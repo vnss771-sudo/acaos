@@ -1,4 +1,5 @@
 import jwt, { type SignOptions } from 'jsonwebtoken'
+import crypto from 'crypto'
 
 const defaultSecret = 'change-me'
 
@@ -12,10 +13,7 @@ export function getJwtSecret() {
   const secret = process.env.JWT_SECRET?.trim()
 
   if (!secret) {
-    if (isProduction()) {
-      throw new Error('JWT_SECRET is required in production')
-    }
-
+    if (isProduction()) throw new Error('JWT_SECRET is required in production')
     return defaultSecret
   }
 
@@ -27,10 +25,25 @@ export function getJwtSecret() {
 }
 
 export function signJwt(payload: JwtPayload): string {
-  const expiresIn = (process.env.JWT_EXPIRES_IN || '7d') as SignOptions['expiresIn']
+  const expiresIn = (process.env.JWT_EXPIRES_IN || '15m') as SignOptions['expiresIn']
   return jwt.sign(payload, getJwtSecret(), { expiresIn })
 }
 
 export function verifyJwt(token: string): JwtPayload {
   return jwt.verify(token, getJwtSecret()) as JwtPayload
+}
+
+export function generateRefreshToken(): string {
+  return crypto.randomBytes(40).toString('hex')
+}
+
+export function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+export function refreshTokenExpiresAt(): Date {
+  const days = Number(process.env.REFRESH_TOKEN_DAYS || 30)
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  return d
 }

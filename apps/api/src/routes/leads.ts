@@ -18,6 +18,7 @@ leadsRouter.get(
     const workspaceId = String(req.query.workspaceId || '').trim()
     const campaignId = typeof req.query.campaignId === 'string' ? req.query.campaignId.trim() : undefined
     const stage = typeof req.query.stage === 'string' ? req.query.stage.trim() : undefined
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined
     const page = Math.max(1, Number(req.query.page) || 1)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25))
 
@@ -29,7 +30,15 @@ leadsRouter.get(
     const where = {
       workspaceId,
       ...(campaignId ? { campaignId } : {}),
-      ...(stage ? { stage } : {})
+      ...(stage ? { stage } : {}),
+      ...(search ? {
+        OR: [
+          { businessName: { contains: search, mode: 'insensitive' as const } },
+          { contactName: { contains: search, mode: 'insensitive' as const } },
+          { email: { contains: search, mode: 'insensitive' as const } },
+          { category: { contains: search, mode: 'insensitive' as const } }
+        ]
+      } : {})
     }
 
     const [leads, total] = await Promise.all([
@@ -173,5 +182,25 @@ leadsRouter.delete(
 
     await prisma.lead.delete({ where: { id: req.params.id } })
     res.json({ ok: true })
+  })
+)
+
+// Get outreach drafts for a lead
+leadsRouter.get(
+  '/:id/drafts',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    if (!lead) throw new ApiError(404, 'Lead not found')
+
+    const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const drafts = await prisma.outreachDraft.findMany({
+      where: { leadId: req.params.id },
+      orderBy: { createdAt: 'desc' }
+    })
+
+    res.json({ drafts })
   })
 )

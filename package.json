@@ -21,6 +21,7 @@
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.10.5",

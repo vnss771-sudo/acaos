@@ -8,65 +8,111 @@ datasource db {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  name         String?
-  passwordHash String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  memberships  Membership[]
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  passwordHash  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
 }
 
 model Workspace {
-  id            String       @id @default(cuid())
-  name          String
-  slug          String       @unique
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  memberships   Membership[]
-  leads         Lead[]
-  campaigns     Campaign[]
+  id                   String          @id @default(cuid())
+  name                 String
+  slug                 String          @unique
+  plan                 String          @default("free")
+  stripeCustomerId     String?         @unique
+  stripeSubscriptionId String?         @unique
+  subscriptionStatus   String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  memberships          Membership[]
+  leads                Lead[]
+  campaigns            Campaign[]
+  outreachDrafts       OutreachDraft[]
 }
 
 model Membership {
-  id          String      @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
   workspaceId String
   role        String
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([userId, workspaceId])
+  @@index([userId])
+  @@index([workspaceId])
 }
 
 model Campaign {
-  id            String     @id @default(cuid())
-  workspaceId   String
-  name          String
-  goalType      String
-  workspace     Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  leads         Lead[]
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  goalType    String
+  description String?
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  leads       Lead[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
 }
 
 model Lead {
-  id            String     @id @default(cuid())
-  workspaceId   String
-  campaignId    String?
-  businessName  String
-  contactName   String?
-  email         String?
-  website       String?
-  city          String?
-  category      String?
-  notes         String?
-  aiSummary     String?
-  outreachAngle String?
-  score         Int        @default(0)
-  stage         String     @default("NEW")
-  workspace     Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign      Campaign?  @relation(fields: [campaignId], references: [id])
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id             String          @id @default(cuid())
+  workspaceId    String
+  campaignId     String?
+  businessName   String
+  contactName    String?
+  email          String?
+  phone          String?
+  website        String?
+  city           String?
+  category       String?
+  notes          String?
+  aiSummary      String?
+  outreachAngle  String?
+  score          Int             @default(0)
+  stage          String          @default("NEW")
+  lastContactedAt DateTime?
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
+  outreachDrafts OutreachDraft[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, stage])
+  @@index([campaignId])
+}
+
+model OutreachDraft {
+  id          String    @id @default(cuid())
+  leadId      String
+  workspaceId String
+  subject     String
+  emailBody   String
+  followup    String?
+  createdAt   DateTime  @default(now())
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([workspaceId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
