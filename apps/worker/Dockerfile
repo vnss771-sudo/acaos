@@ -1,0 +1,18 @@
+FROM node:22-alpine AS base
+WORKDIR /app
+
+# Copy workspace manifests
+COPY package.json package-lock.json ./
+COPY packages/db/package.json ./packages/db/
+COPY apps/worker/package.json ./apps/worker/
+
+RUN npm ci --ignore-optional
+
+COPY packages/db ./packages/db
+COPY apps/worker ./apps/worker
+
+RUN npm run prisma:generate
+
+ENV NODE_ENV=production
+
+CMD ["npm", "--workspace", "@acaos/worker", "run", "start"]
