@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "npx prisma migrate deploy && tsx src/server.ts"
+    "start": "npx prisma migrate deploy --schema ../../packages/db/prisma/schema.prisma && tsx src/server.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",

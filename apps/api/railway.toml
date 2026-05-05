@@ -1,0 +1,11 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "apps/api/Dockerfile"
+buildCommand = ""
+
+[deploy]
+startCommand = "npx prisma migrate deploy --schema packages/db/prisma/schema.prisma && tsx apps/api/src/server.ts"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
