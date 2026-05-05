@@ -13,14 +13,16 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "imapflow": "^1.0.181",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^8.0.5",
-    "openai": "^4.56.0",
+    "openai": "^6.0.0",
     "prisma": "^5.18.0",
     "stripe": "^16.8.0",
     "tsx": "^4.16.2"
+  },
+  "optionalDependencies": {
+    "imapflow": "^1.0.181"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
