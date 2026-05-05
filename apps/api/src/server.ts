@@ -19,14 +19,16 @@ const app = express()
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 
-const allowedOrigins = process.env.WEB_URL
-  ? [process.env.WEB_URL]
-  : process.env.NODE_ENV === 'production'
-    ? []
-    : true
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return false
+  if (process.env.WEB_URL && origin === process.env.WEB_URL) return true
+  if (origin.endsWith('.railway.app')) return true
+  if (origin.endsWith('.vercel.app')) return true
+  return false
+}
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: process.env.NODE_ENV === 'production' ? isAllowedOrigin : true,
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -78,7 +80,6 @@ async function shutdown(signal: string) {
     console.log('[api] Shutdown complete')
     process.exit(0)
   })
-  // Force exit if graceful shutdown takes too long
   setTimeout(() => {
     console.error('[api] Forced exit after timeout')
     process.exit(1)
