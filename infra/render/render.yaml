@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: acaos-api
+    env: node
+    rootDir: .
+    buildCommand: npm install && npm run prisma:generate
+    startCommand: npm run dev:api
+  - type: web
+    name: acaos-web
+    env: node
+    rootDir: .
+    buildCommand: npm install && npm run build
+    startCommand: npx serve -s apps/web/dist -l 4173
+  - type: worker
+    name: acaos-worker
+    env: node
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm run dev:worker
