@@ -1,13 +1,8 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "npm --workspace @acaos/web run build",
   "outputDirectory": "apps/web/dist",
   "installCommand": "npm install",
-  "framework": "vite",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://YOUR_RAILWAY_API_URL/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
-  ],
-  "env": {
-    "VITE_API_BASE_URL": "https://YOUR_RAILWAY_API_URL"
-  }
+  ]
 }
