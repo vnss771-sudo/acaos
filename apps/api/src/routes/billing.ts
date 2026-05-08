@@ -81,21 +81,22 @@ billingRouter.post(
       case 'checkout.session.completed': {
         const session = event.data.object as {
           customer?: string
-          metadata?: { workspaceId?: string }
+          metadata?: { workspaceId?: string; priceId?: string }
           subscription?: string
         }
         const workspaceId = session.metadata?.workspaceId
         if (workspaceId) {
+          const plan = resolvePlanFromPrice(session.metadata?.priceId)
           await prisma.workspace.update({
             where: { id: workspaceId },
             data: {
               stripeCustomerId: session.customer ?? undefined,
               stripeSubscriptionId: session.subscription ?? undefined,
               subscriptionStatus: 'active',
-              plan: 'starter'
+              plan
             }
           })
-          console.log(`[billing] checkout.session.completed workspace=${workspaceId}`)
+          console.log(`[billing] checkout.session.completed workspace=${workspaceId} plan=${plan}`)
         }
         break
       }

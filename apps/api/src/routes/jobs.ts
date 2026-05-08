@@ -16,8 +16,8 @@ export const jobsRouter = Router()
 jobsRouter.use(requireAuth)
 
 const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox']
+const MAX_REPLY_BODY = 10_000
 
-// Enqueue: research a lead asynchronously
 jobsRouter.post(
   '/research',
   aiRateLimit,
@@ -32,12 +32,11 @@ jobsRouter.post(
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    const job = await enqueueResearchLead(leadId)
+    const job = await enqueueResearchLead(leadId, user.id)
     res.status(202).json({ jobId: job.id, queue: 'research-lead', status: 'queued' })
   })
 )
 
-// Enqueue: generate outreach for a lead asynchronously
 jobsRouter.post(
   '/outreach',
   aiRateLimit,
@@ -52,12 +51,11 @@ jobsRouter.post(
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    const job = await enqueueGenerateOutreach(leadId)
+    const job = await enqueueGenerateOutreach(leadId, user.id)
     res.status(202).json({ jobId: job.id, queue: 'generate-outreach', status: 'queued' })
   })
 )
 
-// Enqueue: analyze an inbound reply
 jobsRouter.post(
   '/analyze-reply',
   aiRateLimit,
@@ -67,6 +65,7 @@ jobsRouter.post(
     const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() : undefined
 
     if (!replyBody) throw new ApiError(400, 'replyBody required')
+    if (replyBody.length > MAX_REPLY_BODY) throw new ApiError(400, `replyBody must be at most ${MAX_REPLY_BODY} characters`)
 
     if (leadId) {
       const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -75,12 +74,11 @@ jobsRouter.post(
       if (!member) throw new ApiError(403, 'Access denied')
     }
 
-    const job = await enqueueAnalyzeReply(replyBody, leadId)
+    const job = await enqueueAnalyzeReply(replyBody, leadId, user.id)
     res.status(202).json({ jobId: job.id, queue: 'analyze-reply', status: 'queued' })
   })
 )
 
-// Bulk enqueue: research all NEW leads in a workspace
 jobsRouter.post(
   '/research-bulk',
   aiRateLimit,
@@ -98,20 +96,24 @@ jobsRouter.post(
       take: 50
     })
 
-    const jobs = await Promise.all(leads.map(l => enqueueResearchLead(l.id)))
+    const jobs = await Promise.all(leads.map(l => enqueueResearchLead(l.id, user.id)))
     res.status(202).json({ queued: jobs.length, jobs: jobs.map(j => ({ jobId: j.id, leadId: j.name })) })
   })
 )
 
-// Poll job status
+// Poll job status — only the user who enqueued the job may read its result
 jobsRouter.get(
   '/:queue/:jobId',
   asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
     const { queue, jobId } = req.params
     if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
 
     const job = await getJobById(queue, jobId)
     if (!job) throw new ApiError(404, 'Job not found')
+
+    const jobUserId = (job.data as Record<string, unknown>).userId
+    if (jobUserId && jobUserId !== user.id) throw new ApiError(403, 'Access denied')
 
     const state = await job.getState()
     const result = state === 'completed' ? job.returnvalue : undefined

@@ -25,7 +25,7 @@ export async function createCheckoutSession(
     line_items: [{ price: selectedPrice, quantity: 1 }],
     success_url: `${process.env.WEB_URL}/billing/success?workspaceId=${workspaceId}`,
     cancel_url: `${process.env.WEB_URL}/billing/cancel?workspaceId=${workspaceId}`,
-    metadata: { workspaceId },
+    metadata: { workspaceId, priceId: selectedPrice },
     allow_promotion_codes: true,
     billing_address_collection: 'auto'
   }
