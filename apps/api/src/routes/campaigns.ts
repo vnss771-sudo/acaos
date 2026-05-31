@@ -8,6 +8,8 @@ import type { AuthedRequest } from '../types/auth.js'
 export const campaignsRouter = Router()
 campaignsRouter.use(requireAuth)
 
+const MAX_NAME = 200
+
 // List campaigns for a workspace
 campaignsRouter.get(
   '/',
@@ -41,6 +43,7 @@ campaignsRouter.post(
 
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
     if (!name) throw new ApiError(400, 'name required')
+    if (name.length > MAX_NAME) throw new ApiError(400, `name must be at most ${MAX_NAME} characters`)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')

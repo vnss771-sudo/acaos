@@ -106,6 +106,7 @@ authRouter.post(
 
 authRouter.post(
   '/refresh',
+  authRateLimit,
   asyncHandler(async (req, res) => {
     const rawToken = String(req.body?.refreshToken || '').trim()
     if (!rawToken) throw new ApiError(400, 'refreshToken required')
@@ -169,10 +170,10 @@ authRouter.patch(
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const updates: { name?: string; passwordHash?: string } = {}
+    const updates: { name?: string | null; passwordHash?: string } = {}
 
     if (typeof req.body?.name === 'string') {
-      updates.name = req.body.name.trim() || null as any
+      updates.name = req.body.name.trim() || null
     }
 
     if (typeof req.body?.currentPassword === 'string' && typeof req.body?.newPassword === 'string') {

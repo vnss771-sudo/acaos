@@ -9,6 +9,9 @@ export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
 
 const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
+const MAX_SHORT = 200
+const MAX_NOTES = 2_000
+const MAX_AI = 5_000
 
 // List leads
 leadsRouter.get(
@@ -18,7 +21,8 @@ leadsRouter.get(
     const workspaceId = String(req.query.workspaceId || '').trim()
     const campaignId = typeof req.query.campaignId === 'string' ? req.query.campaignId.trim() : undefined
     const stage = typeof req.query.stage === 'string' ? req.query.stage.trim() : undefined
-    const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined
+    const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : undefined
+    const search = rawSearch && rawSearch.length > MAX_SHORT ? rawSearch.slice(0, MAX_SHORT) : rawSearch
     const page = Math.max(1, Number(req.query.page) || 1)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25))
 
@@ -65,6 +69,7 @@ leadsRouter.post(
 
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
     if (!businessName) throw new ApiError(400, 'businessName required')
+    if (businessName.length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -150,11 +155,28 @@ leadsRouter.patch(
     if (!member) throw new ApiError(403, 'Access denied')
 
     const updates: Record<string, unknown> = {}
-    const fields = ['contactName', 'email', 'website', 'city', 'category', 'notes', 'aiSummary', 'outreachAngle']
-    for (const field of fields) {
+    const shortFields = ['contactName', 'email', 'website', 'city', 'category']
+    const notesFields = ['notes']
+    const aiFields = ['aiSummary', 'outreachAngle']
+    for (const field of shortFields) {
       if (typeof req.body?.[field] === 'string') updates[field] = req.body[field].trim() || null
     }
+    for (const field of notesFields) {
+      if (typeof req.body?.[field] === 'string') {
+        const v = req.body[field].trim()
+        if (v.length > MAX_NOTES) throw new ApiError(400, `${field} must be at most ${MAX_NOTES} characters`)
+        updates[field] = v || null
+      }
+    }
+    for (const field of aiFields) {
+      if (typeof req.body?.[field] === 'string') {
+        const v = req.body[field].trim()
+        if (v.length > MAX_AI) throw new ApiError(400, `${field} must be at most ${MAX_AI} characters`)
+        updates[field] = v || null
+      }
+    }
     if (typeof req.body?.businessName === 'string' && req.body.businessName.trim()) {
+      if (req.body.businessName.trim().length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
       updates.businessName = req.body.businessName.trim()
     }
     if (typeof req.body?.score === 'number') updates.score = req.body.score

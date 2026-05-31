@@ -78,3 +78,17 @@ export const generalRateLimit = createRateLimiter({
   max: 200,
   message: 'Request limit reached. Please slow down.'
 })
+
+// 5 outbound mail sends per hour per IP (prevents spam abuse)
+export const mailRateLimit = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: 'Too many emails sent. Please wait before sending more.'
+})
+
+// 10 IMAP sync triggers per hour per IP
+export const syncRateLimit = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: 'Too many sync requests. Please wait before syncing again.'
+})
