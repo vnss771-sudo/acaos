@@ -34,6 +34,7 @@ model Workspace {
   campaigns            Campaign[]
   outreachDrafts       OutreachDraft[]
   scoringModel         ScoringModel?
+  usageRecords         UsageRecord[]
 }
 
 model Membership {
@@ -153,4 +154,26 @@ model RefreshToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// Monthly AI usage tracking for plan enforcement
+model UsageRecord {
+  id          String    @id @default(cuid())
+  workspaceId String
+  action      String    // AI_RESEARCH | AI_OUTREACH | AI_REPLY
+  month       String    // YYYY-MM
+  count       Int       @default(0)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, month, action])
+  @@index([workspaceId])
+}
+
+// Deduplicate IMAP messages processed during mailbox sync
+model ProcessedEmail {
+  id          String   @id @default(cuid())
+  uid         Int      @unique
+  messageId   String?  @unique
+  fromAddress String?
+  processedAt DateTime @default(now())
 }
