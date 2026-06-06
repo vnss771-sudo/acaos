@@ -127,6 +127,50 @@ const replyWorker = new Worker(
       if (newStage) {
         await prisma.lead.update({ where: { id: leadId }, data: { stage: newStage } })
       }
+
+      // Feed outcome back into the scoring model
+      const lead = await prisma.lead.findUnique({
+        where: { id: leadId },
+        select: { workspaceId: true, score: true }
+      })
+      if (lead) {
+        const model = await prisma.scoringModel.upsert({
+          where: { workspaceId: lead.workspaceId },
+          create: {
+            workspaceId: lead.workspaceId,
+            weights: {
+              industry: 0.20, size: 0.18, hiring: 0.15, tech: 0.12,
+              growth: 0.12, contact: 0.08, messageRelevance: 0.08,
+              channelFit: 0.05, timingFit: 0.02, dataFreshness: 0.00
+            },
+            performanceMetrics: {
+              totalScored: 0, totalReplied: 0, replyRate: 0,
+              avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
+            }
+          },
+          update: {}
+        })
+
+        const replyIntentMap: Record<string, string> = {
+          INTERESTED: 'INTERESTED',
+          NOT_INTERESTED: 'NOT_INTERESTED',
+          NEEDS_MORE_INFO: 'NEED_MORE_INFO'
+        }
+
+        await prisma.scoringOutcome.create({
+          data: {
+            workspaceId: lead.workspaceId,
+            leadId,
+            prospectId: leadId,
+            score: lead.score,
+            replied: parsed.classification !== 'NOT_INTERESTED',
+            replyIntent: replyIntentMap[parsed.classification] ?? null,
+            messageRelevance: 0.5,
+            channelUsed: 'EMAIL',
+            scoringModelId: model.id
+          }
+        })
+      }
     }
 
     await job.updateProgress(100)

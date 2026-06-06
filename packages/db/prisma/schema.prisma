@@ -33,6 +33,7 @@ model Workspace {
   leads                Lead[]
   campaigns            Campaign[]
   outreachDrafts       OutreachDraft[]
+  scoringModel         ScoringModel?
 }
 
 model Membership {
@@ -106,6 +107,40 @@ model OutreachDraft {
 
   @@index([leadId])
   @@index([workspaceId])
+}
+
+// Persisted ScorerV2 model — one per workspace, survives deploys
+model ScoringModel {
+  id                 String           @id @default(cuid())
+  workspaceId        String           @unique
+  weights            Json
+  performanceMetrics Json
+  updateCount        Int              @default(0)
+  lastWeightUpdate   DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  outcomes           ScoringOutcome[]
+}
+
+// Individual reply outcomes — feed the ScorerV2 feedback loop
+model ScoringOutcome {
+  id               String       @id @default(cuid())
+  workspaceId      String
+  leadId           String?
+  prospectId       String
+  score            Float
+  replied          Boolean
+  replyIntent      String?
+  messageRelevance Float        @default(0.5)
+  channelUsed      String       @default("EMAIL")
+  scoringModelId   String
+  scoringModel     ScoringModel @relation(fields: [scoringModelId], references: [id], onDelete: Cascade)
+  recordedAt       DateTime     @default(now())
+
+  @@index([workspaceId])
+  @@index([scoringModelId])
+  @@index([leadId])
 }
 
 model RefreshToken {
