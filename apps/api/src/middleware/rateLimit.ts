@@ -12,7 +12,7 @@ interface WindowEntry {
   resetAt: number
 }
 
-function createRateLimiter(opts: RateLimitOptions): RequestHandler {
+export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
   const store = new Map<string, WindowEntry>()
   const { windowMs, max, message = 'Too many requests, please try again later.' } = opts
 
