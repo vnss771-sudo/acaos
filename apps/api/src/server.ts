@@ -10,6 +10,7 @@ import { campaignsRouter } from './routes/campaigns.js'
 import { leadsRouter } from './routes/leads.js'
 import { statsRouter } from './routes/stats.js'
 import { jobsRouter } from './routes/jobs.js'
+import { ingestRouter } from './routes/ingest.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
@@ -64,6 +65,7 @@ app.use('/api/campaigns', campaignsRouter)
 app.use('/api/leads', leadsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/jobs', jobsRouter)
+app.use('/api/ingest', ingestRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

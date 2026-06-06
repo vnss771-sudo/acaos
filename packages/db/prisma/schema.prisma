@@ -26,6 +26,7 @@ model Workspace {
   stripeCustomerId     String?         @unique
   stripeSubscriptionId String?         @unique
   subscriptionStatus   String?
+  ingestApiKey         String?         @unique
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
   memberships          Membership[]
@@ -78,6 +79,7 @@ model Lead {
   outreachAngle  String?
   score          Int             @default(0)
   stage          String          @default("NEW")
+  sourceTag      String?
   lastContactedAt DateTime?
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign       Campaign?       @relation(fields: [campaignId], references: [id])
@@ -87,6 +89,7 @@ model Lead {
 
   @@index([workspaceId])
   @@index([workspaceId, stage])
+  @@index([workspaceId, email])
   @@index([campaignId])
 }
 
