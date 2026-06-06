@@ -33,6 +33,8 @@ model Workspace {
   leads                Lead[]
   campaigns            Campaign[]
   outreachDrafts       OutreachDraft[]
+  scoringModel         ScoringModel?
+  usageRecords         UsageRecord[]
 }
 
 model Membership {
@@ -108,6 +110,40 @@ model OutreachDraft {
   @@index([workspaceId])
 }
 
+// Persisted ScorerV2 model — one per workspace, survives deploys
+model ScoringModel {
+  id                 String           @id @default(cuid())
+  workspaceId        String           @unique
+  weights            Json
+  performanceMetrics Json
+  updateCount        Int              @default(0)
+  lastWeightUpdate   DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  outcomes           ScoringOutcome[]
+}
+
+// Individual reply outcomes — feed the ScorerV2 feedback loop
+model ScoringOutcome {
+  id               String       @id @default(cuid())
+  workspaceId      String
+  leadId           String?
+  prospectId       String
+  score            Float
+  replied          Boolean
+  replyIntent      String?
+  messageRelevance Float        @default(0.5)
+  channelUsed      String       @default("EMAIL")
+  scoringModelId   String
+  scoringModel     ScoringModel @relation(fields: [scoringModelId], references: [id], onDelete: Cascade)
+  recordedAt       DateTime     @default(now())
+
+  @@index([workspaceId])
+  @@index([scoringModelId])
+  @@index([leadId])
+}
+
 model RefreshToken {
   id        String    @id @default(cuid())
   userId    String
@@ -118,4 +154,26 @@ model RefreshToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// Monthly AI usage tracking for plan enforcement
+model UsageRecord {
+  id          String    @id @default(cuid())
+  workspaceId String
+  action      String    // AI_RESEARCH | AI_OUTREACH | AI_REPLY
+  month       String    // YYYY-MM
+  count       Int       @default(0)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, month, action])
+  @@index([workspaceId])
+}
+
+// Deduplicate IMAP messages processed during mailbox sync
+model ProcessedEmail {
+  id          String   @id @default(cuid())
+  uid         Int      @unique
+  messageId   String?  @unique
+  fromAddress String?
+  processedAt DateTime @default(now())
 }

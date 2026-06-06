@@ -6,6 +6,8 @@ export function normalizeEmail(value: string) {
 }
 
 export function isValidEmail(value: string) {
+  // Reject control characters (including null bytes) before pattern matching
+  if (/[\x00-\x1f\x7f]/.test(value)) return false
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
 }
 

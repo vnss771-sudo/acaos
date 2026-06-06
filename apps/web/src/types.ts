@@ -50,6 +50,29 @@ export type OutreachDraft = {
   createdAt: string
 }
 
+export type ScoringModel = {
+  weights: Record<string, number>
+  metrics: {
+    totalScored: number
+    totalReplied: number
+    replyRate: number
+    avgScoreOfReplied: number
+    avgScoreOfNotReplied: number
+    correlationScore: number
+  }
+  updateCount: number
+  lastWeightUpdate: string | null
+}
+
+export type UsageData = {
+  month: string
+  totals: { AI_RESEARCH: number; AI_OUTREACH: number; AI_REPLY: number }
+  total: number
+  limit: number   // -1 = unlimited
+  plan: string
+  maxLeads: number  // -1 = unlimited
+}
+
 export type StatsData = {
   totalLeads: number
   campaignCount: number
@@ -65,6 +88,9 @@ export type StatsData = {
   }
   recentLeads: Array<{ id: string; businessName: string; stage: string; score: number; category?: string | null; createdAt: string }>
   topLeads: Array<{ id: string; businessName: string; stage: string; score: number; category?: string | null }>
+  scoreDistribution: { HOT: number; WARM: number; COLD: number }
+  scoringModel: ScoringModel | null
+  usage: UsageData
 }
 
 export type View = 'dashboard' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings'
@@ -80,6 +106,18 @@ export const STAGE_COLOR: Record<string, string> = {
   BOOKED: '#10b981',
   CLOSED: '#22c55e',
   DEAD: '#ef4444'
+}
+
+export const TIER_COLOR: Record<string, string> = {
+  HOT: '#ef4444',
+  WARM: '#f59e0b',
+  COLD: '#475569'
+}
+
+export function getScoreTier(score: number): 'HOT' | 'WARM' | 'COLD' {
+  if (score >= 72) return 'HOT'
+  if (score >= 48) return 'WARM'
+  return 'COLD'
 }
 
 export const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] as const

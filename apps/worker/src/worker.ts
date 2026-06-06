@@ -3,6 +3,8 @@ import { Worker } from 'bullmq'
 import { connection, defaultJobOptions } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
+import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
+import type { ScoringWeights } from '../../api/src/lib/scoring.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -10,6 +12,14 @@ function log(queue: string, msg: string) {
 
 function parseJson<T>(raw: string, fallback: T): T {
   try { return JSON.parse(raw) } catch { return fallback }
+}
+
+async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
+  const model = await prisma.scoringModel.findUnique({
+    where: { workspaceId },
+    select: { weights: true }
+  })
+  return (model?.weights as ScoringWeights | null) ?? DEFAULT_SCORING_WEIGHTS
 }
 
 // ── research-lead ─────────────────────────────────────────────────────────────
@@ -27,31 +37,59 @@ const researchWorker = new Worker(
     const raw = await generateLeadResearch({
       businessName: lead.businessName,
       website: lead.website ?? undefined,
+      category: lead.category ?? undefined,
+      city: lead.city ?? undefined,
       notes: lead.notes ?? undefined
     })
 
-    await job.updateProgress(80)
+    await job.updateProgress(60)
 
-    const parsed = parseJson<{ aiSummary?: string; outreachAngle?: string; qualificationSignals?: string[] }>(raw, {})
+    const parsed = parseJson<{
+      aiSummary?: string
+      outreachAngle?: string
+      qualificationSignals?: string[]
+      icpScore?: number
+      hiringSignals?: boolean
+      digitalMaturity?: string
+      estimatedTeamSize?: string
+    }>(raw, {})
+
+    // Build the enriched lead data for scoring
+    const enrichedLead = {
+      businessName: lead.businessName,
+      category: lead.category,
+      contactName: lead.contactName,
+      email: lead.email,
+      website: lead.website,
+      notes: lead.notes,
+      aiSummary: parsed.aiSummary ?? null,
+      outreachAngle: parsed.outreachAngle ?? null
+    }
+
+    // Use AI's icpScore if available and plausible, otherwise compute from signals
+    const weights = await getWorkspaceWeights(lead.workspaceId)
+    const computedScore = computeLeadScore(enrichedLead, weights)
+    const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
+      ? Math.round((parsed.icpScore + computedScore) / 2) // blend AI + signal scores
+      : computedScore
+
+    await job.updateProgress(80)
 
     await prisma.lead.update({
       where: { id: leadId },
       data: {
         aiSummary: parsed.aiSummary ?? null,
         outreachAngle: parsed.outreachAngle ?? null,
+        score: finalScore,
         stage: 'RESEARCHED'
       }
     })
 
     await job.updateProgress(100)
-    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED`)
-    return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle }
+    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore}`)
+    return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle, score: finalScore }
   },
-  {
-    connection,
-    concurrency: 3,
-    ...defaultJobOptions
-  }
+  { connection, concurrency: 3, ...defaultJobOptions }
 )
 
 // ── generate-outreach ─────────────────────────────────────────────────────────
@@ -69,6 +107,8 @@ const outreachWorker = new Worker(
     const raw = await generateOutreach({
       businessName: lead.businessName,
       category: lead.category ?? undefined,
+      city: lead.city ?? undefined,
+      contactName: lead.contactName ?? undefined,
       aiSummary: lead.aiSummary ?? undefined,
       outreachAngle: lead.outreachAngle ?? undefined
     })
@@ -87,17 +127,18 @@ const outreachWorker = new Worker(
           followup: parsed.followup ?? null
         }
       })
+
+      // Advance to OUTREACH_SENT if still at RESEARCHED
+      if (lead.stage === 'RESEARCHED') {
+        await prisma.lead.update({ where: { id: lead.id }, data: { stage: 'OUTREACH_SENT' } })
+      }
     }
 
     await job.updateProgress(100)
     log('generate-outreach', `Done leadId=${leadId}`)
     return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
   },
-  {
-    connection,
-    concurrency: 3,
-    ...defaultJobOptions
-  }
+  { connection, concurrency: 3, ...defaultJobOptions }
 )
 
 // ── analyze-reply ─────────────────────────────────────────────────────────────
@@ -109,35 +150,87 @@ const replyWorker = new Worker(
 
     await job.updateProgress(10)
     const raw = await analyzeReply(replyBody)
-    await job.updateProgress(80)
+    await job.updateProgress(70)
 
     const parsed = parseJson<{
       classification?: string
+      confidence?: number
       summary?: string
       suggestedAction?: string
+      urgency?: string
+      keyQuote?: string
+      isAutoReply?: boolean
     }>(raw, {})
 
     if (leadId && parsed.classification) {
-      const stageMap: Record<string, string> = {
-        INTERESTED: 'REPLIED',
-        NOT_INTERESTED: 'DEAD',
-        NEEDS_MORE_INFO: 'REPLIED'
+      // Skip stage update for auto-replies and OOO
+      if (!parsed.isAutoReply) {
+        const stageMap: Record<string, string> = {
+          INTERESTED: 'REPLIED',
+          NOT_INTERESTED: 'DEAD',
+          NEEDS_MORE_INFO: 'REPLIED',
+          NOT_NOW: 'REPLIED',
+          REFERRAL: 'REPLIED',
+          OUT_OF_OFFICE: 'OUTREACH_SENT' // stay in outreach, they'll be back
+        }
+        const newStage = stageMap[parsed.classification]
+        if (newStage) {
+          await prisma.lead.update({ where: { id: leadId }, data: { stage: newStage } })
+        }
       }
-      const newStage = stageMap[parsed.classification]
-      if (newStage) {
-        await prisma.lead.update({ where: { id: leadId }, data: { stage: newStage } })
+
+      // Feed outcome into scoring model
+      const lead = await prisma.lead.findUnique({
+        where: { id: leadId },
+        select: { workspaceId: true, score: true }
+      })
+
+      if (lead && !parsed.isAutoReply) {
+        const model = await prisma.scoringModel.upsert({
+          where: { workspaceId: lead.workspaceId },
+          create: {
+            workspaceId: lead.workspaceId,
+            weights: DEFAULT_SCORING_WEIGHTS,
+            performanceMetrics: {
+              totalScored: 0, totalReplied: 0, replyRate: 0,
+              avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
+            }
+          },
+          update: {}
+        })
+
+        const replyIntentMap: Record<string, string> = {
+          INTERESTED: 'INTERESTED',
+          NOT_INTERESTED: 'NOT_INTERESTED',
+          NEEDS_MORE_INFO: 'NEED_MORE_INFO',
+          NOT_NOW: 'NEED_MORE_INFO',
+          REFERRAL: 'INTERESTED',
+          OUT_OF_OFFICE: 'NOT_INTERESTED'
+        }
+
+        const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(parsed.classification ?? '')
+
+        await prisma.scoringOutcome.create({
+          data: {
+            workspaceId: lead.workspaceId,
+            leadId,
+            prospectId: leadId,
+            score: lead.score,
+            replied,
+            replyIntent: replyIntentMap[parsed.classification!] ?? null,
+            messageRelevance: replied ? 0.8 : 0.2,
+            channelUsed: 'EMAIL',
+            scoringModelId: model.id
+          }
+        })
       }
     }
 
     await job.updateProgress(100)
-    log('analyze-reply', `Done classification=${parsed.classification}`)
+    log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)
     return parsed
   },
-  {
-    connection,
-    concurrency: 5,
-    ...defaultJobOptions
-  }
+  { connection, concurrency: 5, ...defaultJobOptions }
 )
 
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
@@ -152,15 +245,10 @@ const mailboxWorker = new Worker(
     const result = await syncMailboxOnce()
     await job.updateProgress(100)
 
-    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected}`)
+    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
-  {
-    connection,
-    concurrency: 1,
-    attempts: 2,
-    backoff: { type: 'exponential', delay: 10_000 }
-  }
+  { connection, concurrency: 1, attempts: 2, backoff: { type: 'exponential', delay: 10_000 } }
 )
 
 // Attach error handlers
