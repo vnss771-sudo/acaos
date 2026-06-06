@@ -34,9 +34,12 @@ export async function ensureWorkspaceSlug(input: string) {
   return appendSlugSuffix(base, Date.now())
 }
 
-// Alias used by leads/campaigns routes
+// Returns membership object (with role) or null — used where role checks are needed
 export async function userBelongsToWorkspace(userId: string, workspaceId: string) {
-  return userHasWorkspaceAccess(userId, workspaceId)
+  return prisma.membership.findFirst({
+    where: { userId, workspaceId },
+    select: { id: true, role: true }
+  })
 }
 
 export async function userHasWorkspaceAccess(userId: string, workspaceId: string) {

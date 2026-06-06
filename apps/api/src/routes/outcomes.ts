@@ -288,7 +288,7 @@ outcomesRouter.post(
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId, role: 'OWNER' }
+      where: { userId: user.id, workspaceId, role: 'owner' }
     })
     if (!membership) throw new ApiError(403, 'Only workspace owners can reset the scoring model')
 

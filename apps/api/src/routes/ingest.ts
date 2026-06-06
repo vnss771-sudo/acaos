@@ -146,7 +146,7 @@ keyRouter.post(
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member || member.role !== 'OWNER') throw new ApiError(403, 'Only workspace owners can manage API keys')
+    if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
     const ingestApiKey = randomBytes(32).toString('hex')
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey } })
@@ -164,7 +164,7 @@ keyRouter.delete(
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member || member.role !== 'OWNER') throw new ApiError(403, 'Only workspace owners can manage API keys')
+    if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
     res.json({ ok: true })
