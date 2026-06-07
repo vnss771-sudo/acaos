@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomBytes } from 'crypto'
 import { requireAuth } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
@@ -204,5 +205,26 @@ workspaceRouter.get(
     if (!workspace) throw new ApiError(404, 'Workspace not found')
 
     res.json({ workspace: { ...workspace, role: membership.role } })
+  })
+)
+
+// POST /api/workspaces/:id/rotate-api-key — owner only, generates new ingest API key
+workspaceRouter.post(
+  '/:id/rotate-api-key',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId: req.params.id, role: 'owner' }
+    })
+    if (!membership) throw new ApiError(403, 'Only workspace owners can rotate the API key')
+
+    const ingestApiKey = `ws_${randomBytes(24).toString('hex')}`
+    const workspace = await prisma.workspace.update({
+      where: { id: req.params.id },
+      data: { ingestApiKey },
+      select: { id: true, ingestApiKey: true }
+    })
+
+    res.json({ ingestApiKey: workspace.ingestApiKey })
   })
 )
