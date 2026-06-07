@@ -19,22 +19,24 @@ model User {
 }
 
 model Workspace {
-  id                   String          @id @default(cuid())
+  id                   String            @id @default(cuid())
   name                 String
-  slug                 String          @unique
-  plan                 String          @default("free")
-  stripeCustomerId     String?         @unique
-  stripeSubscriptionId String?         @unique
+  slug                 String            @unique
+  plan                 String            @default("free")
+  stripeCustomerId     String?           @unique
+  stripeSubscriptionId String?           @unique
   subscriptionStatus   String?
-  ingestApiKey         String?         @unique
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  ingestApiKey         String?           @unique
+  webhookUrl           String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
   memberships          Membership[]
   leads                Lead[]
   campaigns            Campaign[]
   outreachDrafts       OutreachDraft[]
   scoringModel         ScoringModel?
   usageRecords         UsageRecord[]
+  invites              WorkspaceInvite[]
 }
 
 model Membership {
@@ -66,32 +68,33 @@ model Campaign {
 }
 
 model Lead {
-  id             String          @id @default(cuid())
-  workspaceId    String
-  campaignId     String?
-  businessName   String
-  contactName    String?
-  email          String?
-  phone          String?
-  website        String?
-  city           String?
-  category       String?
-  notes          String?
-  aiSummary      String?
-  outreachAngle  String?
-  score          Int             @default(0)
-  stage          String          @default("NEW")
-  sourceTag      String?
+  id              String          @id @default(cuid())
+  workspaceId     String
+  campaignId      String?
+  businessName    String
+  contactName     String?
+  email           String?
+  phone           String?
+  website         String?
+  city            String?
+  category        String?
+  notes           String?
+  aiSummary       String?
+  outreachAngle   String?
+  score           Int             @default(0)
+  stage           String          @default("NEW")
+  sourceTag       String?
   lastContactedAt DateTime?
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
-  outreachDrafts OutreachDraft[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign        Campaign?       @relation(fields: [campaignId], references: [id])
+  outreachDrafts  OutreachDraft[]
+  activities      LeadActivity[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
+  @@unique([workspaceId, email])
   @@index([workspaceId])
   @@index([workspaceId, stage])
-  @@index([workspaceId, email])
   @@index([campaignId])
 }
 
@@ -156,6 +159,40 @@ model RefreshToken {
   @@index([userId])
 }
 
+// Audit trail for every significant action on a lead
+model LeadActivity {
+  id          String   @id @default(cuid())
+  leadId      String
+  workspaceId String
+  userId      String?
+  type        String   // CREATED | STAGE_CHANGE | SCORE_UPDATE | AI_RESEARCH | AI_OUTREACH | AI_REPLY | NOTE | IMPORTED | DELETED_DRAFT
+  meta        Json?
+  createdAt   DateTime @default(now())
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+// Team invite tokens — allows workspace owners to onboard members via email
+model WorkspaceInvite {
+  id          String    @id @default(cuid())
+  workspaceId String
+  email       String
+  role        String    @default("member")
+  token       String    @unique
+  invitedById String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
+  @@index([token])
+  @@index([workspaceId])
+}
+
 // Monthly AI usage tracking for plan enforcement
 model UsageRecord {
   id          String    @id @default(cuid())
@@ -169,11 +206,15 @@ model UsageRecord {
   @@index([workspaceId])
 }
 
-// Deduplicate IMAP messages processed during mailbox sync
+// Deduplicate IMAP messages processed during mailbox sync (scoped per workspace mailbox)
 model ProcessedEmail {
   id          String   @id @default(cuid())
-  uid         Int      @unique
+  workspaceId String   @default("")
+  uid         Int
   messageId   String?  @unique
   fromAddress String?
   processedAt DateTime @default(now())
+
+  @@unique([workspaceId, uid])
+  @@index([workspaceId])
 }

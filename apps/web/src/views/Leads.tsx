@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import type { Lead, Workspace, Campaign, OutreachDraft } from '../types.js'
+import type { Lead, Workspace, Campaign, OutreachDraft, LeadActivity } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
@@ -69,12 +69,15 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({ ...lead })
   const [drafts, setDrafts] = useState<OutreachDraft[]>([])
+  const [activities, setActivities] = useState<LeadActivity[]>([])
   const [saving, setSaving] = useState(false)
   const [activeJobs, setActiveJobs] = useState<Record<string, { state: string; progress: number }>>({})
+  const [showActivity, setShowActivity] = useState(false)
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map())
 
   useEffect(() => {
     api<{ drafts: OutreachDraft[] }>(`/api/leads/${lead.id}/drafts`).then(d => setDrafts(d.drafts)).catch(() => {})
+    api<{ activities: LeadActivity[] }>(`/api/leads/${lead.id}/activity`).then(d => setActivities(d.activities)).catch(() => {})
     return () => { eventSourcesRef.current.forEach(es => es.close()) }
   }, [lead.id])
 
@@ -305,6 +308,44 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
           ))}
         </div>
       </div>
+
+      {/* Activity Log */}
+      {activities.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <button
+            style={{ ...s.btnSm, marginBottom: 8, fontSize: 12 }}
+            onClick={() => setShowActivity(v => !v)}
+          >
+            {showActivity ? '▲' : '▼'} Activity Log ({activities.length})
+          </button>
+          {showActivity && (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {activities.map(a => {
+                const meta = a.meta as Record<string, unknown> | null
+                const label: Record<string, string> = {
+                  CREATED: 'Created',
+                  STAGE_CHANGE: `Stage: ${meta?.from} → ${meta?.to}`,
+                  AI_RESEARCH: `AI Research — score ${meta?.score}`,
+                  AI_OUTREACH: `Outreach generated — "${meta?.subject}"`,
+                  AI_REPLY: `Reply classified: ${meta?.classification}${meta?.keyQuote ? ` — "${meta.keyQuote}"` : ''}`,
+                  FIELD_UPDATE: `Fields updated: ${(meta?.fields as string[])?.join(', ')}`,
+                  IMPORTED: `Imported (batch of ${meta?.batchSize})`,
+                  NOTE: String(meta?.note ?? ''),
+                  SCORE_UPDATE: `Score updated to ${meta?.score}`
+                }
+                return (
+                  <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <div style={{ color: colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', paddingTop: 1, minWidth: 80 }}>
+                      {new Date(a.createdAt).toLocaleDateString()} {new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                    <div style={{ color: colors.textMuted, fontSize: 12 }}>{label[a.type] ?? a.type}</div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -314,6 +355,7 @@ export function Leads({ api, workspace, toast }: Props) {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [stageFilter, setStageFilter] = useState('')
+  const [tierFilter, setTierFilter] = useState('')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Lead | null>(null)
   const [adding, setAdding] = useState(false)
@@ -334,12 +376,13 @@ export function Leads({ api, workspace, toast }: Props) {
     setLoading(true)
     const params = new URLSearchParams({ workspaceId: workspace.id, page: String(page), limit: String(LIMIT) })
     if (stageFilter) params.set('stage', stageFilter)
+    if (tierFilter) params.set('tier', tierFilter)
     if (search.trim()) params.set('search', search.trim())
     api<{ leads: Lead[]; total: number }>(`/api/leads?${params}`)
       .then(d => { setLeads(d.leads || []); setTotal(d.total || 0) })
       .catch(e => toast.error(e.message))
       .finally(() => setLoading(false))
-  }, [workspace?.id, page, stageFilter, search])
+  }, [workspace?.id, page, stageFilter, tierFilter, search])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
 
@@ -400,11 +443,11 @@ export function Leads({ api, workspace, toast }: Props) {
 
       if (leads.length === 0) { toast.error('No rows with a businessName found. Check your CSV column headers.'); return }
 
-      const d = await api<{ created: number }>('/api/leads/import', {
+      const d = await api<{ created: number; updated: number; total: number }>('/api/leads/import', {
         method: 'POST',
         body: JSON.stringify({ workspaceId: workspace.id, leads })
       })
-      toast.success(`Imported ${d.created} leads with auto-scoring`)
+      toast.success(`Imported ${d.created} new leads, updated ${d.updated} existing`)
       fetchLeads()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Import failed') }
     finally { setImporting(false); if (fileRef.current) fileRef.current.value = '' }
@@ -478,13 +521,20 @@ export function Leads({ api, workspace, toast }: Props) {
     <div style={s.stack}>
       {/* Controls bar */}
       <div style={{ ...s.card, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select style={{ ...s.input, width: 160 }} value={stageFilter} onChange={e => { setStageFilter(e.target.value); setPage(1) }}>
+        <select style={{ ...s.input, width: 150 }} value={stageFilter} onChange={e => { setStageFilter(e.target.value); setPage(1) }}>
           <option value="">All stages</option>
           {STAGES.map(st => <option key={st} value={st}>{st}</option>)}
         </select>
 
+        <select style={{ ...s.input, width: 120 }} value={tierFilter} onChange={e => { setTierFilter(e.target.value); setPage(1) }}>
+          <option value="">All tiers</option>
+          <option value="HOT">🔥 HOT</option>
+          <option value="WARM">🌤 WARM</option>
+          <option value="COLD">❄ COLD</option>
+        </select>
+
         <input
-          style={{ ...s.input, width: 200 }}
+          style={{ ...s.input, width: 180 }}
           placeholder="Search leads…"
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(1) }}
@@ -531,6 +581,15 @@ export function Leads({ api, workspace, toast }: Props) {
             {importing ? <><Spinner size={12} /> Importing…</> : '↑ Import CSV'}
           </button>
           <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importCsv} />
+          {workspace && (
+            <a
+              href={`${API_BASE}/api/leads/export.csv?workspaceId=${workspace.id}${stageFilter ? `&stage=${stageFilter}` : ''}${tierFilter ? `&tier=${tierFilter}` : ''}`}
+              download
+              style={{ ...s.btnSm, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+            >
+              ↓ Export CSV
+            </a>
+          )}
           <button style={s.btn} onClick={() => setAdding(v => !v)}>+ Add Lead</button>
         </div>
       </div>

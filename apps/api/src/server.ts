@@ -12,6 +12,7 @@ import { statsRouter } from './routes/stats.js'
 import { jobsRouter } from './routes/jobs.js'
 import { ingestRouter } from './routes/ingest.js'
 import { outcomesRouter } from './routes/outcomes.js'
+import { invitesRouter } from './routes/invites.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
@@ -33,7 +34,7 @@ app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? isAllowedOrigin : true,
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }))
 
 app.use('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }))
@@ -42,16 +43,32 @@ app.use(generalRateLimit)
 
 app.get('/api/health', async (_req, res) => {
   let dbOk = false
+  let redisOk = false
+
   try {
     await prisma.$queryRaw`SELECT 1`
     dbOk = true
   } catch { /* leave false */ }
 
-  const status = dbOk ? 200 : 503
+  try {
+    const { getQueue } = await import('./lib/queues.js')
+    const q = getQueue('research-lead')
+    // Ping Redis via BullMQ's underlying connection
+    const client = (q as unknown as { opts: { connection: { ping: () => Promise<string> } } }).opts?.connection
+    if (client?.ping) {
+      await client.ping()
+      redisOk = true
+    }
+  } catch { /* leave false */ }
+
+  const ok = dbOk
+  const status = ok ? 200 : 503
   res.status(status).json({
-    ok: dbOk,
+    ok,
+    db: dbOk,
+    redis: redisOk,
     service: 'acaos-api',
-    version: process.env.npm_package_version || '1.3.0',
+    version: process.env.npm_package_version || '1.4.0',
     env: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()
   })
@@ -68,6 +85,7 @@ app.use('/api/stats', statsRouter)
 app.use('/api/jobs', jobsRouter)
 app.use('/api/ingest', ingestRouter)
 app.use('/api/outcomes', outcomesRouter)
+app.use('/api/invites', invitesRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

@@ -93,6 +93,31 @@ export type StatsData = {
   usage: UsageData
 }
 
+export type LeadActivity = {
+  id: string
+  leadId: string
+  workspaceId: string
+  userId?: string | null
+  type: string
+  meta?: Record<string, unknown> | null
+  createdAt: string
+}
+
+export type WorkspaceInvite = {
+  id: string
+  email: string
+  role: string
+  expiresAt: string
+  createdAt: string
+}
+
+export type WorkspaceMember = {
+  id: string
+  role: string
+  createdAt: string
+  user: { id: string; email: string; name?: string | null }
+}
+
 export type View = 'dashboard' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings'
 
 export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const

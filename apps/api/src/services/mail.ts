@@ -61,7 +61,7 @@ function extractPlainText(source: Buffer): string {
   return raw.trim()
 }
 
-export async function syncMailboxOnce(): Promise<{
+export async function syncMailboxOnce(workspaceId = ''): Promise<{
   inspected: number
   matched: number
   queued: number
@@ -87,8 +87,11 @@ export async function syncMailboxOnce(): Promise<{
     await client.connect()
     await client.mailboxOpen('INBOX')
 
-    // Load already-processed UIDs to skip them
-    const existing = await prisma.processedEmail.findMany({ select: { uid: true, messageId: true } })
+    // Load already-processed UIDs for this mailbox/workspace
+    const existing = await prisma.processedEmail.findMany({
+      where: { workspaceId },
+      select: { uid: true, messageId: true }
+    })
     const seenUids = new Set(existing.map(e => e.uid))
     const seenMsgIds = new Set(existing.map(e => e.messageId).filter(Boolean))
 
@@ -168,6 +171,7 @@ export async function syncMailboxOnce(): Promise<{
     if (processedRows.length > 0) {
       await prisma.processedEmail.createMany({
         data: processedRows.map(r => ({
+          workspaceId,
           uid: r.uid,
           messageId: r.messageId ?? undefined,
           fromAddress: r.fromAddress

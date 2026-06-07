@@ -5,6 +5,8 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit } from '../lib/limits.js'
+import { logActivity, logBatch } from '../lib/activity.js'
+import { fireStageWebhook } from '../lib/webhook.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const leadsRouter = Router()
@@ -23,7 +25,53 @@ async function getWorkspaceWeights(workspaceId: string) {
   return (model?.weights as typeof DEFAULT_SCORING_WEIGHTS | null) ?? DEFAULT_SCORING_WEIGHTS
 }
 
-// List leads
+function toCsvRow(fields: string[]): string {
+  return fields.map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')
+}
+
+// CSV Export — GET /api/leads/export.csv
+leadsRouter.get(
+  '/export.csv',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.query.workspaceId || '').trim()
+    const stage = typeof req.query.stage === 'string' ? req.query.stage.trim() : undefined
+    const campaignId = typeof req.query.campaignId === 'string' ? req.query.campaignId.trim() : undefined
+
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const where = {
+      workspaceId,
+      ...(stage ? { stage } : {}),
+      ...(campaignId ? { campaignId } : {})
+    }
+
+    const leads = await prisma.lead.findMany({
+      where,
+      orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
+      take: 10_000
+    })
+
+    const headers = ['businessName', 'contactName', 'email', 'phone', 'website', 'city', 'category', 'stage', 'score', 'notes', 'aiSummary', 'outreachAngle', 'sourceTag', 'createdAt']
+    const rows = [
+      toCsvRow(headers),
+      ...leads.map(l => toCsvRow([
+        l.businessName, l.contactName ?? '', l.email ?? '', l.phone ?? '',
+        l.website ?? '', l.city ?? '', l.category ?? '', l.stage, String(l.score),
+        l.notes ?? '', l.aiSummary ?? '', l.outreachAngle ?? '',
+        l.sourceTag ?? '', l.createdAt.toISOString()
+      ]))
+    ]
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="leads-${workspaceId}-${new Date().toISOString().slice(0, 10)}.csv"`)
+    res.send('﻿' + rows.join('\r\n')) // BOM for Excel compatibility
+  })
+)
+
+// List leads — GET /api/leads
 leadsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -31,26 +79,34 @@ leadsRouter.get(
     const workspaceId = String(req.query.workspaceId || '').trim()
     const campaignId = typeof req.query.campaignId === 'string' ? req.query.campaignId.trim() : undefined
     const stage = typeof req.query.stage === 'string' ? req.query.stage.trim() : undefined
+    const tier = typeof req.query.tier === 'string' ? req.query.tier.trim().toUpperCase() : undefined
     const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : undefined
     const search = rawSearch && rawSearch.length > MAX_SHORT ? rawSearch.slice(0, MAX_SHORT) : rawSearch
     const page = Math.max(1, Number(req.query.page) || 1)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25))
 
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+
+    // Tier filter translates to score ranges
+    let scoreFilter: { gte?: number; lt?: number } | undefined
+    if (tier === 'HOT') scoreFilter = { gte: 72 }
+    else if (tier === 'WARM') scoreFilter = { gte: 48, lt: 72 }
+    else if (tier === 'COLD') scoreFilter = { lt: 48 }
 
     const where = {
       workspaceId,
       ...(campaignId ? { campaignId } : {}),
       ...(stage ? { stage } : {}),
+      ...(scoreFilter ? { score: scoreFilter } : {}),
       ...(search ? {
         OR: [
           { businessName: { contains: search, mode: 'insensitive' as const } },
           { contactName: { contains: search, mode: 'insensitive' as const } },
           { email: { contains: search, mode: 'insensitive' as const } },
-          { category: { contains: search, mode: 'insensitive' as const } }
+          { category: { contains: search, mode: 'insensitive' as const } },
+          { city: { contains: search, mode: 'insensitive' as const } }
         ]
       } : {})
     }
@@ -102,11 +158,18 @@ leadsRouter.post(
     const score = computeLeadScore(leadData, weights)
 
     const lead = await prisma.lead.create({ data: { ...leadData, score } })
+
+    await logActivity({
+      leadId: lead.id, workspaceId, userId: user.id,
+      type: 'CREATED',
+      meta: { businessName: lead.businessName, score, stage: 'NEW' }
+    })
+
     res.status(201).json({ lead })
   })
 )
 
-// Bulk import leads
+// Bulk import leads — POST /api/leads/import
 leadsRouter.post(
   '/import',
   asyncHandler(async (req, res) => {
@@ -143,8 +206,64 @@ leadsRouter.post(
         return { ...row, score: computeLeadScore(row, weights) }
       })
 
-    const result = await prisma.lead.createMany({ data: rows, skipDuplicates: false })
-    res.json({ created: result.count })
+    // Upsert leads with email (dedup within workspace), create leads without email
+    const withEmail = rows.filter(r => r.email)
+    const withoutEmail = rows.filter(r => !r.email)
+
+    let created = 0
+    let updated = 0
+
+    for (const row of withEmail) {
+      const existing = await prisma.lead.findFirst({
+        where: { workspaceId, email: row.email! }
+      })
+      if (existing) {
+        await prisma.lead.update({
+          where: { id: existing.id },
+          data: {
+            businessName: row.businessName,
+            contactName: row.contactName,
+            website: row.website,
+            city: row.city,
+            category: row.category,
+            notes: row.notes,
+            sourceTag: row.sourceTag,
+            score: row.score
+          }
+        })
+        updated++
+      } else {
+        await prisma.lead.create({ data: row })
+        created++
+      }
+    }
+
+    if (withoutEmail.length > 0) {
+      const res2 = await prisma.lead.createMany({ data: withoutEmail, skipDuplicates: true })
+      created += res2.count
+    }
+
+    // Log activity for newly created leads (too expensive to log all for large imports)
+    // Just log a single IMPORTED event per batch on the workspace
+    if (created > 0 || updated > 0) {
+      // Find the most recently created leads from this import batch to log
+      const recentLeads = await prisma.lead.findMany({
+        where: { workspaceId, createdAt: { gte: new Date(Date.now() - 5000) } },
+        select: { id: true },
+        take: Math.min(created, 50)
+      })
+      if (recentLeads.length > 0) {
+        await logBatch(recentLeads.map(l => ({
+          leadId: l.id,
+          workspaceId,
+          userId: user.id,
+          type: 'IMPORTED' as const,
+          meta: { batchSize: rows.length, created, updated }
+        })))
+      }
+    }
+
+    res.json({ created, updated, total: created + updated })
   })
 )
 
@@ -163,7 +282,28 @@ leadsRouter.get(
   })
 )
 
-// Update lead (including AI fields and stage)
+// Get activity log for a lead
+leadsRouter.get(
+  '/:id/activity',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    if (!lead) throw new ApiError(404, 'Lead not found')
+
+    const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const activities = await prisma.leadActivity.findMany({
+      where: { leadId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    })
+
+    res.json({ activities })
+  })
+)
+
+// Update lead
 leadsRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -175,7 +315,7 @@ leadsRouter.patch(
     if (!member) throw new ApiError(403, 'Access denied')
 
     const updates: Record<string, unknown> = {}
-    const shortFields = ['contactName', 'email', 'website', 'city', 'category']
+    const shortFields = ['contactName', 'website', 'city', 'category', 'phone']
     const notesFields = ['notes']
     const aiFields = ['aiSummary', 'outreachAngle']
 
@@ -200,6 +340,19 @@ leadsRouter.patch(
       if (req.body.businessName.trim().length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
       updates.businessName = req.body.businessName.trim()
     }
+    // Email updates — normalise and check uniqueness
+    if (typeof req.body?.email === 'string') {
+      const newEmail = req.body.email.trim().toLowerCase() || null
+      if (newEmail && newEmail !== lead.email) {
+        const conflict = await prisma.lead.findFirst({
+          where: { workspaceId: lead.workspaceId, email: newEmail, id: { not: lead.id } }
+        })
+        if (conflict) throw new ApiError(409, 'A lead with this email already exists in the workspace')
+      }
+      updates.email = newEmail
+    }
+
+    const prevStage = lead.stage
     if (typeof req.body?.stage === 'string') {
       if (!VALID_STAGES.includes(req.body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
       updates.stage = req.body.stage
@@ -214,11 +367,27 @@ leadsRouter.patch(
       const weights = await getWorkspaceWeights(lead.workspaceId)
       updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights)
     } else if (typeof req.body?.score === 'number') {
-      // Allow manual override only if no auto-rescore
       updates.score = req.body.score
     }
 
     const updated = await prisma.lead.update({ where: { id: req.params.id }, data: updates })
+
+    // Log significant changes
+    if (updates.stage && updates.stage !== prevStage) {
+      await logActivity({
+        leadId: lead.id, workspaceId: lead.workspaceId, userId: user.id,
+        type: 'STAGE_CHANGE',
+        meta: { from: prevStage, to: updates.stage }
+      })
+      fireStageWebhook(lead.workspaceId, lead.id, lead.businessName, prevStage, String(updates.stage))
+    } else if (Object.keys(updates).length > 0) {
+      await logActivity({
+        leadId: lead.id, workspaceId: lead.workspaceId, userId: user.id,
+        type: 'FIELD_UPDATE',
+        meta: { fields: Object.keys(updates).filter(k => k !== 'score'), newScore: updated.score }
+      })
+    }
+
     res.json({ lead: updated })
   })
 )
@@ -239,7 +408,7 @@ leadsRouter.delete(
   })
 )
 
-// Bulk delete leads
+// Bulk delete
 leadsRouter.post(
   '/bulk-delete',
   asyncHandler(async (req, res) => {
@@ -282,6 +451,14 @@ leadsRouter.post(
       where: { id: { in: ids }, workspaceId },
       data: { stage }
     })
+
+    // Log bulk stage change
+    await logBatch(ids.slice(0, result.count).map(id => ({
+      leadId: id, workspaceId, userId: user.id,
+      type: 'STAGE_CHANGE' as const,
+      meta: { to: stage, bulk: true }
+    })))
+
     res.json({ updated: result.count })
   })
 )
@@ -312,6 +489,39 @@ leadsRouter.post(
       data: { campaignId }
     })
     res.json({ updated: result.count })
+  })
+)
+
+// Bulk enqueue research
+leadsRouter.post(
+  '/bulk-research',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.body?.workspaceId || '').trim()
+    const ids = req.body?.ids
+
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
+    if (ids.length > 50) throw new ApiError(400, 'Maximum 50 leads per bulk research')
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const { enqueueResearchLead } = await import('../lib/queues.js')
+    const { checkAndIncrementAiUsage } = await import('../lib/limits.js')
+
+    const jobs = []
+    for (const leadId of ids) {
+      try {
+        await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
+        const job = await enqueueResearchLead(leadId, user.id)
+        jobs.push({ leadId, jobId: job.id })
+      } catch {
+        break // Stop on limit reached
+      }
+    }
+
+    res.status(202).json({ queued: jobs.length, jobs })
   })
 )
 

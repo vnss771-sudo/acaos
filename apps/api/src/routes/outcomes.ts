@@ -213,31 +213,17 @@ outcomesRouter.post(
       }
     })
 
-    // Count total outcomes and recalculate weights every 7
+    // Offload weight recomputation to background every 7 outcomes
     const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId: model.id } })
-    let weightsUpdated = false
+    let weightsScheduled = false
 
     if (totalOutcomes >= 7 && totalOutcomes % 7 === 0) {
-      const all = await prisma.scoringOutcome.findMany({
-        where: { scoringModelId: model.id },
-        select: { score: true, replied: true, messageRelevance: true, channelUsed: true }
-      })
-
-      const { weights, metrics } = recomputeWeights(all, model.weights as Weights)
-
-      await prisma.scoringModel.update({
-        where: { id: model.id },
-        data: {
-          weights,
-          performanceMetrics: metrics,
-          updateCount: { increment: 1 },
-          lastWeightUpdate: new Date()
-        }
-      })
-      weightsUpdated = true
+      const { enqueueRecomputeWeights } = await import('../lib/queues.js')
+      await enqueueRecomputeWeights(workspaceId)
+      weightsScheduled = true
     }
 
-    res.status(201).json({ recorded: true, weightsUpdated, totalOutcomes })
+    res.status(201).json({ recorded: true, weightsUpdated: weightsScheduled, totalOutcomes })
   })
 )
 

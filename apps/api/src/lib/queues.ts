@@ -48,6 +48,31 @@ export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {
   )
 }
 
+export async function enqueueRecomputeWeights(workspaceId: string) {
+  return getQueue('recompute-weights').add(
+    'recompute-weights',
+    { workspaceId },
+    { attempts: 2, backoff: { type: 'exponential', delay: 3000 }, jobId: `weights-${workspaceId}` }
+  )
+}
+
+// Set up recurring mailbox sync (every 5 minutes) — idempotent, safe to call at startup
+export async function scheduleRecurringSync() {
+  const queue = getQueue('sync-mailbox')
+  // Clear old recurring jobs first to avoid accumulation
+  const existing = await queue.getRepeatableJobs()
+  for (const job of existing) {
+    if (job.name === 'sync-mailbox-cron') {
+      await queue.removeRepeatableByKey(job.key)
+    }
+  }
+  await queue.add(
+    'sync-mailbox-cron',
+    { scheduled: true },
+    { repeat: { every: 5 * 60 * 1000 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } }
+  )
+}
+
 export async function getJobById(queueName: string, jobId: string) {
   const { Job } = await import('bullmq')
   return Job.fromId(getQueue(queueName), jobId)

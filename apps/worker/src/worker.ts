@@ -4,6 +4,7 @@ import { connection, defaultJobOptions } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
+import { logActivity } from '../../api/src/lib/activity.js'
 import type { ScoringWeights } from '../../api/src/lib/scoring.js'
 
 function log(queue: string, msg: string) {
@@ -86,6 +87,13 @@ const researchWorker = new Worker(
     })
 
     await job.updateProgress(100)
+
+    await logActivity({
+      leadId, workspaceId: lead.workspaceId,
+      type: 'AI_RESEARCH',
+      meta: { score: finalScore, hiringSignals: parsed.hiringSignals, digitalMaturity: parsed.digitalMaturity, estimatedTeamSize: parsed.estimatedTeamSize }
+    })
+
     log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore}`)
     return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle, score: finalScore }
   },
@@ -135,6 +143,15 @@ const outreachWorker = new Worker(
     }
 
     await job.updateProgress(100)
+
+    if (parsed.subject && parsed.email) {
+      await logActivity({
+        leadId: lead.id, workspaceId: lead.workspaceId,
+        type: 'AI_OUTREACH',
+        meta: { subject: parsed.subject }
+      })
+    }
+
     log('generate-outreach', `Done leadId=${leadId}`)
     return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
   },
@@ -163,7 +180,6 @@ const replyWorker = new Worker(
     }>(raw, {})
 
     if (leadId && parsed.classification) {
-      // Skip stage update for auto-replies and OOO
       if (!parsed.isAutoReply) {
         const stageMap: Record<string, string> = {
           INTERESTED: 'REPLIED',
@@ -171,15 +187,25 @@ const replyWorker = new Worker(
           NEEDS_MORE_INFO: 'REPLIED',
           NOT_NOW: 'REPLIED',
           REFERRAL: 'REPLIED',
-          OUT_OF_OFFICE: 'OUTREACH_SENT' // stay in outreach, they'll be back
+          OUT_OF_OFFICE: 'OUTREACH_SENT'
         }
         const newStage = stageMap[parsed.classification]
         if (newStage) {
-          await prisma.lead.update({ where: { id: leadId }, data: { stage: newStage } })
+          const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { stage: true, workspaceId: true, businessName: true } })
+          if (lead) {
+            await prisma.lead.update({ where: { id: leadId }, data: { stage: newStage } })
+            await logActivity({
+              leadId, workspaceId: lead.workspaceId,
+              type: 'AI_REPLY',
+              meta: { classification: parsed.classification, confidence: parsed.confidence, urgency: parsed.urgency, keyQuote: parsed.keyQuote, from: lead.stage, to: newStage }
+            })
+            // Fire webhook on noteworthy stage transitions
+            const { fireStageWebhook } = await import('../../api/src/lib/webhook.js')
+            fireStageWebhook(lead.workspaceId, leadId, lead.businessName, lead.stage, newStage)
+          }
         }
       }
 
-      // Feed outcome into scoring model
       const lead = await prisma.lead.findUnique({
         where: { id: leadId },
         select: { workspaceId: true, score: true }
@@ -233,19 +259,83 @@ const replyWorker = new Worker(
   { connection, concurrency: 5, ...defaultJobOptions }
 )
 
+// ── recompute-weights ─────────────────────────────────────────────────────────
+const weightsWorker = new Worker(
+  'recompute-weights',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('recompute-weights', `Processing workspaceId=${workspaceId}`)
+
+    const model = await prisma.scoringModel.findUnique({ where: { workspaceId } })
+    if (!model) { log('recompute-weights', 'No scoring model found, skipping'); return }
+
+    const all = await prisma.scoringOutcome.findMany({
+      where: { scoringModelId: model.id },
+      select: { score: true, replied: true, messageRelevance: true, channelUsed: true }
+    })
+    if (all.length < 7) { log('recompute-weights', 'Not enough outcomes yet, skipping'); return }
+
+    // Inline weight computation (same logic as outcomes.ts recomputeWeights)
+    type Outcome = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
+    type Weights = Record<string, number>
+
+    function calculateCorrelation(outcomes: Outcome[]): number {
+      if (outcomes.length < 2) return 0
+      const meanScore = outcomes.reduce((s, o) => s + o.score, 0) / outcomes.length
+      const meanReply = outcomes.filter(o => o.replied).length / outcomes.length
+      let num = 0, denS = 0, denR = 0
+      for (const o of outcomes) {
+        const ds = o.score - meanScore, dr = (o.replied ? 1 : 0) - meanReply
+        num += ds * dr; denS += ds * ds; denR += dr * dr
+      }
+      return (denS === 0 || denR === 0) ? 0 : num / Math.sqrt(denS * denR)
+    }
+
+    const replied = all.filter(o => o.replied)
+    const notReplied = all.filter(o => !o.replied)
+    const correlation = calculateCorrelation(all)
+    const replyRate = all.length > 0 ? replied.length / all.length : 0
+    const avgRepliedScore = replied.length > 0 ? replied.reduce((s, o) => s + o.score, 0) / replied.length : 0
+    const avgNotRepliedScore = notReplied.length > 0 ? notReplied.reduce((s, o) => s + o.score, 0) / notReplied.length : 0
+    const avgMessageRelevance = replied.length > 0 ? replied.reduce((s, o) => s + o.messageRelevance, 0) / replied.length : 0.5
+    const linkedInReplies = replied.filter(o => o.channelUsed === 'LINKEDIN').length
+    const emailReplies = replied.filter(o => o.channelUsed === 'EMAIL').length
+
+    const weights = { ...(model.weights as Weights) }
+    const learnRate = Math.min(0.15, 1 / all.length)
+    if (Math.abs(correlation) > 0.1) weights['industry'] = Math.min(0.35, Math.max(0.05, weights['industry'] + learnRate * correlation * 0.3))
+    if (avgMessageRelevance > 0.7) weights['messageRelevance'] = Math.min(0.20, (weights['messageRelevance'] ?? 0.08) + learnRate * 0.1)
+    else if (avgMessageRelevance < 0.3) weights['messageRelevance'] = Math.max(0.02, (weights['messageRelevance'] ?? 0.08) - learnRate * 0.1)
+    if (linkedInReplies > emailReplies * 2) weights['channelFit'] = Math.min(0.15, (weights['channelFit'] ?? 0.05) + learnRate * 0.05)
+    const total = Object.values(weights).reduce((s, v) => s + v, 0)
+    for (const k of Object.keys(weights)) weights[k] = Math.round((weights[k] / total) * 1000) / 1000
+
+    const metrics = { totalScored: all.length, totalReplied: replied.length, replyRate, correlationScore: Math.round(correlation * 100) / 100, avgScoreOfReplied: Math.round(avgRepliedScore), avgScoreOfNotReplied: Math.round(avgNotRepliedScore) }
+
+    await prisma.scoringModel.update({
+      where: { id: model.id },
+      data: { weights, performanceMetrics: metrics, updateCount: { increment: 1 }, lastWeightUpdate: new Date() }
+    })
+
+    log('recompute-weights', `Done workspaceId=${workspaceId} outcomes=${all.length} replyRate=${(replyRate * 100).toFixed(1)}% correlation=${correlation.toFixed(2)}`)
+    return { workspaceId, totalOutcomes: all.length, replyRate, correlation }
+  },
+  { connection, concurrency: 2, attempts: 2, backoff: { type: 'exponential', delay: 3000 } }
+)
+
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
 const mailboxWorker = new Worker(
   'sync-mailbox',
   async (job) => {
     const { workspaceId } = job.data as { workspaceId?: string }
-    log('sync-mailbox', `Processing workspaceId=${workspaceId}`)
+    log('sync-mailbox', `Processing workspaceId=${workspaceId ?? 'scheduled'}`)
 
     await job.updateProgress(10)
     const { syncMailboxOnce } = await import('../../api/src/services/mail.js')
     const result = await syncMailboxOnce()
     await job.updateProgress(100)
 
-    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
+    log('sync-mailbox', `Done inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
   { connection, concurrency: 1, attempts: 2, backoff: { type: 'exponential', delay: 10_000 } }
@@ -256,6 +346,7 @@ for (const [name, worker] of [
   ['research-lead', researchWorker],
   ['generate-outreach', outreachWorker],
   ['analyze-reply', replyWorker],
+  ['recompute-weights', weightsWorker],
   ['sync-mailbox', mailboxWorker]
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
@@ -266,6 +357,15 @@ for (const [name, worker] of [
   })
 }
 
+// Set up recurring mailbox sync (every 5 minutes) — best effort
+import('../../api/src/lib/queues.js').then(({ scheduleRecurringSync }) => {
+  return scheduleRecurringSync()
+}).then(() => {
+  console.log('[worker] Recurring mailbox sync scheduled (every 5 min)')
+}).catch(err => {
+  console.warn('[worker] Could not schedule recurring sync:', err.message)
+})
+
 // Graceful shutdown
 async function shutdown(signal: string) {
   console.log(`[worker] ${signal} received — shutting down`)
@@ -273,6 +373,7 @@ async function shutdown(signal: string) {
     researchWorker.close(),
     outreachWorker.close(),
     replyWorker.close(),
+    weightsWorker.close(),
     mailboxWorker.close()
   ])
   await prisma.$disconnect()
@@ -283,4 +384,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 4 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox)')
+console.log('[worker] Started — listening on 5 queues (research-lead, generate-outreach, analyze-reply, recompute-weights, sync-mailbox)')

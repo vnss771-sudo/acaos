@@ -89,7 +89,7 @@ workspaceRouter.patch(
     })
     if (!membership) throw new ApiError(403, 'Must be owner or admin to update workspace')
 
-    const updates: { name?: string; slug?: string } = {}
+    const updates: { name?: string; slug?: string; webhookUrl?: string | null } = {}
 
     if (typeof req.body?.name === 'string' && req.body.name.trim()) {
       updates.name = req.body.name.trim()
@@ -99,12 +99,22 @@ workspaceRouter.patch(
       updates.slug = await ensureWorkspaceSlug(req.body.slug.trim())
     }
 
+    if ('webhookUrl' in req.body) {
+      const rawUrl = req.body.webhookUrl
+      if (rawUrl === null || rawUrl === '') {
+        updates.webhookUrl = null
+      } else if (typeof rawUrl === 'string') {
+        try { new URL(rawUrl) } catch { throw new ApiError(400, 'webhookUrl must be a valid URL') }
+        updates.webhookUrl = rawUrl.trim()
+      }
+    }
+
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No valid updates provided')
 
     const workspace = await prisma.workspace.update({
       where: { id: req.params.id },
       data: updates,
-      select: { id: true, name: true, slug: true, plan: true }
+      select: { id: true, name: true, slug: true, plan: true, webhookUrl: true }
     })
 
     res.json({ workspace })
@@ -152,5 +162,47 @@ workspaceRouter.get(
         id: m.id, role: m.role, createdAt: m.createdAt, user: m.user
       }))
     })
+  })
+)
+
+// DELETE /api/workspaces/:id/members/:memberId — remove a member (owner only)
+workspaceRouter.delete(
+  '/:id/members/:memberId',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { id: workspaceId, memberId } = req.params
+
+    const callerMembership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: 'owner' }
+    })
+    if (!callerMembership) throw new ApiError(403, 'Only workspace owners can remove members')
+
+    const target = await prisma.membership.findFirst({ where: { id: memberId, workspaceId } })
+    if (!target) throw new ApiError(404, 'Member not found')
+    if (target.role === 'owner') throw new ApiError(400, 'Cannot remove the workspace owner')
+    if (target.userId === user.id) throw new ApiError(400, 'Cannot remove yourself')
+
+    await prisma.membership.delete({ where: { id: memberId } })
+    res.json({ ok: true })
+  })
+)
+
+// GET /api/workspaces/:id/settings — return workspace with webhookUrl (owner only)
+workspaceRouter.get(
+  '/:id/settings',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId: req.params.id, role: { in: ['owner', 'admin'] } }
+    })
+    if (!membership) throw new ApiError(403, 'Access denied')
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, name: true, slug: true, plan: true, webhookUrl: true, ingestApiKey: true }
+    })
+    if (!workspace) throw new ApiError(404, 'Workspace not found')
+
+    res.json({ workspace: { ...workspace, role: membership.role } })
   })
 )
