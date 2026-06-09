@@ -80,7 +80,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
 // GET /api/prospects/:id
 prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: {
       signals: { orderBy: { detectedAt: 'desc' } },
       recommendations: { orderBy: { priority: 'desc' } },
@@ -136,7 +136,8 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
 
 // PATCH /api/prospects/:id
 prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospectId = req.params.id as string
+  const existing = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const allowed = ['companyName','domain','industry','employeeCount','estimatedRevenue',
@@ -149,27 +150,29 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
   }
   if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
 
-  const updated = await prisma.prospect.update({ where: { id: req.params.id }, data })
+  const updated = await prisma.prospect.update({ where: { id: prospectId }, data })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
 }))
 
 // DELETE /api/prospects/:id
 prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospectId = req.params.id as string
+  const existing = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
-  await prisma.prospect.delete({ where: { id: req.params.id } })
+  await prisma.prospect.delete({ where: { id: prospectId } })
   res.json({ ok: true })
 }))
 
 // POST /api/prospects/:id/rescore — recalculate scores from current signals
 prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
-    include: { signals: true }
-  })
+  const prospectId = req.params.id as string
+  const [prospect, signals] = await Promise.all([
+    prisma.prospect.findUnique({ where: { id: prospectId } }),
+    prisma.signal.findMany({ where: { prospectId: prospectId }, orderBy: { detectedAt: 'desc' } })
+  ])
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const rawSignals = prospect.signals.map(toRawSignal)
+  const rawSignals = signals.map(toRawSignal)
   const scores = calculateOpportunityScores(rawSignals, {
     industry: prospect.industry,
     employeeCount: prospect.employeeCount,
@@ -181,7 +184,7 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
   const updated = await prisma.prospect.update({
-    where: { id: req.params.id },
+    where: { id: prospectId },
     data: { ...scores, buyingStage, winProbability }
   })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
@@ -189,7 +192,7 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
 
 // POST /api/prospects/:id/outcome — record outcome stage change
 prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
   if (!req.body.stage) throw new ApiError(400, 'stage required')
 
@@ -217,13 +220,14 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
 
 // POST /api/prospects/:id/recommend — generate rule-based recommendation
 prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
-    include: { signals: true }
-  })
+  const prospectId = req.params.id as string
+  const [prospect, signals] = await Promise.all([
+    prisma.prospect.findUnique({ where: { id: prospectId } }),
+    prisma.signal.findMany({ where: { prospectId: prospectId }, orderBy: { detectedAt: 'desc' } })
+  ])
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const rawSignals = prospect.signals.map(toRawSignal)
+  const rawSignals = signals.map(toRawSignal)
   const rec = generateRuleBasedRecommendation(
     {
       industry: prospect.industry,

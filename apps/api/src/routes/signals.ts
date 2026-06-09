@@ -81,8 +81,9 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
 
 // DELETE /api/signals/:id
 signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const signal = await prisma.signal.findUnique({ where: { id: req.params.id } })
+  const signalId = req.params.id as string
+  const signal = await prisma.signal.findUnique({ where: { id: signalId } })
   if (!signal) throw new ApiError(404, 'Signal not found')
-  await prisma.signal.delete({ where: { id: req.params.id } })
+  await prisma.signal.delete({ where: { id: signalId } })
   res.json({ ok: true })
 }))

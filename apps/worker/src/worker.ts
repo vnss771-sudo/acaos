@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
-import { connection, defaultJobOptions } from './lib/queue.js'
+import { connection } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
@@ -96,7 +96,7 @@ const researchWorker = new Worker(
     log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore}`)
     return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle, score: finalScore }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // ── generate-outreach ─────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ const outreachWorker = new Worker(
     log('generate-outreach', `Done leadId=${leadId}`)
     return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // ── analyze-reply ─────────────────────────────────────────────────────────────
@@ -237,7 +237,7 @@ const replyWorker = new Worker(
     log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)
     return parsed
   },
-  { connection, concurrency: 5, ...defaultJobOptions }
+  { connection, concurrency: 5 }
 )
 
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ const mailboxWorker = new Worker(
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
-  { connection, concurrency: 1, attempts: 2, backoff: { type: 'exponential', delay: 10_000 } }
+  { connection, concurrency: 1 }
 )
 
 // ── score-prospects ────────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ const scoreProspectsWorker = new Worker(
     log('score-prospects', `Done: ${updated} prospects rescored`)
     return { workspaceId, updated }
   },
-  { connection, concurrency: 1, ...defaultJobOptions }
+  { connection, concurrency: 1 }
 )
 
 // ── generate-recommendations ──────────────────────────────────────────────────
@@ -355,7 +355,7 @@ const recommendWorker = new Worker(
     log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel}`)
     return { prospectId, ...rec }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // Attach error handlers
