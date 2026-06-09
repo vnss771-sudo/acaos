@@ -7,20 +7,26 @@ import {
   detectBuyingStage,
   calcWinProbability,
   generateRuleBasedRecommendation,
-  getOpportunityTier
+  getOpportunityTier,
+  predictBuyingIntent,
+  toRawSignal,
 } from '../lib/signalEngine.js'
-import type { RawSignal } from '../lib/signalEngine.js'
+import { userHasWorkspaceAccess } from '../lib/workspaces.js'
+import { enqueueScoreProspects } from '../lib/queues.js'
+import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
 
-function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
+async function getICP(workspaceId: string) {
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+  if (!icp) return undefined
   return {
-    type: s.type as RawSignal['type'],
-    strength: s.strength,
-    sourceReliability: s.sourceReliability,
-    industryRelevance: s.industryRelevance,
-    detectedAt: s.detectedAt
+    targetIndustries: icp.targetIndustries,
+    minEmployees:     icp.minEmployees  ?? undefined,
+    maxEmployees:     icp.maxEmployees  ?? undefined,
+    targetGeos:       icp.targetGeos,
+    mustHaveEmail:    icp.mustHaveEmail,
   }
 }
 
@@ -29,51 +35,67 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-  const page = Math.max(1, parseInt(req.query.page as string) || 1)
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const page  = Math.max(1, parseInt(req.query.page  as string) || 1)
   const limit = Math.min(100, parseInt(req.query.limit as string) || 25)
-  const skip = (page - 1) * limit
-  const tierFilter = req.query.tier as string | undefined
-  const stageFilter = req.query.stage as string | undefined
+  const skip  = (page - 1) * limit
+
+  const tierFilter    = req.query.tier    as string | undefined
+  const stageFilter   = req.query.stage   as string | undefined
   const outcomeFilter = req.query.outcome as string | undefined
-  const search = req.query.search as string | undefined
+  const search        = req.query.search  as string | undefined
 
   const where: Record<string, unknown> = { workspaceId }
-  if (stageFilter) where.buyingStage = stageFilter
+  if (stageFilter)   where.buyingStage  = stageFilter
   if (outcomeFilter) where.outcomeStage = outcomeFilter
   if (search) where.companyName = { contains: search, mode: 'insensitive' }
 
-  let prospects = await prisma.prospect.findMany({
-    where,
-    include: { signals: true, recommendations: { orderBy: { priority: 'desc' }, take: 1 } },
-    orderBy: { opportunityScore: 'desc' },
-    skip,
-    take: limit + 1
-  })
-
-  // Apply tier filter in memory (computed field)
+  // Tier filter maps to score range — keeps pagination accurate
   if (tierFilter) {
-    prospects = prospects.filter(p => {
-      const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
-      return tier === tierFilter.toUpperCase()
-    })
+    const tier = tierFilter.toUpperCase()
+    if (tier === 'HOT')  where.opportunityScore = { gte: 72 }
+    else if (tier === 'WARM') where.opportunityScore = { gte: 45, lt: 72 }
+    else if (tier === 'COLD') where.opportunityScore = { lt: 45 }
   }
+
+  const [prospects, total] = await Promise.all([
+    prisma.prospect.findMany({
+      where,
+      select: {
+        id: true, workspaceId: true, companyName: true, domain: true,
+        industry: true, employeeCount: true, location: true,
+        contactName: true, contactEmail: true, contactPhone: true, contactTitle: true,
+        linkedinUrl: true, opportunityScore: true, intentScore: true, fitScore: true,
+        timingScore: true, confidenceScore: true, similarityScore: true, channelScore: true,
+        buyingStage: true, outcomeStage: true, expectedDealValue: true,
+        winProbability: true, lastSignalAt: true, lastContactedAt: true,
+        sourceTag: true, createdAt: true, updatedAt: true,
+        _count: { select: { signals: true } },
+        recommendations: { orderBy: { priority: 'desc' }, take: 1 },
+      },
+      orderBy: { opportunityScore: 'desc' },
+      skip,
+      take: limit + 1,
+    }),
+    prisma.prospect.count({ where }),
+  ])
 
   const hasMore = prospects.length > limit
   if (hasMore) prospects.pop()
 
-  const total = await prisma.prospect.count({ where })
-
   res.json({
-    prospects: prospects.map(p => ({
+    prospects: prospects.map((p: (typeof prospects)[0]) => ({
       ...p,
-      tier: getOpportunityTier(p.opportunityScore),
+      signalCount:       p._count.signals,
+      tier:              getOpportunityTier(p.opportunityScore),
       topRecommendation: p.recommendations[0] ?? null,
-      signalCount: p.signals.length
     })),
     page,
     limit,
     total,
-    hasMore
+    hasMore,
   })
 }))
 
@@ -82,53 +104,65 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
     where: { id: req.params.id },
     include: {
-      signals: { orderBy: { detectedAt: 'desc' } },
+      signals:         { orderBy: { detectedAt: 'desc' } },
       recommendations: { orderBy: { priority: 'desc' } },
-      outcomes: { orderBy: { recordedAt: 'desc' } }
-    }
+      outcomes:        { orderBy: { recordedAt: 'desc' } },
+    },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
-  res.json({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore) })
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const rawSignals = prospect.signals.map(toRawSignal)
+  const prediction = predictBuyingIntent(rawSignals, prospect.buyingStage, prospect.opportunityScore)
+
+  res.json({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction })
 }))
 
 // POST /api/prospects
 prospectsRouter.post('/', asyncHandler(async (req, res) => {
   const workspaceId = req.body.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  if (!workspaceId)         throw new ApiError(400, 'workspaceId required')
   if (!req.body.companyName) throw new ApiError(400, 'companyName required')
 
-  const prospect = await prisma.prospect.create({
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const meta = {
+    industry:      req.body.industry      ?? null,
+    employeeCount: req.body.employeeCount ? Number(req.body.employeeCount) : null,
+    contactEmail:  req.body.contactEmail  ?? null,
+    contactName:   req.body.contactName   ?? null,
+    domain:        req.body.domain        ?? null,
+    location:      req.body.location      ?? null,
+  }
+
+  const icp    = await getICP(workspaceId)
+  const scores = calculateOpportunityScores([], meta, icp)
+
+  // Scores are computed before create — single atomic write, no orphan risk
+  const updated = await prisma.prospect.create({
     data: {
       workspaceId,
-      companyName: req.body.companyName,
-      domain: req.body.domain ?? null,
-      industry: req.body.industry ?? null,
-      employeeCount: req.body.employeeCount ? Number(req.body.employeeCount) : null,
-      estimatedRevenue: req.body.estimatedRevenue ? Number(req.body.estimatedRevenue) : null,
-      location: req.body.location ?? null,
-      description: req.body.description ?? null,
-      contactName: req.body.contactName ?? null,
-      contactEmail: req.body.contactEmail ?? null,
-      contactPhone: req.body.contactPhone ?? null,
-      contactTitle: req.body.contactTitle ?? null,
-      linkedinUrl: req.body.linkedinUrl ?? null,
+      companyName:       req.body.companyName,
+      domain:            meta.domain,
+      industry:          meta.industry,
+      employeeCount:     meta.employeeCount,
+      estimatedRevenue:  req.body.estimatedRevenue ? Number(req.body.estimatedRevenue) : null,
+      location:          meta.location,
+      description:       req.body.description   ?? null,
+      notes:             req.body.notes          ?? null,
+      aiSummary:         req.body.aiSummary      ?? null,
+      contactName:       meta.contactName,
+      contactEmail:      meta.contactEmail,
+      contactPhone:      req.body.contactPhone   ?? null,
+      contactTitle:      req.body.contactTitle   ?? null,
+      linkedinUrl:       req.body.linkedinUrl    ?? null,
       expectedDealValue: req.body.expectedDealValue ? Number(req.body.expectedDealValue) : null,
-      sourceTag: req.body.sourceTag ?? null,
-    }
-  })
-
-  // Initial scoring (no signals yet)
-  const scores = calculateOpportunityScores([], {
-    industry: prospect.industry,
-    employeeCount: prospect.employeeCount,
-    contactEmail: prospect.contactEmail,
-    contactName: prospect.contactName,
-    domain: prospect.domain
-  })
-
-  const updated = await prisma.prospect.update({
-    where: { id: prospect.id },
-    data: { ...scores }
+      sourceTag:         req.body.sourceTag      ?? null,
+      ...scores,
+    },
   })
 
   res.status(201).json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
@@ -139,9 +173,15 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
   const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
-  const allowed = ['companyName','domain','industry','employeeCount','estimatedRevenue',
-    'location','description','contactName','contactEmail','contactPhone','contactTitle',
-    'linkedinUrl','outcomeStage','buyingStage','expectedDealValue','notes','aiSummary']
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const allowed = [
+    'companyName', 'domain', 'industry', 'employeeCount', 'estimatedRevenue',
+    'location', 'description', 'notes', 'aiSummary',
+    'contactName', 'contactEmail', 'contactPhone', 'contactTitle',
+    'linkedinUrl', 'outcomeStage', 'buyingStage', 'expectedDealValue', 'sourceTag',
+  ]
 
   const data: Record<string, unknown> = {}
   for (const key of allowed) {
@@ -157,82 +197,104 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
 prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
+
   await prisma.prospect.delete({ where: { id: req.params.id } })
   res.json({ ok: true })
 }))
 
-// POST /api/prospects/:id/rescore — recalculate scores from current signals
+// POST /api/prospects/:id/rescore
 prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
     where: { id: req.params.id },
-    include: { signals: true }
+    include: { signals: true },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
   const rawSignals = prospect.signals.map(toRawSignal)
-  const scores = calculateOpportunityScores(rawSignals, {
-    industry: prospect.industry,
+  const icp        = await getICP(prospect.workspaceId)
+  const scores     = calculateOpportunityScores(rawSignals, {
+    industry:      prospect.industry,
     employeeCount: prospect.employeeCount,
-    contactEmail: prospect.contactEmail,
-    contactName: prospect.contactName,
-    domain: prospect.domain
-  })
-  const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
+    contactEmail:  prospect.contactEmail,
+    contactName:   prospect.contactName,
+    domain:        prospect.domain,
+    location:      prospect.location,
+  }, icp)
+  const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
   const updated = await prisma.prospect.update({
     where: { id: req.params.id },
-    data: { ...scores, buyingStage, winProbability }
+    data: { ...scores, buyingStage, winProbability },
   })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
 }))
 
-// POST /api/prospects/:id/outcome — record outcome stage change
+// POST /api/prospects/:id/outcome
 prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
   if (!req.body.stage) throw new ApiError(400, 'stage required')
 
-  const outcome = await prisma.prospectOutcome.create({
-    data: {
-      workspaceId: prospect.workspaceId,
-      prospectId: prospect.id,
-      stage: req.body.stage,
-      notes: req.body.notes ?? null,
-      dealValue: req.body.dealValue ? Number(req.body.dealValue) : null,
-    }
-  })
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const updated = await prisma.prospect.update({
-    where: { id: prospect.id },
-    data: {
-      outcomeStage: req.body.stage,
-      lastContactedAt: ['CONTACTED','MEETING','PROPOSAL','WON','LOST'].includes(req.body.stage)
-        ? new Date() : undefined
-    }
-  })
+  const [outcome, updated] = await prisma.$transaction([
+    prisma.prospectOutcome.create({
+      data: {
+        workspaceId: prospect.workspaceId,
+        prospectId:  prospect.id,
+        stage:       req.body.stage,
+        notes:       req.body.notes     ?? null,
+        dealValue:   req.body.dealValue ? Number(req.body.dealValue) : null,
+      },
+    }),
+    prisma.prospect.update({
+      where: { id: prospect.id },
+      data: {
+        outcomeStage:   req.body.stage,
+        lastContactedAt: ['CONTACTED','MEETING','PROPOSAL','WON','LOST'].includes(req.body.stage)
+          ? new Date() : undefined,
+      },
+    }),
+  ])
+
+  // Trigger background recalibration on WON/LOST outcomes
+  if (['WON', 'LOST'].includes(req.body.stage)) {
+    enqueueScoreProspects(prospect.workspaceId).catch(() => {})
+  }
 
   res.json({ outcome, prospect: { ...updated, tier: getOpportunityTier(updated.opportunityScore) } })
 }))
 
-// POST /api/prospects/:id/recommend — generate rule-based recommendation
+// POST /api/prospects/:id/recommend
 prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
     where: { id: req.params.id },
-    include: { signals: true }
+    include: { signals: true },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const rawSignals = prospect.signals.map(toRawSignal)
   const rec = generateRuleBasedRecommendation(
     {
-      industry: prospect.industry,
+      industry:      prospect.industry,
       employeeCount: prospect.employeeCount,
-      contactEmail: prospect.contactEmail,
-      contactName: prospect.contactName,
-      contactPhone: prospect.contactPhone,
-      linkedinUrl: prospect.linkedinUrl,
-      domain: prospect.domain
+      contactEmail:  prospect.contactEmail,
+      contactName:   prospect.contactName,
+      contactPhone:  prospect.contactPhone,
+      linkedinUrl:   prospect.linkedinUrl,
+      domain:        prospect.domain,
+      location:      prospect.location,
     },
     rawSignals
   )
@@ -240,10 +302,10 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
   const recommendation = await prisma.recommendation.create({
     data: {
       workspaceId: prospect.workspaceId,
-      prospectId: prospect.id,
+      prospectId:  prospect.id,
       ...rec,
-      expiresAt: new Date(Date.now() + 7 * 86_400_000) // 7 days
-    }
+      expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    },
   })
 
   res.status(201).json(recommendation)

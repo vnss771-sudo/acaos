@@ -60,3 +60,10 @@ export async function enqueueScoreProspects(workspaceId: string) {
 export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string) {
   return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId }, defaultJobOpts)
 }
+
+export async function enqueueCalibrate(workspaceId: string) {
+  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, {
+    ...defaultJobOpts,
+    jobId: `calibrate-${workspaceId}`, // deduplicate: one active calibration per workspace
+  })
+}

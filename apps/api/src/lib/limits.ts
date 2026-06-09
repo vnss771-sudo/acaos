@@ -37,7 +37,7 @@ async function getMonthlyAiCount(workspaceId: string): Promise<number> {
   const records = await prisma.usageRecord.findMany({
     where: { workspaceId, month }
   })
-  return records.reduce((s, r) => s + r.count, 0)
+  return records.reduce((s: number, r: (typeof records)[0]) => s + r.count, 0)
 }
 
 export async function checkAndIncrementAiUsage(workspaceId: string, action: UsageAction): Promise<void> {

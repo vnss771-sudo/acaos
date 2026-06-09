@@ -35,10 +35,12 @@ model Workspace {
   outreachDrafts       OutreachDraft[]
   scoringModel         ScoringModel?
   usageRecords         UsageRecord[]
-  prospects        Prospect[]
-  signals          Signal[]
-  recommendations  Recommendation[]
-  prospectOutcomes ProspectOutcome[]
+  prospects            Prospect[]
+  signals              Signal[]
+  recommendations      Recommendation[]
+  prospectOutcomes     ProspectOutcome[]
+  icp                  WorkspaceICP?
+  securityEvents       SecurityEvent[]
 }
 
 model Membership {
@@ -70,28 +72,28 @@ model Campaign {
 }
 
 model Lead {
-  id             String          @id @default(cuid())
-  workspaceId    String
-  campaignId     String?
-  businessName   String
-  contactName    String?
-  email          String?
-  phone          String?
-  website        String?
-  city           String?
-  category       String?
-  notes          String?
-  aiSummary      String?
-  outreachAngle  String?
-  score          Int             @default(0)
-  stage          String          @default("NEW")
-  sourceTag      String?
+  id              String          @id @default(cuid())
+  workspaceId     String
+  campaignId      String?
+  businessName    String
+  contactName     String?
+  email           String?
+  phone           String?
+  website         String?
+  city            String?
+  category        String?
+  notes           String?
+  aiSummary       String?
+  outreachAngle   String?
+  score           Int             @default(0)
+  stage           String          @default("NEW")
+  sourceTag       String?
   lastContactedAt DateTime?
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
-  outreachDrafts OutreachDraft[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign        Campaign?       @relation(fields: [campaignId], references: [id])
+  outreachDrafts  OutreachDraft[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   @@index([workspaceId])
   @@index([workspaceId, stage])
@@ -119,6 +121,7 @@ model ScoringModel {
   id                 String           @id @default(cuid())
   workspaceId        String           @unique
   weights            Json
+  signalWeights      Json?            // learned per-type multipliers from calibration
   performanceMetrics Json
   updateCount        Int              @default(0)
   lastWeightUpdate   DateTime?
@@ -213,7 +216,7 @@ enum OutcomeStage {
 }
 
 model Prospect {
-  id               String       @id @default(cuid())
+  id               String           @id @default(cuid())
   workspaceId      String
   companyName      String
   domain           String?
@@ -222,30 +225,34 @@ model Prospect {
   estimatedRevenue Float?
   location         String?
   description      String?
+  notes            String?
+  aiSummary        String?
   contactName      String?
   contactEmail     String?
   contactPhone     String?
   contactTitle     String?
   linkedinUrl      String?
-  opportunityScore Int          @default(0)
-  intentScore      Int          @default(0)
-  fitScore         Int          @default(0)
-  timingScore      Int          @default(0)
-  confidenceScore  Int          @default(0)
-  buyingStage      BuyingStage  @default(RESEARCHING)
-  outcomeStage     OutcomeStage @default(DISCOVERED)
+  // Core intelligence scores
+  opportunityScore Int              @default(0)
+  intentScore      Int              @default(0)
+  fitScore         Int              @default(0)
+  timingScore      Int              @default(0)
+  confidenceScore  Int              @default(0)
+  similarityScore  Int              @default(0)
+  channelScore     Int              @default(0)
+  buyingStage      BuyingStage      @default(RESEARCHING)
+  outcomeStage     OutcomeStage     @default(DISCOVERED)
   expectedDealValue Float?
   winProbability   Float?
   lastSignalAt     DateTime?
   lastContactedAt  DateTime?
-  aiSummary        String?
   sourceTag        String?
-  workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   signals          Signal[]
   recommendations  Recommendation[]
   outcomes         ProspectOutcome[]
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   @@index([workspaceId])
   @@index([workspaceId, opportunityScore])
@@ -312,4 +319,39 @@ model ProspectOutcome {
 
   @@index([workspaceId])
   @@index([prospectId])
+}
+
+// Layer 6: Workspace-level ICP configuration — auto-discovered from WON outcomes
+model WorkspaceICP {
+  id               String    @id @default(cuid())
+  workspaceId      String    @unique
+  targetIndustries String[]
+  minEmployees     Int?
+  maxEmployees     Int?
+  targetGeos       String[]
+  mustHaveEmail    Boolean   @default(false)
+  autoUpdatedAt    DateTime?
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+// Security audit trail — fire-and-forget, never blocks requests
+model SecurityEvent {
+  id           String    @id @default(cuid())
+  eventType    String
+  severity     String    @default("INFO")
+  userId       String?
+  workspaceId  String?
+  ipAddress    String?
+  userAgent    String?
+  resourceType String?
+  resourceId   String?
+  meta         Json?
+  createdAt    DateTime  @default(now())
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([eventType])
+  @@index([createdAt])
 }

@@ -9,9 +9,11 @@ import {
   calculateOpportunityScores,
   detectBuyingStage,
   calcWinProbability,
-  generateRuleBasedRecommendation
+  generateRuleBasedRecommendation,
+  toRawSignal,
 } from '../../api/src/lib/signalEngine.js'
-import type { RawSignal } from '../../api/src/lib/signalEngine.js'
+import type { RawSignal, SignalWeights } from '../../api/src/lib/signalEngine.js'
+import { calibrate } from '../../api/src/lib/learningLoop.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -274,27 +276,20 @@ const scoreProspectsWorker = new Worker(
 
     let updated = 0
     for (const prospect of prospects) {
-      const rawSignals: RawSignal[] = prospect.signals.map(s => ({
-        type: s.type as RawSignal['type'],
-        strength: s.strength,
-        sourceReliability: s.sourceReliability,
-        industryRelevance: s.industryRelevance,
-        detectedAt: s.detectedAt
-      }))
-
+      const rawSignals = prospect.signals.map(toRawSignal)
       const scores = calculateOpportunityScores(rawSignals, {
-        industry: prospect.industry,
+        industry:      prospect.industry,
         employeeCount: prospect.employeeCount,
-        contactEmail: prospect.contactEmail,
-        contactName: prospect.contactName,
-        domain: prospect.domain
+        contactEmail:  prospect.contactEmail,
+        contactName:   prospect.contactName,
+        domain:        prospect.domain,
+        location:      prospect.location,
       })
-      const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
+      const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
       const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-
       await prisma.prospect.update({
         where: { id: prospect.id },
-        data: { ...scores, buyingStage, winProbability }
+        data: { ...scores, buyingStage, winProbability },
       })
       updated++
     }
@@ -321,23 +316,18 @@ const recommendWorker = new Worker(
 
     await job.updateProgress(20)
 
-    const rawSignals: RawSignal[] = prospect.signals.map(s => ({
-      type: s.type as RawSignal['type'],
-      strength: s.strength,
-      sourceReliability: s.sourceReliability,
-      industryRelevance: s.industryRelevance,
-      detectedAt: s.detectedAt
-    }))
+    const rawSignals = prospect.signals.map(toRawSignal)
 
     const rec = generateRuleBasedRecommendation(
       {
-        industry: prospect.industry,
+        industry:      prospect.industry,
         employeeCount: prospect.employeeCount,
-        contactEmail: prospect.contactEmail,
-        contactName: prospect.contactName,
-        contactPhone: prospect.contactPhone,
-        linkedinUrl: prospect.linkedinUrl,
-        domain: prospect.domain
+        contactEmail:  prospect.contactEmail,
+        contactName:   prospect.contactName,
+        contactPhone:  prospect.contactPhone,
+        linkedinUrl:   prospect.linkedinUrl,
+        domain:        prospect.domain,
+        location:      prospect.location,
       },
       rawSignals
     )
@@ -358,6 +348,85 @@ const recommendWorker = new Worker(
   { connection, concurrency: 3, ...defaultJobOptions }
 )
 
+// ── calibrate-scoring ─────────────────────────────────────────────────────────
+const calibrateWorker = new Worker(
+  'calibrate-scoring',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('calibrate-scoring', `Calibrating workspaceId=${workspaceId}`)
+
+    // Fetch last 100 WON/LOST outcomes with prospect + signal data
+    const outcomeRows = await prisma.prospectOutcome.findMany({
+      where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
+      orderBy: { recordedAt: 'desc' },
+      take: 100,
+      include: {
+        prospect: { include: { signals: { select: { type: true } } } }
+      }
+    })
+
+    await job.updateProgress(30)
+
+    const outcomes = outcomeRows.map((o: typeof outcomeRows[0]) => ({
+      stage: o.stage as 'WON' | 'LOST',
+      prospect: {
+        industry:      o.prospect.industry,
+        employeeCount: o.prospect.employeeCount,
+        signals:       o.prospect.signals,
+      }
+    }))
+
+    const result = calibrate(outcomes)
+
+    await job.updateProgress(60)
+
+    if (result.stats.calibrated) {
+      // Persist learned signal weights
+      await prisma.scoringModel.upsert({
+        where:  { workspaceId },
+        create: {
+          workspaceId,
+          weights:           {},
+          signalWeights:     result.signalWeights as object,
+          performanceMetrics: { totalOutcomes: result.stats.totalOutcomes },
+        },
+        update: {
+          signalWeights:     result.signalWeights as object,
+          lastWeightUpdate:  new Date(),
+          updateCount:       { increment: 1 },
+          performanceMetrics: { totalOutcomes: result.stats.totalOutcomes, winRate: result.stats.baselineWinRate },
+        }
+      })
+
+      // Apply ICP auto-update from WON deals
+      if (Object.keys(result.icpUpdate).length > 0) {
+        await prisma.workspaceICP.upsert({
+          where:  { workspaceId },
+          create: {
+            workspaceId,
+            targetIndustries: result.icpUpdate.targetIndustries ?? [],
+            minEmployees:     result.icpUpdate.minEmployees,
+            maxEmployees:     result.icpUpdate.maxEmployees,
+            targetGeos:       [],
+            autoUpdatedAt:    new Date(),
+          },
+          update: {
+            ...(result.icpUpdate.targetIndustries && { targetIndustries: result.icpUpdate.targetIndustries }),
+            ...(result.icpUpdate.minEmployees !== undefined && { minEmployees: result.icpUpdate.minEmployees }),
+            ...(result.icpUpdate.maxEmployees !== undefined && { maxEmployees: result.icpUpdate.maxEmployees }),
+            autoUpdatedAt: new Date(),
+          }
+        })
+      }
+    }
+
+    await job.updateProgress(100)
+    log('calibrate-scoring', `Done calibrated=${result.stats.calibrated} won=${result.stats.wonCount}/${result.stats.totalOutcomes}`)
+    return result.stats
+  },
+  { connection, concurrency: 1 }
+)
+
 // Attach error handlers
 for (const [name, worker] of [
   ['research-lead', researchWorker],
@@ -365,7 +434,8 @@ for (const [name, worker] of [
   ['analyze-reply', replyWorker],
   ['sync-mailbox', mailboxWorker],
   ['score-prospects', scoreProspectsWorker],
-  ['generate-recommendations', recommendWorker]
+  ['generate-recommendations', recommendWorker],
+  ['calibrate-scoring', calibrateWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -384,7 +454,8 @@ async function shutdown(signal: string) {
     replyWorker.close(),
     mailboxWorker.close(),
     scoreProspectsWorker.close(),
-    recommendWorker.close()
+    recommendWorker.close(),
+    calibrateWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -394,4 +465,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 6 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations)')
+console.log('[worker] Started — listening on 7 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring)')
