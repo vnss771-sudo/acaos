@@ -131,6 +131,25 @@ model ScoringModel {
   outcomes           ScoringOutcome[]
 }
 
+model SecurityEvent {
+  id           String   @id @default(cuid())
+  workspaceId  String?
+  userId       String?
+  eventType    String
+  severity     String   @default("INFO")
+  ipAddress    String?
+  userAgent    String?
+  resourceType String?
+  resourceId   String?
+  meta         Json?
+  createdAt    DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
 // Individual reply outcomes — feed the ScorerV2 feedback loop
 model ScoringOutcome {
   id               String       @id @default(cuid())

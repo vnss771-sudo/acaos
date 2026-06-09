@@ -116,7 +116,7 @@ export const TIER_COLOR: Record<string, string> = {
 
 export function getScoreTier(score: number): 'HOT' | 'WARM' | 'COLD' {
   if (score >= 72) return 'HOT'
-  if (score >= 48) return 'WARM'
+  if (score >= 45) return 'WARM'
   return 'COLD'
 }
 
@@ -278,4 +278,14 @@ export const SIGNAL_TYPE_LABELS: Record<SignalType, string> = {
   PROCUREMENT: 'Procurement',
   BUSINESS_REGISTRATION: 'Business Registration',
   WEBSITE_CHANGE: 'Website Change'
+}
+
+export type WorkspaceICP = {
+  id?: string
+  workspaceId: string
+  targetIndustries: string[]
+  minEmployees: number
+  maxEmployees: number
+  targetGeos: string[]
+  mustHaveEmail: boolean
 }

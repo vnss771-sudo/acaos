@@ -120,7 +120,8 @@ jobsRouter.get(
   '/:queue/:jobId',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const { queue, jobId } = req.params
+    const queue = req.params.queue as string
+    const jobId = req.params.jobId as string
     if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
 
     const job = await getJobById(queue, jobId)
@@ -151,7 +152,8 @@ jobsRouter.get(
 jobsRouter.get(
   '/events/:queue/:jobId',
   asyncHandler(async (req, res) => {
-    const { queue, jobId } = req.params
+    const queue = req.params.queue as string
+    const jobId = req.params.jobId as string
     if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
 
     // Authenticate via query param (EventSource limitation)
@@ -167,7 +169,7 @@ jobsRouter.get(
       throw new ApiError(401, 'Invalid or expired token')
     }
 
-    const job = await getJobById(queue, jobId)
+    const job = await getJobById(queue as string, jobId as string)
     if (!job) throw new ApiError(404, 'Job not found')
 
     const jobUserId = (job.data as Record<string, unknown>).userId

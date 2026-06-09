@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
-import { connection, defaultJobOptions } from './lib/queue.js'
+import { connection } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
@@ -98,7 +98,7 @@ const researchWorker = new Worker(
     log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore}`)
     return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle, score: finalScore }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // ── generate-outreach ─────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ const outreachWorker = new Worker(
     log('generate-outreach', `Done leadId=${leadId}`)
     return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // ── analyze-reply ─────────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ const replyWorker = new Worker(
     log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)
     return parsed
   },
-  { connection, concurrency: 5, ...defaultJobOptions }
+  { connection, concurrency: 5 }
 )
 
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
@@ -257,7 +257,7 @@ const mailboxWorker = new Worker(
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
-  { connection, concurrency: 1, attempts: 2, backoff: { type: 'exponential', delay: 10_000 } }
+  { connection, concurrency: 1 }
 )
 
 // ── score-prospects ────────────────────────────────────────────────────────────
@@ -273,6 +273,12 @@ const scoreProspectsWorker = new Worker(
     })
 
     await job.updateProgress(10)
+
+    const [icp, scoringModel] = await Promise.all([
+      prisma.workspaceICP.findUnique({ where: { workspaceId } }),
+      prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } })
+    ])
+    const signalWeights = (scoringModel?.signalWeights ?? null) as SignalWeights | null
 
     let updated = 0
     for (const prospect of prospects) {
@@ -298,7 +304,7 @@ const scoreProspectsWorker = new Worker(
     log('score-prospects', `Done: ${updated} prospects rescored`)
     return { workspaceId, updated }
   },
-  { connection, concurrency: 1, ...defaultJobOptions }
+  { connection, concurrency: 1 }
 )
 
 // ── generate-recommendations ──────────────────────────────────────────────────
@@ -345,7 +351,97 @@ const recommendWorker = new Worker(
     log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel}`)
     return { prospectId, ...rec }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
+)
+
+// ── calibrate-scoring ──────────────────────────────────────────────────────────
+const calibrateWorker = new Worker(
+  'calibrate-scoring',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
+
+    await job.updateProgress(10)
+
+    // Fetch last 100 WON/LOST outcomes with prospect + signals
+    const rawOutcomes = await prisma.prospectOutcome.findMany({
+      where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
+      include: { prospect: { include: { signals: true } } },
+      orderBy: { recordedAt: 'desc' },
+      take: 100
+    })
+
+    await job.updateProgress(30)
+
+    const outcomes = rawOutcomes.map(o => ({
+      stage: o.stage as 'WON' | 'LOST',
+      prospect: {
+        industry: o.prospect.industry,
+        employeeCount: o.prospect.employeeCount,
+        signals: o.prospect.signals.map(s => ({ type: s.type }))
+      }
+    }))
+
+    const result = calibrate(outcomes)
+    await job.updateProgress(60)
+
+    if (!result.stats.calibrated) {
+      log('calibrate-scoring', `Skipped: ${result.stats.reason} (${result.stats.totalOutcomes} outcomes)`)
+      return result.stats
+    }
+
+    // Persist calibrated signal weights into ScoringModel
+    await prisma.scoringModel.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        weights: DEFAULT_SCORING_WEIGHTS,
+        signalWeights: result.signalWeights,
+        performanceMetrics: {
+          totalOutcomes: result.stats.totalOutcomes,
+          winRate: result.stats.baselineWinRate,
+          calibratedAt: new Date().toISOString()
+        }
+      },
+      update: {
+        signalWeights: result.signalWeights,
+        lastWeightUpdate: new Date(),
+        updateCount: { increment: 1 },
+        performanceMetrics: {
+          totalOutcomes: result.stats.totalOutcomes,
+          winRate: result.stats.baselineWinRate,
+          calibratedAt: new Date().toISOString()
+        }
+      }
+    })
+
+    await job.updateProgress(80)
+
+    // Apply ICP updates from WON deal characteristics
+    if (Object.keys(result.icpUpdate).length > 0) {
+      await prisma.workspaceICP.upsert({
+        where: { workspaceId },
+        create: {
+          workspaceId,
+          targetIndustries: result.icpUpdate.targetIndustries ?? [],
+          minEmployees: result.icpUpdate.minEmployees ?? 1,
+          maxEmployees: result.icpUpdate.maxEmployees ?? 999999,
+          targetGeos: [],
+          mustHaveEmail: false,
+        },
+        update: {
+          ...(result.icpUpdate.targetIndustries && { targetIndustries: result.icpUpdate.targetIndustries }),
+          ...(result.icpUpdate.minEmployees !== undefined && { minEmployees: result.icpUpdate.minEmployees }),
+          ...(result.icpUpdate.maxEmployees !== undefined && { maxEmployees: result.icpUpdate.maxEmployees }),
+        }
+      })
+    }
+
+    await job.updateProgress(100)
+    log('calibrate-scoring', `Done workspace=${workspaceId} winRate=${Math.round(result.stats.baselineWinRate * 100)}% signalTypes=${Object.keys(result.signalWeights).length}`)
+    return result.stats
+  },
+  { connection, concurrency: 1 }
 )
 
 // ── calibrate-scoring ─────────────────────────────────────────────────────────

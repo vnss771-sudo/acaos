@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import type { Workspace, Prospect, Signal, Recommendation } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
-  SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, TIER_COLOR
+  SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, TIER_COLOR, getScoreTier
 } from '../types.js'
 import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
 import { s, colors } from '../styles.js'
@@ -138,7 +138,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
   }
 
   const p = detail ?? prospect
-  const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
+  const tier = getScoreTier(p.opportunityScore)
 
   return (
     <div style={{
@@ -399,7 +399,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
             </thead>
             <tbody>
               {prospects.map(p => {
-                const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
+                const tier = getScoreTier(p.opportunityScore)
                 return (
                   <tr key={p.id}
                     onClick={() => setSelected(p)}

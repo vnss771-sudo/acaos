@@ -62,7 +62,7 @@ campaignsRouter.get(
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const campaign = await prisma.campaign.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id as string },
       include: { _count: { select: { leads: true } } }
     })
 
@@ -80,7 +80,8 @@ campaignsRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const existing = await prisma.campaign.findUnique({ where: { id: req.params.id } })
+    const campaignId = req.params.id as string
+    const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
     const member = await userBelongsToWorkspace(user.id, existing.workspaceId)
@@ -94,7 +95,7 @@ campaignsRouter.patch(
       updates.goalType = req.body.goalType.trim()
     }
 
-    const campaign = await prisma.campaign.update({ where: { id: req.params.id }, data: updates })
+    const campaign = await prisma.campaign.update({ where: { id: campaignId }, data: updates })
     res.json({ campaign })
   })
 )
@@ -104,13 +105,14 @@ campaignsRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const existing = await prisma.campaign.findUnique({ where: { id: req.params.id } })
+    const campaignId = req.params.id as string
+    const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
     const member = await userBelongsToWorkspace(user.id, existing.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    await prisma.campaign.delete({ where: { id: req.params.id } })
+    await prisma.campaign.delete({ where: { id: campaignId } })
     res.json({ ok: true })
   })
 )

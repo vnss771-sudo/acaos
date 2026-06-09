@@ -30,6 +30,10 @@ async function getICP(workspaceId: string) {
   }
 }
 
+async function getICP(workspaceId: string): Promise<ICPConfig | null> {
+  return prisma.workspaceICP.findUnique({ where: { workspaceId } })
+}
+
 // GET /api/prospects?workspaceId=&tier=&stage=&page=&limit=
 prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
@@ -101,8 +105,9 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
 
 // GET /api/prospects/:id
 prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
+  const prospectId = req.params.id as string
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: prospectId },
     include: {
       signals:         { orderBy: { detectedAt: 'desc' } },
       recommendations: { orderBy: { priority: 'desc' } },
@@ -165,12 +170,14 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
     },
   })
 
+  const updated = await prisma.prospect.update({ where: { id: prospect.id }, data: { ...scores } })
   res.status(201).json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
 }))
 
 // PATCH /api/prospects/:id
 prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospectId = req.params.id as string
+  const existing = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -189,13 +196,14 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
   }
   if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
 
-  const updated = await prisma.prospect.update({ where: { id: req.params.id }, data })
+  const updated = await prisma.prospect.update({ where: { id: prospectId }, data })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
 }))
 
 // DELETE /api/prospects/:id
 prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospectId = req.params.id as string
+  const existing = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -238,8 +246,13 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
 
 // POST /api/prospects/:id/outcome
 prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospectId = req.params.id as string
+  const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
   if (!req.body.stage) throw new ApiError(400, 'stage required')
 
   const userId = (req as AuthedRequest).user.id
@@ -268,6 +281,11 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
   // Trigger background recalibration on WON/LOST outcomes
   if (['WON', 'LOST'].includes(req.body.stage)) {
     enqueueScoreProspects(prospect.workspaceId).catch(() => {})
+  }
+
+  // Trigger autonomous learning loop after definitive outcomes
+  if (['WON', 'LOST'].includes(req.body.stage)) {
+    enqueueCalibrate(prospect.workspaceId).catch(() => { /* non-blocking */ })
   }
 
   res.json({ outcome, prospect: { ...updated, tier: getOpportunityTier(updated.opportunityScore) } })
@@ -309,4 +327,70 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
   })
 
   res.status(201).json(recommendation)
+}))
+
+// POST /api/prospects/:id/enrich — Apollo.io company enrichment → auto-generate signals
+prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
+  const prospectId = req.params.id as string
+  const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const { enrichProspect } = await import('../services/apollo.js')
+  const result = await enrichProspect(prospect)
+
+  // Persist any new signals
+  const created: string[] = []
+  for (const sig of result.signals) {
+    const s = await prisma.signal.create({
+      data: {
+        workspaceId: prospect.workspaceId,
+        prospectId: prospect.id,
+        type: sig.type as import('@prisma/client').SignalType,
+        strength: sig.strength,
+        sourceReliability: sig.sourceReliability,
+        industryRelevance: sig.industryRelevance,
+        title: sig.title,
+        description: sig.description,
+        source: sig.source,
+        detectedAt: sig.detectedAt,
+      }
+    })
+    created.push(s.id)
+  }
+
+  // Update contact / company fields if Apollo returned better data
+  if (Object.keys(result.updates).length > 0) {
+    await prisma.prospect.update({ where: { id: prospectId }, data: result.updates })
+  }
+
+  // Rescore with new signals
+  const [allSignals, icp] = await Promise.all([
+    prisma.signal.findMany({ where: { prospectId } }),
+    getICP(prospect.workspaceId)
+  ])
+  const rawSignals = allSignals.map(toRawSignal)
+  const u = result.updates
+  const scores = calculateOpportunityScores(rawSignals, {
+    industry: (u.industry as string | null | undefined) ?? prospect.industry,
+    employeeCount: (u.employeeCount as number | null | undefined) ?? prospect.employeeCount,
+    contactEmail: (u.contactEmail as string | null | undefined) ?? prospect.contactEmail,
+    contactName: (u.contactName as string | null | undefined) ?? prospect.contactName,
+    domain: (u.domain as string | null | undefined) ?? prospect.domain
+  }, icp)
+  const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
+  const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+  const updated = await prisma.prospect.update({
+    where: { id: prospectId },
+    data: { ...scores, buyingStage, winProbability }
+  })
+
+  res.json({
+    prospect: { ...updated, tier: getOpportunityTier(updated.opportunityScore) },
+    signalsCreated: created.length,
+    signalIds: created
+  })
 }))

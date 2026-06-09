@@ -3,6 +3,7 @@ import type { Workspace, OpportunitiesData, ForecastData, Prospect, View } from 
 import { BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS, TIER_COLOR } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { ScoreRing } from '../components/ScoreRing.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -11,22 +12,6 @@ type Props = {
   workspace: Workspace | null
   toast: ToastHook
   setView: (v: View) => void
-}
-
-function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
-  const tier = score >= 72 ? 'HOT' : score >= 45 ? 'WARM' : 'COLD'
-  const color = TIER_COLOR[tier]
-  return (
-    <div style={{
-      width: size, height: size, borderRadius: '50%',
-      border: `3px solid ${color}`,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      flexShrink: 0,
-      background: color + '22'
-    }}>
-      <span style={{ color, fontWeight: 800, fontSize: size * 0.28 }}>{score}</span>
-    </div>
-  )
 }
 
 function ScoreDimension({ label, value }: { label: string; value: number }) {

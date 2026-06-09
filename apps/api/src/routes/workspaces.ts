@@ -5,6 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { ensureWorkspaceSlug, userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { normalizeOptionalString } from '../lib/validation.js'
 import { createBillingPortalSession } from '../services/stripe.js'
+import { logSecurityEvent } from '../lib/securityLog.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const workspaceRouter = Router()
@@ -55,8 +56,9 @@ workspaceRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
     const workspace = await prisma.workspace.findUnique({
-      where: { id: req.params.id },
+      where: { id: workspaceId },
       select: {
         id: true, name: true, slug: true, plan: true,
         subscriptionStatus: true, createdAt: true, updatedAt: true,
@@ -67,7 +69,7 @@ workspaceRouter.get(
     if (!workspace) throw new ApiError(404, 'Workspace not found')
 
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId: req.params.id },
+      where: { userId: user.id, workspaceId: workspaceId },
       select: { role: true }
     })
     if (!membership) throw new ApiError(403, 'Access denied')
@@ -80,11 +82,12 @@ workspaceRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const existing = await prisma.workspace.findUnique({ where: { id: req.params.id } })
+    const workspaceId = req.params.id as string
+    const existing = await prisma.workspace.findUnique({ where: { id: workspaceId } })
     if (!existing) throw new ApiError(404, 'Workspace not found')
 
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId: req.params.id, role: { in: ['owner', 'admin'] } },
+      where: { userId: user.id, workspaceId: workspaceId, role: { in: ['owner', 'admin'] } },
       select: { role: true }
     })
     if (!membership) throw new ApiError(403, 'Must be owner or admin to update workspace')
@@ -102,7 +105,7 @@ workspaceRouter.patch(
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No valid updates provided')
 
     const workspace = await prisma.workspace.update({
-      where: { id: req.params.id },
+      where: { id: workspaceId },
       data: updates,
       select: { id: true, name: true, slug: true, plan: true }
     })
@@ -119,7 +122,7 @@ workspaceRouter.post(
     if (!allowed) throw new ApiError(403, 'Access denied')
 
     const workspace = await prisma.workspace.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id as string },
       select: { stripeCustomerId: true }
     })
     if (!workspace?.stripeCustomerId) {
@@ -218,14 +221,15 @@ workspaceRouter.get(
   '/:id/members',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
+    const membersWorkspaceId = req.params.id as string
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId: req.params.id },
+      where: { userId: user.id, workspaceId: membersWorkspaceId },
       select: { role: true }
     })
     if (!membership) throw new ApiError(403, 'Access denied')
 
     const members = await prisma.membership.findMany({
-      where: { workspaceId: req.params.id },
+      where: { workspaceId: membersWorkspaceId },
       include: { user: { select: { id: true, email: true, name: true } } },
       orderBy: { createdAt: 'asc' }
     })
@@ -235,5 +239,37 @@ workspaceRouter.get(
         id: m.id, role: m.role, createdAt: m.createdAt, user: m.user
       }))
     })
+  })
+)
+
+// GET /api/workspaces/:id/audit-log?limit=&offset=&eventType=&severity=
+workspaceRouter.get(
+  '/:id/audit-log',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
+      select: { role: true }
+    })
+    if (!membership) throw new ApiError(403, 'Must be owner or admin to view audit log')
+
+    const limit = Math.min(200, parseInt(req.query.limit as string) || 50)
+    const offset = parseInt(req.query.offset as string) || 0
+    const where: Record<string, unknown> = { workspaceId }
+    if (req.query.eventType) where.eventType = req.query.eventType
+    if (req.query.severity) where.severity = req.query.severity
+
+    const [events, total] = await Promise.all([
+      prisma.securityEvent.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset
+      }),
+      prisma.securityEvent.count({ where })
+    ])
+
+    res.json({ events, total, limit, offset })
   })
 )
