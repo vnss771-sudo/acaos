@@ -6,9 +6,11 @@ import { colors } from '../styles.js'
 type NavItem = { id: View; label: string; icon: string }
 
 const NAV: NavItem[] = [
+  { id: 'intelligence', label: 'Intelligence', icon: '◈' },
+  { id: 'prospects', label: 'Prospects', icon: '◎' },
   { id: 'dashboard', label: 'Dashboard', icon: '⬡' },
-  { id: 'campaigns', label: 'Campaigns', icon: '◈' },
-  { id: 'leads', label: 'Leads', icon: '◎' },
+  { id: 'campaigns', label: 'Campaigns', icon: '▣' },
+  { id: 'leads', label: 'Leads', icon: '▤' },
   { id: 'ai', label: 'AI Tools', icon: '✦' },
   { id: 'billing', label: 'Billing', icon: '◆' },
   { id: 'settings', label: 'Settings', icon: '◌' }

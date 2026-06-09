@@ -55,8 +55,9 @@ workspaceRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
     const workspace = await prisma.workspace.findUnique({
-      where: { id: req.params.id },
+      where: { id: workspaceId },
       select: {
         id: true, name: true, slug: true, plan: true,
         subscriptionStatus: true, createdAt: true, updatedAt: true,
@@ -67,7 +68,7 @@ workspaceRouter.get(
     if (!workspace) throw new ApiError(404, 'Workspace not found')
 
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId: req.params.id },
+      where: { userId: user.id, workspaceId: workspaceId },
       select: { role: true }
     })
     if (!membership) throw new ApiError(403, 'Access denied')
@@ -80,11 +81,12 @@ workspaceRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const existing = await prisma.workspace.findUnique({ where: { id: req.params.id } })
+    const workspaceId = req.params.id as string
+    const existing = await prisma.workspace.findUnique({ where: { id: workspaceId } })
     if (!existing) throw new ApiError(404, 'Workspace not found')
 
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId: req.params.id, role: { in: ['owner', 'admin'] } },
+      where: { userId: user.id, workspaceId: workspaceId, role: { in: ['owner', 'admin'] } },
       select: { role: true }
     })
     if (!membership) throw new ApiError(403, 'Must be owner or admin to update workspace')
@@ -102,7 +104,7 @@ workspaceRouter.patch(
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No valid updates provided')
 
     const workspace = await prisma.workspace.update({
-      where: { id: req.params.id },
+      where: { id: workspaceId },
       data: updates,
       select: { id: true, name: true, slug: true, plan: true }
     })
@@ -115,11 +117,11 @@ workspaceRouter.post(
   '/:id/billing-portal',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const allowed = await userCanManageWorkspaceBilling(user.id, req.params.id)
+    const allowed = await userCanManageWorkspaceBilling(user.id, req.params.id as string)
     if (!allowed) throw new ApiError(403, 'Access denied')
 
     const workspace = await prisma.workspace.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id as string },
       select: { stripeCustomerId: true }
     })
     if (!workspace?.stripeCustomerId) {
@@ -135,14 +137,15 @@ workspaceRouter.get(
   '/:id/members',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
+    const membersWorkspaceId = req.params.id as string
     const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId: req.params.id },
+      where: { userId: user.id, workspaceId: membersWorkspaceId },
       select: { role: true }
     })
     if (!membership) throw new ApiError(403, 'Access denied')
 
     const members = await prisma.membership.findMany({
-      where: { workspaceId: req.params.id },
+      where: { workspaceId: membersWorkspaceId },
       include: { user: { select: { id: true, email: true, name: true } } },
       orderBy: { createdAt: 'asc' }
     })

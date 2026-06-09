@@ -35,6 +35,10 @@ model Workspace {
   outreachDrafts       OutreachDraft[]
   scoringModel         ScoringModel?
   usageRecords         UsageRecord[]
+  prospects        Prospect[]
+  signals          Signal[]
+  recommendations  Recommendation[]
+  prospectOutcomes ProspectOutcome[]
 }
 
 model Membership {
@@ -176,4 +180,136 @@ model ProcessedEmail {
   messageId   String?  @unique
   fromAddress String?
   processedAt DateTime @default(now())
+}
+
+enum SignalType {
+  HIRING
+  FUNDING
+  EXPANSION
+  TECH_ADOPTION
+  LEADERSHIP_CHANGE
+  NEWS_MENTION
+  PROCUREMENT
+  BUSINESS_REGISTRATION
+  WEBSITE_CHANGE
+}
+
+enum BuyingStage {
+  RESEARCHING
+  EVALUATING
+  COMPARING
+  PURCHASING
+  INACTIVE
+}
+
+enum OutcomeStage {
+  DISCOVERED
+  VIEWED
+  CONTACTED
+  MEETING
+  PROPOSAL
+  WON
+  LOST
+}
+
+model Prospect {
+  id               String       @id @default(cuid())
+  workspaceId      String
+  companyName      String
+  domain           String?
+  industry         String?
+  employeeCount    Int?
+  estimatedRevenue Float?
+  location         String?
+  description      String?
+  contactName      String?
+  contactEmail     String?
+  contactPhone     String?
+  contactTitle     String?
+  linkedinUrl      String?
+  opportunityScore Int          @default(0)
+  intentScore      Int          @default(0)
+  fitScore         Int          @default(0)
+  timingScore      Int          @default(0)
+  confidenceScore  Int          @default(0)
+  buyingStage      BuyingStage  @default(RESEARCHING)
+  outcomeStage     OutcomeStage @default(DISCOVERED)
+  expectedDealValue Float?
+  winProbability   Float?
+  lastSignalAt     DateTime?
+  lastContactedAt  DateTime?
+  aiSummary        String?
+  sourceTag        String?
+  workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  signals          Signal[]
+  recommendations  Recommendation[]
+  outcomes         ProspectOutcome[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, opportunityScore])
+  @@index([workspaceId, buyingStage])
+  @@index([workspaceId, outcomeStage])
+}
+
+model Signal {
+  id                String     @id @default(cuid())
+  workspaceId       String
+  prospectId        String
+  type              SignalType
+  strength          Int
+  sourceReliability Int        @default(70)
+  industryRelevance Int        @default(50)
+  title             String?
+  description       String?
+  sourceUrl         String?
+  source            String?
+  rawData           Json?
+  detectedAt        DateTime   @default(now())
+  workspace         Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect          Prospect   @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt         DateTime   @default(now())
+
+  @@index([workspaceId])
+  @@index([prospectId])
+  @@index([type])
+  @@index([detectedAt])
+}
+
+model Recommendation {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  prospectId   String
+  bestContact  String?
+  bestTiming   String?
+  bestChannel  String?
+  messageAngle String?
+  reasoning    String?
+  actionText   String?
+  urgency      String    @default("MEDIUM")
+  priority     Int       @default(50)
+  expiresAt    DateTime?
+  actedAt      DateTime?
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect     Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+
+  @@index([workspaceId])
+  @@index([prospectId])
+}
+
+model ProspectOutcome {
+  id          String       @id @default(cuid())
+  workspaceId String
+  prospectId  String
+  stage       OutcomeStage
+  notes       String?
+  dealValue   Float?
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect    Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  recordedAt  DateTime     @default(now())
+
+  @@index([workspaceId])
+  @@index([prospectId])
 }

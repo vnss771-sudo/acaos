@@ -153,7 +153,7 @@ leadsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id as string } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
@@ -168,7 +168,8 @@ leadsRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    const leadId = req.params.id as string
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
@@ -218,7 +219,7 @@ leadsRouter.patch(
       updates.score = req.body.score
     }
 
-    const updated = await prisma.lead.update({ where: { id: req.params.id }, data: updates })
+    const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
     res.json({ lead: updated })
   })
 )
@@ -228,13 +229,14 @@ leadsRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    const leadId = req.params.id as string
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    await prisma.lead.delete({ where: { id: req.params.id } })
+    await prisma.lead.delete({ where: { id: leadId } })
     res.json({ ok: true })
   })
 )
@@ -320,14 +322,15 @@ leadsRouter.get(
   '/:id/drafts',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    const leadId = req.params.id as string
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
     const drafts = await prisma.outreachDraft.findMany({
-      where: { leadId: req.params.id },
+      where: { leadId: leadId },
       orderBy: { createdAt: 'desc' }
     })
 

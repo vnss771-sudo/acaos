@@ -4,7 +4,6 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
 import { requireAuth } from '../middleware/auth.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const ingestRouter = Router()
@@ -145,8 +144,8 @@ keyRouter.post(
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member || member.role !== 'OWNER') throw new ApiError(403, 'Only workspace owners can manage API keys')
+    const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
+    if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
     const ingestApiKey = randomBytes(32).toString('hex')
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey } })
@@ -163,8 +162,8 @@ keyRouter.delete(
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member || member.role !== 'OWNER') throw new ApiError(403, 'Only workspace owners can manage API keys')
+    const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
+    if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
     res.json({ ok: true })

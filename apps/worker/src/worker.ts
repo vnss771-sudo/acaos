@@ -1,10 +1,17 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
-import { connection, defaultJobOptions } from './lib/queue.js'
+import { connection } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
 import type { ScoringWeights } from '../../api/src/lib/scoring.js'
+import {
+  calculateOpportunityScores,
+  detectBuyingStage,
+  calcWinProbability,
+  generateRuleBasedRecommendation
+} from '../../api/src/lib/signalEngine.js'
+import type { RawSignal } from '../../api/src/lib/signalEngine.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -89,7 +96,7 @@ const researchWorker = new Worker(
     log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore}`)
     return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle, score: finalScore }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // ── generate-outreach ─────────────────────────────────────────────────────────
@@ -138,7 +145,7 @@ const outreachWorker = new Worker(
     log('generate-outreach', `Done leadId=${leadId}`)
     return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
   },
-  { connection, concurrency: 3, ...defaultJobOptions }
+  { connection, concurrency: 3 }
 )
 
 // ── analyze-reply ─────────────────────────────────────────────────────────────
@@ -230,7 +237,7 @@ const replyWorker = new Worker(
     log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)
     return parsed
   },
-  { connection, concurrency: 5, ...defaultJobOptions }
+  { connection, concurrency: 5 }
 )
 
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
@@ -248,7 +255,107 @@ const mailboxWorker = new Worker(
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
-  { connection, concurrency: 1, attempts: 2, backoff: { type: 'exponential', delay: 10_000 } }
+  { connection, concurrency: 1 }
+)
+
+// ── score-prospects ────────────────────────────────────────────────────────────
+const scoreProspectsWorker = new Worker(
+  'score-prospects',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
+
+    const prospects = await prisma.prospect.findMany({
+      where: { workspaceId },
+      include: { signals: true }
+    })
+
+    await job.updateProgress(10)
+
+    let updated = 0
+    for (const prospect of prospects) {
+      const rawSignals: RawSignal[] = prospect.signals.map(s => ({
+        type: s.type as RawSignal['type'],
+        strength: s.strength,
+        sourceReliability: s.sourceReliability,
+        industryRelevance: s.industryRelevance,
+        detectedAt: s.detectedAt
+      }))
+
+      const scores = calculateOpportunityScores(rawSignals, {
+        industry: prospect.industry,
+        employeeCount: prospect.employeeCount,
+        contactEmail: prospect.contactEmail,
+        contactName: prospect.contactName,
+        domain: prospect.domain
+      })
+      const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
+      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+      await prisma.prospect.update({
+        where: { id: prospect.id },
+        data: { ...scores, buyingStage, winProbability }
+      })
+      updated++
+    }
+
+    await job.updateProgress(100)
+    log('score-prospects', `Done: ${updated} prospects rescored`)
+    return { workspaceId, updated }
+  },
+  { connection, concurrency: 1 }
+)
+
+// ── generate-recommendations ──────────────────────────────────────────────────
+const recommendWorker = new Worker(
+  'generate-recommendations',
+  async (job) => {
+    const { prospectId, workspaceId } = job.data as { prospectId: string; workspaceId: string }
+    log('generate-recommendations', `Generating for prospectId=${prospectId}`)
+
+    const prospect = await prisma.prospect.findUnique({
+      where: { id: prospectId },
+      include: { signals: true }
+    })
+    if (!prospect) throw new Error(`Prospect ${prospectId} not found`)
+
+    await job.updateProgress(20)
+
+    const rawSignals: RawSignal[] = prospect.signals.map(s => ({
+      type: s.type as RawSignal['type'],
+      strength: s.strength,
+      sourceReliability: s.sourceReliability,
+      industryRelevance: s.industryRelevance,
+      detectedAt: s.detectedAt
+    }))
+
+    const rec = generateRuleBasedRecommendation(
+      {
+        industry: prospect.industry,
+        employeeCount: prospect.employeeCount,
+        contactEmail: prospect.contactEmail,
+        contactName: prospect.contactName,
+        contactPhone: prospect.contactPhone,
+        linkedinUrl: prospect.linkedinUrl,
+        domain: prospect.domain
+      },
+      rawSignals
+    )
+
+    await prisma.recommendation.create({
+      data: {
+        workspaceId,
+        prospectId,
+        ...rec,
+        expiresAt: new Date(Date.now() + 7 * 86_400_000)
+      }
+    })
+
+    await job.updateProgress(100)
+    log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel}`)
+    return { prospectId, ...rec }
+  },
+  { connection, concurrency: 3 }
 )
 
 // Attach error handlers
@@ -256,7 +363,9 @@ for (const [name, worker] of [
   ['research-lead', researchWorker],
   ['generate-outreach', outreachWorker],
   ['analyze-reply', replyWorker],
-  ['sync-mailbox', mailboxWorker]
+  ['sync-mailbox', mailboxWorker],
+  ['score-prospects', scoreProspectsWorker],
+  ['generate-recommendations', recommendWorker]
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -273,7 +382,9 @@ async function shutdown(signal: string) {
     researchWorker.close(),
     outreachWorker.close(),
     replyWorker.close(),
-    mailboxWorker.close()
+    mailboxWorker.close(),
+    scoreProspectsWorker.close(),
+    recommendWorker.close()
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -283,4 +394,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 4 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox)')
+console.log('[worker] Started — listening on 6 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations)')

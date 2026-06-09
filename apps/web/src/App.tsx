@@ -11,6 +11,8 @@ import { Leads } from './views/Leads.js'
 import { AiTools } from './views/AiTools.js'
 import { Billing } from './views/Billing.js'
 import { Settings } from './views/Settings.js'
+import { Intelligence } from './views/Intelligence.js'
+import { ProspectsView } from './views/Prospects.js'
 import { colors } from './styles.js'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
@@ -113,6 +115,8 @@ export function App() {
 
   const VIEW_TITLE: Record<View, string> = {
     dashboard: 'Dashboard',
+    intelligence: 'Acquisition Intelligence',
+    prospects: 'Prospects',
     campaigns: 'Campaigns',
     leads: 'Leads',
     ai: 'AI Tools',
@@ -165,6 +169,8 @@ export function App() {
         {/* Main content */}
         <main style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
           {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
+          {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
+          {view === 'prospects' && <ProspectsView {...commonProps} />}
           {view === 'campaigns' && <Campaigns {...commonProps} />}
           {view === 'leads' && <Leads {...commonProps} />}
           {view === 'ai' && <AiTools {...commonProps} />}
