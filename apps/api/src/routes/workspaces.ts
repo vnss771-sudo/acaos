@@ -5,6 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { ensureWorkspaceSlug, userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { normalizeOptionalString } from '../lib/validation.js'
 import { createBillingPortalSession } from '../services/stripe.js'
+import { logSecurityEvent } from '../lib/securityLog.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const workspaceRouter = Router()
@@ -181,6 +182,7 @@ workspaceRouter.put(
         ...(mustHaveEmail !== undefined && { mustHaveEmail: Boolean(mustHaveEmail) }),
       }
     })
+    logSecurityEvent({ eventType: 'ICP_UPDATED', userId: user.id, workspaceId, req })
     res.json({ icp })
   })
 )
@@ -207,5 +209,37 @@ workspaceRouter.get(
         id: m.id, role: m.role, createdAt: m.createdAt, user: m.user
       }))
     })
+  })
+)
+
+// GET /api/workspaces/:id/audit-log?limit=&offset=&eventType=&severity=
+workspaceRouter.get(
+  '/:id/audit-log',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
+      select: { role: true }
+    })
+    if (!membership) throw new ApiError(403, 'Must be owner or admin to view audit log')
+
+    const limit = Math.min(200, parseInt(req.query.limit as string) || 50)
+    const offset = parseInt(req.query.offset as string) || 0
+    const where: Record<string, unknown> = { workspaceId }
+    if (req.query.eventType) where.eventType = req.query.eventType
+    if (req.query.severity) where.severity = req.query.severity
+
+    const [events, total] = await Promise.all([
+      prisma.securityEvent.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset
+      }),
+      prisma.securityEvent.count({ where })
+    ])
+
+    res.json({ events, total, limit, offset })
   })
 )

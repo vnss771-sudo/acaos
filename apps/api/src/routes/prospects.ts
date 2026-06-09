@@ -10,6 +10,8 @@ import {
   getOpportunityTier
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
+import { logSecurityEvent } from '../lib/securityLog.js'
+import { enqueueCalibrate } from '../lib/queues.js'
 import type { RawSignal, ICPConfig } from '../lib/signalEngine.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -176,6 +178,12 @@ prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
   if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
 
   await prisma.prospect.delete({ where: { id: prospectId } })
+  logSecurityEvent({
+    eventType: 'PROSPECT_DELETED', severity: 'WARN',
+    userId, workspaceId: existing.workspaceId,
+    resourceType: 'Prospect', resourceId: prospectId,
+    req
+  })
   res.json({ ok: true })
 }))
 
@@ -240,6 +248,11 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
         ? new Date() : undefined
     }
   })
+
+  // Trigger autonomous learning loop after definitive outcomes
+  if (['WON', 'LOST'].includes(req.body.stage)) {
+    enqueueCalibrate(prospect.workspaceId).catch(() => { /* non-blocking */ })
+  }
 
   res.json({ outcome, prospect: { ...updated, tier: getOpportunityTier(updated.opportunityScore) } })
 }))

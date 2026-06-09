@@ -120,6 +120,7 @@ model ScoringModel {
   id                 String           @id @default(cuid())
   workspaceId        String           @unique
   weights            Json
+  signalWeights      Json?            // Calibrated per-signal multipliers: Record<SignalType, number>
   performanceMetrics Json
   updateCount        Int              @default(0)
   lastWeightUpdate   DateTime?
@@ -127,6 +128,25 @@ model ScoringModel {
   updatedAt          DateTime         @updatedAt
   workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   outcomes           ScoringOutcome[]
+}
+
+model SecurityEvent {
+  id           String   @id @default(cuid())
+  workspaceId  String?
+  userId       String?
+  eventType    String
+  severity     String   @default("INFO")
+  ipAddress    String?
+  userAgent    String?
+  resourceType String?
+  resourceId   String?
+  meta         Json?
+  createdAt    DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
 }
 
 // Individual reply outcomes — feed the ScorerV2 feedback loop

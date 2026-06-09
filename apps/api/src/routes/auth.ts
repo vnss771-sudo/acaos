@@ -13,6 +13,7 @@ import { authRateLimit } from '../middleware/rateLimit.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { buildWorkspaceName, isValidEmail, normalizeEmail, validatePassword } from '../lib/validation.js'
 import { resolveUniqueWorkspaceSlug } from '../lib/workspaces.js'
+import { logSecurityEvent } from '../lib/securityLog.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const authRouter = Router()
@@ -74,6 +75,7 @@ authRouter.post(
     const { token, refreshToken } = issueTokens(result.user.id)
     await persistRefreshToken(result.user.id, refreshToken)
 
+    logSecurityEvent({ eventType: 'AUTH_SIGNUP', userId: result.user.id, workspaceId: result.workspace.id, req })
     res.status(201).json({ token, refreshToken, user: result.user, workspace: result.workspace })
   })
 )
@@ -88,14 +90,21 @@ authRouter.post(
     if (!email || !password) throw new ApiError(400, 'Email and password are required')
 
     const user = await prisma.user.findUnique({ where: { email } })
-    if (!user?.passwordHash) throw new ApiError(401, 'Invalid credentials')
+    if (!user?.passwordHash) {
+      logSecurityEvent({ eventType: 'AUTH_LOGIN_FAILURE', severity: 'WARN', meta: { email }, req })
+      throw new ApiError(401, 'Invalid credentials')
+    }
 
     const ok = await bcrypt.compare(password, user.passwordHash)
-    if (!ok) throw new ApiError(401, 'Invalid credentials')
+    if (!ok) {
+      logSecurityEvent({ eventType: 'AUTH_LOGIN_FAILURE', severity: 'WARN', userId: user.id, meta: { email }, req })
+      throw new ApiError(401, 'Invalid credentials')
+    }
 
     const { token, refreshToken } = issueTokens(user.id)
     await persistRefreshToken(user.id, refreshToken)
 
+    logSecurityEvent({ eventType: 'AUTH_LOGIN_SUCCESS', userId: user.id, req })
     res.json({
       token,
       refreshToken,
@@ -115,6 +124,7 @@ authRouter.post(
     const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } })
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+      logSecurityEvent({ eventType: 'AUTH_TOKEN_INVALID', severity: 'WARN', req })
       throw new ApiError(401, 'Refresh token invalid or expired')
     }
 
@@ -129,6 +139,7 @@ authRouter.post(
       select: { id: true, email: true, name: true }
     })
 
+    logSecurityEvent({ eventType: 'AUTH_TOKEN_REFRESH', userId: stored.userId, req })
     res.json({ token, refreshToken: newRefreshToken, user })
   })
 )
@@ -139,10 +150,12 @@ authRouter.post(
     const rawToken = String(req.body?.refreshToken || '').trim()
     if (rawToken) {
       const tokenHash = hashRefreshToken(rawToken)
+      const stored = await prisma.refreshToken.findUnique({ where: { tokenHash }, select: { userId: true } })
       await prisma.refreshToken.updateMany({
         where: { tokenHash, revokedAt: null },
         data: { revokedAt: new Date() }
       })
+      if (stored) logSecurityEvent({ eventType: 'AUTH_LOGOUT', userId: stored.userId, req })
     }
     res.json({ ok: true })
   })

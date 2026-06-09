@@ -42,6 +42,9 @@ export type RawSignal = {
   detectedAt: Date
 }
 
+// Learned per-signal-type multipliers produced by the calibration loop
+export type SignalWeights = Partial<Record<SignalType, number>>
+
 // Decayed signal strength accounting for age
 export function decayedStrength(signal: RawSignal): number {
   const ageDays = (Date.now() - signal.detectedAt.getTime()) / 86_400_000
@@ -50,12 +53,13 @@ export function decayedStrength(signal: RawSignal): number {
 }
 
 // Intent score: how strongly this company is showing buying intent
-function calcIntentScore(signals: RawSignal[]): number {
+function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights | null): number {
   if (signals.length === 0) return 0
-  // Weighted sum of decayed strengths, capped by event weights
   const scores = signals.map(sig => {
     const ds = decayedStrength(sig)
-    const cap = EVENT_BASE_WEIGHTS[sig.type]
+    // Apply learned multiplier to the cap (default 1.0 = no adjustment)
+    const baseCap = EVENT_BASE_WEIGHTS[sig.type]
+    const cap = baseCap * (signalWeights?.[sig.type] ?? 1.0)
     return Math.min(ds * (sig.sourceReliability / 100), cap)
   })
   // Geometric-ish aggregation: primary signal + diminishing returns for additional signals
@@ -147,8 +151,13 @@ export type OpportunityScores = {
 }
 
 // Main scoring formula: geometric mean of 4 dimensions
-export function calculateOpportunityScores(signals: RawSignal[], meta: ProspectMeta, icp?: ICPConfig | null): OpportunityScores {
-  const intentScore = Math.round(calcIntentScore(signals))
+export function calculateOpportunityScores(
+  signals: RawSignal[],
+  meta: ProspectMeta,
+  icp?: ICPConfig | null,
+  signalWeights?: SignalWeights | null
+): OpportunityScores {
+  const intentScore = Math.round(calcIntentScore(signals, signalWeights))
   const fitScore = Math.round(calcFitScore(meta, icp))
   const timingScore = Math.round(calcTimingScore(signals))
   const confidenceScore = Math.round(calcConfidenceScore(signals))

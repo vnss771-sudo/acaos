@@ -11,7 +11,8 @@ import {
   calcWinProbability,
   generateRuleBasedRecommendation
 } from '../../api/src/lib/signalEngine.js'
-import type { RawSignal } from '../../api/src/lib/signalEngine.js'
+import type { RawSignal, SignalWeights } from '../../api/src/lib/signalEngine.js'
+import { calibrate } from '../../api/src/lib/learningLoop.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -272,7 +273,11 @@ const scoreProspectsWorker = new Worker(
 
     await job.updateProgress(10)
 
-    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+    const [icp, scoringModel] = await Promise.all([
+      prisma.workspaceICP.findUnique({ where: { workspaceId } }),
+      prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } })
+    ])
+    const signalWeights = (scoringModel?.signalWeights ?? null) as SignalWeights | null
 
     let updated = 0
     for (const prospect of prospects) {
@@ -290,7 +295,7 @@ const scoreProspectsWorker = new Worker(
         contactEmail: prospect.contactEmail,
         contactName: prospect.contactName,
         domain: prospect.domain
-      }, icp)
+      }, icp, signalWeights)
       const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
       const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
@@ -360,6 +365,96 @@ const recommendWorker = new Worker(
   { connection, concurrency: 3 }
 )
 
+// ── calibrate-scoring ──────────────────────────────────────────────────────────
+const calibrateWorker = new Worker(
+  'calibrate-scoring',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
+
+    await job.updateProgress(10)
+
+    // Fetch last 100 WON/LOST outcomes with prospect + signals
+    const rawOutcomes = await prisma.prospectOutcome.findMany({
+      where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
+      include: { prospect: { include: { signals: true } } },
+      orderBy: { recordedAt: 'desc' },
+      take: 100
+    })
+
+    await job.updateProgress(30)
+
+    const outcomes = rawOutcomes.map(o => ({
+      stage: o.stage as 'WON' | 'LOST',
+      prospect: {
+        industry: o.prospect.industry,
+        employeeCount: o.prospect.employeeCount,
+        signals: o.prospect.signals.map(s => ({ type: s.type }))
+      }
+    }))
+
+    const result = calibrate(outcomes)
+    await job.updateProgress(60)
+
+    if (!result.stats.calibrated) {
+      log('calibrate-scoring', `Skipped: ${result.stats.reason} (${result.stats.totalOutcomes} outcomes)`)
+      return result.stats
+    }
+
+    // Persist calibrated signal weights into ScoringModel
+    await prisma.scoringModel.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        weights: DEFAULT_SCORING_WEIGHTS,
+        signalWeights: result.signalWeights,
+        performanceMetrics: {
+          totalOutcomes: result.stats.totalOutcomes,
+          winRate: result.stats.baselineWinRate,
+          calibratedAt: new Date().toISOString()
+        }
+      },
+      update: {
+        signalWeights: result.signalWeights,
+        lastWeightUpdate: new Date(),
+        updateCount: { increment: 1 },
+        performanceMetrics: {
+          totalOutcomes: result.stats.totalOutcomes,
+          winRate: result.stats.baselineWinRate,
+          calibratedAt: new Date().toISOString()
+        }
+      }
+    })
+
+    await job.updateProgress(80)
+
+    // Apply ICP updates from WON deal characteristics
+    if (Object.keys(result.icpUpdate).length > 0) {
+      await prisma.workspaceICP.upsert({
+        where: { workspaceId },
+        create: {
+          workspaceId,
+          targetIndustries: result.icpUpdate.targetIndustries ?? [],
+          minEmployees: result.icpUpdate.minEmployees ?? 1,
+          maxEmployees: result.icpUpdate.maxEmployees ?? 999999,
+          targetGeos: [],
+          mustHaveEmail: false,
+        },
+        update: {
+          ...(result.icpUpdate.targetIndustries && { targetIndustries: result.icpUpdate.targetIndustries }),
+          ...(result.icpUpdate.minEmployees !== undefined && { minEmployees: result.icpUpdate.minEmployees }),
+          ...(result.icpUpdate.maxEmployees !== undefined && { maxEmployees: result.icpUpdate.maxEmployees }),
+        }
+      })
+    }
+
+    await job.updateProgress(100)
+    log('calibrate-scoring', `Done workspace=${workspaceId} winRate=${Math.round(result.stats.baselineWinRate * 100)}% signalTypes=${Object.keys(result.signalWeights).length}`)
+    return result.stats
+  },
+  { connection, concurrency: 1 }
+)
+
 // Attach error handlers
 for (const [name, worker] of [
   ['research-lead', researchWorker],
@@ -367,7 +462,8 @@ for (const [name, worker] of [
   ['analyze-reply', replyWorker],
   ['sync-mailbox', mailboxWorker],
   ['score-prospects', scoreProspectsWorker],
-  ['generate-recommendations', recommendWorker]
+  ['generate-recommendations', recommendWorker],
+  ['calibrate-scoring', calibrateWorker]
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -386,7 +482,8 @@ async function shutdown(signal: string) {
     replyWorker.close(),
     mailboxWorker.close(),
     scoreProspectsWorker.close(),
-    recommendWorker.close()
+    recommendWorker.close(),
+    calibrateWorker.close()
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -396,4 +493,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 6 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations)')
+console.log('[worker] Started — listening on 7 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring)')
