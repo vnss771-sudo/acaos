@@ -3,7 +3,9 @@ import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability } from '../lib/signalEngine.js'
+import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import type { RawSignal } from '../lib/signalEngine.js'
+import type { AuthedRequest } from '../types/auth.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
@@ -16,6 +18,9 @@ function toRawSignal(s: { type: string; strength: number; sourceReliability: num
 signalsRouter.get('/', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const where: Record<string, unknown> = { workspaceId }
   if (req.query.prospectId) where.prospectId = req.query.prospectId
@@ -39,8 +44,14 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   if (!type) throw new ApiError(400, 'type required')
   if (strength === undefined || strength < 0 || strength > 100) throw new ApiError(400, 'strength must be 0-100')
 
+  // Verify workspace membership
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  // Verify prospect belongs to the claimed workspace (IDOR guard)
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
+  if (prospect.workspaceId !== workspaceId) throw new ApiError(403, 'Access denied')
 
   const signal = await prisma.signal.create({
     data: {
@@ -58,8 +69,11 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     }
   })
 
-  // Rescore the prospect
-  const allSignals = await prisma.signal.findMany({ where: { prospectId } })
+  // Rescore the prospect — fetch ICP to make fit score workspace-aware
+  const [allSignals, icp] = await Promise.all([
+    prisma.signal.findMany({ where: { prospectId } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId } })
+  ])
   const rawSignals = allSignals.map(toRawSignal)
   const scores = calculateOpportunityScores(rawSignals, {
     industry: prospect.industry,
@@ -67,7 +81,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     contactEmail: prospect.contactEmail,
     contactName: prospect.contactName,
     domain: prospect.domain
-  })
+  }, icp)
   const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
@@ -84,6 +98,10 @@ signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const signalId = req.params.id as string
   const signal = await prisma.signal.findUnique({ where: { id: signalId } })
   if (!signal) throw new ApiError(404, 'Signal not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, signal.workspaceId)) throw new ApiError(403, 'Access denied')
+
   await prisma.signal.delete({ where: { id: signalId } })
   res.json({ ok: true })
 }))

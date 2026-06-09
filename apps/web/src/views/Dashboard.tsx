@@ -341,7 +341,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
             </thead>
             <tbody>
               {stats.topLeads.map(lead => {
-                const tier = lead.score >= 72 ? 'HOT' : lead.score >= 48 ? 'WARM' : 'COLD'
+                const tier = lead.score >= 72 ? 'HOT' : lead.score >= 45 ? 'WARM' : 'COLD'
                 return (
                   <tr key={lead.id}>
                     <td style={{ padding: '8px 12px 8px 0', color: colors.text, fontSize: 14 }}>{lead.businessName}</td>

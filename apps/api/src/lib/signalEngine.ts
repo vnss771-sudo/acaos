@@ -97,30 +97,45 @@ export type ProspectMeta = {
   domain?: string | null
 }
 
+export type ICPConfig = {
+  targetIndustries?: string[]
+  minEmployees?: number
+  maxEmployees?: number
+  targetGeos?: string[]
+  mustHaveEmail?: boolean
+}
+
 const ICP_INDUSTRIES = ['civil', 'electrical', 'plumbing', 'landscaping', 'facilities', 'hvac',
   'roofing', 'painting', 'flooring', 'mechanical', 'structural', 'construction', 'environmental',
   'infrastructure', 'utility', 'contractor', 'logistics', 'transport', 'warehouse', 'financial',
   'insurance', 'accounting', 'legal', 'consulting', 'engineering', 'manufacturing', 'retail',
   'hospitality', 'healthcare', 'technology', 'real estate', 'property']
 
-function calcFitScore(meta: ProspectMeta): number {
+function calcFitScore(meta: ProspectMeta, icp?: ICPConfig | null): number {
   let score = 40 // base
   if (meta.industry) {
-    const lower = meta.industry.toLowerCase()
-    if (ICP_INDUSTRIES.some(k => lower.includes(k))) score += 30
-    else score += 5
+    if (icp?.targetIndustries?.length) {
+      const lower = meta.industry.toLowerCase()
+      score += icp.targetIndustries.some(t => lower.includes(t.toLowerCase())) ? 35 : -10
+    } else {
+      const lower = meta.industry.toLowerCase()
+      score += ICP_INDUSTRIES.some(k => lower.includes(k)) ? 30 : 5
+    }
   }
+  const minE = icp?.minEmployees ?? 10
+  const maxE = icp?.maxEmployees ?? 500
   if (meta.employeeCount) {
-    if (meta.employeeCount >= 10 && meta.employeeCount <= 500) score += 20
-    else if (meta.employeeCount > 500) score += 5
+    if (meta.employeeCount >= minE && meta.employeeCount <= maxE) score += 20
+    else if (meta.employeeCount > maxE) score += 5
     else score += 10
   } else {
     score += 10 // unknown = some fit
   }
+  if (icp?.mustHaveEmail && !meta.contactEmail) score -= 20
   if (meta.contactEmail) score += 10
   if (meta.contactName) score += 5
   if (meta.domain) score += 5
-  return Math.min(100, score)
+  return Math.min(100, Math.max(0, score))
 }
 
 export type OpportunityScores = {
@@ -132,9 +147,9 @@ export type OpportunityScores = {
 }
 
 // Main scoring formula: geometric mean of 4 dimensions
-export function calculateOpportunityScores(signals: RawSignal[], meta: ProspectMeta): OpportunityScores {
+export function calculateOpportunityScores(signals: RawSignal[], meta: ProspectMeta, icp?: ICPConfig | null): OpportunityScores {
   const intentScore = Math.round(calcIntentScore(signals))
-  const fitScore = Math.round(calcFitScore(meta))
+  const fitScore = Math.round(calcFitScore(meta, icp))
   const timingScore = Math.round(calcTimingScore(signals))
   const confidenceScore = Math.round(calcConfidenceScore(signals))
 

@@ -272,6 +272,8 @@ const scoreProspectsWorker = new Worker(
 
     await job.updateProgress(10)
 
+    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+
     let updated = 0
     for (const prospect of prospects) {
       const rawSignals: RawSignal[] = prospect.signals.map(s => ({
@@ -288,7 +290,7 @@ const scoreProspectsWorker = new Worker(
         contactEmail: prospect.contactEmail,
         contactName: prospect.contactName,
         domain: prospect.domain
-      })
+      }, icp)
       const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
       const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 

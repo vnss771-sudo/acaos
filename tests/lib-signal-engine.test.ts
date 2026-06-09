@@ -9,7 +9,7 @@ import {
   generateRuleBasedRecommendation,
   EVENT_BASE_WEIGHTS
 } from '../apps/api/src/lib/signalEngine.js'
-import type { RawSignal, ProspectMeta, BuyingStage } from '../apps/api/src/lib/signalEngine.js'
+import type { RawSignal, ProspectMeta, ICPConfig, BuyingStage } from '../apps/api/src/lib/signalEngine.js'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -416,5 +416,58 @@ describe('full scoring pipeline integration', () => {
 
     assert.ok(expectedRevenue > 0, 'Expected revenue should be positive')
     assert.ok(expectedRevenue <= dealValue, 'Expected revenue should not exceed deal value')
+  })
+})
+
+// ── ICPConfig ──────────────────────────────────────────────────────────────────
+
+describe('ICPConfig — workspace-level fit scoring', () => {
+  const sigs = [makeSignal('HIRING', 0)]
+
+  it('no ICP falls back to generic industry list', () => {
+    const meta: ProspectMeta = { industry: 'construction', employeeCount: 50 }
+    const { fitScore } = calculateOpportunityScores(sigs, meta)
+    assert.ok(fitScore > 60, `Generic construction should score well: ${fitScore}`)
+  })
+
+  it('ICP industry match boosts fitScore vs no match', () => {
+    const meta: ProspectMeta = { industry: 'SaaS', employeeCount: 100 }
+    const icp: ICPConfig = { targetIndustries: ['SaaS', 'Software'], minEmployees: 50, maxEmployees: 500 }
+    const noICP = calculateOpportunityScores(sigs, meta)
+    const withICP = calculateOpportunityScores(sigs, meta, icp)
+    assert.ok(withICP.fitScore > noICP.fitScore, `ICP match (${withICP.fitScore}) should beat generic (${noICP.fitScore})`)
+  })
+
+  it('ICP industry mismatch reduces fitScore', () => {
+    const meta: ProspectMeta = { industry: 'Agriculture', employeeCount: 100 }
+    const icp: ICPConfig = { targetIndustries: ['SaaS', 'FinTech'] }
+    const noICP = calculateOpportunityScores(sigs, meta)
+    const withICP = calculateOpportunityScores(sigs, meta, icp)
+    assert.ok(withICP.fitScore < noICP.fitScore, `ICP mismatch (${withICP.fitScore}) should beat generic (${noICP.fitScore}) in reverse`)
+  })
+
+  it('employee count within ICP range boosts score', () => {
+    const inRange: ProspectMeta = { industry: 'Tech', employeeCount: 100 }
+    const outOfRange: ProspectMeta = { industry: 'Tech', employeeCount: 5000 }
+    const icp: ICPConfig = { minEmployees: 50, maxEmployees: 500 }
+    const { fitScore: inScore } = calculateOpportunityScores(sigs, inRange, icp)
+    const { fitScore: outScore } = calculateOpportunityScores(sigs, outOfRange, icp)
+    assert.ok(inScore > outScore, `In-range (${inScore}) should beat out-of-range (${outScore})`)
+  })
+
+  it('mustHaveEmail with no email penalises fitScore', () => {
+    const withEmail: ProspectMeta = { industry: 'Tech', contactEmail: 'a@b.com' }
+    const noEmail: ProspectMeta = { industry: 'Tech' }
+    const icp: ICPConfig = { mustHaveEmail: true }
+    const { fitScore: eScore } = calculateOpportunityScores(sigs, withEmail, icp)
+    const { fitScore: nScore } = calculateOpportunityScores(sigs, noEmail, icp)
+    assert.ok(eScore > nScore, `Has email (${eScore}) should beat no email (${nScore}) when mustHaveEmail=true`)
+  })
+
+  it('fitScore always stays within [0, 100]', () => {
+    const extremeICP: ICPConfig = { targetIndustries: ['XYZ'], mustHaveEmail: true, minEmployees: 1000, maxEmployees: 2000 }
+    const worstMeta: ProspectMeta = { industry: 'Agriculture' }
+    const { fitScore } = calculateOpportunityScores(sigs, worstMeta, extremeICP)
+    assert.ok(fitScore >= 0 && fitScore <= 100, `fitScore must be [0,100], got ${fitScore}`)
   })
 })

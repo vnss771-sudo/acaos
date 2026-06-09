@@ -39,6 +39,7 @@ model Workspace {
   signals          Signal[]
   recommendations  Recommendation[]
   prospectOutcomes ProspectOutcome[]
+  icp              WorkspaceICP?
 }
 
 model Membership {
@@ -312,4 +313,17 @@ model ProspectOutcome {
 
   @@index([workspaceId])
   @@index([prospectId])
+}
+
+model WorkspaceICP {
+  id               String    @id @default(cuid())
+  workspaceId      String    @unique
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  targetIndustries String[]  @default([])
+  minEmployees     Int       @default(1)
+  maxEmployees     Int       @default(999999)
+  targetGeos       String[]  @default([])
+  mustHaveEmail    Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }

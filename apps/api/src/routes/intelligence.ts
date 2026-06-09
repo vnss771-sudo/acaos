@@ -3,7 +3,9 @@ import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
+import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
+import type { AuthedRequest } from '../types/auth.js'
 
 export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
@@ -13,6 +15,9 @@ intelligenceRouter.use(requireAuth)
 intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
@@ -65,6 +70,9 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
@@ -143,6 +151,9 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const [totalProspects, signalCounts, tierDist, stageDist] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId } }),

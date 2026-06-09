@@ -133,6 +133,58 @@ workspaceRouter.post(
   })
 )
 
+// GET /api/workspaces/:id/icp — retrieve ICP config
+workspaceRouter.get(
+  '/:id/icp',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId },
+      select: { role: true }
+    })
+    if (!membership) throw new ApiError(403, 'Access denied')
+
+    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+    res.json({ icp: icp ?? { workspaceId, targetIndustries: [], minEmployees: 1, maxEmployees: 999999, targetGeos: [], mustHaveEmail: false } })
+  })
+)
+
+// PUT /api/workspaces/:id/icp — upsert ICP config
+workspaceRouter.put(
+  '/:id/icp',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
+      select: { role: true }
+    })
+    if (!membership) throw new ApiError(403, 'Must be owner or admin to update ICP')
+
+    const { targetIndustries, minEmployees, maxEmployees, targetGeos, mustHaveEmail } = req.body
+    const icp = await prisma.workspaceICP.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        targetIndustries: Array.isArray(targetIndustries) ? targetIndustries : [],
+        minEmployees: minEmployees ? Number(minEmployees) : 1,
+        maxEmployees: maxEmployees ? Number(maxEmployees) : 999999,
+        targetGeos: Array.isArray(targetGeos) ? targetGeos : [],
+        mustHaveEmail: Boolean(mustHaveEmail),
+      },
+      update: {
+        ...(Array.isArray(targetIndustries) && { targetIndustries }),
+        ...(minEmployees !== undefined && { minEmployees: Number(minEmployees) }),
+        ...(maxEmployees !== undefined && { maxEmployees: Number(maxEmployees) }),
+        ...(Array.isArray(targetGeos) && { targetGeos }),
+        ...(mustHaveEmail !== undefined && { mustHaveEmail: Boolean(mustHaveEmail) }),
+      }
+    })
+    res.json({ icp })
+  })
+)
+
 workspaceRouter.get(
   '/:id/members',
   asyncHandler(async (req, res) => {
