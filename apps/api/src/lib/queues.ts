@@ -52,3 +52,11 @@ export async function getJobById(queueName: string, jobId: string) {
   const { Job } = await import('bullmq')
   return Job.fromId(getQueue(queueName), jobId)
 }
+
+export async function enqueueScoreProspects(workspaceId: string) {
+  return getQueue('score-prospects').add('score-prospects', { workspaceId }, defaultJobOpts)
+}
+
+export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string) {
+  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId }, defaultJobOpts)
+}
