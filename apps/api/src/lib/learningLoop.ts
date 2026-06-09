@@ -70,19 +70,21 @@ export function calibrate(outcomes: OutcomeRecord[]): CalibrationResult {
   const icpUpdate: CalibrationResult['icpUpdate'] = {}
 
   if (wonCount >= MIN_SAMPLES) {
-    // Top industries from WON deals (≥ 2 occurrences)
+    // Top industries from WON deals (≥ 2 occurrences) — group case-insensitively, preserve original casing
+    const industryFirst  = new Map<string, string>()
     const industryCounts = new Map<string, number>()
     for (const o of wonOutcomes) {
       if (o.prospect.industry) {
-        const normalized = o.prospect.industry.toLowerCase().trim()
-        industryCounts.set(normalized, (industryCounts.get(normalized) ?? 0) + 1)
+        const key = o.prospect.industry.trim().toLowerCase()
+        if (!industryFirst.has(key)) industryFirst.set(key, o.prospect.industry.trim())
+        industryCounts.set(key, (industryCounts.get(key) ?? 0) + 1)
       }
     }
     const topIndustries = [...industryCounts.entries()]
       .filter(([, count]) => count >= 2)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
-      .map(([industry]) => industry)
+      .map(([key]) => industryFirst.get(key) ?? key)
     if (topIndustries.length > 0) {
       icpUpdate.targetIndustries = topIndustries
     }
