@@ -62,6 +62,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     latestSignal: p.signals[0] ?? null,
     signalCount: p.signals.length,
     topRecommendation: p.recommendations[0] ?? null,
+    isActivated: p.signals.some(s => s.type === 'PROBLEM_OWNER_ACTIVATION'),
   })
 
   res.json({
@@ -81,7 +82,8 @@ intelligenceRouter.get('/strategy-cards', asyncHandler(async (req, res) => {
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
     include: {
-      recommendations: { orderBy: { createdAt: 'desc' }, take: 1 }
+      recommendations: { orderBy: { createdAt: 'desc' }, take: 1 },
+      signals: { where: { type: 'PROBLEM_OWNER_ACTIVATION' }, take: 1 }
     },
     orderBy: { expectedRevenueScore: 'desc' },
     take: limit
@@ -103,6 +105,7 @@ intelligenceRouter.get('/strategy-cards', asyncHandler(async (req, res) => {
       contactEmail: p.contactEmail,
       contactTitle: p.contactTitle,
       recommendation: p.recommendations[0] ?? null,
+      isActivated: p.signals.length > 0,
     }))
   })
 }))

@@ -1,5 +1,5 @@
 // Signal intelligence engine — decay functions, opportunity scoring, buying stage detection,
-// expected revenue scoring, and signal normalization
+// expected revenue scoring, signal normalization, and Problem-Owner Activation detection
 
 export type SignalType =
   // Broad acquisition signals
@@ -9,6 +9,8 @@ export type SignalType =
   | 'JOB_POSTING_SPIKE' | 'CONTRACT_AWARDED' | 'TENDER_PUBLISHED' | 'PERMIT_APPROVED'
   | 'OFFICE_OPENING' | 'PRICING_PAGE_CHANGED' | 'ENTERPRISE_PAGE_LAUNCHED'
   | 'GOV_GRANT_RECEIVED' | 'PROJECT_START_DETECTED' | 'TECH_STACK_CHANGED'
+  // Composite activation signal: operational trigger + named ownership + solution-seeking
+  | 'PROBLEM_OWNER_ACTIVATION'
 
 export type BuyingStage = 'RESEARCHING' | 'EVALUATING' | 'COMPARING' | 'PURCHASING' | 'INACTIVE'
 export type OutcomeStage = 'DISCOVERED' | 'VIEWED' | 'CONTACTED' | 'MEETING' | 'PROPOSAL' | 'WON' | 'LOST'
@@ -36,6 +38,8 @@ const SIGNAL_DECAY_RATES: Record<SignalType, number> = {
   GOV_GRANT_RECEIVED: 0.007,
   PROJECT_START_DETECTED: 0.009,
   TECH_STACK_CHANGED: 0.014,
+  // Composite signal — buying windows close fast
+  PROBLEM_OWNER_ACTIVATION: 0.018,
 }
 
 // Base event weights (0-100): higher = stronger buying signal
@@ -61,6 +65,8 @@ export const EVENT_BASE_WEIGHTS: Record<SignalType, number> = {
   ENTERPRISE_PAGE_LAUNCHED: 68,
   TECH_STACK_CHANGED: 65,
   PRICING_PAGE_CHANGED: 60,
+  // Seal-the-deal composite signal
+  PROBLEM_OWNER_ACTIVATION: 100,
 }
 
 // Signal normalization: what buying category does each type imply?
@@ -72,25 +78,26 @@ export type SignalNormalization = {
 }
 
 const SIGNAL_NORMALIZATIONS: Record<SignalType, SignalNormalization> = {
-  FUNDING:                 { normalizedType: 'growth',       category: 'financial',    buyingImplication: 'spending_capacity_unlocked',     predictedNeeds: ['scaling_software', 'staffing', 'infrastructure'] },
-  CONTRACT_AWARDED:        { normalizedType: 'growth',       category: 'market',       buyingImplication: 'project_delivery_pressure',       predictedNeeds: ['project_management', 'workforce', 'subcontractors'] },
-  TENDER_PUBLISHED:        { normalizedType: 'market_entry', category: 'market',       buyingImplication: 'active_procurement_intent',        predictedNeeds: ['compliance', 'project_management', 'specialist_labour'] },
-  HIRING:                  { normalizedType: 'growth',       category: 'operational',  buyingImplication: 'team_expansion_operational_need', predictedNeeds: ['onboarding_software', 'hr_tools', 'workflow_tools'] },
-  JOB_POSTING_SPIKE:       { normalizedType: 'growth',       category: 'operational',  buyingImplication: 'rapid_team_growth_imminent',       predictedNeeds: ['ats', 'onboarding', 'workforce_management'] },
-  PERMIT_APPROVED:         { normalizedType: 'growth',       category: 'market',       buyingImplication: 'project_commencement_confirmed',   predictedNeeds: ['site_management', 'materials', 'labour'] },
-  GOV_GRANT_RECEIVED:      { normalizedType: 'growth',       category: 'financial',    buyingImplication: 'funded_project_starting',          predictedNeeds: ['compliance_reporting', 'project_tools', 'specialist_services'] },
-  PROJECT_START_DETECTED:  { normalizedType: 'growth',       category: 'operational',  buyingImplication: 'new_project_resources_needed',     predictedNeeds: ['project_management', 'labour', 'equipment'] },
-  OFFICE_OPENING:          { normalizedType: 'market_entry', category: 'market',       buyingImplication: 'geographic_expansion_underway',    predictedNeeds: ['local_vendors', 'fitout', 'comms_infrastructure'] },
-  EXPANSION:               { normalizedType: 'growth',       category: 'market',       buyingImplication: 'capacity_or_market_expansion',     predictedNeeds: ['operations_tools', 'staffing', 'logistics'] },
-  LEADERSHIP_CHANGE:       { normalizedType: 'market_entry', category: 'operational',  buyingImplication: 'vendor_reset_opportunity',         predictedNeeds: ['strategy_consulting', 'new_tools', 'process_review'] },
-  TECH_ADOPTION:           { normalizedType: 'efficiency',   category: 'digital',      buyingImplication: 'digital_transformation_active',    predictedNeeds: ['integrations', 'training', 'support'] },
-  TECH_STACK_CHANGED:      { normalizedType: 'efficiency',   category: 'digital',      buyingImplication: 'platform_migration_in_progress',   predictedNeeds: ['migration_services', 'integrations', 'training'] },
-  ENTERPRISE_PAGE_LAUNCHED:{ normalizedType: 'market_entry', category: 'digital',      buyingImplication: 'upmarket_repositioning',           predictedNeeds: ['enterprise_tools', 'compliance', 'sso_security'] },
-  PRICING_PAGE_CHANGED:    { normalizedType: 'market_entry', category: 'digital',      buyingImplication: 'pricing_strategy_shift',           predictedNeeds: ['billing_tools', 'analytics', 'sales_enablement'] },
-  PROCUREMENT:             { normalizedType: 'cost_reduction', category: 'operational', buyingImplication: 'active_vendor_evaluation',         predictedNeeds: ['vendor_management', 'procurement_software', 'compliance'] },
-  NEWS_MENTION:            { normalizedType: 'growth',       category: 'market',       buyingImplication: 'brand_momentum_visible',           predictedNeeds: ['pr_tools', 'crm', 'outbound_tools'] },
-  WEBSITE_CHANGE:          { normalizedType: 'growth',       category: 'digital',      buyingImplication: 'business_evolution_signalled',     predictedNeeds: ['digital_services', 'analytics', 'content'] },
-  BUSINESS_REGISTRATION:   { normalizedType: 'market_entry', category: 'market',       buyingImplication: 'new_entrant_needs_everything',      predictedNeeds: ['accounting', 'banking', 'saas_stack', 'insurance'] },
+  FUNDING:                   { normalizedType: 'growth',         category: 'financial',   buyingImplication: 'spending_capacity_unlocked',         predictedNeeds: ['scaling_software', 'staffing', 'infrastructure'] },
+  CONTRACT_AWARDED:          { normalizedType: 'growth',         category: 'market',      buyingImplication: 'project_delivery_pressure',          predictedNeeds: ['project_management', 'workforce', 'subcontractors'] },
+  TENDER_PUBLISHED:          { normalizedType: 'market_entry',   category: 'market',      buyingImplication: 'active_procurement_intent',          predictedNeeds: ['compliance', 'project_management', 'specialist_labour'] },
+  HIRING:                    { normalizedType: 'growth',         category: 'operational', buyingImplication: 'team_expansion_operational_need',    predictedNeeds: ['onboarding_software', 'hr_tools', 'workflow_tools'] },
+  JOB_POSTING_SPIKE:         { normalizedType: 'growth',         category: 'operational', buyingImplication: 'rapid_team_growth_imminent',         predictedNeeds: ['ats', 'onboarding', 'workforce_management'] },
+  PERMIT_APPROVED:           { normalizedType: 'growth',         category: 'market',      buyingImplication: 'project_commencement_confirmed',     predictedNeeds: ['site_management', 'materials', 'labour'] },
+  GOV_GRANT_RECEIVED:        { normalizedType: 'growth',         category: 'financial',   buyingImplication: 'funded_project_starting',            predictedNeeds: ['compliance_reporting', 'project_tools', 'specialist_services'] },
+  PROJECT_START_DETECTED:    { normalizedType: 'growth',         category: 'operational', buyingImplication: 'new_project_resources_needed',       predictedNeeds: ['project_management', 'labour', 'equipment'] },
+  OFFICE_OPENING:            { normalizedType: 'market_entry',   category: 'market',      buyingImplication: 'geographic_expansion_underway',      predictedNeeds: ['local_vendors', 'fitout', 'comms_infrastructure'] },
+  EXPANSION:                 { normalizedType: 'growth',         category: 'market',      buyingImplication: 'capacity_or_market_expansion',       predictedNeeds: ['operations_tools', 'staffing', 'logistics'] },
+  LEADERSHIP_CHANGE:         { normalizedType: 'market_entry',   category: 'operational', buyingImplication: 'vendor_reset_opportunity',           predictedNeeds: ['strategy_consulting', 'new_tools', 'process_review'] },
+  TECH_ADOPTION:             { normalizedType: 'efficiency',     category: 'digital',     buyingImplication: 'digital_transformation_active',      predictedNeeds: ['integrations', 'training', 'support'] },
+  TECH_STACK_CHANGED:        { normalizedType: 'efficiency',     category: 'digital',     buyingImplication: 'platform_migration_in_progress',     predictedNeeds: ['migration_services', 'integrations', 'training'] },
+  ENTERPRISE_PAGE_LAUNCHED:  { normalizedType: 'market_entry',   category: 'digital',     buyingImplication: 'upmarket_repositioning',             predictedNeeds: ['enterprise_tools', 'compliance', 'sso_security'] },
+  PRICING_PAGE_CHANGED:      { normalizedType: 'market_entry',   category: 'digital',     buyingImplication: 'pricing_strategy_shift',             predictedNeeds: ['billing_tools', 'analytics', 'sales_enablement'] },
+  PROCUREMENT:               { normalizedType: 'cost_reduction', category: 'operational', buyingImplication: 'active_vendor_evaluation',           predictedNeeds: ['vendor_management', 'procurement_software', 'compliance'] },
+  NEWS_MENTION:              { normalizedType: 'growth',         category: 'market',      buyingImplication: 'brand_momentum_visible',             predictedNeeds: ['pr_tools', 'crm', 'outbound_tools'] },
+  WEBSITE_CHANGE:            { normalizedType: 'growth',         category: 'digital',     buyingImplication: 'business_evolution_signalled',       predictedNeeds: ['digital_services', 'analytics', 'content'] },
+  BUSINESS_REGISTRATION:     { normalizedType: 'market_entry',   category: 'market',      buyingImplication: 'new_entrant_needs_everything',       predictedNeeds: ['accounting', 'banking', 'saas_stack', 'insurance'] },
+  PROBLEM_OWNER_ACTIVATION:  { normalizedType: 'growth',         category: 'operational', buyingImplication: 'active_solution_search_confirmed',   predictedNeeds: ['immediate_vendor', 'fast_onboarding', 'proven_solution'] },
 }
 
 export function normalizeSignal(type: SignalType): SignalNormalization {
@@ -103,22 +110,27 @@ export function normalizeSignal(type: SignalType): SignalNormalization {
 }
 
 // Industry-specific signal priority matrix — construction/civil example
-// These override EVENT_BASE_WEIGHTS for ICP-matched industries
 const INDUSTRY_SIGNAL_BOOST: Partial<Record<string, Partial<Record<SignalType, number>>>> = {
   construction: {
     CONTRACT_AWARDED: 100, TENDER_PUBLISHED: 100, PERMIT_APPROVED: 95,
     JOB_POSTING_SPIKE: 90, GOV_GRANT_RECEIVED: 88, PROJECT_START_DETECTED: 92,
+    PROBLEM_OWNER_ACTIVATION: 100,
   },
   logistics: {
     OFFICE_OPENING: 90, HIRING: 88, EXPANSION: 92, CONTRACT_AWARDED: 85,
+    PROBLEM_OWNER_ACTIVATION: 100,
   },
   saas: {
     FUNDING: 100, TECH_STACK_CHANGED: 85, ENTERPRISE_PAGE_LAUNCHED: 90, PRICING_PAGE_CHANGED: 80,
+    PROBLEM_OWNER_ACTIVATION: 100,
   },
   financial: {
     LEADERSHIP_CHANGE: 85, PROCUREMENT: 88, FUNDING: 90,
+    PROBLEM_OWNER_ACTIVATION: 100,
   },
 }
+
+export type IndustryBoostConfig = Partial<Record<string, Partial<Record<SignalType, number>>>>
 
 function getIndustryWeight(type: SignalType, industry?: string | null, industryBoosts?: IndustryBoostConfig): number {
   if (!industry) return EVENT_BASE_WEIGHTS[type]
@@ -138,6 +150,11 @@ export type RawSignal = {
   sourceReliability: number
   industryRelevance: number
   detectedAt: Date
+}
+
+export type FullSignal = RawSignal & {
+  title?: string | null
+  description?: string | null
 }
 
 // Decayed signal strength accounting for age
@@ -180,11 +197,10 @@ function calcConfidenceScore(signals: RawSignal[]): number {
   if (signals.length === 0) return 10
   const avgReliability = signals.reduce((s, sig) => s + sig.sourceReliability, 0) / signals.length
   const avgRelevance = signals.reduce((s, sig) => s + sig.industryRelevance, 0) / signals.length
-  const countBonus = Math.min(30, signals.length * 8) // up to +30 for 4+ signals
+  const countBonus = Math.min(30, signals.length * 8)
   return Math.min(100, avgReliability * 0.4 + avgRelevance * 0.3 + countBonus)
 }
 
-// ICP Fit score from prospect metadata
 export type ProspectMeta = {
   industry?: string | null
   employeeCount?: number | null
@@ -203,7 +219,6 @@ export type ICPConfig = {
 }
 
 export type SignalWeights = Partial<Record<SignalType, number>>
-export type IndustryBoostConfig = Partial<Record<string, Partial<Record<SignalType, number>>>>
 
 const ICP_INDUSTRIES = ['civil', 'electrical', 'plumbing', 'landscaping', 'facilities', 'hvac',
   'roofing', 'painting', 'flooring', 'mechanical', 'structural', 'construction', 'environmental',
@@ -254,9 +269,9 @@ export function calculateOpportunityScores(
   signalWeights?: SignalWeights,
   industryBoosts?: IndustryBoostConfig
 ): OpportunityScores {
-  const intentScore    = Math.round(calcIntentScore(signals, signalWeights, meta.industry, industryBoosts))
-  const fitScore       = Math.round(calcFitScore(meta, icp))
-  const timingScore    = Math.round(calcTimingScore(signals))
+  const intentScore     = Math.round(calcIntentScore(signals, signalWeights, meta.industry, industryBoosts))
+  const fitScore        = Math.round(calcFitScore(meta, icp))
+  const timingScore     = Math.round(calcTimingScore(signals))
   const confidenceScore = Math.round(calcConfidenceScore(signals))
 
   const product = intentScore * fitScore * timingScore * confidenceScore
@@ -266,8 +281,6 @@ export function calculateOpportunityScores(
 }
 
 // ── Expected Revenue Score ────────────────────────────────────────────────────
-// Dollar-weighted ranking: P(Convert) × DealValue × Retention × (1 + Expansion)
-// Answers: "Is this opportunity worth pursuing right now?"
 
 export function calculateExpectedRevenue(
   winProbability: number | null | undefined,
@@ -285,7 +298,6 @@ export function calculateExpectedRevenue(
 // Compute decay deadline for a signal (when decayed strength < 5% of original)
 export function computeSignalExpiry(type: SignalType, detectedAt: Date): Date {
   const rate = SIGNAL_DECAY_RATES[type] ?? 0.01
-  // decay < 5%: e^(-rate × days) < 0.05 → days > -ln(0.05)/rate
   const daysToExpiry = Math.ceil(-Math.log(0.05) / rate)
   return new Date(detectedAt.getTime() + daysToExpiry * 86_400_000)
 }
@@ -300,6 +312,10 @@ export function detectBuyingStage(signals: RawSignal[], opportunityScore: number
   if (ageDays > 90) return 'INACTIVE'
 
   const types = new Set(signals.map(s => s.type))
+
+  // Problem-Owner Activation is the strongest possible signal — immediate PURCHASING
+  if (types.has('PROBLEM_OWNER_ACTIVATION')) return 'PURCHASING'
+
   const hasFunding     = types.has('FUNDING')
   const hasHiring      = types.has('HIRING') || types.has('JOB_POSTING_SPIKE')
   const hasProcurement = types.has('PROCUREMENT') || types.has('TENDER_PUBLISHED') || types.has('CONTRACT_AWARDED')
@@ -312,7 +328,6 @@ export function detectBuyingStage(signals: RawSignal[], opportunityScore: number
   return 'RESEARCHING'
 }
 
-// Win probability by buying stage, adjusted by opportunity score
 const STAGE_BASE_PROBS: Record<BuyingStage, number> = {
   INACTIVE:    0.02,
   RESEARCHING: 0.05,
@@ -327,7 +342,6 @@ export function calcWinProbability(stage: BuyingStage, opportunityScore: number)
   return Math.max(0.01, Math.min(0.95, base * (1 + adjustment)))
 }
 
-// Human-readable tier
 export function getOpportunityTier(score: number): 'HOT' | 'WARM' | 'COLD' {
   if (score >= 72) return 'HOT'
   if (score >= 45) return 'WARM'
@@ -374,20 +388,25 @@ export function generateRuleBasedRecommendation(
     OFFICE_OPENING: 'GROWTH', PRICING_PAGE_CHANGED: 'COST_SAVINGS',
     ENTERPRISE_PAGE_LAUNCHED: 'GROWTH', GOV_GRANT_RECEIVED: 'GROWTH',
     PROJECT_START_DETECTED: 'EFFICIENCY', TECH_STACK_CHANGED: 'EFFICIENCY',
+    PROBLEM_OWNER_ACTIVATION: 'EFFICIENCY',
   }
   const messageAngle = dominant ? ANGLE_MAP[dominant.type] : 'GROWTH'
 
   const ageDays = dominant
     ? (Date.now() - dominant.detectedAt.getTime()) / 86_400_000
     : 999
-  const bestTiming = ageDays < 3 ? 'Today — signal is very fresh'
+
+  const isProblemOwner = dominant?.type === 'PROBLEM_OWNER_ACTIVATION'
+
+  const bestTiming = isProblemOwner ? 'Today — buying window is open NOW'
+    : ageDays < 3 ? 'Today — signal is very fresh'
     : ageDays < 7 ? 'This week — signal is still hot'
     : ageDays < 14 ? 'Within 2 weeks — signal is warm'
     : ageDays < 30 ? 'This month — signal is cooling'
     : 'Anytime — prioritize other hot prospects first'
 
-  const urgency  = ageDays < 3 ? 'HIGH' : ageDays < 14 ? 'MEDIUM' : 'LOW'
-  const priority = Math.max(10, Math.min(100, Math.round(100 - ageDays * 0.8)))
+  const urgency  = isProblemOwner ? 'HIGH' : ageDays < 3 ? 'HIGH' : ageDays < 14 ? 'MEDIUM' : 'LOW'
+  const priority = isProblemOwner ? 100 : Math.max(10, Math.min(100, Math.round(100 - ageDays * 0.8)))
 
   const bestContact = meta.contactName ?? 'Decision maker / owner'
 
@@ -411,6 +430,7 @@ export function generateRuleBasedRecommendation(
     GOV_GRANT_RECEIVED: 'Government grant confirms funded project with procurement needs',
     PROJECT_START_DETECTED: 'Project start signals immediate resource and vendor requirements',
     TECH_STACK_CHANGED: 'Technology stack change signals platform migration and integration needs',
+    PROBLEM_OWNER_ACTIVATION: 'Someone has been assigned to solve the exact problem you sell against — buying window is open',
   }
   const reasoning = dominant ? REASON_MAP[dominant.type] : 'Based on company profile and industry fit'
 
@@ -419,14 +439,14 @@ export function generateRuleBasedRecommendation(
     LINKEDIN: 'Connect on LinkedIn with personalized message',
     PHONE: `Call${meta.contactPhone ? ` ${meta.contactPhone}` : ' main number'}`,
   }
-  const actionText = ACTION_MAP[bestChannel]
+  const actionText = isProblemOwner
+    ? `${ACTION_MAP[bestChannel]} — reference their specific operational pain directly`
+    : ACTION_MAP[bestChannel]
 
-  // Predicted need from the dominant signal's normalization
   const norm = dominant ? normalizeSignal(dominant.type) : null
   const predictedNeed = norm?.predictedNeeds.slice(0, 3).join(', ') ?? 'Operational support'
 
-  // Meeting probability: win probability boosted by signal freshness
-  const freshnessMultiplier = ageDays < 7 ? 1.3 : ageDays < 30 ? 1.0 : 0.7
+  const freshnessMultiplier = isProblemOwner ? 2.0 : ageDays < 7 ? 1.3 : ageDays < 30 ? 1.0 : 0.7
   const meetingProbability = Math.min(0.95, winProbability * freshnessMultiplier * 1.5)
 
   return { bestContact, bestTiming, bestChannel, messageAngle, reasoning, actionText, urgency, priority, predictedNeed, meetingProbability }
@@ -434,7 +454,6 @@ export function generateRuleBasedRecommendation(
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-// Convert a DB Signal row to RawSignal for scoring functions
 export function toRawSignal(s: {
   type: SignalType
   strength: number
@@ -449,6 +468,18 @@ export function toRawSignal(s: {
     industryRelevance: s.industryRelevance,
     detectedAt: s.detectedAt,
   }
+}
+
+export function toFullSignal(s: {
+  type: SignalType
+  strength: number
+  sourceReliability: number
+  industryRelevance: number
+  detectedAt: Date
+  title?: string | null
+  description?: string | null
+}): FullSignal {
+  return { ...toRawSignal(s), title: s.title, description: s.description }
 }
 
 const STAGE_ORDER: Record<BuyingStage, number> = {
@@ -488,4 +519,116 @@ export function predictBuyingIntent(
   const confidence = Math.min(95, 40 + recentCount * 10 + Math.round(opportunityScore * 0.3))
 
   return { predictedStage, confidence, trajectory, nextAction: NEXT_ACTION_MAP[predictedStage] }
+}
+
+// ── Problem-Owner Activation Detection ────────────────────────────────────────
+// The signal that seals the deal: a company has a real pain, a deadline, and
+// someone internally has been assigned to fix it — and they're actively looking.
+
+// Operational triggers: events that create urgency and project/budget pressure
+const OPERATIONAL_TRIGGERS = new Set<SignalType>([
+  'CONTRACT_AWARDED', 'TENDER_PUBLISHED', 'PERMIT_APPROVED',
+  'GOV_GRANT_RECEIVED', 'PROJECT_START_DETECTED', 'EXPANSION', 'OFFICE_OPENING',
+])
+
+// Solution-seeking signals: behaviors showing they're actively evaluating
+const SOLUTION_SEEKING = new Set<SignalType>([
+  'PROCUREMENT', 'PRICING_PAGE_CHANGED', 'ENTERPRISE_PAGE_LAUNCHED',
+  'TECH_ADOPTION', 'TECH_STACK_CHANGED', 'WEBSITE_CHANGE',
+])
+
+// Keywords in job posting titles/descriptions that confirm operational pain ownership
+const ROLE_KEYWORDS = [
+  'coordinator', 'scheduling', 'compliance', 'crew', 'subcontractor', 'subcontract',
+  'site management', 'field operation', 'job tracking', 'job update', 'progress report',
+  'paperwork', 'documentation', 'multi-site', 'multiple site', 'project coordinator',
+  'operations coordinator', 'operations manager', 'office manager', 'workflow',
+  'team coordination', 'site supervisor', 'dispatch', 'timesheet', 'rostering',
+  'workforce management', 'resource planning', 'site admin', 'onboarding coordinator',
+]
+
+export type ProblemOwnerResult = {
+  activated: boolean
+  confidence: number
+  activationTier: 'CONFIRMED' | 'PROBABLE' | 'POSSIBLE' | null
+  evidencePieces: string[]
+  recommendedStrength: number
+}
+
+export function detectProblemOwnerActivation(
+  signals: FullSignal[],
+  windowDays = 45
+): ProblemOwnerResult {
+  const NONE: ProblemOwnerResult = {
+    activated: false, confidence: 0, activationTier: null,
+    evidencePieces: [], recommendedStrength: 0,
+  }
+
+  const cutoff = new Date(Date.now() - windowDays * 86_400_000)
+  const recent = signals.filter(
+    s => s.type !== 'PROBLEM_OWNER_ACTIVATION' && s.detectedAt >= cutoff
+  )
+
+  // Requirement: must have at least one operational trigger in window
+  const trigger = recent.find(s => OPERATIONAL_TRIGGERS.has(s.type))
+  if (!trigger) return NONE
+
+  const evidencePieces: string[] = []
+  let score = 0
+
+  // Layer 1: Operational trigger (required, 40 pts base)
+  score += 40
+  const triggerAge = (Date.now() - trigger.detectedAt.getTime()) / 86_400_000
+  evidencePieces.push(`${trigger.type.replace(/_/g, ' ')} detected${triggerAge < 14 ? ' (fresh)' : ''}`)
+
+  // Layer 2: Hiring with named ownership (25 pts)
+  const hiringSignal = recent.find(s => s.type === 'HIRING' || s.type === 'JOB_POSTING_SPIKE')
+  if (hiringSignal) {
+    score += 25
+    evidencePieces.push('Active hiring underway')
+
+    // Layer 3: Role-specific keywords in job ad (20 pts) — confirms who is being assigned
+    const text = `${hiringSignal.title ?? ''} ${hiringSignal.description ?? ''}`.toLowerCase()
+    const matchedKeyword = ROLE_KEYWORDS.find(kw => text.includes(kw))
+    if (matchedKeyword) {
+      score += 20
+      evidencePieces.push(`Job posting mentions "${matchedKeyword}" — operational pain confirmed`)
+    }
+  }
+
+  // Layer 4: Active solution-seeking (15 pts)
+  const solutionSignal = recent.find(s => SOLUTION_SEEKING.has(s.type))
+  if (solutionSignal) {
+    score += 15
+    evidencePieces.push(`${solutionSignal.type.replace(/_/g, ' ')} — actively evaluating solutions`)
+  }
+
+  // Recency multiplier: fresh trigger amplifies urgency
+  if (triggerAge < 14) {
+    score = Math.round(score * 1.15)
+    if (!evidencePieces[0].includes('fresh')) {
+      evidencePieces[0] += ' (fresh — window is open)'
+    }
+  }
+
+  const confidence = Math.min(100, score)
+
+  // Tiers: POSSIBLE ≥45, PROBABLE ≥65, CONFIRMED ≥85
+  const activationTier: ProblemOwnerResult['activationTier'] =
+    confidence >= 85 ? 'CONFIRMED' :
+    confidence >= 65 ? 'PROBABLE'  :
+    confidence >= 45 ? 'POSSIBLE'  : null
+
+  const recommendedStrength = activationTier === 'CONFIRMED' ? 95
+    : activationTier === 'PROBABLE' ? 80
+    : activationTier === 'POSSIBLE' ? 65
+    : 0
+
+  return {
+    activated: activationTier !== null,
+    confidence,
+    activationTier,
+    evidencePieces,
+    recommendedStrength,
+  }
 }

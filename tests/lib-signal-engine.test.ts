@@ -10,9 +10,10 @@ import {
   generateRuleBasedRecommendation,
   normalizeSignal,
   computeSignalExpiry,
+  detectProblemOwnerActivation,
   EVENT_BASE_WEIGHTS
 } from '../apps/api/src/lib/signalEngine.js'
-import type { RawSignal, ProspectMeta, BuyingStage, SignalType } from '../apps/api/src/lib/signalEngine.js'
+import type { RawSignal, FullSignal, ProspectMeta, BuyingStage, SignalType } from '../apps/api/src/lib/signalEngine.js'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -521,6 +522,109 @@ describe('normalizeSignal', () => {
       assert.ok(norm.normalizedType, `${type} missing normalizedType`)
       assert.ok(norm.category, `${type} missing category`)
     }
+  })
+})
+
+// ── detectProblemOwnerActivation ──────────────────────────────────────────────
+
+describe('detectProblemOwnerActivation', () => {
+  function makeFullSignal(
+    type: RawSignal['type'],
+    ageDays = 0,
+    strength = 80,
+    title = '',
+    description = ''
+  ): FullSignal {
+    return {
+      type, strength, sourceReliability: 80, industryRelevance: 70,
+      detectedAt: new Date(Date.now() - ageDays * 86_400_000),
+      title, description,
+    }
+  }
+
+  it('returns not activated when no signals', () => {
+    const result = detectProblemOwnerActivation([])
+    assert.equal(result.activated, false)
+    assert.equal(result.activationTier, null)
+  })
+
+  it('returns not activated when no operational trigger present', () => {
+    const result = detectProblemOwnerActivation([
+      makeFullSignal('HIRING', 0),
+      makeFullSignal('FUNDING', 1),
+    ])
+    assert.equal(result.activated, false)
+  })
+
+  it('old trigger (>14 days) alone scores below POSSIBLE threshold', () => {
+    // 40 pts, no recency multiplier → < 45 threshold
+    const result = detectProblemOwnerActivation([makeFullSignal('CONTRACT_AWARDED', 20)])
+    assert.equal(result.activated, false)
+    assert.equal(result.activationTier, null)
+  })
+
+  it('fresh trigger alone reaches POSSIBLE tier', () => {
+    // 40 × 1.15 = 46 → POSSIBLE
+    const result = detectProblemOwnerActivation([makeFullSignal('CONTRACT_AWARDED', 0)])
+    assert.equal(result.activated, true)
+    assert.equal(result.activationTier, 'POSSIBLE')
+    assert.equal(result.recommendedStrength, 65)
+  })
+
+  it('trigger + hiring reaches PROBABLE tier', () => {
+    // 40 (old trigger) + 25 (hiring) = 65 → PROBABLE
+    const result = detectProblemOwnerActivation([
+      makeFullSignal('PERMIT_APPROVED', 20),
+      makeFullSignal('HIRING', 5),
+    ])
+    assert.equal(result.activated, true)
+    assert.equal(result.activationTier, 'PROBABLE')
+    assert.equal(result.recommendedStrength, 80)
+  })
+
+  it('trigger + hiring + role keywords reaches CONFIRMED tier', () => {
+    // 40 + 25 + 20 = 85 → CONFIRMED
+    const result = detectProblemOwnerActivation([
+      makeFullSignal('CONTRACT_AWARDED', 20),
+      makeFullSignal('JOB_POSTING_SPIKE', 5, 80,
+        'Operations Coordinator',
+        'Manage scheduling, compliance, subcontractors across multiple sites'),
+    ])
+    assert.equal(result.activated, true)
+    assert.equal(result.activationTier, 'CONFIRMED')
+    assert.equal(result.recommendedStrength, 95)
+  })
+
+  it('signals outside the window are ignored', () => {
+    const result = detectProblemOwnerActivation([makeFullSignal('CONTRACT_AWARDED', 50)], 45)
+    assert.equal(result.activated, false)
+  })
+
+  it('evidencePieces describes each detected layer', () => {
+    const result = detectProblemOwnerActivation([
+      makeFullSignal('PERMIT_APPROVED', 20),
+      makeFullSignal('HIRING', 5, 80, 'Site Coordinator', 'crew dispatch, rostering, site admin'),
+    ])
+    assert.ok(result.evidencePieces.length >= 2)
+    assert.ok(result.evidencePieces[0].toUpperCase().includes('PERMIT'))
+    assert.ok(result.evidencePieces.some(p => p.toLowerCase().includes('hiring')))
+  })
+
+  it('fresh trigger + hiring + keywords + solution-seeking → CONFIRMED with confidence ≥85', () => {
+    const result = detectProblemOwnerActivation([
+      makeFullSignal('PROJECT_START_DETECTED', 1, 90),
+      makeFullSignal('JOB_POSTING_SPIKE', 2, 80, 'Scheduling Coordinator', 'crew dispatch, subcontractors, multi-site'),
+      makeFullSignal('PROCUREMENT', 3, 75),
+    ])
+    assert.equal(result.activationTier, 'CONFIRMED')
+    assert.ok(result.confidence >= 85)
+  })
+
+  it('existing PROBLEM_OWNER_ACTIVATION signal is excluded from self-evaluation', () => {
+    const result = detectProblemOwnerActivation([
+      makeFullSignal('PROBLEM_OWNER_ACTIVATION' as RawSignal['type'], 0),
+    ])
+    assert.equal(result.activated, false)
   })
 })
 

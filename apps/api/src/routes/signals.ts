@@ -2,7 +2,10 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { calculateOpportunityScores, detectBuyingStage, calcWinProbability } from '../lib/signalEngine.js'
+import {
+  calculateOpportunityScores, detectBuyingStage, calcWinProbability,
+  toFullSignal, detectProblemOwnerActivation, normalizeSignal, computeSignalExpiry
+} from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
 
 export const signalsRouter = Router()
@@ -75,6 +78,42 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     where: { id: prospectId },
     data: { ...scores, buyingStage, winProbability, lastSignalAt: signal.detectedAt }
   })
+
+  // Detect Problem-Owner Activation after rescoring
+  const fullSignals = allSignals.map(s => toFullSignal({
+    type: s.type as RawSignal['type'],
+    strength: s.strength,
+    sourceReliability: s.sourceReliability,
+    industryRelevance: s.industryRelevance,
+    detectedAt: s.detectedAt,
+    title: s.title,
+    description: s.description,
+  }))
+  const activation = detectProblemOwnerActivation(fullSignals)
+  if (activation.activated) {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000)
+    const hasRecent = allSignals.some(s =>
+      s.type === 'PROBLEM_OWNER_ACTIVATION' && s.detectedAt > sevenDaysAgo
+    )
+    if (!hasRecent) {
+      const norm = normalizeSignal('PROBLEM_OWNER_ACTIVATION')
+      await prisma.signal.create({
+        data: {
+          workspaceId,
+          prospectId,
+          type: 'PROBLEM_OWNER_ACTIVATION',
+          strength: activation.recommendedStrength,
+          sourceReliability: 85,
+          industryRelevance: 90,
+          title: `Problem-Owner Activation (${activation.activationTier})`,
+          description: activation.evidencePieces.join(' · '),
+          source: 'system',
+          ...norm,
+          expiresAt: computeSignalExpiry('PROBLEM_OWNER_ACTIVATION', new Date()),
+        }
+      })
+    }
+  }
 
   res.status(201).json(signal)
 }))

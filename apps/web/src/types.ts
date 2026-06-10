@@ -136,6 +136,8 @@ export type SignalType =
   | 'JOB_POSTING_SPIKE' | 'CONTRACT_AWARDED' | 'TENDER_PUBLISHED' | 'PERMIT_APPROVED'
   | 'OFFICE_OPENING' | 'PRICING_PAGE_CHANGED' | 'ENTERPRISE_PAGE_LAUNCHED'
   | 'GOV_GRANT_RECEIVED' | 'PROJECT_START_DETECTED' | 'TECH_STACK_CHANGED'
+  // Composite activation signal: auto-detected, never manually added
+  | 'PROBLEM_OWNER_ACTIVATION'
 
 export type BuyingStage = 'RESEARCHING' | 'EVALUATING' | 'COMPARING' | 'PURCHASING' | 'INACTIVE'
 export type OutcomeStage = 'DISCOVERED' | 'VIEWED' | 'CONTACTED' | 'MEETING' | 'PROPOSAL' | 'WON' | 'LOST'
@@ -216,6 +218,7 @@ export type Prospect = {
   topRecommendation?: Recommendation | null
   signals?: Signal[]
   recommendations?: Recommendation[]
+  isActivated?: boolean
   createdAt: string
 }
 
@@ -234,6 +237,7 @@ export type StrategyCard = {
   contactEmail?: string | null
   contactTitle?: string | null
   recommendation: Recommendation | null
+  isActivated?: boolean
 }
 
 export type StrategyCardsData = {
@@ -334,6 +338,7 @@ export const SIGNAL_TYPE_ICONS: Record<SignalType, string> = {
   GOV_GRANT_RECEIVED: '🏛️',
   PROJECT_START_DETECTED: '🔨',
   TECH_STACK_CHANGED: '🔧',
+  PROBLEM_OWNER_ACTIVATION: '⚡',
 }
 
 export const SIGNAL_TYPE_LABELS: Record<SignalType, string> = {
@@ -356,4 +361,5 @@ export const SIGNAL_TYPE_LABELS: Record<SignalType, string> = {
   GOV_GRANT_RECEIVED: 'Gov Grant Received',
   PROJECT_START_DETECTED: 'Project Start Detected',
   TECH_STACK_CHANGED: 'Tech Stack Changed',
+  PROBLEM_OWNER_ACTIVATION: 'Problem-Owner Activation',
 }

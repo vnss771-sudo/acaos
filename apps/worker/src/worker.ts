@@ -12,8 +12,12 @@ import {
   calcWinProbability,
   generateRuleBasedRecommendation,
   toRawSignal,
+  toFullSignal,
+  detectProblemOwnerActivation,
+  normalizeSignal,
+  computeSignalExpiry,
 } from '../../api/src/lib/signalEngine.js'
-import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
+import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
 
 function log(queue: string, msg: string) {
@@ -285,7 +289,7 @@ const scoreProspectsWorker = new Worker(
       })
       if (batch.length === 0) break
 
-      await Promise.all(batch.map(prospect => {
+      await Promise.all(batch.map(async prospect => {
         const rawSignals = prospect.signals.map(toRawSignal)
         const scores = calculateOpportunityScores(rawSignals, {
           industry:      prospect.industry,
@@ -303,10 +307,46 @@ const scoreProspectsWorker = new Worker(
           prospect.retentionProbability,
           prospect.expansionProbability,
         )
-        return prisma.prospect.update({
+        await prisma.prospect.update({
           where: { id: prospect.id },
           data: { ...scores, buyingStage, winProbability, expectedRevenueScore },
         })
+
+        // Problem-Owner Activation detection
+        const fullSignals = prospect.signals.map(s => toFullSignal({
+          type: s.type as SignalType,
+          strength: s.strength,
+          sourceReliability: s.sourceReliability,
+          industryRelevance: s.industryRelevance,
+          detectedAt: s.detectedAt,
+          title: s.title,
+          description: s.description,
+        }))
+        const activation = detectProblemOwnerActivation(fullSignals)
+        if (activation.activated) {
+          const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000)
+          const hasRecent = prospect.signals.some(s =>
+            s.type === 'PROBLEM_OWNER_ACTIVATION' && s.detectedAt > sevenDaysAgo
+          )
+          if (!hasRecent) {
+            const norm = normalizeSignal('PROBLEM_OWNER_ACTIVATION')
+            await prisma.signal.create({
+              data: {
+                workspaceId,
+                prospectId: prospect.id,
+                type: 'PROBLEM_OWNER_ACTIVATION',
+                strength: activation.recommendedStrength,
+                sourceReliability: 85,
+                industryRelevance: 90,
+                title: `Problem-Owner Activation (${activation.activationTier})`,
+                description: activation.evidencePieces.join(' · '),
+                source: 'system',
+                ...norm,
+                expiresAt: computeSignalExpiry('PROBLEM_OWNER_ACTIVATION', new Date()),
+              }
+            })
+          }
+        }
       }))
 
       updated += batch.length

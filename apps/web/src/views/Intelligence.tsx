@@ -74,6 +74,13 @@ function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: 
               color: BUYING_STAGE_COLOR[prospect.buyingStage],
               fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99
             }}>{BUYING_STAGE_LABELS[prospect.buyingStage]}</span>
+            {prospect.isActivated && (
+              <span style={{
+                background: '#78350f33', color: '#fbbf24',
+                fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99,
+                letterSpacing: '0.04em'
+              }}>⚡ ACTIVATED</span>
+            )}
           </div>
 
           <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 6 }}>
@@ -285,6 +292,13 @@ function StrategyCardRow({ card, rank, onOutcome }: { card: StrategyCard; rank: 
               color: BUYING_STAGE_COLOR[card.buyingStage],
               fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99
             }}>{BUYING_STAGE_LABELS[card.buyingStage]}</span>
+            {card.isActivated && (
+              <span style={{
+                background: '#78350f33', color: '#fbbf24',
+                fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99,
+                letterSpacing: '0.04em'
+              }}>⚡ ACTIVATED</span>
+            )}
           </div>
           {card.industry && (
             <div style={{ color: colors.textFaint, fontSize: 12 }}>

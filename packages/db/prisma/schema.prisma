@@ -213,6 +213,8 @@ enum SignalType {
   GOV_GRANT_RECEIVED
   PROJECT_START_DETECTED
   TECH_STACK_CHANGED
+  // Composite activation signal: operational trigger + named ownership + solution-seeking
+  PROBLEM_OWNER_ACTIVATION
 }
 
 enum BuyingStage {
