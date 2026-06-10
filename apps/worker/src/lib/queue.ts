@@ -18,7 +18,7 @@ export const defaultJobOptions = {
   removeOnFail: { count: 200, age: 7 * 24 * 60 * 60 }
 }
 
-// Named queue registry — all 7 queues the worker listens on
+// Named queue registry — all 8 queues the worker listens on
 export const QUEUE_NAMES = [
   'research-lead',
   'generate-outreach',
@@ -27,6 +27,7 @@ export const QUEUE_NAMES = [
   'score-prospects',
   'generate-recommendations',
   'calibrate-scoring',
+  'generate-strategy-cards',
 ] as const
 
 export type QueueName = typeof QUEUE_NAMES[number]
@@ -49,4 +50,5 @@ export const queues = {
   scoreProspects:  getQueue('score-prospects'),
   recommendations: getQueue('generate-recommendations'),
   calibrate:       getQueue('calibrate-scoring'),
+  strategyCards:   getQueue('generate-strategy-cards'),
 }

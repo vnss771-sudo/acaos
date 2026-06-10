@@ -129,8 +129,13 @@ export const PLAN_LABELS: Record<string, string> = {
 }
 
 export type SignalType =
+  // Broad acquisition signals
   | 'HIRING' | 'FUNDING' | 'EXPANSION' | 'TECH_ADOPTION' | 'LEADERSHIP_CHANGE'
   | 'NEWS_MENTION' | 'PROCUREMENT' | 'BUSINESS_REGISTRATION' | 'WEBSITE_CHANGE'
+  // Granular acquisition signals for precision targeting
+  | 'JOB_POSTING_SPIKE' | 'CONTRACT_AWARDED' | 'TENDER_PUBLISHED' | 'PERMIT_APPROVED'
+  | 'OFFICE_OPENING' | 'PRICING_PAGE_CHANGED' | 'ENTERPRISE_PAGE_LAUNCHED'
+  | 'GOV_GRANT_RECEIVED' | 'PROJECT_START_DETECTED' | 'TECH_STACK_CHANGED'
 
 export type BuyingStage = 'RESEARCHING' | 'EVALUATING' | 'COMPARING' | 'PURCHASING' | 'INACTIVE'
 export type OutcomeStage = 'DISCOVERED' | 'VIEWED' | 'CONTACTED' | 'MEETING' | 'PROPOSAL' | 'WON' | 'LOST'
@@ -141,10 +146,16 @@ export type Signal = {
   strength: number
   sourceReliability: number
   industryRelevance: number
+  confidence?: number
+  normalizedType?: string | null
+  category?: string | null
+  buyingImplication?: string | null
+  predictedNeeds?: string[]
   title?: string | null
   description?: string | null
   source?: string | null
   sourceUrl?: string | null
+  expiresAt?: string | null
   detectedAt: string
   createdAt: string
 }
@@ -159,6 +170,9 @@ export type Recommendation = {
   actionText?: string | null
   urgency: string
   priority: number
+  predictedNeed?: string | null
+  meetingProbability?: number | null
+  expectedRevenue?: number | null
   expiresAt?: string | null
   actedAt?: string | null
   createdAt: string
@@ -174,6 +188,8 @@ export type Prospect = {
   estimatedRevenue?: number | null
   location?: string | null
   description?: string | null
+  notes?: string | null
+  sourceTag?: string | null
   contactName?: string | null
   contactEmail?: string | null
   contactPhone?: string | null
@@ -184,6 +200,9 @@ export type Prospect = {
   fitScore: number
   timingScore: number
   confidenceScore: number
+  expectedRevenueScore: number
+  retentionProbability: number
+  expansionProbability: number
   tier: 'HOT' | 'WARM' | 'COLD'
   buyingStage: BuyingStage
   outcomeStage: OutcomeStage
@@ -198,6 +217,37 @@ export type Prospect = {
   signals?: Signal[]
   recommendations?: Recommendation[]
   createdAt: string
+}
+
+export type StrategyCard = {
+  id: string
+  companyName: string
+  industry?: string | null
+  location?: string | null
+  expectedRevenueScore: number
+  opportunityScore: number
+  winProbability?: number | null
+  expectedDealValue?: number | null
+  tier: 'HOT' | 'WARM' | 'COLD'
+  buyingStage: BuyingStage
+  contactName?: string | null
+  contactEmail?: string | null
+  contactTitle?: string | null
+  recommendation: Recommendation | null
+}
+
+export type StrategyCardsData = {
+  strategyCards: StrategyCard[]
+}
+
+export type IndustrySignalConfig = {
+  id: string
+  workspaceId: string
+  industry: string
+  signalBoosts: Record<string, number>
+  description?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export type OpportunitiesData = {
@@ -256,6 +306,14 @@ export const OUTCOME_STAGE_COLOR: Record<OutcomeStage, string> = {
   LOST: '#ef4444'
 }
 
+export const ALL_SIGNAL_TYPES: SignalType[] = [
+  'CONTRACT_AWARDED', 'TENDER_PUBLISHED', 'FUNDING', 'HIRING', 'JOB_POSTING_SPIKE',
+  'GOV_GRANT_RECEIVED', 'PERMIT_APPROVED', 'PROJECT_START_DETECTED', 'EXPANSION',
+  'OFFICE_OPENING', 'PROCUREMENT', 'LEADERSHIP_CHANGE', 'TECH_ADOPTION',
+  'TECH_STACK_CHANGED', 'ENTERPRISE_PAGE_LAUNCHED', 'PRICING_PAGE_CHANGED',
+  'BUSINESS_REGISTRATION', 'NEWS_MENTION', 'WEBSITE_CHANGE',
+]
+
 export const SIGNAL_TYPE_ICONS: Record<SignalType, string> = {
   FUNDING: '💰',
   HIRING: '👥',
@@ -265,7 +323,17 @@ export const SIGNAL_TYPE_ICONS: Record<SignalType, string> = {
   NEWS_MENTION: '📰',
   PROCUREMENT: '🛒',
   BUSINESS_REGISTRATION: '📋',
-  WEBSITE_CHANGE: '🌐'
+  WEBSITE_CHANGE: '🌐',
+  JOB_POSTING_SPIKE: '🚀',
+  CONTRACT_AWARDED: '🏆',
+  TENDER_PUBLISHED: '📄',
+  PERMIT_APPROVED: '✅',
+  OFFICE_OPENING: '🏢',
+  PRICING_PAGE_CHANGED: '💲',
+  ENTERPRISE_PAGE_LAUNCHED: '🌟',
+  GOV_GRANT_RECEIVED: '🏛️',
+  PROJECT_START_DETECTED: '🔨',
+  TECH_STACK_CHANGED: '🔧',
 }
 
 export const SIGNAL_TYPE_LABELS: Record<SignalType, string> = {
@@ -277,5 +345,15 @@ export const SIGNAL_TYPE_LABELS: Record<SignalType, string> = {
   NEWS_MENTION: 'News Mention',
   PROCUREMENT: 'Procurement',
   BUSINESS_REGISTRATION: 'Business Registration',
-  WEBSITE_CHANGE: 'Website Change'
+  WEBSITE_CHANGE: 'Website Change',
+  JOB_POSTING_SPIKE: 'Job Posting Spike',
+  CONTRACT_AWARDED: 'Contract Awarded',
+  TENDER_PUBLISHED: 'Tender Published',
+  PERMIT_APPROVED: 'Permit Approved',
+  OFFICE_OPENING: 'Office Opening',
+  PRICING_PAGE_CHANGED: 'Pricing Page Changed',
+  ENTERPRISE_PAGE_LAUNCHED: 'Enterprise Page Launched',
+  GOV_GRANT_RECEIVED: 'Gov Grant Received',
+  PROJECT_START_DETECTED: 'Project Start Detected',
+  TECH_STACK_CHANGED: 'Tech Stack Changed',
 }

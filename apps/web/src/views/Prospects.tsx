@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import type { Workspace, Prospect, Signal, Recommendation } from '../types.js'
 import {
-  BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
+  ALL_SIGNAL_TYPES, BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
   SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, TIER_COLOR
 } from '../types.js'
 import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
@@ -11,11 +11,7 @@ import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
-
-const SIGNAL_TYPES: SignalType[] = [
-  'HIRING', 'FUNDING', 'EXPANSION', 'TECH_ADOPTION', 'LEADERSHIP_CHANGE',
-  'NEWS_MENTION', 'PROCUREMENT', 'BUSINESS_REGISTRATION', 'WEBSITE_CHANGE'
-]
+type SortBy = 'opportunityScore' | 'expectedRevenueScore'
 
 function SignalBadge({ signal }: { signal: Signal }) {
   const ageInDays = Math.round((Date.now() - new Date(signal.detectedAt).getTime()) / 86_400_000)
@@ -31,6 +27,11 @@ function SignalBadge({ signal }: { signal: Signal }) {
           {SIGNAL_TYPE_LABELS[signal.type]}
         </div>
         {signal.title && <div style={{ color: colors.textFaint, fontSize: 11 }}>{signal.title}</div>}
+        {signal.buyingImplication && (
+          <div style={{ color: colors.textFaint, fontSize: 10, fontStyle: 'italic' }}>
+            {signal.buyingImplication.replace(/_/g, ' ')}
+          </div>
+        )}
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>
         <div style={{ color: colors.amber, fontSize: 11, fontWeight: 700 }}>{signal.strength}</div>
@@ -45,11 +46,11 @@ function SignalBadge({ signal }: { signal: Signal }) {
 function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
   prospectId: string; workspaceId: string; api: ApiHook; onDone: () => void; toast: ToastHook
 }) {
-  const [type, setType] = useState<SignalType>('HIRING')
-  const [strength, setStrength] = useState(70)
+  const [type, setType] = useState<SignalType>('CONTRACT_AWARDED')
+  const [strength, setStrength] = useState(80)
   const [title, setTitle] = useState('')
-  const [sourceReliability, setSourceReliability] = useState(70)
-  const [industryRelevance, setIndustryRelevance] = useState(60)
+  const [sourceReliability, setSourceReliability] = useState(75)
+  const [industryRelevance, setIndustryRelevance] = useState(70)
   const [saving, setSaving] = useState(false)
 
   const submit = async () => {
@@ -73,7 +74,9 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
           <label style={s.label}>Signal Type</label>
           <select value={type} onChange={e => setType(e.target.value as SignalType)}
             style={{ ...s.input, height: 40 }}>
-            {SIGNAL_TYPES.map(t => <option key={t} value={t}>{SIGNAL_TYPE_LABELS[t]}</option>)}
+            {ALL_SIGNAL_TYPES.map(t => (
+              <option key={t} value={t}>{SIGNAL_TYPE_ICONS[t]} {SIGNAL_TYPE_LABELS[t]}</option>
+            ))}
           </select>
         </div>
         <div>
@@ -95,12 +98,76 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
       <div style={{ marginBottom: 8 }}>
         <label style={s.label}>Title (optional)</label>
         <input type="text" value={title} onChange={e => setTitle(e.target.value)}
-          placeholder="e.g. Hiring 5 sales reps" style={s.input} />
+          placeholder="e.g. Awarded $2M construction contract" style={s.input} />
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={submit} disabled={saving} style={s.btn}>{saving ? 'Adding…' : 'Add Signal'}</button>
         <button onClick={onDone} style={s.btnGhost}>Cancel</button>
       </div>
+    </div>
+  )
+}
+
+function StrategyCardSection({ rec }: { rec: Recommendation }) {
+  return (
+    <div style={{ background: '#0a1628', border: `1px solid ${colors.blue}33`, borderRadius: 8, padding: 14, marginBottom: 8 }}>
+      <div style={{ color: colors.blue, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+        Strategy Card
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        {rec.predictedNeed && (
+          <div style={{ gridColumn: '1 / -1' }}>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>PREDICTED NEED</div>
+            <div style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>{rec.predictedNeed}</div>
+          </div>
+        )}
+        {rec.meetingProbability != null && (
+          <div style={s.cardInner}>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>Meeting Probability</div>
+            <div style={{ color: colors.green, fontSize: 18, fontWeight: 700 }}>
+              {Math.round(rec.meetingProbability * 100)}%
+            </div>
+          </div>
+        )}
+        {rec.expectedRevenue != null && (
+          <div style={s.cardInner}>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>Expected Revenue</div>
+            <div style={{ color: colors.amber, fontSize: 18, fontWeight: 700 }}>
+              ${rec.expectedRevenue.toLocaleString()}
+            </div>
+          </div>
+        )}
+        {rec.bestContact && (
+          <div>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>CONTACT</div>
+            <div style={{ color: colors.text, fontSize: 12 }}>{rec.bestContact}</div>
+          </div>
+        )}
+        {rec.bestChannel && (
+          <div>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>CHANNEL</div>
+            <div style={{ color: colors.text, fontSize: 12 }}>{rec.bestChannel}</div>
+          </div>
+        )}
+        {rec.bestTiming && (
+          <div>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>TIMING</div>
+            <div style={{ color: colors.text, fontSize: 12 }}>{rec.bestTiming}</div>
+          </div>
+        )}
+        {rec.messageAngle && (
+          <div>
+            <div style={{ color: colors.textFaint, fontSize: 10 }}>ANGLE</div>
+            <div style={{ color: colors.text, fontSize: 12 }}>{rec.messageAngle}</div>
+          </div>
+        )}
+      </div>
+      {rec.actionText && (
+        <div style={{ color: colors.blueLight, fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{rec.actionText}</div>
+      )}
+      {rec.reasoning && (
+        <div style={{ color: colors.textFaint, fontSize: 11, fontStyle: 'italic' }}>{rec.reasoning}</div>
+      )}
     </div>
   )
 }
@@ -111,6 +178,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
   const [detail, setDetail] = useState<Prospect | null>(null)
   const [showAddSignal, setShowAddSignal] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [enriching, setEnriching] = useState(false)
 
   useEffect(() => {
     api<Prospect>(`/api/prospects/${prospect.id}`)
@@ -133,8 +201,19 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
       await api<Recommendation>(`/api/prospects/${prospect.id}/recommend`, { method: 'POST' })
       const updated = await api<Prospect>(`/api/prospects/${prospect.id}`)
       setDetail(updated)
-      toast.success('Recommendation generated')
+      toast.success('Strategy card generated')
     } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
+  const handleEnrich = async () => {
+    setEnriching(true)
+    try {
+      const updated = await api<Prospect>(`/api/prospects/${prospect.id}/enrich`, { method: 'POST' })
+      setDetail(updated)
+      onRefresh()
+      toast.success('Prospect enriched with Apollo data')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setEnriching(false) }
   }
 
   const p = detail ?? prospect
@@ -147,11 +226,12 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
       padding: '40px 20px', zIndex: 100, overflowY: 'auto'
     }} onClick={onClose}>
       <div style={{
-        ...s.card, width: '100%', maxWidth: 680,
-        border: `1px solid ${TIER_COLOR[tier]}44`, maxHeight: '85vh', overflowY: 'auto'
+        ...s.card, width: '100%', maxWidth: 700,
+        border: `1px solid ${TIER_COLOR[tier]}44`, maxHeight: '90vh', overflowY: 'auto'
       }} onClick={e => e.stopPropagation()}>
         {loading ? <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div> : (
           <>
+            {/* Header */}
             <div style={{ ...s.flexBetween, marginBottom: 16 }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
@@ -171,17 +251,34 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
               </div>
             </div>
 
-            {/* Score sub-dimensions */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
-              {([['Intent', p.intentScore], ['Fit', p.fitScore], ['Timing', p.timingScore], ['Confidence', p.confidenceScore]] as const).map(([label, val]) => (
+            {/* Dual scoring row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6, marginBottom: 16 }}>
+              {([
+                ['Intent', p.intentScore, colors.blue],
+                ['Fit', p.fitScore, colors.blue],
+                ['Timing', p.timingScore, colors.blue],
+                ['Confidence', p.confidenceScore, colors.blue],
+              ] as const).map(([label, val]) => (
                 <div key={label} style={s.cardInner}>
                   <div style={{ color: colors.textFaint, fontSize: 10 }}>{label}</div>
-                  <div style={{ color: val >= 70 ? colors.green : val >= 45 ? colors.amber : colors.textFaint, fontSize: 22, fontWeight: 700 }}>{val}</div>
+                  <div style={{ color: val >= 70 ? colors.green : val >= 45 ? colors.amber : colors.textFaint, fontSize: 20, fontWeight: 700 }}>{val}</div>
                 </div>
               ))}
+              <div style={{ ...s.cardInner, border: `1px solid ${colors.amber}33` }}>
+                <div style={{ color: colors.textFaint, fontSize: 10 }}>Exp. Rev Score</div>
+                <div style={{ color: colors.amber, fontSize: 20, fontWeight: 700 }}>
+                  {p.expectedRevenueScore > 0 ? `$${p.expectedRevenueScore.toLocaleString()}` : '–'}
+                </div>
+              </div>
+              <div style={s.cardInner}>
+                <div style={{ color: colors.textFaint, fontSize: 10 }}>Win Prob</div>
+                <div style={{ color: colors.green, fontSize: 20, fontWeight: 700 }}>
+                  {p.winProbability != null ? `${Math.round(p.winProbability * 100)}%` : '–'}
+                </div>
+              </div>
             </div>
 
-            {/* Buying stage + outcome */}
+            {/* Stage badges */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
               <div style={s.cardInner}>
                 <div style={{ color: colors.textFaint, fontSize: 10, marginBottom: 4 }}>Buying Stage</div>
@@ -212,11 +309,19 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
               </div>
             )}
 
+            {/* Top strategy card */}
+            {(p.recommendations ?? []).length > 0 && (
+              <StrategyCardSection rec={p.recommendations![0]} />
+            )}
+
             {/* Signals */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ ...s.flexBetween, marginBottom: 8 }}>
                 <div style={s.sectionHeader}>Signals ({p.signals?.length ?? 0})</div>
                 <div style={{ display: 'flex', gap: 6 }}>
+                  <button style={s.btnSm} onClick={handleEnrich} disabled={enriching}>
+                    {enriching ? 'Enriching…' : 'Enrich'}
+                  </button>
                   <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
                   <button style={s.btnSm} onClick={() => setShowAddSignal(true)}>+ Signal</button>
                 </div>
@@ -241,28 +346,38 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
               </div>
             </div>
 
-            {/* Recommendations */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ ...s.flexBetween, marginBottom: 8 }}>
-                <div style={s.sectionHeader}>Recommendations</div>
-                <button style={s.btnSm} onClick={handleRecommend}>Generate</button>
-              </div>
-              {(p.recommendations ?? []).slice(0, 3).map(rec => (
-                <div key={rec.id} style={{ ...s.cardInner, marginBottom: 8 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 6 }}>
-                    {rec.bestContact && <div><span style={{ color: colors.textFaint, fontSize: 10 }}>CONTACT </span><span style={{ color: colors.text, fontSize: 12 }}>{rec.bestContact}</span></div>}
-                    {rec.bestChannel && <div><span style={{ color: colors.textFaint, fontSize: 10 }}>CHANNEL </span><span style={{ color: colors.text, fontSize: 12 }}>{rec.bestChannel}</span></div>}
-                    {rec.bestTiming && <div><span style={{ color: colors.textFaint, fontSize: 10 }}>TIMING </span><span style={{ color: colors.text, fontSize: 12 }}>{rec.bestTiming}</span></div>}
-                    {rec.messageAngle && <div><span style={{ color: colors.textFaint, fontSize: 10 }}>ANGLE </span><span style={{ color: colors.text, fontSize: 12 }}>{rec.messageAngle}</span></div>}
-                  </div>
-                  {rec.actionText && <div style={{ color: colors.blueLight, fontSize: 13, fontWeight: 600 }}>{rec.actionText}</div>}
-                  {rec.reasoning && <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 4 }}>{rec.reasoning}</div>}
+            {/* All recommendations */}
+            {(p.recommendations ?? []).length > 1 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ ...s.flexBetween, marginBottom: 8 }}>
+                  <div style={s.sectionHeader}>All Recommendations</div>
+                  <button style={s.btnSm} onClick={handleRecommend}>Generate</button>
                 </div>
-              ))}
-              {(p.recommendations?.length ?? 0) === 0 && (
-                <div style={{ color: colors.textFaint, fontSize: 13 }}>No recommendations yet. Click Generate to create one.</div>
-              )}
-            </div>
+                {(p.recommendations ?? []).slice(1, 4).map(rec => (
+                  <div key={rec.id} style={{ ...s.cardInner, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                      {rec.bestChannel && <span style={{ color: colors.text, fontSize: 12, fontWeight: 600 }}>{rec.bestChannel}</span>}
+                      <span style={{
+                        color: rec.urgency === 'HIGH' ? colors.red : rec.urgency === 'MEDIUM' ? colors.amber : colors.textFaint,
+                        fontSize: 11, fontWeight: 700
+                      }}>{rec.urgency}</span>
+                    </div>
+                    {rec.actionText && <div style={{ color: colors.blueLight, fontSize: 13 }}>{rec.actionText}</div>}
+                    {rec.reasoning && <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 4 }}>{rec.reasoning}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(p.recommendations?.length ?? 0) === 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ ...s.flexBetween, marginBottom: 8 }}>
+                  <div style={s.sectionHeader}>Strategy Card</div>
+                  <button style={s.btnSm} onClick={handleRecommend}>Generate</button>
+                </div>
+                <div style={{ color: colors.textFaint, fontSize: 13 }}>No strategy card yet. Click Generate to create one.</div>
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button style={s.btnGhost} onClick={onClose}>Close</button>
@@ -288,19 +403,20 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState<SortBy>('opportunityScore')
 
   const load = () => {
     if (!workspace) return
     setLoading(true)
     api<{ prospects: Prospect[]; total: number }>(
-      `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
+      `/api/prospects?workspaceId=${workspace.id}&limit=100&sortBy=${sortBy}${search ? `&search=${encodeURIComponent(search)}` : ''}`
     )
       .then(d => setProspects(d.prospects))
       .catch(e => toast.error(e.message))
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [workspace?.id, search])
+  useEffect(() => { load() }, [workspace?.id, search, sortBy])
 
   const handleAdd = async () => {
     if (!workspace || !form.companyName.trim()) return
@@ -324,12 +440,33 @@ export function ProspectsView({ api, workspace, toast }: Props) {
     <div style={s.stack}>
       {/* Header */}
       <div style={s.flexBetween}>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             type="text" placeholder="Search prospects…" value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ ...s.input, width: 240 }}
+            style={{ ...s.input, width: 220 }}
           />
+          {/* Sort toggle */}
+          <div style={{ display: 'flex', background: '#1e2d40', borderRadius: 6, padding: 3, gap: 2 }}>
+            <button
+              onClick={() => setSortBy('opportunityScore')}
+              style={{
+                ...s.btnSm, fontSize: 11, padding: '4px 10px',
+                background: sortBy === 'opportunityScore' ? colors.blue : 'transparent',
+                color: sortBy === 'opportunityScore' ? '#fff' : colors.textMuted,
+              }}>
+              Score
+            </button>
+            <button
+              onClick={() => setSortBy('expectedRevenueScore')}
+              style={{
+                ...s.btnSm, fontSize: 11, padding: '4px 10px',
+                background: sortBy === 'expectedRevenueScore' ? colors.amber : 'transparent',
+                color: sortBy === 'expectedRevenueScore' ? '#000' : colors.textMuted,
+              }}>
+              $Exp. Revenue
+            </button>
+          </div>
         </div>
         <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
       </div>
@@ -388,12 +525,27 @@ export function ProspectsView({ api, workspace, toast }: Props) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Company', 'Industry', 'Location', 'Buying Stage', 'Score', 'Signals', 'Win Prob'].map(h => (
-                  <th key={h} style={{
-                    color: colors.textFaint, fontSize: 11, fontWeight: 600,
-                    textTransform: 'uppercase', letterSpacing: '0.06em',
-                    padding: '8px 12px 8px 0', textAlign: 'left', whiteSpace: 'nowrap'
-                  }}>{h}</th>
+                {[
+                  { h: 'Company', key: null },
+                  { h: 'Industry', key: null },
+                  { h: 'Location', key: null },
+                  { h: 'Buying Stage', key: null },
+                  { h: 'Opp. Score', key: 'opportunityScore' as SortBy },
+                  { h: 'Exp. Revenue', key: 'expectedRevenueScore' as SortBy },
+                  { h: 'Signals', key: null },
+                  { h: 'Win Prob', key: null },
+                ].map(({ h, key }) => (
+                  <th key={h}
+                    onClick={key ? () => setSortBy(key) : undefined}
+                    style={{
+                      color: key && sortBy === key ? colors.amber : colors.textFaint,
+                      fontSize: 11, fontWeight: 600,
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                      padding: '8px 12px 8px 0', textAlign: 'left', whiteSpace: 'nowrap',
+                      cursor: key ? 'pointer' : 'default'
+                    }}>
+                    {h}{key && sortBy === key ? ' ▼' : ''}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -424,8 +576,19 @@ export function ProspectsView({ api, workspace, toast }: Props) {
                       }}>{BUYING_STAGE_LABELS[p.buyingStage as BuyingStage]}</span>
                     </td>
                     <td style={{ padding: '10px 12px 10px 0' }}>
-                      <span style={{ color: TIER_COLOR[tier], fontWeight: 800, fontSize: 16 }}>
+                      <span style={{
+                        color: TIER_COLOR[tier], fontWeight: 800, fontSize: 16,
+                        opacity: sortBy === 'opportunityScore' ? 1 : 0.5
+                      }}>
                         {p.opportunityScore}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 12px 10px 0' }}>
+                      <span style={{
+                        color: colors.amber, fontWeight: 700, fontSize: 13,
+                        opacity: sortBy === 'expectedRevenueScore' ? 1 : 0.6
+                      }}>
+                        {p.expectedRevenueScore > 0 ? `$${p.expectedRevenueScore.toLocaleString()}` : '–'}
                       </span>
                     </td>
                     <td style={{ padding: '10px 12px 10px 0', color: colors.textMuted, fontSize: 13 }}>

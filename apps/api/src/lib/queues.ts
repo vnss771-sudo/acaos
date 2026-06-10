@@ -64,3 +64,7 @@ export async function enqueueGenerateRecommendations(prospectId: string, workspa
 export async function enqueueCalibrate(workspaceId: string) {
   return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, defaultJobOpts)
 }
+
+export async function enqueueGenerateStrategyCards(workspaceId: string) {
+  return getQueue('generate-strategy-cards').add('generate-strategy-cards', { workspaceId }, defaultJobOpts)
+}

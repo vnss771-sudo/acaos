@@ -120,10 +120,11 @@ const INDUSTRY_SIGNAL_BOOST: Partial<Record<string, Partial<Record<SignalType, n
   },
 }
 
-function getIndustryWeight(type: SignalType, industry?: string | null): number {
+function getIndustryWeight(type: SignalType, industry?: string | null, industryBoosts?: IndustryBoostConfig): number {
   if (!industry) return EVENT_BASE_WEIGHTS[type]
   const lower = industry.toLowerCase()
-  for (const [key, boosts] of Object.entries(INDUSTRY_SIGNAL_BOOST)) {
+  const boostMap = industryBoosts ?? INDUSTRY_SIGNAL_BOOST
+  for (const [key, boosts] of Object.entries(boostMap)) {
     if (lower.includes(key)) {
       return boosts[type] ?? EVENT_BASE_WEIGHTS[type]
     }
@@ -147,11 +148,11 @@ export function decayedStrength(signal: RawSignal): number {
 }
 
 // Intent score: how strongly this company is showing buying intent
-function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights, industry?: string | null): number {
+function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights, industry?: string | null, industryBoosts?: IndustryBoostConfig): number {
   if (signals.length === 0) return 0
   const scores = signals.map(sig => {
     const ds = decayedStrength(sig)
-    const cap = signalWeights?.[sig.type] ?? getIndustryWeight(sig.type, industry)
+    const cap = signalWeights?.[sig.type] ?? getIndustryWeight(sig.type, industry, industryBoosts)
     return Math.min(ds * (sig.sourceReliability / 100), cap)
   })
   scores.sort((a, b) => b - a)
@@ -202,6 +203,7 @@ export type ICPConfig = {
 }
 
 export type SignalWeights = Partial<Record<SignalType, number>>
+export type IndustryBoostConfig = Partial<Record<string, Partial<Record<SignalType, number>>>>
 
 const ICP_INDUSTRIES = ['civil', 'electrical', 'plumbing', 'landscaping', 'facilities', 'hvac',
   'roofing', 'painting', 'flooring', 'mechanical', 'structural', 'construction', 'environmental',
@@ -249,9 +251,10 @@ export function calculateOpportunityScores(
   signals: RawSignal[],
   meta: ProspectMeta,
   icp?: ICPConfig,
-  signalWeights?: SignalWeights
+  signalWeights?: SignalWeights,
+  industryBoosts?: IndustryBoostConfig
 ): OpportunityScores {
-  const intentScore    = Math.round(calcIntentScore(signals, signalWeights, meta.industry))
+  const intentScore    = Math.round(calcIntentScore(signals, signalWeights, meta.industry, industryBoosts))
   const fitScore       = Math.round(calcFitScore(meta, icp))
   const timingScore    = Math.round(calcTimingScore(signals))
   const confidenceScore = Math.round(calcConfidenceScore(signals))

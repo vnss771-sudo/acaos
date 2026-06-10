@@ -9,7 +9,6 @@ export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
 
 // GET /api/intelligence/opportunities?workspaceId=
-// Returns hot/warm/cold prospects with recommendations
 intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
@@ -24,7 +23,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     take: 200
   })
 
-  const hot = prospects.filter(p => p.opportunityScore >= 72)
+  const hot  = prospects.filter(p => p.opportunityScore >= 72)
   const warm = prospects.filter(p => p.opportunityScore >= 45 && p.opportunityScore < 72)
   const cold = prospects.filter(p => p.opportunityScore < 45)
 
@@ -38,6 +37,9 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     fitScore: p.fitScore,
     timingScore: p.timingScore,
     confidenceScore: p.confidenceScore,
+    expectedRevenueScore: p.expectedRevenueScore,
+    retentionProbability: p.retentionProbability,
+    expansionProbability: p.expansionProbability,
     tier: getOpportunityTier(p.opportunityScore),
     buyingStage: p.buyingStage,
     outcomeStage: p.outcomeStage,
@@ -60,8 +62,42 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
   })
 }))
 
+// GET /api/intelligence/strategy-cards?workspaceId=&limit=
+intelligenceRouter.get('/strategy-cards', asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const limit = Math.min(50, parseInt(req.query.limit as string ?? '20') || 20)
+
+  const prospects = await prisma.prospect.findMany({
+    where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
+    include: {
+      recommendations: { orderBy: { createdAt: 'desc' }, take: 1 }
+    },
+    orderBy: { expectedRevenueScore: 'desc' },
+    take: limit
+  })
+
+  res.json({
+    strategyCards: prospects.map(p => ({
+      id: p.id,
+      companyName: p.companyName,
+      industry: p.industry,
+      location: p.location,
+      expectedRevenueScore: p.expectedRevenueScore,
+      opportunityScore: p.opportunityScore,
+      winProbability: p.winProbability,
+      expectedDealValue: p.expectedDealValue,
+      tier: getOpportunityTier(p.opportunityScore),
+      buyingStage: p.buyingStage,
+      contactName: p.contactName,
+      contactEmail: p.contactEmail,
+      contactTitle: p.contactTitle,
+      recommendation: p.recommendations[0] ?? null,
+    }))
+  })
+}))
+
 // GET /api/intelligence/forecast?workspaceId=
-// Revenue prediction engine
 intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
@@ -80,7 +116,6 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
     select: { dealValue: true, recordedAt: true }
   })
 
-  // Default deal value by rough industry category
   function defaultDealValue(industry: string | null): number {
     if (!industry) return 5000
     const lower = industry.toLowerCase()
@@ -108,11 +143,10 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   })
 
   const totalPipelineValue = pipeline.reduce((s, p) => s + p.dealValue, 0)
-  const weightedForecast = pipeline.reduce((s, p) => s + p.expectedRevenue, 0)
-  const wonRevenue = won.reduce((s, o) => s + (o.dealValue ?? 0), 0)
-  const wonCount = won.length
+  const weightedForecast   = pipeline.reduce((s, p) => s + p.expectedRevenue, 0)
+  const wonRevenue         = won.reduce((s, o) => s + (o.dealValue ?? 0), 0)
+  const wonCount           = won.length
 
-  // Stage breakdown
   const stageBreakdown: Record<string, { count: number; forecast: number }> = {}
   for (const p of pipeline) {
     const stage = p.buyingStage
@@ -139,32 +173,21 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 }))
 
 // GET /api/intelligence/stats?workspaceId=
-// Signal and scoring statistics
 intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-  const [totalProspects, signalCounts, tierDist, stageDist] = await Promise.all([
+  const [totalProspects, signalCounts, stageDist] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId } }),
     prisma.signal.groupBy({ by: ['type'], where: { workspaceId }, _count: true }),
-    prisma.prospect.groupBy({
-      by: ['opportunityScore'],
-      where: { workspaceId },
-      _count: true
-    }),
-    prisma.prospect.groupBy({
-      by: ['buyingStage'],
-      where: { workspaceId },
-      _count: true
-    })
+    prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId }, _count: true })
   ])
 
-  // Bucket tier distribution
   const allProspects = await prisma.prospect.findMany({
     where: { workspaceId },
     select: { opportunityScore: true }
   })
-  const hot = allProspects.filter(p => p.opportunityScore >= 72).length
+  const hot  = allProspects.filter(p => p.opportunityScore >= 72).length
   const warm = allProspects.filter(p => p.opportunityScore >= 45 && p.opportunityScore < 72).length
   const cold = allProspects.filter(p => p.opportunityScore < 45).length
 
@@ -174,4 +197,48 @@ intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
     signalBreakdown: Object.fromEntries(signalCounts.map(r => [r.type, r._count])),
     stageDistribution: Object.fromEntries(stageDist.map(r => [r.buyingStage, r._count]))
   })
+}))
+
+// ── Industry Signal Config CRUD ────────────────────────────────────────────────
+
+// GET /api/intelligence/industry-configs?workspaceId=
+intelligenceRouter.get('/industry-configs', asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const configs = await prisma.industrySignalConfig.findMany({
+    where: { workspaceId },
+    orderBy: { industry: 'asc' }
+  })
+
+  res.json({ configs })
+}))
+
+// PUT /api/intelligence/industry-configs/:industry
+intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, res) => {
+  const { industry } = req.params
+  const { workspaceId, signalBoosts, description } = req.body
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  if (!signalBoosts || typeof signalBoosts !== 'object') throw new ApiError(400, 'signalBoosts must be an object')
+
+  const config = await prisma.industrySignalConfig.upsert({
+    where: { workspaceId_industry: { workspaceId, industry } },
+    create: { workspaceId, industry, signalBoosts, description: description ?? null },
+    update: { signalBoosts, description: description ?? null }
+  })
+
+  res.json({ config })
+}))
+
+// DELETE /api/intelligence/industry-configs/:industry?workspaceId=
+intelligenceRouter.delete('/industry-configs/:industry', asyncHandler(async (req, res) => {
+  const { industry } = req.params
+  const workspaceId = req.query.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  await prisma.industrySignalConfig.delete({
+    where: { workspaceId_industry: { workspaceId, industry } }
+  })
+
+  res.json({ ok: true })
 }))
