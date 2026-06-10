@@ -262,11 +262,6 @@ const scoreProspectsWorker = new Worker(
     const { workspaceId } = job.data as { workspaceId: string }
     log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
 
-    const prospects = await prisma.prospect.findMany({
-      where: { workspaceId },
-      include: { signals: true }
-    })
-
     await job.updateProgress(10)
 
     const [icp, scoringModel] = await Promise.all([
@@ -275,24 +270,41 @@ const scoreProspectsWorker = new Worker(
     ])
     const signalWeights = (scoringModel?.signalWeights ?? null) as SignalWeights | null
 
+    const BATCH_SIZE = 200
+    let cursor: string | undefined
     let updated = 0
-    for (const prospect of prospects) {
-      const rawSignals = prospect.signals.map(toRawSignal)
-      const scores = calculateOpportunityScores(rawSignals, {
-        industry:      prospect.industry,
-        employeeCount: prospect.employeeCount,
-        contactEmail:  prospect.contactEmail,
-        contactName:   prospect.contactName,
-        domain:        prospect.domain,
-        location:      prospect.location,
-      }, icp ?? undefined, signalWeights ?? undefined)
-      const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
-      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-      await prisma.prospect.update({
-        where: { id: prospect.id },
-        data: { ...scores, buyingStage, winProbability },
+
+    while (true) {
+      const batch = await prisma.prospect.findMany({
+        where: { workspaceId },
+        include: { signals: true },
+        orderBy: { id: 'asc' },
+        take: BATCH_SIZE,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       })
-      updated++
+      if (batch.length === 0) break
+
+      await Promise.all(batch.map(prospect => {
+        const rawSignals = prospect.signals.map(toRawSignal)
+        const scores = calculateOpportunityScores(rawSignals, {
+          industry:      prospect.industry,
+          employeeCount: prospect.employeeCount,
+          contactEmail:  prospect.contactEmail,
+          contactName:   prospect.contactName,
+          domain:        prospect.domain,
+          location:      prospect.location,
+        }, icp ?? undefined, signalWeights ?? undefined)
+        const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
+        const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+        return prisma.prospect.update({
+          where: { id: prospect.id },
+          data: { ...scores, buyingStage, winProbability },
+        })
+      }))
+
+      updated += batch.length
+      cursor = batch[batch.length - 1].id
+      if (batch.length < BATCH_SIZE) break
     }
 
     await job.updateProgress(100)
@@ -360,7 +372,16 @@ const calibrateWorker = new Worker(
 
     const rawOutcomes = await prisma.prospectOutcome.findMany({
       where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
-      include: { prospect: { include: { signals: true } } },
+      select: {
+        stage: true,
+        prospect: {
+          select: {
+            industry: true,
+            employeeCount: true,
+            signals: { select: { type: true } },
+          },
+        },
+      },
       orderBy: { recordedAt: 'desc' },
       take: 100
     })

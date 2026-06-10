@@ -248,7 +248,11 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
+  const VALID_OUTCOME_STAGES = ['DISCOVERED', 'VIEWED', 'CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST']
   if (!req.body.stage) throw new ApiError(400, 'stage required')
+  if (!VALID_OUTCOME_STAGES.includes(req.body.stage)) {
+    throw new ApiError(400, `stage must be one of: ${VALID_OUTCOME_STAGES.join(', ')}`)
+  }
 
   const [outcome, updated] = await prisma.$transaction([
     prisma.prospectOutcome.create({
@@ -326,45 +330,59 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const { enrichProspect } = await import('../services/apollo.js')
+
+  // Fetch existing signals and ICP concurrently before enrichment writes
+  const [existingSignals, icp] = await Promise.all([
+    prisma.signal.findMany({ where: { prospectId: prospect.id } }),
+    getICP(prospect.workspaceId),
+  ])
+
   const result = await enrichProspect(prospect)
 
-  const created: string[] = []
-  for (const sig of result.signals) {
-    const s = await prisma.signal.create({
-      data: {
-        workspaceId:       prospect.workspaceId,
-        prospectId:        prospect.id,
-        type:              sig.type as import('@prisma/client').SignalType,
-        strength:          sig.strength,
-        sourceReliability: sig.sourceReliability,
-        industryRelevance: sig.industryRelevance,
-        title:             sig.title,
-        description:       sig.description,
-        source:            sig.source,
-        detectedAt:        sig.detectedAt,
-      }
-    })
-    created.push(s.id)
+  // Create all new signals in parallel — no serial round trips
+  const newSignals = await Promise.all(
+    result.signals.map(sig =>
+      prisma.signal.create({
+        data: {
+          workspaceId:       prospect.workspaceId,
+          prospectId:        prospect.id,
+          type:              sig.type as import('@prisma/client').SignalType,
+          strength:          sig.strength,
+          sourceReliability: sig.sourceReliability,
+          industryRelevance: sig.industryRelevance,
+          title:             sig.title,
+          description:       sig.description,
+          source:            sig.source,
+          detectedAt:        sig.detectedAt,
+        },
+      })
+    )
+  )
+  const created = newSignals.map(s => s.id)
+
+  const allSignals = [...existingSignals, ...newSignals]
+  const rawSignals = allSignals.map(toRawSignal)
+
+  const u = result.updates
+  // Apply allowlist — never blindly spread external data into Prisma
+  const ALLOWED_ENRICH = ['industry', 'employeeCount', 'contactEmail', 'contactName',
+    'contactPhone', 'contactTitle', 'linkedinUrl', 'domain', 'description', 'location'] as const
+  const safeUpdates: Record<string, unknown> = {}
+  for (const key of ALLOWED_ENRICH) {
+    if (u[key] !== undefined) safeUpdates[key] = u[key]
   }
 
-  const [allSignals, icp] = await Promise.all([
-    prisma.signal.findMany({ where: { prospectId: prospect.id } }),
-    getICP(prospect.workspaceId)
-  ])
-  const rawSignals = allSignals.map(toRawSignal)
-  const u          = result.updates
-  const scores     = calculateOpportunityScores(rawSignals, {
-    industry:      (u.industry      as string | null | undefined) ?? prospect.industry,
-    employeeCount: (u.employeeCount as number | null | undefined) ?? prospect.employeeCount,
-    contactEmail:  (u.contactEmail  as string | null | undefined) ?? prospect.contactEmail,
-    contactName:   (u.contactName   as string | null | undefined) ?? prospect.contactName,
-    domain:        (u.domain        as string | null | undefined) ?? prospect.domain,
+  const scores = calculateOpportunityScores(rawSignals, {
+    industry:      u.industry      ?? prospect.industry,
+    employeeCount: u.employeeCount ?? prospect.employeeCount,
+    contactEmail:  u.contactEmail  ?? prospect.contactEmail,
+    contactName:   u.contactName   ?? prospect.contactName,
+    domain:        u.domain        ?? prospect.domain,
     location:      prospect.location,
   }, icp)
   const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
-  // Most recent signal detectedAt — use as lastSignalAt
   const latestSignalAt = allSignals.reduce<Date | null>((max, s) => {
     return !max || s.detectedAt > max ? s.detectedAt : max
   }, null)
@@ -376,8 +394,8 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
       buyingStage,
       winProbability,
       ...(latestSignalAt && { lastSignalAt: latestSignalAt }),
-      ...(Object.keys(u).length > 0 && u),
-    }
+      ...(Object.keys(safeUpdates).length > 0 && safeUpdates),
+    },
   })
 
   res.json({

@@ -17,7 +17,7 @@
     "typecheck:web": "tsc --noEmit -p apps/web/tsconfig.json",
     "typecheck:worker": "tsc --noEmit -p apps/worker/tsconfig.json",
     "typecheck": "npm run typecheck:api && npm run typecheck:web && npm run typecheck:worker",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "npx tsx --test tests/**/*.test.ts",
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {

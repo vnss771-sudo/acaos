@@ -84,8 +84,8 @@ export function calibrate(outcomes: Outcome[]): CalibrateResult {
   const icpUpdate: CalibrateResult['icpUpdate'] = {}
   if (topIndustries.length > 0) icpUpdate.targetIndustries = topIndustries
   if (wonCounts.length >= 3) {
-    icpUpdate.minEmployees = wonCounts[Math.floor(wonCounts.length * 0.1)]
-    icpUpdate.maxEmployees = wonCounts[Math.floor(wonCounts.length * 0.9)]
+    icpUpdate.minEmployees = wonCounts[Math.floor((wonCounts.length - 1) * 0.1)]
+    icpUpdate.maxEmployees = wonCounts[Math.floor((wonCounts.length - 1) * 0.9)]
   }
 
   return {
