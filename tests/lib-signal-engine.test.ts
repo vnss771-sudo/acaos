@@ -3,13 +3,16 @@ import assert from 'node:assert/strict'
 import {
   decayedStrength,
   calculateOpportunityScores,
+  calculateExpectedRevenue,
   detectBuyingStage,
   calcWinProbability,
   getOpportunityTier,
   generateRuleBasedRecommendation,
+  normalizeSignal,
+  computeSignalExpiry,
   EVENT_BASE_WEIGHTS
 } from '../apps/api/src/lib/signalEngine.js'
-import type { RawSignal, ProspectMeta, BuyingStage } from '../apps/api/src/lib/signalEngine.js'
+import type { RawSignal, ProspectMeta, BuyingStage, SignalType } from '../apps/api/src/lib/signalEngine.js'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -416,5 +419,132 @@ describe('full scoring pipeline integration', () => {
 
     assert.ok(expectedRevenue > 0, 'Expected revenue should be positive')
     assert.ok(expectedRevenue <= dealValue, 'Expected revenue should not exceed deal value')
+  })
+
+  it('TENDER_PUBLISHED triggers PURCHASING stage on construction ICP', () => {
+    const sigs = [makeSignal('TENDER_PUBLISHED', 2, 90)]
+    const stage = detectBuyingStage(sigs, 55)
+    assert.equal(stage, 'PURCHASING', 'TENDER_PUBLISHED should map to PURCHASING')
+  })
+
+  it('CONTRACT_AWARDED triggers PURCHASING stage', () => {
+    const sigs = [makeSignal('CONTRACT_AWARDED', 1, 85)]
+    const stage = detectBuyingStage(sigs, 50)
+    assert.equal(stage, 'PURCHASING')
+  })
+
+  it('JOB_POSTING_SPIKE with FUNDING triggers COMPARING or higher', () => {
+    const sigs = [makeSignal('JOB_POSTING_SPIKE', 1, 80), makeSignal('FUNDING', 3, 75)]
+    const scores = calculateOpportunityScores(sigs, ICPMeta)
+    const stage = detectBuyingStage(sigs, scores.opportunityScore)
+    assert.ok(['COMPARING', 'PURCHASING'].includes(stage),
+      `Expected COMPARING or PURCHASING, got ${stage}`)
+  })
+})
+
+// ── calculateExpectedRevenue ──────────────────────────────────────────────────
+
+describe('calculateExpectedRevenue', () => {
+  it('returns 0 when expectedDealValue is null', () => {
+    assert.equal(calculateExpectedRevenue(0.5, null), 0)
+    assert.equal(calculateExpectedRevenue(0.5, undefined), 0)
+    assert.equal(calculateExpectedRevenue(0.5, 0), 0)
+  })
+
+  it('returns 0 when winProbability is 0 or null', () => {
+    assert.equal(calculateExpectedRevenue(0, 10000), 0)
+    assert.equal(calculateExpectedRevenue(null, 10000), 0)
+  })
+
+  it('computes correctly with default retention and expansion', () => {
+    // P(convert)=0.3, deal=10000, retention=0.8, expansion=0.2
+    // = 10000 × 0.3 × 0.8 × (1 + 0.2×0.5) = 10000 × 0.3 × 0.8 × 1.1 = 2640
+    const result = calculateExpectedRevenue(0.3, 10000, 0.8, 0.2)
+    assert.equal(result, 2640)
+  })
+
+  it('higher retention → higher expected revenue', () => {
+    const low  = calculateExpectedRevenue(0.4, 20000, 0.5, 0.1)
+    const high = calculateExpectedRevenue(0.4, 20000, 0.9, 0.1)
+    assert.ok(high > low, 'Higher retention should produce higher expected revenue')
+  })
+
+  it('expansion adds revenue above base', () => {
+    const noExpand = calculateExpectedRevenue(0.5, 10000, 0.8, 0)
+    const withExpand = calculateExpectedRevenue(0.5, 10000, 0.8, 0.5)
+    assert.ok(withExpand > noExpand, 'Expansion probability should increase expected revenue')
+  })
+
+  it('clamps winProbability to [0,1]', () => {
+    const safe   = calculateExpectedRevenue(0.5, 10000, 0.8, 0.2)
+    const clamped = calculateExpectedRevenue(1.5, 10000, 0.8, 0.2)
+    // 1.5 should clamp to 1.0, so clamped should equal 100% version
+    const full = calculateExpectedRevenue(1.0, 10000, 0.8, 0.2)
+    assert.equal(clamped, full, 'winProbability > 1 should clamp to 1')
+    assert.ok(clamped > safe, 'Clamped result should exceed 50% result')
+  })
+})
+
+// ── normalizeSignal ───────────────────────────────────────────────────────────
+
+describe('normalizeSignal', () => {
+  it('returns a normalizedType, category, buyingImplication, and predictedNeeds', () => {
+    const norm = normalizeSignal('FUNDING')
+    assert.ok(norm.normalizedType)
+    assert.ok(norm.category)
+    assert.ok(norm.buyingImplication)
+    assert.ok(Array.isArray(norm.predictedNeeds))
+  })
+
+  it('CONTRACT_AWARDED maps to growth/market with project delivery implication', () => {
+    const norm = normalizeSignal('CONTRACT_AWARDED')
+    assert.equal(norm.normalizedType, 'growth')
+    assert.equal(norm.category, 'market')
+    assert.ok(norm.buyingImplication.includes('project'))
+  })
+
+  it('PROCUREMENT maps to cost_reduction category', () => {
+    const norm = normalizeSignal('PROCUREMENT')
+    assert.equal(norm.normalizedType, 'cost_reduction')
+  })
+
+  it('all 19 signal types have a normalization entry', () => {
+    const allTypes: SignalType[] = [
+      'HIRING', 'FUNDING', 'EXPANSION', 'TECH_ADOPTION', 'LEADERSHIP_CHANGE',
+      'NEWS_MENTION', 'PROCUREMENT', 'BUSINESS_REGISTRATION', 'WEBSITE_CHANGE',
+      'JOB_POSTING_SPIKE', 'CONTRACT_AWARDED', 'TENDER_PUBLISHED', 'PERMIT_APPROVED',
+      'OFFICE_OPENING', 'PRICING_PAGE_CHANGED', 'ENTERPRISE_PAGE_LAUNCHED',
+      'GOV_GRANT_RECEIVED', 'PROJECT_START_DETECTED', 'TECH_STACK_CHANGED',
+    ]
+    for (const type of allTypes) {
+      const norm = normalizeSignal(type)
+      assert.ok(norm.normalizedType, `${type} missing normalizedType`)
+      assert.ok(norm.category, `${type} missing category`)
+    }
+  })
+})
+
+// ── computeSignalExpiry ───────────────────────────────────────────────────────
+
+describe('computeSignalExpiry', () => {
+  it('returns a Date in the future', () => {
+    const expiry = computeSignalExpiry('FUNDING', new Date())
+    assert.ok(expiry > new Date(), 'expiry should be in the future')
+  })
+
+  it('fast-decaying signals expire sooner than slow-decaying ones', () => {
+    const now = new Date()
+    const websiteExpiry  = computeSignalExpiry('WEBSITE_CHANGE', now)  // rate 0.025
+    const permitExpiry   = computeSignalExpiry('PERMIT_APPROVED', now)  // rate 0.007
+    assert.ok(websiteExpiry < permitExpiry,
+      'WEBSITE_CHANGE (fast decay) should expire before PERMIT_APPROVED (slow decay)')
+  })
+
+  it('expiry is consistent: signal with older detectedAt expires sooner in wall clock', () => {
+    const old = new Date(Date.now() - 30 * 86_400_000)
+    const fresh = new Date()
+    const oldExpiry   = computeSignalExpiry('FUNDING', old)
+    const freshExpiry = computeSignalExpiry('FUNDING', fresh)
+    assert.ok(oldExpiry < freshExpiry, 'Older signal should expire sooner')
   })
 })

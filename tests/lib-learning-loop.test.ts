@@ -202,6 +202,53 @@ describe('toRawSignal()', () => {
   })
 })
 
+// ── calibrate() — channel & timing weights ────────────────────────────────────
+
+describe('calibrate() message weights', () => {
+  function makeOutcomes(n: number) {
+    return Array.from({ length: n }, (_, i) => makeOutcome(i % 2 === 0 ? 'WON' : 'LOST'))
+  }
+
+  it('populates channelWeights from message outcomes', () => {
+    const msgOutcomes = [
+      ...Array.from({ length: 10 }, () => ({ event: 'SENT',           channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 3 },  () => ({ event: 'MEETING_BOOKED', channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 5 },  () => ({ event: 'SENT',           channel: 'PHONE', industry: null })),
+    ]
+    const result = calibrate(makeOutcomes(10), msgOutcomes)
+    assert.equal(result.stats.calibrated, true)
+    assert.ok('EMAIL' in result.channelWeights, 'EMAIL should have a weight')
+    assert.equal(result.channelWeights['EMAIL'], Math.round(Math.min(100, Math.max(0, (3/10) * 500))))
+  })
+
+  it('skips channels with fewer than 5 sent events', () => {
+    const msgOutcomes = [
+      ...Array.from({ length: 4 }, () => ({ event: 'SENT',    channel: 'LINKEDIN', industry: null })),
+      { event: 'MEETING_BOOKED', channel: 'LINKEDIN', industry: null },
+    ]
+    const result = calibrate(makeOutcomes(10), msgOutcomes)
+    assert.ok(!('LINKEDIN' in result.channelWeights), 'LINKEDIN with 4 sent should be excluded')
+  })
+
+  it('populates timingWeights from sentAt hour/dow', () => {
+    const msgOutcomes = [
+      ...Array.from({ length: 5 }, () => ({ event: 'SENT',           channel: 'EMAIL', industry: null, sentAtDow: 2, sentAtHour: 9 })),
+      ...Array.from({ length: 2 }, () => ({ event: 'MEETING_BOOKED', channel: 'EMAIL', industry: null, sentAtDow: 2, sentAtHour: 9 })),
+    ]
+    const result = calibrate(makeOutcomes(10), msgOutcomes)
+    // 5 sent events ≥ threshold of 3, so '2:9' should appear
+    assert.ok('2:9' in result.timingWeights, '5 sent events should meet the threshold of 3')
+    // 2/5 meeting rate * 500 = 200 → clamped to 100
+    assert.equal(result.timingWeights['2:9'], 100)
+  })
+
+  it('returns empty channelWeights and timingWeights when no message outcomes', () => {
+    const result = calibrate(makeOutcomes(10))
+    assert.deepEqual(result.channelWeights, {})
+    assert.deepEqual(result.timingWeights, {})
+  })
+})
+
 // ── predictBuyingIntent() ─────────────────────────────────────────────────────
 
 describe('predictBuyingIntent()', () => {

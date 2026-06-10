@@ -19,16 +19,16 @@ model User {
 }
 
 model Workspace {
-  id                   String          @id @default(cuid())
+  id                   String               @id @default(cuid())
   name                 String
-  slug                 String          @unique
-  plan                 String          @default("free")
-  stripeCustomerId     String?         @unique
-  stripeSubscriptionId String?         @unique
+  slug                 String               @unique
+  plan                 String               @default("free")
+  stripeCustomerId     String?              @unique
+  stripeSubscriptionId String?              @unique
   subscriptionStatus   String?
-  ingestApiKey         String?         @unique
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  ingestApiKey         String?              @unique
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
   memberships          Membership[]
   leads                Lead[]
   campaigns            Campaign[]
@@ -40,6 +40,8 @@ model Workspace {
   recommendations      Recommendation[]
   prospectOutcomes     ProspectOutcome[]
   workspaceICP         WorkspaceICP?
+  messageExperiments   MessageExperiment[]
+  messageOutcomes      MessageOutcome[]
 }
 
 model Membership {
@@ -71,28 +73,28 @@ model Campaign {
 }
 
 model Lead {
-  id             String          @id @default(cuid())
-  workspaceId    String
-  campaignId     String?
-  businessName   String
-  contactName    String?
-  email          String?
-  phone          String?
-  website        String?
-  city           String?
-  category       String?
-  notes          String?
-  aiSummary      String?
-  outreachAngle  String?
-  score          Int             @default(0)
-  stage          String          @default("NEW")
-  sourceTag      String?
+  id              String          @id @default(cuid())
+  workspaceId     String
+  campaignId      String?
+  businessName    String
+  contactName     String?
+  email           String?
+  phone           String?
+  website         String?
+  city            String?
+  category        String?
+  notes           String?
+  aiSummary       String?
+  outreachAngle   String?
+  score           Int             @default(0)
+  stage           String          @default("NEW")
+  sourceTag       String?
   lastContactedAt DateTime?
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
-  outreachDrafts OutreachDraft[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign        Campaign?       @relation(fields: [campaignId], references: [id])
+  outreachDrafts  OutreachDraft[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   @@index([workspaceId])
   @@index([workspaceId, stage])
@@ -115,12 +117,14 @@ model OutreachDraft {
   @@index([workspaceId])
 }
 
-// Persisted ScorerV2 model — one per workspace, survives deploys
+// Persisted scoring model — one per workspace, survives deploys
 model ScoringModel {
   id                 String           @id @default(cuid())
   workspaceId        String           @unique
   weights            Json
   signalWeights      Json?
+  channelWeights     Json?            // learned channel effectiveness per industry
+  timingWeights      Json?            // learned best-timing patterns per segment
   performanceMetrics Json
   updateCount        Int              @default(0)
   lastWeightUpdate   DateTime?
@@ -184,7 +188,10 @@ model ProcessedEmail {
   processedAt DateTime @default(now())
 }
 
+// ── Acquisition Intelligence enums ───────────────────────────────────────────
+
 enum SignalType {
+  // Broad acquisition signals
   HIRING
   FUNDING
   EXPANSION
@@ -194,6 +201,17 @@ enum SignalType {
   PROCUREMENT
   BUSINESS_REGISTRATION
   WEBSITE_CHANGE
+  // Granular acquisition signals for precision targeting
+  JOB_POSTING_SPIKE
+  CONTRACT_AWARDED
+  TENDER_PUBLISHED
+  PERMIT_APPROVED
+  OFFICE_OPENING
+  PRICING_PAGE_CHANGED
+  ENTERPRISE_PAGE_LAUNCHED
+  GOV_GRANT_RECEIVED
+  PROJECT_START_DETECTED
+  TECH_STACK_CHANGED
 }
 
 enum BuyingStage {
@@ -214,44 +232,64 @@ enum OutcomeStage {
   LOST
 }
 
+enum MessageEvent {
+  SENT
+  OPENED
+  CLICKED
+  REPLIED
+  MEETING_BOOKED
+  PROPOSAL_SENT
+  WON
+  LOST
+}
+
+// ── Prospect intelligence models ──────────────────────────────────────────────
+
 model Prospect {
-  id               String       @id @default(cuid())
-  workspaceId      String
-  companyName      String
-  domain           String?
-  industry         String?
-  employeeCount    Int?
-  estimatedRevenue Float?
-  location         String?
-  description      String?
-  notes            String?
-  contactName      String?
-  contactEmail     String?
-  contactPhone     String?
-  contactTitle     String?
-  linkedinUrl      String?
-  opportunityScore Int          @default(0)
-  intentScore      Int          @default(0)
-  fitScore         Int          @default(0)
-  timingScore      Int          @default(0)
-  confidenceScore  Int          @default(0)
-  buyingStage      BuyingStage  @default(RESEARCHING)
-  outcomeStage     OutcomeStage @default(DISCOVERED)
-  expectedDealValue Float?
-  winProbability   Float?
-  lastSignalAt     DateTime?
-  lastContactedAt  DateTime?
-  aiSummary        String?
-  sourceTag        String?
-  workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  signals          Signal[]
-  recommendations  Recommendation[]
-  outcomes         ProspectOutcome[]
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  id                   String            @id @default(cuid())
+  workspaceId          String
+  companyName          String
+  domain               String?
+  industry             String?
+  employeeCount        Int?
+  estimatedRevenue     Float?
+  location             String?
+  description          String?
+  notes                String?
+  contactName          String?
+  contactEmail         String?
+  contactPhone         String?
+  contactTitle         String?
+  linkedinUrl          String?
+  // Opportunity scoring (0-100 intelligence signal)
+  opportunityScore     Int               @default(0)
+  intentScore          Int               @default(0)
+  fitScore             Int               @default(0)
+  timingScore          Int               @default(0)
+  confidenceScore      Int               @default(0)
+  buyingStage          BuyingStage       @default(RESEARCHING)
+  outcomeStage         OutcomeStage      @default(DISCOVERED)
+  // Expected revenue scoring (dollar-weighted ranking)
+  expectedDealValue    Float?
+  winProbability       Float?
+  retentionProbability Float             @default(0.8)
+  expansionProbability Float             @default(0.2)
+  expectedRevenueScore Float             @default(0)
+  lastSignalAt         DateTime?
+  lastContactedAt      DateTime?
+  aiSummary            String?
+  sourceTag            String?
+  workspace            Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  signals              Signal[]
+  recommendations      Recommendation[]
+  outcomes             ProspectOutcome[]
+  messageOutcomes      MessageOutcome[]
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
 
   @@index([workspaceId])
   @@index([workspaceId, opportunityScore])
+  @@index([workspaceId, expectedRevenueScore])
   @@index([workspaceId, buyingStage])
   @@index([workspaceId, outcomeStage])
 }
@@ -261,15 +299,28 @@ model Signal {
   workspaceId       String
   prospectId        String
   type              SignalType
+  // Raw event data
+  rawType           String?    // original type string before normalization
+  normalizedType    String?    // normalized category: growth|efficiency|cost_reduction|risk
+  category          String?    // high-level: operational|financial|digital|market
+  // Signal quality
   strength          Int
+  confidence        Int        @default(70)  // 0-100 confidence in signal accuracy
   sourceReliability Int        @default(70)
   industryRelevance Int        @default(50)
+  // Buying intelligence
+  buyingImplication String?    // e.g. "likely_operational_pressure"
+  predictedNeeds    String[]   // e.g. ["labour","workflow_software","subcontractors"]
+  // Evidence
   title             String?
   description       String?
   sourceUrl         String?
+  evidenceUrl       String?
   source            String?
   rawData           Json?
+  // Lifecycle
   detectedAt        DateTime   @default(now())
+  expiresAt         DateTime?  // pre-computed decay deadline
   workspace         Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect          Prospect   @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   createdAt         DateTime   @default(now())
@@ -278,25 +329,32 @@ model Signal {
   @@index([prospectId])
   @@index([type])
   @@index([detectedAt])
+  @@index([expiresAt])
 }
 
+// Strategy card — intelligence output for a prospect
 model Recommendation {
-  id           String    @id @default(cuid())
-  workspaceId  String
-  prospectId   String
-  bestContact  String?
-  bestTiming   String?
-  bestChannel  String?
-  messageAngle String?
-  reasoning    String?
-  actionText   String?
-  urgency      String    @default("MEDIUM")
-  priority     Int       @default(50)
-  expiresAt    DateTime?
-  actedAt      DateTime?
-  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  prospect     Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
-  createdAt    DateTime  @default(now())
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  prospectId         String
+  // Action intelligence
+  bestContact        String?
+  bestTiming         String?
+  bestChannel        String?
+  messageAngle       String?
+  reasoning          String?
+  actionText         String?
+  urgency            String    @default("MEDIUM")
+  priority           Int       @default(50)
+  // Strategy card extensions
+  predictedNeed      String?   // e.g. "workforce coordination software"
+  meetingProbability Float?    // 0.0-1.0
+  expectedRevenue    Float?    // dollar value of this opportunity
+  expiresAt          DateTime?
+  actedAt            DateTime?
+  workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect           Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt          DateTime  @default(now())
 
   @@index([workspaceId])
   @@index([prospectId])
@@ -328,4 +386,53 @@ model WorkspaceICP {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// ── Message Intelligence models ───────────────────────────────────────────────
+
+// Tracks message variants for A/B learning
+model MessageExperiment {
+  id                  String           @id @default(cuid())
+  workspaceId         String
+  name                String
+  subject             String?
+  painAngle           String?          // e.g. "labour_shortage", "cost_reduction"
+  ctaType             String?          // e.g. "book_call", "demo_request", "reply"
+  industry            String?
+  channel             String           // EMAIL | LINKEDIN | PHONE
+  messageLength       Int?
+  personalizationType String?          // e.g. "signal_based", "industry", "generic"
+  timing              String?          // e.g. "tuesday_morning", "end_of_quarter"
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  outcomes            MessageOutcome[]
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, channel])
+  @@index([workspaceId, industry])
+}
+
+// Individual message outcome — feeds message-market fit learning
+model MessageOutcome {
+  id           String             @id @default(cuid())
+  workspaceId  String
+  experimentId String?
+  prospectId   String?
+  event        MessageEvent
+  channel      String
+  sentAt       DateTime?
+  respondedAt  DateTime?          // first meaningful response timestamp
+  dealValue    Float?
+  notes        String?
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  experiment   MessageExperiment? @relation(fields: [experimentId], references: [id])
+  prospect     Prospect?          @relation(fields: [prospectId], references: [id])
+  createdAt    DateTime           @default(now())
+
+  @@index([workspaceId])
+  @@index([experimentId])
+  @@index([prospectId])
+  @@index([workspaceId, event])
+  @@index([workspaceId, channel])
 }

@@ -7,6 +7,7 @@ import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/sco
 import type { ScoringWeights } from '../../api/src/lib/scoring.js'
 import {
   calculateOpportunityScores,
+  calculateExpectedRevenue,
   detectBuyingStage,
   calcWinProbability,
   generateRuleBasedRecommendation,
@@ -294,11 +295,17 @@ const scoreProspectsWorker = new Worker(
           domain:        prospect.domain,
           location:      prospect.location,
         }, icp ?? undefined, signalWeights ?? undefined)
-        const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
-        const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+        const buyingStage          = detectBuyingStage(rawSignals, scores.opportunityScore)
+        const winProbability       = calcWinProbability(buyingStage, scores.opportunityScore)
+        const expectedRevenueScore = calculateExpectedRevenue(
+          winProbability,
+          prospect.expectedDealValue,
+          prospect.retentionProbability,
+          prospect.expansionProbability,
+        )
         return prisma.prospect.update({
           where: { id: prospect.id },
-          data: { ...scores, buyingStage, winProbability },
+          data: { ...scores, buyingStage, winProbability, expectedRevenueScore },
         })
       }))
 
@@ -342,7 +349,15 @@ const recommendWorker = new Worker(
         domain:        prospect.domain,
         location:      prospect.location,
       },
-      rawSignals
+      rawSignals,
+      prospect.winProbability ?? 0,
+    )
+
+    const expectedRevenue = calculateExpectedRevenue(
+      prospect.winProbability,
+      prospect.expectedDealValue,
+      prospect.retentionProbability,
+      prospect.expansionProbability,
     )
 
     await prisma.recommendation.create({
@@ -350,6 +365,7 @@ const recommendWorker = new Worker(
         workspaceId,
         prospectId,
         ...rec,
+        expectedRevenue,
         expiresAt: new Date(Date.now() + 7 * 86_400_000)
       }
     })
@@ -370,21 +386,34 @@ const calibrateWorker = new Worker(
 
     await job.updateProgress(10)
 
-    const rawOutcomes = await prisma.prospectOutcome.findMany({
-      where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
-      select: {
-        stage: true,
-        prospect: {
-          select: {
-            industry: true,
-            employeeCount: true,
-            signals: { select: { type: true } },
+    const [rawOutcomes, rawMessageOutcomes] = await Promise.all([
+      prisma.prospectOutcome.findMany({
+        where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
+        select: {
+          stage: true,
+          prospect: {
+            select: {
+              industry: true,
+              employeeCount: true,
+              signals: { select: { type: true } },
+            },
           },
         },
-      },
-      orderBy: { recordedAt: 'desc' },
-      take: 100
-    })
+        orderBy: { recordedAt: 'desc' },
+        take: 100,
+      }),
+      prisma.messageOutcome.findMany({
+        where: { workspaceId },
+        select: {
+          event: true,
+          channel: true,
+          sentAt: true,
+          experiment: { select: { industry: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      }),
+    ])
 
     await job.updateProgress(30)
 
@@ -397,7 +426,15 @@ const calibrateWorker = new Worker(
       }
     }))
 
-    const result = calibrate(outcomes)
+    const messageOutcomes = rawMessageOutcomes.map(mo => ({
+      event:     mo.event as string,
+      channel:   mo.channel,
+      industry:  mo.experiment?.industry ?? null,
+      sentAtHour: mo.sentAt ? new Date(mo.sentAt).getUTCHours() : undefined,
+      sentAtDow:  mo.sentAt ? new Date(mo.sentAt).getUTCDay()   : undefined,
+    }))
+
+    const result = calibrate(outcomes, messageOutcomes)
     await job.updateProgress(60)
 
     if (!result.stats.calibrated) {
@@ -411,6 +448,8 @@ const calibrateWorker = new Worker(
         workspaceId,
         weights: DEFAULT_SCORING_WEIGHTS,
         signalWeights: result.signalWeights,
+        channelWeights: result.channelWeights,
+        timingWeights: result.timingWeights,
         performanceMetrics: {
           totalOutcomes: result.stats.totalOutcomes,
           winRate: result.stats.baselineWinRate,
@@ -419,6 +458,8 @@ const calibrateWorker = new Worker(
       },
       update: {
         signalWeights: result.signalWeights,
+        channelWeights: result.channelWeights,
+        timingWeights: result.timingWeights,
         lastWeightUpdate: new Date(),
         updateCount: { increment: 1 },
         performanceMetrics: {

@@ -4,12 +4,15 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import {
   calculateOpportunityScores,
+  calculateExpectedRevenue,
   detectBuyingStage,
   calcWinProbability,
   generateRuleBasedRecommendation,
   getOpportunityTier,
   predictBuyingIntent,
+  normalizeSignal,
   toRawSignal,
+  computeSignalExpiry,
   type ICPConfig,
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
@@ -48,6 +51,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const stageFilter   = req.query.stage   as string | undefined
   const outcomeFilter = req.query.outcome as string | undefined
   const search        = req.query.search  as string | undefined
+  const sortBy        = req.query.sortBy  as string | undefined  // opportunityScore | expectedRevenueScore
 
   const where: Record<string, unknown> = { workspaceId }
   if (stageFilter)   where.buyingStage  = stageFilter
@@ -61,6 +65,10 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     else if (tier === 'COLD') where.opportunityScore = { lt: 45 }
   }
 
+  const orderBy = sortBy === 'expectedRevenueScore'
+    ? { expectedRevenueScore: 'desc' as const }
+    : { opportunityScore: 'desc' as const }
+
   const [prospects, total] = await Promise.all([
     prisma.prospect.findMany({
       where,
@@ -71,12 +79,14 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
         linkedinUrl: true, opportunityScore: true, intentScore: true, fitScore: true,
         timingScore: true, confidenceScore: true,
         buyingStage: true, outcomeStage: true, expectedDealValue: true,
-        winProbability: true, lastSignalAt: true, lastContactedAt: true,
+        winProbability: true, retentionProbability: true, expansionProbability: true,
+        expectedRevenueScore: true,
+        lastSignalAt: true, lastContactedAt: true,
         sourceTag: true, createdAt: true, updatedAt: true,
         _count: { select: { signals: true } },
         recommendations: { orderBy: { priority: 'desc' }, take: 1 },
       },
-      orderBy: { opportunityScore: 'desc' },
+      orderBy,
       skip,
       take: limit + 1,
     }),
@@ -139,10 +149,12 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
     location:      req.body.location      ?? null,
   }
 
-  const icp    = await getICP(workspaceId)
-  const scores = calculateOpportunityScores([], meta, icp)
-  const buyingStage    = detectBuyingStage([], scores.opportunityScore)
+  const icp          = await getICP(workspaceId)
+  const scores       = calculateOpportunityScores([], meta, icp)
+  const buyingStage  = detectBuyingStage([], scores.opportunityScore)
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+  const expectedDealValue = req.body.expectedDealValue ? Number(req.body.expectedDealValue) : null
+  const expectedRevenueScore = calculateExpectedRevenue(winProbability, expectedDealValue)
 
   const created = await prisma.prospect.create({
     data: {
@@ -161,11 +173,12 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
       contactPhone:      req.body.contactPhone   ?? null,
       contactTitle:      req.body.contactTitle   ?? null,
       linkedinUrl:       req.body.linkedinUrl    ?? null,
-      expectedDealValue: req.body.expectedDealValue ? Number(req.body.expectedDealValue) : null,
+      expectedDealValue,
       sourceTag:         req.body.sourceTag      ?? null,
       ...scores,
       buyingStage,
       winProbability,
+      expectedRevenueScore,
     },
   })
 
@@ -230,12 +243,18 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
     domain:        prospect.domain,
     location:      prospect.location,
   }, icp)
-  const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
-  const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+  const buyingStage         = detectBuyingStage(rawSignals, scores.opportunityScore)
+  const winProbability      = calcWinProbability(buyingStage, scores.opportunityScore)
+  const expectedRevenueScore = calculateExpectedRevenue(
+    winProbability,
+    prospect.expectedDealValue,
+    prospect.retentionProbability,
+    prospect.expansionProbability,
+  )
 
   const updated = await prisma.prospect.update({
     where: { id: req.params.id },
-    data: { ...scores, buyingStage, winProbability },
+    data: { ...scores, buyingStage, winProbability, expectedRevenueScore },
   })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
 }))
@@ -306,14 +325,23 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
       domain:        prospect.domain,
       location:      prospect.location,
     },
-    rawSignals
+    rawSignals,
+    prospect.winProbability ?? 0,
+  )
+
+  const expectedRevenue = calculateExpectedRevenue(
+    prospect.winProbability,
+    prospect.expectedDealValue,
+    prospect.retentionProbability,
+    prospect.expansionProbability,
   )
 
   const recommendation = await prisma.recommendation.create({
     data: {
-      workspaceId: prospect.workspaceId,
-      prospectId:  prospect.id,
+      workspaceId:        prospect.workspaceId,
+      prospectId:         prospect.id,
       ...rec,
+      expectedRevenue,
       expiresAt: new Date(Date.now() + 7 * 86_400_000),
     },
   })
@@ -339,24 +367,32 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
 
   const result = await enrichProspect(prospect)
 
-  // Create all new signals in parallel — no serial round trips
+  // Create all new signals in parallel — enrich with normalization data and expiry
   const newSignals = await Promise.all(
-    result.signals.map(sig =>
-      prisma.signal.create({
+    result.signals.map(sig => {
+      const { normalizedType, category, buyingImplication, predictedNeeds } = normalizeSignal(sig.type)
+      return prisma.signal.create({
         data: {
           workspaceId:       prospect.workspaceId,
           prospectId:        prospect.id,
           type:              sig.type as import('@prisma/client').SignalType,
+          rawType:           sig.type,
+          normalizedType,
+          category,
+          buyingImplication,
+          predictedNeeds,
           strength:          sig.strength,
+          confidence:        sig.sourceReliability,
           sourceReliability: sig.sourceReliability,
           industryRelevance: sig.industryRelevance,
           title:             sig.title,
           description:       sig.description,
           source:            sig.source,
           detectedAt:        sig.detectedAt,
+          expiresAt:         computeSignalExpiry(sig.type, sig.detectedAt),
         },
       })
-    )
+    })
   )
   const created = newSignals.map(s => s.id)
 
@@ -380,8 +416,14 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
     domain:        u.domain        ?? prospect.domain,
     location:      prospect.location,
   }, icp)
-  const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
-  const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+  const buyingStage          = detectBuyingStage(rawSignals, scores.opportunityScore)
+  const winProbability       = calcWinProbability(buyingStage, scores.opportunityScore)
+  const expectedRevenueScore = calculateExpectedRevenue(
+    winProbability,
+    prospect.expectedDealValue,
+    prospect.retentionProbability,
+    prospect.expansionProbability,
+  )
 
   const latestSignalAt = allSignals.reduce<Date | null>((max, s) => {
     return !max || s.detectedAt > max ? s.detectedAt : max
@@ -393,6 +435,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
       ...scores,
       buyingStage,
       winProbability,
+      expectedRevenueScore,
       ...(latestSignalAt && { lastSignalAt: latestSignalAt }),
       ...(Object.keys(safeUpdates).length > 0 && safeUpdates),
     },
