@@ -50,15 +50,13 @@ export function decayedStrength(signal: RawSignal): number {
 }
 
 // Intent score: how strongly this company is showing buying intent
-function calcIntentScore(signals: RawSignal[]): number {
+function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights): number {
   if (signals.length === 0) return 0
-  // Weighted sum of decayed strengths, capped by event weights
   const scores = signals.map(sig => {
     const ds = decayedStrength(sig)
-    const cap = EVENT_BASE_WEIGHTS[sig.type]
+    const cap = signalWeights?.[sig.type] ?? EVENT_BASE_WEIGHTS[sig.type]
     return Math.min(ds * (sig.sourceReliability / 100), cap)
   })
-  // Geometric-ish aggregation: primary signal + diminishing returns for additional signals
   scores.sort((a, b) => b - a)
   const primary = scores[0]
   const bonus = scores.slice(1).reduce((acc, s) => acc + s * 0.25, 0)
@@ -95,7 +93,18 @@ export type ProspectMeta = {
   contactEmail?: string | null
   contactName?: string | null
   domain?: string | null
+  location?: string | null
 }
+
+export type ICPConfig = {
+  targetIndustries: string[]
+  minEmployees?: number
+  maxEmployees?: number
+  targetGeos: string[]
+  mustHaveEmail: boolean
+}
+
+export type SignalWeights = Partial<Record<SignalType, number>>
 
 const ICP_INDUSTRIES = ['civil', 'electrical', 'plumbing', 'landscaping', 'facilities', 'hvac',
   'roofing', 'painting', 'flooring', 'mechanical', 'structural', 'construction', 'environmental',
@@ -103,24 +112,31 @@ const ICP_INDUSTRIES = ['civil', 'electrical', 'plumbing', 'landscaping', 'facil
   'insurance', 'accounting', 'legal', 'consulting', 'engineering', 'manufacturing', 'retail',
   'hospitality', 'healthcare', 'technology', 'real estate', 'property']
 
-function calcFitScore(meta: ProspectMeta): number {
-  let score = 40 // base
+function calcFitScore(meta: ProspectMeta, icp?: ICPConfig): number {
+  let score = 40
   if (meta.industry) {
     const lower = meta.industry.toLowerCase()
-    if (ICP_INDUSTRIES.some(k => lower.includes(k))) score += 30
+    const industryList = icp?.targetIndustries?.length ? icp.targetIndustries : ICP_INDUSTRIES
+    if (industryList.some(k => lower.includes(k.toLowerCase()))) score += 30
     else score += 5
   }
   if (meta.employeeCount) {
-    if (meta.employeeCount >= 10 && meta.employeeCount <= 500) score += 20
-    else if (meta.employeeCount > 500) score += 5
+    const min = icp?.minEmployees ?? 10
+    const max = icp?.maxEmployees ?? 500
+    if (meta.employeeCount >= min && meta.employeeCount <= max) score += 20
+    else if (meta.employeeCount > max) score += 5
     else score += 10
   } else {
-    score += 10 // unknown = some fit
+    score += 10
   }
-  if (meta.contactEmail) score += 10
+  if (meta.contactEmail) {
+    score += icp?.mustHaveEmail ? 15 : 10
+  } else if (icp?.mustHaveEmail) {
+    score -= 20
+  }
   if (meta.contactName) score += 5
   if (meta.domain) score += 5
-  return Math.min(100, score)
+  return Math.min(100, Math.max(0, score))
 }
 
 export type OpportunityScores = {
@@ -132,13 +148,17 @@ export type OpportunityScores = {
 }
 
 // Main scoring formula: geometric mean of 4 dimensions
-export function calculateOpportunityScores(signals: RawSignal[], meta: ProspectMeta): OpportunityScores {
-  const intentScore = Math.round(calcIntentScore(signals))
-  const fitScore = Math.round(calcFitScore(meta))
+export function calculateOpportunityScores(
+  signals: RawSignal[],
+  meta: ProspectMeta,
+  icp?: ICPConfig,
+  signalWeights?: SignalWeights
+): OpportunityScores {
+  const intentScore = Math.round(calcIntentScore(signals, signalWeights))
+  const fitScore = Math.round(calcFitScore(meta, icp))
   const timingScore = Math.round(calcTimingScore(signals))
   const confidenceScore = Math.round(calcConfidenceScore(signals))
 
-  // Geometric mean — all four dimensions must be present for a high score
   const product = intentScore * fitScore * timingScore * confidenceScore
   const opportunityScore = Math.round(Math.min(100, Math.max(0, Math.pow(product, 0.25))))
 
@@ -264,4 +284,60 @@ export function generateRuleBasedRecommendation(
   const actionText = ACTION_MAP[bestChannel]
 
   return { bestContact, bestTiming, bestChannel, messageAngle, reasoning, actionText, urgency, priority }
+}
+
+// Convert a DB Signal row to RawSignal for scoring functions
+export function toRawSignal(s: {
+  type: SignalType
+  strength: number
+  sourceReliability: number
+  industryRelevance: number
+  detectedAt: Date
+}): RawSignal {
+  return {
+    type: s.type,
+    strength: s.strength,
+    sourceReliability: s.sourceReliability,
+    industryRelevance: s.industryRelevance,
+    detectedAt: s.detectedAt,
+  }
+}
+
+const STAGE_ORDER: Record<BuyingStage, number> = {
+  INACTIVE: 0, RESEARCHING: 1, EVALUATING: 2, COMPARING: 3, PURCHASING: 4,
+}
+
+const NEXT_ACTION_MAP: Record<BuyingStage, string> = {
+  INACTIVE:    'Monitor for new signals before outreach',
+  RESEARCHING: 'Send awareness content — company is in early research mode',
+  EVALUATING:  'Schedule discovery call — company is actively evaluating options',
+  COMPARING:   'Present ROI case — company is comparing vendors now',
+  PURCHASING:  'Fast-track to proposal — company is ready to buy',
+}
+
+export function predictBuyingIntent(
+  signals: RawSignal[],
+  currentStage: BuyingStage | string,
+  opportunityScore: number
+): {
+  predictedStage: BuyingStage
+  confidence: number
+  trajectory: 'ACCELERATING' | 'STABLE' | 'DECELERATING'
+  nextAction: string
+} {
+  const predictedStage = detectBuyingStage(signals, opportunityScore)
+  const currentOrder = STAGE_ORDER[currentStage as BuyingStage] ?? 1
+  const predictedOrder = STAGE_ORDER[predictedStage]
+
+  const trajectory: 'ACCELERATING' | 'STABLE' | 'DECELERATING' =
+    predictedOrder > currentOrder ? 'ACCELERATING' :
+    predictedOrder < currentOrder ? 'DECELERATING' :
+    'STABLE'
+
+  const recentCount = signals.filter(
+    s => (Date.now() - s.detectedAt.getTime()) / 86_400_000 < 30
+  ).length
+  const confidence = Math.min(95, 40 + recentCount * 10 + Math.round(opportunityScore * 0.3))
+
+  return { predictedStage, confidence, trajectory, nextAction: NEXT_ACTION_MAP[predictedStage] }
 }

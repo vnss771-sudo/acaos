@@ -9,9 +9,11 @@ import {
   calculateOpportunityScores,
   detectBuyingStage,
   calcWinProbability,
-  generateRuleBasedRecommendation
+  generateRuleBasedRecommendation,
+  toRawSignal,
 } from '../../api/src/lib/signalEngine.js'
-import type { RawSignal } from '../../api/src/lib/signalEngine.js'
+import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
+import { calibrate } from '../../api/src/lib/learningLoop.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -61,7 +63,6 @@ const researchWorker = new Worker(
       estimatedTeamSize?: string
     }>(raw, {})
 
-    // Build the enriched lead data for scoring
     const enrichedLead = {
       businessName: lead.businessName,
       category: lead.category,
@@ -73,11 +74,10 @@ const researchWorker = new Worker(
       outreachAngle: parsed.outreachAngle ?? null
     }
 
-    // Use AI's icpScore if available and plausible, otherwise compute from signals
     const weights = await getWorkspaceWeights(lead.workspaceId)
     const computedScore = computeLeadScore(enrichedLead, weights)
     const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
-      ? Math.round((parsed.icpScore + computedScore) / 2) // blend AI + signal scores
+      ? Math.round((parsed.icpScore + computedScore) / 2)
       : computedScore
 
     await job.updateProgress(80)
@@ -135,7 +135,6 @@ const outreachWorker = new Worker(
         }
       })
 
-      // Advance to OUTREACH_SENT if still at RESEARCHED
       if (lead.stage === 'RESEARCHED') {
         await prisma.lead.update({ where: { id: lead.id }, data: { stage: 'OUTREACH_SENT' } })
       }
@@ -170,7 +169,6 @@ const replyWorker = new Worker(
     }>(raw, {})
 
     if (leadId && parsed.classification) {
-      // Skip stage update for auto-replies and OOO
       if (!parsed.isAutoReply) {
         const stageMap: Record<string, string> = {
           INTERESTED: 'REPLIED',
@@ -178,7 +176,7 @@ const replyWorker = new Worker(
           NEEDS_MORE_INFO: 'REPLIED',
           NOT_NOW: 'REPLIED',
           REFERRAL: 'REPLIED',
-          OUT_OF_OFFICE: 'OUTREACH_SENT' // stay in outreach, they'll be back
+          OUT_OF_OFFICE: 'OUTREACH_SENT'
         }
         const newStage = stageMap[parsed.classification]
         if (newStage) {
@@ -186,7 +184,6 @@ const replyWorker = new Worker(
         }
       }
 
-      // Feed outcome into scoring model
       const lead = await prisma.lead.findUnique({
         where: { id: leadId },
         select: { workspaceId: true, score: true }
@@ -272,29 +269,28 @@ const scoreProspectsWorker = new Worker(
 
     await job.updateProgress(10)
 
+    const [icp, scoringModel] = await Promise.all([
+      prisma.workspaceICP.findUnique({ where: { workspaceId } }),
+      prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } })
+    ])
+    const signalWeights = (scoringModel?.signalWeights ?? null) as SignalWeights | null
+
     let updated = 0
     for (const prospect of prospects) {
-      const rawSignals: RawSignal[] = prospect.signals.map(s => ({
-        type: s.type as RawSignal['type'],
-        strength: s.strength,
-        sourceReliability: s.sourceReliability,
-        industryRelevance: s.industryRelevance,
-        detectedAt: s.detectedAt
-      }))
-
+      const rawSignals = prospect.signals.map(toRawSignal)
       const scores = calculateOpportunityScores(rawSignals, {
-        industry: prospect.industry,
+        industry:      prospect.industry,
         employeeCount: prospect.employeeCount,
-        contactEmail: prospect.contactEmail,
-        contactName: prospect.contactName,
-        domain: prospect.domain
-      })
-      const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
+        contactEmail:  prospect.contactEmail,
+        contactName:   prospect.contactName,
+        domain:        prospect.domain,
+        location:      prospect.location,
+      }, icp ?? undefined, signalWeights ?? undefined)
+      const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
       const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-
       await prisma.prospect.update({
         where: { id: prospect.id },
-        data: { ...scores, buyingStage, winProbability }
+        data: { ...scores, buyingStage, winProbability },
       })
       updated++
     }
@@ -321,23 +317,18 @@ const recommendWorker = new Worker(
 
     await job.updateProgress(20)
 
-    const rawSignals: RawSignal[] = prospect.signals.map(s => ({
-      type: s.type as RawSignal['type'],
-      strength: s.strength,
-      sourceReliability: s.sourceReliability,
-      industryRelevance: s.industryRelevance,
-      detectedAt: s.detectedAt
-    }))
+    const rawSignals = prospect.signals.map(toRawSignal)
 
     const rec = generateRuleBasedRecommendation(
       {
-        industry: prospect.industry,
+        industry:      prospect.industry,
         employeeCount: prospect.employeeCount,
-        contactEmail: prospect.contactEmail,
-        contactName: prospect.contactName,
-        contactPhone: prospect.contactPhone,
-        linkedinUrl: prospect.linkedinUrl,
-        domain: prospect.domain
+        contactEmail:  prospect.contactEmail,
+        contactName:   prospect.contactName,
+        contactPhone:  prospect.contactPhone,
+        linkedinUrl:   prospect.linkedinUrl,
+        domain:        prospect.domain,
+        location:      prospect.location,
       },
       rawSignals
     )
@@ -358,14 +349,102 @@ const recommendWorker = new Worker(
   { connection, concurrency: 3 }
 )
 
-// Attach error handlers
+// ── calibrate-scoring ─────────────────────────────────────────────────────────
+const calibrateWorker = new Worker(
+  'calibrate-scoring',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
+
+    await job.updateProgress(10)
+
+    const rawOutcomes = await prisma.prospectOutcome.findMany({
+      where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
+      include: { prospect: { include: { signals: true } } },
+      orderBy: { recordedAt: 'desc' },
+      take: 100
+    })
+
+    await job.updateProgress(30)
+
+    const outcomes = rawOutcomes.map(o => ({
+      stage: o.stage as 'WON' | 'LOST',
+      prospect: {
+        industry: o.prospect.industry,
+        employeeCount: o.prospect.employeeCount,
+        signals: o.prospect.signals.map(s => ({ type: s.type }))
+      }
+    }))
+
+    const result = calibrate(outcomes)
+    await job.updateProgress(60)
+
+    if (!result.stats.calibrated) {
+      log('calibrate-scoring', `Skipped: ${result.stats.reason} (${result.stats.totalOutcomes} outcomes)`)
+      return result.stats
+    }
+
+    await prisma.scoringModel.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        weights: DEFAULT_SCORING_WEIGHTS,
+        signalWeights: result.signalWeights,
+        performanceMetrics: {
+          totalOutcomes: result.stats.totalOutcomes,
+          winRate: result.stats.baselineWinRate,
+          calibratedAt: new Date().toISOString()
+        }
+      },
+      update: {
+        signalWeights: result.signalWeights,
+        lastWeightUpdate: new Date(),
+        updateCount: { increment: 1 },
+        performanceMetrics: {
+          totalOutcomes: result.stats.totalOutcomes,
+          winRate: result.stats.baselineWinRate,
+          calibratedAt: new Date().toISOString()
+        }
+      }
+    })
+
+    await job.updateProgress(80)
+
+    if (Object.keys(result.icpUpdate).length > 0) {
+      await prisma.workspaceICP.upsert({
+        where: { workspaceId },
+        create: {
+          workspaceId,
+          targetIndustries: result.icpUpdate.targetIndustries ?? [],
+          minEmployees: result.icpUpdate.minEmployees ?? 1,
+          maxEmployees: result.icpUpdate.maxEmployees ?? 999999,
+          targetGeos: [],
+          mustHaveEmail: false,
+        },
+        update: {
+          ...(result.icpUpdate.targetIndustries && { targetIndustries: result.icpUpdate.targetIndustries }),
+          ...(result.icpUpdate.minEmployees !== undefined && { minEmployees: result.icpUpdate.minEmployees }),
+          ...(result.icpUpdate.maxEmployees !== undefined && { maxEmployees: result.icpUpdate.maxEmployees }),
+        }
+      })
+    }
+
+    await job.updateProgress(100)
+    log('calibrate-scoring', `Done workspace=${workspaceId} winRate=${Math.round(result.stats.baselineWinRate * 100)}% signalTypes=${Object.keys(result.signalWeights).length}`)
+    return result.stats
+  },
+  { connection, concurrency: 1 }
+)
+
+// ── Error handlers ─────────────────────────────────────────────────────────────
 for (const [name, worker] of [
-  ['research-lead', researchWorker],
-  ['generate-outreach', outreachWorker],
-  ['analyze-reply', replyWorker],
-  ['sync-mailbox', mailboxWorker],
-  ['score-prospects', scoreProspectsWorker],
-  ['generate-recommendations', recommendWorker]
+  ['research-lead',           researchWorker],
+  ['generate-outreach',       outreachWorker],
+  ['analyze-reply',           replyWorker],
+  ['sync-mailbox',            mailboxWorker],
+  ['score-prospects',         scoreProspectsWorker],
+  ['generate-recommendations',recommendWorker],
+  ['calibrate-scoring',       calibrateWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -375,7 +454,7 @@ for (const [name, worker] of [
   })
 }
 
-// Graceful shutdown
+// ── Graceful shutdown ──────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
   console.log(`[worker] ${signal} received — shutting down`)
   await Promise.all([
@@ -384,7 +463,8 @@ async function shutdown(signal: string) {
     replyWorker.close(),
     mailboxWorker.close(),
     scoreProspectsWorker.close(),
-    recommendWorker.close()
+    recommendWorker.close(),
+    calibrateWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -392,6 +472,6 @@ async function shutdown(signal: string) {
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 6 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations)')
+console.log('[worker] Started — listening on 7 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring)')

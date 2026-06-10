@@ -35,10 +35,11 @@ model Workspace {
   outreachDrafts       OutreachDraft[]
   scoringModel         ScoringModel?
   usageRecords         UsageRecord[]
-  prospects        Prospect[]
-  signals          Signal[]
-  recommendations  Recommendation[]
-  prospectOutcomes ProspectOutcome[]
+  prospects            Prospect[]
+  signals              Signal[]
+  recommendations      Recommendation[]
+  prospectOutcomes     ProspectOutcome[]
+  workspaceICP         WorkspaceICP?
 }
 
 model Membership {
@@ -119,6 +120,7 @@ model ScoringModel {
   id                 String           @id @default(cuid())
   workspaceId        String           @unique
   weights            Json
+  signalWeights      Json?
   performanceMetrics Json
   updateCount        Int              @default(0)
   lastWeightUpdate   DateTime?
@@ -222,6 +224,7 @@ model Prospect {
   estimatedRevenue Float?
   location         String?
   description      String?
+  notes            String?
   contactName      String?
   contactEmail     String?
   contactPhone     String?
@@ -312,4 +315,17 @@ model ProspectOutcome {
 
   @@index([workspaceId])
   @@index([prospectId])
+}
+
+model WorkspaceICP {
+  id               String    @id @default(cuid())
+  workspaceId      String    @unique
+  targetIndustries String[]
+  minEmployees     Int?
+  maxEmployees     Int?
+  targetGeos       String[]
+  mustHaveEmail    Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
