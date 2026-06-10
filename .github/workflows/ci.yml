@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-optional
+
+      - name: Validate Prisma schema
+        run: npx prisma validate --schema packages/db/prisma/schema.prisma
+
+      - name: Run tests
+        run: npm test
+
+  migrate-check:
+    name: Migration drift check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: acaos
+          POSTGRES_PASSWORD: acaos
+          POSTGRES_DB: acaos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-optional
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Apply migrations (deploy mode — same as production)
+        env:
+          DATABASE_URL: postgresql://acaos:acaos@localhost:5432/acaos_test
+        run: npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+
+      - name: Assert no schema drift
+        env:
+          DATABASE_URL: postgresql://acaos:acaos@localhost:5432/acaos_test
+        # migrate status exits non-zero if any migrations are unapplied or the
+        # schema.prisma has diverged from the migration history
+        run: npx prisma migrate status --schema packages/db/prisma/schema.prisma

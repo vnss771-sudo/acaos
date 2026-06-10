@@ -1,9 +1,19 @@
 import { Router } from 'express'
+import type { Request } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
+
+type AuthedRequest = Request & { user?: { id: string; email: string; name: string | null } }
+
+async function assertMembership(userId: string, workspaceId: string): Promise<void> {
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } }
+  })
+  if (!membership) throw new ApiError(403, 'Not a member of this workspace')
+}
 
 export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
@@ -221,6 +231,10 @@ intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, r
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
   if (!signalBoosts || typeof signalBoosts !== 'object') throw new ApiError(400, 'signalBoosts must be an object')
 
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
   const config = await prisma.industrySignalConfig.upsert({
     where: { workspaceId_industry: { workspaceId, industry } },
     create: { workspaceId, industry, signalBoosts, description: description ?? null },
@@ -230,11 +244,16 @@ intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, r
   res.json({ config })
 }))
 
-// DELETE /api/intelligence/industry-configs/:industry?workspaceId=
+// DELETE /api/intelligence/industry-configs/:industry
+// workspaceId in request body to avoid URL-based workspace spoofing
 intelligenceRouter.delete('/industry-configs/:industry', asyncHandler(async (req, res) => {
   const { industry } = req.params
-  const workspaceId = req.query.workspaceId as string
+  const workspaceId = (req.body?.workspaceId ?? req.query.workspaceId) as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
 
   await prisma.industrySignalConfig.delete({
     where: { workspaceId_industry: { workspaceId, industry } }

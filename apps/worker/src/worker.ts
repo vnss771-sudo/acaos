@@ -316,7 +316,11 @@ const scoreProspectsWorker = new Worker(
 
     await job.updateProgress(100)
     log('score-prospects', `Done: ${updated} prospects rescored — triggering strategy cards`)
-    await getQueue('generate-strategy-cards').add('generate-strategy-cards', { workspaceId }, defaultJobOptions)
+    await getQueue('generate-strategy-cards').add(
+      'generate-strategy-cards',
+      { workspaceId },
+      { ...defaultJobOptions, jobId: `strategy-cards:${workspaceId}` }
+    )
     return { workspaceId, updated }
   },
   { connection, concurrency: 1 }

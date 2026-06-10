@@ -466,7 +466,10 @@ function IndustryMatrixPanel({ workspaceId, api, toast }: { workspaceId: string;
   const handleDelete = async (industry: string) => {
     if (!confirm(`Delete config for "${industry}"?`)) return
     try {
-      await api(`/api/intelligence/industry-configs/${encodeURIComponent(industry)}?workspaceId=${workspaceId}`, { method: 'DELETE' })
+      await api(`/api/intelligence/industry-configs/${encodeURIComponent(industry)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ workspaceId })
+      })
       toast.success(`Deleted config for "${industry}"`)
       load()
     } catch (e: unknown) { toast.error((e as Error).message) }

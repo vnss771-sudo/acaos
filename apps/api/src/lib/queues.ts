@@ -26,7 +26,12 @@ export function getQueue(name: string): Queue {
   return _queues.get(name)!
 }
 
-const defaultJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 5000 } } as const
+const defaultJobOpts = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 5_000 },
+  removeOnComplete: { count: 100, age: 24 * 60 * 60 },
+  removeOnFail:     { count: 200, age: 7 * 24 * 60 * 60 },
+}
 
 export async function enqueueResearchLead(leadId: string, userId: string) {
   return getQueue('research-lead').add('research-lead', { leadId, userId }, defaultJobOpts)
@@ -66,5 +71,9 @@ export async function enqueueCalibrate(workspaceId: string) {
 }
 
 export async function enqueueGenerateStrategyCards(workspaceId: string) {
-  return getQueue('generate-strategy-cards').add('generate-strategy-cards', { workspaceId }, defaultJobOpts)
+  return getQueue('generate-strategy-cards').add(
+    'generate-strategy-cards',
+    { workspaceId },
+    { ...defaultJobOpts, jobId: `strategy-cards:${workspaceId}` }
+  )
 }
