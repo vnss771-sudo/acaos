@@ -180,6 +180,39 @@ export type Recommendation = {
   createdAt: string
 }
 
+export type SignalEvidenceItem = {
+  type: string
+  label: string
+  ageDays: number
+  rawStrength: number
+  decayedStrength: number
+  contribution: number
+  isLeading: boolean
+}
+
+export type OpportunityBrief = {
+  id: string
+  prospectId: string
+  buyingWindowStrength: 'HIGH' | 'MEDIUM' | 'LOW'
+  whyNow: string[]
+  likelyProblem: string
+  problemOwnerRole: string
+  offerAngle: string
+  outreachApproach: string
+  confidenceScore: number
+  evidenceItems: SignalEvidenceItem[]
+  scoreBenchmark: {
+    intentScore: number
+    fitScore: number
+    timingScore: number
+    confidenceScore: number
+    opportunityScore: number
+  }
+  rejectionReasons: string[]
+  generatedAt: string
+  expiresAt: string
+}
+
 export type Prospect = {
   id: string
   workspaceId: string
@@ -219,6 +252,18 @@ export type Prospect = {
   signals?: Signal[]
   recommendations?: Recommendation[]
   isActivated?: boolean
+  briefSummary?: {
+    buyingWindowStrength: 'HIGH' | 'MEDIUM' | 'LOW'
+    whyNow: string[]
+    likelyProblem: string
+    problemOwnerRole: string
+    offerAngle: string
+    evidenceItems: SignalEvidenceItem[]
+    confidenceScore: number
+    generatedAt: string
+    expiresAt: string
+  } | null
+  opportunityBrief?: OpportunityBrief | null
   createdAt: string
 }
 

@@ -97,3 +97,11 @@ export async function enqueueReEngage(workspaceId: string) {
     { ...defaultJobOpts, jobId: `re-engage:${workspaceId}` }
   )
 }
+
+export async function enqueueGenerateOpportunityBrief(prospectId: string, workspaceId: string) {
+  return getQueue('generate-opportunity-brief').add(
+    'generate-opportunity-brief',
+    { prospectId, workspaceId },
+    { ...defaultJobOpts, jobId: `opportunity-brief:${prospectId}` }
+  )
+}

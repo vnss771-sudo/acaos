@@ -88,6 +88,7 @@ const QUEUE_NAMES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'score-prospects', 'generate-recommendations', 'calibrate-scoring',
   'generate-strategy-cards', 'advance-cadence', 'harvest-signals', 're-engage',
+  'generate-opportunity-brief',
 ]
 createBullBoard({
   queues: QUEUE_NAMES.map(name => new BullMQAdapter(getQueue(name))),

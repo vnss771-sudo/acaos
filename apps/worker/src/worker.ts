@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
 import { connection, getQueue, defaultJobOptions } from './lib/queue.js'
-import { generateLeadResearch, generateOutreach, analyzeReply, generateSignalAwareOutreach } from '../../api/src/services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, generateSignalAwareOutreach, generateOpportunityBrief } from '../../api/src/services/openai.js'
 import type { ProductContext } from '../../api/src/services/openai.js'
 import { sendMail, isMailConfigured } from '../../api/src/services/mail.js'
 import { fetchJobPostings } from '../../api/src/services/apollo.js'
@@ -20,6 +20,7 @@ import {
   detectProblemOwnerActivation,
   normalizeSignal,
   computeSignalExpiry,
+  explainOpportunityScores,
   ROLE_KEYWORDS,
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
@@ -506,6 +507,20 @@ const scoreProspectsWorker = new Worker(
       updated += batch.length
       cursor = batch[batch.length - 1].id
       if (batch.length < BATCH_SIZE) break
+    }
+
+    // Enqueue Opportunity Briefs for HOT prospects (score >= 72)
+    const hotProspects = await prisma.prospect.findMany({
+      where: { workspaceId, opportunityScore: { gte: 72 }, outcomeStage: { notIn: ['WON', 'LOST'] } },
+      select: { id: true },
+      take: 50,
+    })
+    for (const hp of hotProspects) {
+      await getQueue('generate-opportunity-brief').add(
+        'generate-opportunity-brief',
+        { prospectId: hp.id, workspaceId },
+        { ...defaultJobOptions, jobId: `opportunity-brief:${hp.id}` }
+      )
     }
 
     await job.updateProgress(100)
@@ -1218,19 +1233,118 @@ const reEngageWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── generate-opportunity-brief ────────────────────────────────────────────────
+const opportunityBriefWorker = new Worker(
+  'generate-opportunity-brief',
+  async (job) => {
+    const { prospectId, workspaceId } = job.data as { prospectId: string; workspaceId: string }
+    log('generate-opportunity-brief', `Generating brief for prospectId=${prospectId}`)
+
+    const prospect = await prisma.prospect.findUnique({
+      where: { id: prospectId },
+      include: {
+        signals: { orderBy: { detectedAt: 'desc' } },
+        workspace: { include: { workspaceProduct: true } },
+      },
+    })
+    if (!prospect) {
+      log('generate-opportunity-brief', `Prospect ${prospectId} not found — skipping`)
+      return null
+    }
+
+    await job.updateProgress(20)
+
+    const rawSignals = prospect.signals.map(toRawSignal)
+    const icpRow     = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+    const icpConfig  = icpRow ? {
+      targetIndustries: icpRow.targetIndustries,
+      minEmployees:     icpRow.minEmployees  ?? undefined,
+      maxEmployees:     icpRow.maxEmployees  ?? undefined,
+      targetGeos:       icpRow.targetGeos,
+      mustHaveEmail:    icpRow.mustHaveEmail,
+    } : undefined
+
+    const { evidence, ...scores } = explainOpportunityScores(
+      rawSignals,
+      {
+        industry:      prospect.industry,
+        employeeCount: prospect.employeeCount,
+        contactEmail:  prospect.contactEmail,
+        contactName:   prospect.contactName,
+        domain:        prospect.domain,
+        location:      prospect.location,
+      },
+      icpConfig,
+    )
+
+    await job.updateProgress(40)
+
+    const signalsForBrief = prospect.signals.slice(0, 8).map(s => ({
+      type:        s.type,
+      title:       s.title,
+      description: s.description,
+      strength:    s.strength,
+      ageDays:     Math.round((Date.now() - s.detectedAt.getTime()) / 86_400_000),
+    }))
+
+    const brief = await generateOpportunityBrief({
+      companyName:      prospect.companyName,
+      industry:         prospect.industry,
+      location:         prospect.location,
+      employeeCount:    prospect.employeeCount,
+      contactTitle:     prospect.contactTitle ?? null,
+      buyingStage:      prospect.buyingStage,
+      opportunityScore: prospect.opportunityScore,
+      signals:          signalsForBrief,
+      evidence,
+      product:          (prospect.workspace.workspaceProduct as ProductContext | null) ?? null,
+    })
+
+    await job.updateProgress(80)
+
+    const expiresAt = new Date(Date.now() + 3 * 86_400_000) // 3 days
+    await prisma.opportunityBrief.upsert({
+      where:  { prospectId },
+      create: {
+        workspaceId,
+        prospectId,
+        ...brief,
+        evidenceItems:    evidence.intentContributions,
+        scoreBenchmark:   scores,
+        rejectionReasons: evidence.rejectionReasons,
+        expiresAt,
+      },
+      update: {
+        ...brief,
+        evidenceItems:    evidence.intentContributions,
+        scoreBenchmark:   scores,
+        rejectionReasons: evidence.rejectionReasons,
+        generatedAt:      new Date(),
+        expiresAt,
+      },
+    })
+
+    await job.updateProgress(100)
+    log('generate-opportunity-brief', `Done prospectId=${prospectId} confidence=${brief.confidenceScore} window=${brief.buyingWindowStrength}`)
+    return { prospectId, confidenceScore: brief.confidenceScore, buyingWindowStrength: brief.buyingWindowStrength }
+  },
+  { connection, concurrency: 2 }
+)
+
 // ── Error handlers ─────────────────────────────────────────────────────────────
 for (const [name, worker] of [
-  ['research-lead',            researchWorker],
-  ['generate-outreach',        outreachWorker],
-  ['analyze-reply',            replyWorker],
-  ['sync-mailbox',             mailboxWorker],
-  ['score-prospects',          scoreProspectsWorker],
-  ['generate-recommendations', recommendWorker],
-  ['calibrate-scoring',        calibrateWorker],
-  ['generate-strategy-cards',  strategyCardsWorker],
-  ['advance-cadence',          advanceCadenceWorker],
-  ['harvest-signals',          harvestSignalsWorker],
-  ['re-engage',                reEngageWorker],
+  ['research-lead',               researchWorker],
+  ['generate-outreach',           outreachWorker],
+  ['analyze-reply',               replyWorker],
+  ['sync-mailbox',                mailboxWorker],
+  ['score-prospects',             scoreProspectsWorker],
+  ['generate-recommendations',    recommendWorker],
+  ['calibrate-scoring',           calibrateWorker],
+  ['generate-strategy-cards',     strategyCardsWorker],
+  ['advance-cadence',             advanceCadenceWorker],
+  ['harvest-signals',             harvestSignalsWorker],
+  ['re-engage',                   reEngageWorker],
+  ['generate-opportunity-brief',  opportunityBriefWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -1255,6 +1369,7 @@ async function shutdown(signal: string) {
     advanceCadenceWorker.close(),
     harvestSignalsWorker.close(),
     reEngageWorker.close(),
+    opportunityBriefWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -1264,4 +1379,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 11 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage)')
+console.log('[worker] Started — listening on 12 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage, generate-opportunity-brief)')

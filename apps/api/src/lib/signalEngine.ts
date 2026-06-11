@@ -157,11 +157,12 @@ export type FullSignal = RawSignal & {
   description?: string | null
 }
 
-// Decayed signal strength accounting for age
+// Decayed signal strength accounting for age — clamps negative/NaN/Infinity inputs to 0
 export function decayedStrength(signal: RawSignal): number {
-  const ageDays = (Date.now() - signal.detectedAt.getTime()) / 86_400_000
+  const strength = Number.isFinite(signal.strength) && signal.strength > 0 ? signal.strength : 0
+  const ageDays = Math.max(0, (Date.now() - signal.detectedAt.getTime()) / 86_400_000)
   const rate = SIGNAL_DECAY_RATES[signal.type] ?? 0.01
-  return signal.strength * Math.exp(-rate * ageDays)
+  return strength * Math.exp(-rate * ageDays)
 }
 
 // Intent score: how strongly this company is showing buying intent
@@ -280,6 +281,118 @@ export function calculateOpportunityScores(
   return { intentScore, fitScore, timingScore, confidenceScore, opportunityScore }
 }
 
+// ── Score evidence — per-signal breakdown for Opportunity Brief ───────────────
+
+export type SignalEvidenceItem = {
+  type: SignalType
+  label: string
+  ageDays: number
+  rawStrength: number
+  decayedStrength: number
+  contribution: number
+  isLeading: boolean
+}
+
+export type ScoreEvidence = {
+  intentContributions: SignalEvidenceItem[]
+  fitBreakdown: {
+    industryMatch: boolean
+    sizeInRange: boolean
+    hasEmail: boolean
+    hasName: boolean
+    hasDomain: boolean
+    score: number
+  }
+  timingBreakdown: { mostRecentAgeDays: number; score: number }
+  confidenceBreakdown: { avgReliability: number; avgRelevance: number; signalCount: number; score: number }
+  rejectionReasons: string[]
+}
+
+export function explainOpportunityScores(
+  signals: RawSignal[],
+  meta: ProspectMeta,
+  icp?: ICPConfig,
+  signalWeights?: SignalWeights,
+  industryBoosts?: IndustryBoostConfig
+): OpportunityScores & { evidence: ScoreEvidence } {
+  const scores = calculateOpportunityScores(signals, meta, icp, signalWeights, industryBoosts)
+
+  // ── Intent contributions ──────────────────────────────────────────────────
+  const rejectionReasons: string[] = []
+  const rawContributions = signals.map(sig => {
+    const ds = decayedStrength(sig)
+    const cap = signalWeights?.[sig.type] ?? getIndustryWeight(sig.type, meta.industry, industryBoosts)
+    const contribution = Math.min(ds * (sig.sourceReliability / 100), cap)
+    const ageDays = Math.round((Date.now() - sig.detectedAt.getTime()) / 86_400_000)
+
+    if (sig.strength < 5) {
+      rejectionReasons.push(`${sig.type.replace(/_/g, ' ')}: very low strength (${sig.strength})`)
+    } else if (ageDays > 90) {
+      rejectionReasons.push(`${sig.type.replace(/_/g, ' ')}: too old (${ageDays} days)`)
+    } else if (sig.sourceReliability < 40) {
+      rejectionReasons.push(`${sig.type.replace(/_/g, ' ')}: low source reliability (${sig.sourceReliability})`)
+    }
+
+    return { sig, ds, contribution, ageDays }
+  })
+  rawContributions.sort((a, b) => b.contribution - a.contribution)
+
+  const intentContributions: SignalEvidenceItem[] = rawContributions.map((r, i) => ({
+    type: r.sig.type,
+    label: normalizeSignal(r.sig.type).buyingImplication,
+    ageDays: r.ageDays,
+    rawStrength: r.sig.strength,
+    decayedStrength: Math.round(r.ds * 10) / 10,
+    contribution: Math.round(r.contribution * 10) / 10,
+    isLeading: i === 0,
+  }))
+
+  // ── Fit breakdown ─────────────────────────────────────────────────────────
+  const industryList = icp?.targetIndustries?.length ? icp.targetIndustries : ICP_INDUSTRIES
+  const industryMatch = meta.industry
+    ? industryList.some(k => meta.industry!.toLowerCase().includes(k.toLowerCase()))
+    : false
+  const min = icp?.minEmployees ?? 10
+  const max = icp?.maxEmployees ?? 500
+  const sizeInRange = meta.employeeCount != null
+    ? meta.employeeCount >= min && meta.employeeCount <= max
+    : false
+
+  const fitBreakdown = {
+    industryMatch,
+    sizeInRange,
+    hasEmail: !!meta.contactEmail,
+    hasName: !!meta.contactName,
+    hasDomain: !!meta.domain,
+    score: scores.fitScore,
+  }
+
+  // ── Timing breakdown ──────────────────────────────────────────────────────
+  const mostRecentMs = signals.length > 0
+    ? Math.max(...signals.map(s => s.detectedAt.getTime()))
+    : 0
+  const mostRecentAgeDays = mostRecentMs > 0
+    ? Math.round((Date.now() - mostRecentMs) / 86_400_000)
+    : 999
+
+  const timingBreakdown = { mostRecentAgeDays, score: scores.timingScore }
+
+  // ── Confidence breakdown ──────────────────────────────────────────────────
+  const avgReliability = signals.length > 0
+    ? Math.round(signals.reduce((s, sig) => s + sig.sourceReliability, 0) / signals.length)
+    : 0
+  const avgRelevance = signals.length > 0
+    ? Math.round(signals.reduce((s, sig) => s + sig.industryRelevance, 0) / signals.length)
+    : 0
+
+  const confidenceBreakdown = { avgReliability, avgRelevance, signalCount: signals.length, score: scores.confidenceScore }
+
+  return {
+    ...scores,
+    evidence: { intentContributions, fitBreakdown, timingBreakdown, confidenceBreakdown, rejectionReasons },
+  }
+}
+
 // ── Expected Revenue Score ────────────────────────────────────────────────────
 
 export function calculateExpectedRevenue(
@@ -338,7 +451,8 @@ const STAGE_BASE_PROBS: Record<BuyingStage, number> = {
 
 export function calcWinProbability(stage: BuyingStage, opportunityScore: number): number {
   const base = STAGE_BASE_PROBS[stage]
-  const adjustment = (opportunityScore - 50) / 100
+  const score = Number.isFinite(opportunityScore) ? opportunityScore : 50
+  const adjustment = (score - 50) / 100
   return Math.max(0.01, Math.min(0.95, base * (1 + adjustment)))
 }
 
@@ -449,7 +563,8 @@ export function generateRuleBasedRecommendation(
   const freshnessMultiplier = isProblemOwner ? 2.0 : ageDays < 7 ? 1.3 : ageDays < 30 ? 1.0 : 0.7
   // Floor at 0.35 for Problem-Owner Activation: a confirmed activation warrants a meaningful
   // meeting probability even before the first scoring cycle sets winProbability > 0
-  const rawMeetingProb = winProbability * freshnessMultiplier * 1.5
+  const safeWinProb = Number.isFinite(winProbability) ? Math.max(0, winProbability) : 0
+  const rawMeetingProb = safeWinProb * freshnessMultiplier * 1.5
   const meetingProbability = Math.min(0.95, isProblemOwner ? Math.max(0.35, rawMeetingProb) : rawMeetingProb)
 
   return { bestContact, bestTiming, bestChannel, messageAngle, reasoning, actionText, urgency, priority, predictedNeed, meetingProbability }

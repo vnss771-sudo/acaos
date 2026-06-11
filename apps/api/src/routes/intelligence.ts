@@ -5,7 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
-import { enqueueScoreProspects, enqueueHarvestSignals, enqueueReEngage } from '../lib/queues.js'
+import { enqueueScoreProspects, enqueueHarvestSignals, enqueueReEngage, enqueueGenerateOpportunityBrief } from '../lib/queues.js'
 
 type AuthedRequest = Request & { user?: { id: string; email: string; name: string | null } }
 
@@ -29,6 +29,19 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     include: {
       signals: { orderBy: { detectedAt: 'desc' }, take: 5 },
       recommendations: { orderBy: { priority: 'desc' }, take: 1 },
+      opportunityBrief: {
+        select: {
+          buyingWindowStrength: true,
+          whyNow: true,
+          likelyProblem: true,
+          problemOwnerRole: true,
+          offerAngle: true,
+          evidenceItems: true,
+          confidenceScore: true,
+          generatedAt: true,
+          expiresAt: true,
+        }
+      },
       // Accurate POA check independent of the take:5 signal window
       _count: { select: { signals: { where: { type: 'PROBLEM_OWNER_ACTIVATION' } } } }
     },
@@ -66,6 +79,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     signalCount: p.signals.length,
     topRecommendation: p.recommendations[0] ?? null,
     isActivated: p._count.signals > 0,
+    briefSummary: p.opportunityBrief ?? null,
   })
 
   res.json({
@@ -306,4 +320,73 @@ intelligenceRouter.post('/run', asyncHandler(async (req, res) => {
   ])
 
   res.json({ ok: true, queued: ['score-prospects', 'harvest-signals', 're-engage'] })
+}))
+
+// GET /api/intelligence/briefs?workspaceId=&prospectId=
+// Returns { brief } for a single prospect, or { briefs } list for the workspace
+intelligenceRouter.get('/briefs', asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string
+  const prospectId  = req.query.prospectId  as string | undefined
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
+  if (prospectId) {
+    const brief = await prisma.opportunityBrief.findUnique({
+      where: { prospectId }
+    })
+    if (!brief || brief.workspaceId !== workspaceId) throw new ApiError(404, 'Brief not found')
+    res.json({ brief })
+    return
+  }
+
+  const briefs = await prisma.opportunityBrief.findMany({
+    where: { workspaceId },
+    orderBy: { generatedAt: 'desc' },
+    take: 200,
+  })
+  res.json({ briefs })
+}))
+
+// POST /api/intelligence/briefs/generate
+// body: { workspaceId, prospectId? }
+// If prospectId is provided, enqueues for that prospect only.
+// Otherwise enqueues for all HOT+WARM prospects (max 50).
+intelligenceRouter.post('/briefs/generate', asyncHandler(async (req, res) => {
+  const { workspaceId, prospectId } = req.body as { workspaceId?: string; prospectId?: string }
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
+  if (prospectId) {
+    const prospect = await prisma.prospect.findUnique({ where: { id: prospectId }, select: { workspaceId: true } })
+    if (!prospect || prospect.workspaceId !== workspaceId) throw new ApiError(404, 'Prospect not found')
+    await enqueueGenerateOpportunityBrief(prospectId, workspaceId)
+    res.json({ ok: true, queued: 1 })
+    return
+  }
+
+  // Batch: enqueue HOT + WARM prospects (max 50) that don't already have a fresh brief
+  const oneDayFromNow = new Date(Date.now() + 86_400_000)
+  const prospects = await prisma.prospect.findMany({
+    where: {
+      workspaceId,
+      opportunityScore: { gte: 45 },
+      outcomeStage: { notIn: ['WON', 'LOST'] },
+      OR: [
+        { opportunityBrief: null },
+        { opportunityBrief: { expiresAt: { lt: oneDayFromNow } } }
+      ]
+    },
+    select: { id: true },
+    take: 50,
+    orderBy: { opportunityScore: 'desc' },
+  })
+
+  await Promise.all(prospects.map(p => enqueueGenerateOpportunityBrief(p.id, workspaceId)))
+  res.json({ ok: true, queued: prospects.length })
 }))

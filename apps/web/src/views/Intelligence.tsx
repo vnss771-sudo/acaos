@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import type {
   Workspace, OpportunitiesData, ForecastData, Prospect, View,
-  StrategyCardsData, StrategyCard, IndustrySignalConfig
+  StrategyCardsData, StrategyCard, IndustrySignalConfig,
+  OpportunityBrief, SignalEvidenceItem
 } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS,
@@ -19,7 +20,7 @@ type Props = {
   setView: (v: View) => void
 }
 
-type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-matrix' | 'cadences'
+type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-matrix' | 'cadences' | 'briefs'
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
 function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
@@ -302,6 +303,39 @@ function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
               <div style={{ color: colors.text, fontSize: 13 }}>{prospect.contactName}</div>
               {prospect.contactTitle && <div style={{ color: colors.textFaint, fontSize: 12 }}>{prospect.contactTitle}</div>}
               {prospect.contactEmail && <div style={{ color: colors.blueLight, fontSize: 12 }}>{prospect.contactEmail}</div>}
+            </div>
+          )}
+
+          {prospect.briefSummary && (
+            <div style={{ background: '#0f172a', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase' }}>Opportunity Brief</div>
+                <span style={{
+                  background: prospect.briefSummary.buyingWindowStrength === 'HIGH' ? colors.red + '33'
+                    : prospect.briefSummary.buyingWindowStrength === 'MEDIUM' ? colors.amber + '33' : '#47556933',
+                  color: prospect.briefSummary.buyingWindowStrength === 'HIGH' ? colors.red
+                    : prospect.briefSummary.buyingWindowStrength === 'MEDIUM' ? colors.amber : colors.textFaint,
+                  fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 99
+                }}>{prospect.briefSummary.buyingWindowStrength} WINDOW</span>
+                <span style={{ color: colors.textFaint, fontSize: 10, marginLeft: 'auto' }}>
+                  {Math.round(prospect.briefSummary.confidenceScore)}% confidence
+                </span>
+              </div>
+              {prospect.briefSummary.likelyProblem && (
+                <div style={{ color: colors.textMuted, fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: colors.textFaint }}>Problem: </span>{prospect.briefSummary.likelyProblem}
+                </div>
+              )}
+              {prospect.briefSummary.problemOwnerRole && (
+                <div style={{ color: colors.textMuted, fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: colors.textFaint }}>Owner: </span>{prospect.briefSummary.problemOwnerRole}
+                </div>
+              )}
+              {prospect.briefSummary.offerAngle && (
+                <div style={{ color: colors.blueLight, fontSize: 12 }}>
+                  <span style={{ color: colors.textFaint }}>Offer: </span>{prospect.briefSummary.offerAngle}
+                </div>
+              )}
             </div>
           )}
 
@@ -882,6 +916,241 @@ function CadencesPanel({ workspaceId, api, toast }: { workspaceId: string; api: 
   )
 }
 
+// ── Brief Card ────────────────────────────────────────────────────────────────
+function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, onRefresh }: {
+  brief: OpportunityBrief | null
+  prospectId: string
+  companyName: string
+  workspaceId: string
+  api: ApiHook
+  toast: ToastHook
+  onRefresh: () => void
+}) {
+  const [generating, setGenerating] = useState(false)
+  const [rejectionsOpen, setRejectionsOpen] = useState(false)
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    try {
+      await api(`/api/intelligence/briefs/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ workspaceId, prospectId })
+      })
+      toast.success('Brief generation queued — refresh in a moment')
+      onRefresh()
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setGenerating(false) }
+  }
+
+  const isExpired = brief ? new Date(brief.expiresAt) < new Date() : false
+
+  if (!brief) {
+    return (
+      <div style={{ ...s.card, padding: '16px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ color: colors.text, fontWeight: 600, fontSize: 14 }}>{companyName}</div>
+          <button onClick={handleGenerate} disabled={generating}
+            style={{ ...s.btnSm, fontSize: 11, background: '#1e3a5f', color: '#93c5fd' }}>
+            {generating ? '…' : '+ Generate Brief'}
+          </button>
+        </div>
+        <div style={{ color: colors.textFaint, fontSize: 12 }}>No brief yet for this prospect.</div>
+      </div>
+    )
+  }
+
+  const windowColor = brief.buyingWindowStrength === 'HIGH' ? colors.red
+    : brief.buyingWindowStrength === 'MEDIUM' ? colors.amber : colors.textFaint
+
+  return (
+    <div style={{ ...s.card, padding: '16px 18px', border: `1px solid ${windowColor}33` }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ color: colors.text, fontWeight: 700, fontSize: 15, flex: 1 }}>{companyName}</div>
+        <span style={{
+          background: windowColor + '22', color: windowColor,
+          fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99
+        }}>{brief.buyingWindowStrength} WINDOW</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ width: 28, height: 28, borderRadius: '50%', border: `2px solid ${colors.blue}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ color: colors.blue, fontSize: 9, fontWeight: 800 }}>{brief.confidenceScore}</span>
+          </div>
+          <span style={{ color: colors.textFaint, fontSize: 10 }}>confidence</span>
+        </div>
+        {isExpired && (
+          <button onClick={handleGenerate} disabled={generating}
+            style={{ ...s.btnSm, fontSize: 10, background: '#78350f33', color: colors.amber }}>
+            {generating ? '…' : '↺ Refresh'}
+          </button>
+        )}
+      </div>
+
+      {/* Why Now */}
+      {brief.whyNow.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Why Now</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {brief.whyNow.map((item, i) => {
+              const match = item.match(/^\[([A-Z_]+)\](.*)/)
+              const icon = match ? SIGNAL_TYPE_ICONS[match[1] as keyof typeof SIGNAL_TYPE_ICONS] ?? '•' : '•'
+              const text = match ? match[2].trim() : item
+              return (
+                <div key={i} style={{ display: 'flex', gap: 6, fontSize: 12, color: colors.textMuted }}>
+                  <span style={{ flexShrink: 0 }}>{icon}</span>
+                  <span>{text}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Problem / Owner / Offer */}
+      <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+        <div>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>Likely Problem</div>
+          <div style={{ color: colors.text, fontSize: 13 }}>{brief.likelyProblem}</div>
+        </div>
+        <div>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>Problem Owner</div>
+          <div style={{ color: colors.text, fontSize: 13 }}>{brief.problemOwnerRole}</div>
+        </div>
+        <div>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>Offer Angle</div>
+          <div style={{ color: colors.blueLight, fontSize: 13 }}>{brief.offerAngle}</div>
+        </div>
+      </div>
+
+      {brief.outreachApproach && (
+        <div style={{ color: colors.textMuted, fontSize: 12, fontStyle: 'italic', marginBottom: 12 }}>
+          {brief.outreachApproach}
+        </div>
+      )}
+
+      {/* Score dimensions mini-bar */}
+      {brief.scoreBenchmark && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Score Evidence</div>
+          <ScoreDimension label="Intent"      value={brief.scoreBenchmark.intentScore     ?? 0} />
+          <ScoreDimension label="Fit"         value={brief.scoreBenchmark.fitScore        ?? 0} />
+          <ScoreDimension label="Timing"      value={brief.scoreBenchmark.timingScore     ?? 0} />
+          <ScoreDimension label="Confidence"  value={brief.scoreBenchmark.confidenceScore ?? 0} />
+        </div>
+      )}
+
+      {/* Evidence chips */}
+      {brief.evidenceItems && brief.evidenceItems.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          {(brief.evidenceItems as SignalEvidenceItem[]).map((item, i) => (
+            <div key={i} style={{
+              background: item.isLeading ? '#1e3a5f' : '#1e2d40',
+              border: `1px solid ${item.isLeading ? '#3b82f633' : colors.border}`,
+              borderRadius: 6, padding: '3px 8px',
+              display: 'flex', alignItems: 'center', gap: 4
+            }}>
+              <span style={{ fontSize: 11 }}>{SIGNAL_TYPE_ICONS[item.type as keyof typeof SIGNAL_TYPE_ICONS] ?? '•'}</span>
+              <span style={{ color: colors.textMuted, fontSize: 11 }}>{item.label}</span>
+              <span style={{ color: colors.blueLight, fontSize: 11, fontWeight: 700 }}>+{item.contribution}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Rejected signals collapsible */}
+      {brief.rejectionReasons && brief.rejectionReasons.length > 0 && (
+        <div>
+          <button onClick={() => setRejectionsOpen(r => !r)} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: colors.textFaint, fontSize: 10, padding: 0, display: 'flex', alignItems: 'center', gap: 4
+          }}>
+            {rejectionsOpen ? '▼' : '▶'} {brief.rejectionReasons.length} weak/rejected signals
+          </button>
+          {rejectionsOpen && (
+            <div style={{ marginTop: 6, paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {brief.rejectionReasons.map((r, i) => (
+                <div key={i} style={{ color: colors.textFaint, fontSize: 11 }}>• {r}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Briefs Panel ──────────────────────────────────────────────────────────────
+function BriefsPanel({ workspace, api, toast }: { workspace: Workspace; api: ApiHook; toast: ToastHook }) {
+  const [briefs, setBriefs] = useState<OpportunityBrief[]>([])
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    api<{ briefs: OpportunityBrief[] }>(`/api/intelligence/briefs?workspaceId=${workspace.id}`)
+      .then(d => setBriefs(d.briefs))
+      .catch(e => toast.error(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [workspace.id])
+
+  const handleGenerateAll = async () => {
+    setGenerating(true)
+    try {
+      const result = await api<{ queued: number }>('/api/intelligence/briefs/generate', {
+        method: 'POST',
+        body: JSON.stringify({ workspaceId: workspace.id })
+      })
+      toast.success(`Queued ${result.queued} briefs — refresh in a moment`)
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setGenerating(false) }
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
+
+  return (
+    <div style={s.stack}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ color: colors.textMuted, fontSize: 13 }}>
+          {briefs.length} opportunity brief{briefs.length !== 1 ? 's' : ''} — evidence-backed signal→problem→owner→offer dossiers
+        </div>
+        <button onClick={handleGenerateAll} disabled={generating} style={{ ...s.btn, fontSize: 12 }}>
+          {generating ? '⏳ Queuing…' : '⚡ Generate All HOT+WARM'}
+        </button>
+      </div>
+
+      {briefs.length === 0 ? (
+        <div style={s.card}>
+          <EmptyState
+            message="No briefs yet. Run Intelligence to score prospects and auto-generate briefs for HOT prospects (score ≥ 72), or click Generate All HOT+WARM."
+            icon="◈"
+          />
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {briefs
+            .sort((a, b) => {
+              const w = { HIGH: 3, MEDIUM: 2, LOW: 1 } as const
+              return (w[b.buyingWindowStrength] ?? 0) - (w[a.buyingWindowStrength] ?? 0)
+            })
+            .map(brief => (
+              <BriefCard
+                key={brief.id}
+                brief={brief}
+                prospectId={brief.prospectId}
+                companyName={brief.prospectId}
+                workspaceId={workspace.id}
+                api={api}
+                toast={toast}
+                onRefresh={load}
+              />
+            ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Intelligence View ────────────────────────────────────────────────────
 export function Intelligence({ api, workspace, toast, setView }: Props) {
   const [opportunities, setOpportunities] = useState<OpportunitiesData | null>(null)
@@ -987,6 +1256,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
 
   const TABS: { key: ActiveTab; label: string }[] = [
     { key: 'opportunities', label: 'Opportunities' },
+    { key: 'briefs', label: 'Briefs' },
     { key: 'strategy-cards', label: 'Strategy Cards' },
     { key: 'forecast', label: 'Revenue Forecast' },
     { key: 'industry-matrix', label: 'Industry Matrix' },
@@ -1060,6 +1330,8 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
             </div>
           </div>
         )
+      ) : activeTab === 'briefs' ? (
+        <BriefsPanel workspace={workspace} api={api} toast={toast} />
       ) : activeTab === 'strategy-cards' ? (
         strategyCards ? (
           <StrategyCardsPanel data={strategyCards} onOutcome={handleOutcome} />

@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
+import type { ScoreEvidence } from '../lib/signalEngine.js'
 
 export type ProductContext = {
   productName:     string
@@ -205,6 +206,119 @@ ${signalContext}
 
 ${templateGuide}`
   )
+}
+
+export type OpportunityBriefInput = {
+  companyName:    string
+  industry:       string | null
+  location:       string | null
+  employeeCount:  number | null
+  contactTitle:   string | null
+  buyingStage:    string
+  opportunityScore: number
+  signals: Array<{
+    type:        string
+    title:       string | null
+    description: string | null
+    strength:    number
+    ageDays:     number
+  }>
+  evidence:  ScoreEvidence
+  product:   ProductContext | null
+}
+
+export type OpportunityBriefOutput = {
+  buyingWindowStrength: 'HIGH' | 'MEDIUM' | 'LOW'
+  whyNow:           string[]   // 3-5 signal-derived bullets
+  likelyProblem:    string     // one-sentence operational pain
+  problemOwnerRole: string     // job title who owns this problem
+  offerAngle:       string     // one-sentence offer framing
+  outreachApproach: string     // tone/style guidance
+  confidenceScore:  number     // 0-100
+}
+
+export async function generateOpportunityBrief(input: OpportunityBriefInput): Promise<OpportunityBriefOutput> {
+  const p = input.product ?? DEFAULT_PRODUCT
+
+  const topSignals = input.signals
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 5)
+    .map(s => {
+      const label = s.title ?? s.type.replace(/_/g, ' ')
+      const desc = s.description ? ` — ${s.description}` : ''
+      return `• [${s.type}] ${label}${desc} (strength ${s.strength}, ${s.ageDays}d ago)`
+    }).join('\n')
+
+  const { fitBreakdown, timingBreakdown, confidenceBreakdown, rejectionReasons } = input.evidence
+
+  const evidenceSummary = [
+    `Fit: industry=${fitBreakdown.industryMatch}, size=${fitBreakdown.sizeInRange}, email=${fitBreakdown.hasEmail}, score=${fitBreakdown.score}`,
+    `Timing: most-recent-signal=${timingBreakdown.mostRecentAgeDays}d ago, score=${timingBreakdown.score}`,
+    `Confidence: signals=${confidenceBreakdown.signalCount}, avg-reliability=${confidenceBreakdown.avgReliability}, score=${confidenceBreakdown.score}`,
+  ].join('\n')
+
+  const rejectionSummary = rejectionReasons.length > 0
+    ? `Weak/rejected signals:\n${rejectionReasons.map(r => `• ${r}`).join('\n')}`
+    : 'No rejected signals.'
+
+  const productContext = p
+    ? `Product: ${p.productName} (${p.productCategory ?? 'SaaS'})
+ICP: ${p.targetICP ?? 'businesses that need ' + p.productName}
+Pain points: ${p.keyPainPoints.join(', ')}
+Differentiators: ${p.differentiators.join(', ')}`
+    : 'Product context not available.'
+
+  const raw = await chat(
+    `You are a B2B sales intelligence analyst. Given company signals and scoring context, answer five questions: why this company, why now, what is the likely problem, who owns it, and what offer angle is most likely to land. Be specific to the signals provided — never generic.
+
+Return ONLY a valid JSON object with these exact keys:
+- buyingWindowStrength ("HIGH" | "MEDIUM" | "LOW"): Overall buying window strength. HIGH = multiple recent strong signals, MEDIUM = some signals, LOW = weak or old signals.
+- whyNow (string[]): 3–5 concise bullets, each derived from a specific signal. Start each with the signal type in brackets, e.g. "[JOB_POSTING]".
+- likelyProblem (string): One sentence. The operational pain this company most likely has right now, inferred from signals.
+- problemOwnerRole (string): Job title or role who owns this problem (the person to reach). Be specific: "Head of Field Operations", not "Manager".
+- offerAngle (string): One sentence. How to frame the offer specifically for this company's situation. Must reference the inferred problem.
+- outreachApproach (string): Tone and style guidance for the outreach message — e.g. "Lead with the hiring signal, peer-to-peer tone, no jargon, ask a yes/no question".
+- confidenceScore (number): 0–100. Your confidence in this brief. Deduct for few signals, old signals, low reliability, or poor ICP fit.`,
+
+    `Analyse this prospect for a targeted B2B opportunity brief:
+
+Company: ${input.companyName}
+Industry: ${input.industry ?? 'Unknown'}
+Location: ${input.location ?? 'Unknown'}
+Employees: ${input.employeeCount ?? 'Unknown'}
+Contact title: ${input.contactTitle ?? 'Unknown'}
+Buying stage: ${input.buyingStage}
+Opportunity score: ${input.opportunityScore}/100
+
+TOP SIGNALS:
+${topSignals || 'No signals available'}
+
+SCORE EVIDENCE:
+${evidenceSummary}
+
+${rejectionSummary}
+
+${productContext}
+
+Answer the five questions with evidence-based specificity. If signals are sparse, reflect that in a lower confidenceScore.`
+  )
+
+  let parsed: OpportunityBriefOutput
+  try {
+    parsed = JSON.parse(raw) as OpportunityBriefOutput
+  } catch {
+    throw new ApiError(500, 'Failed to parse opportunity brief from AI response')
+  }
+
+  // Normalise and clamp
+  const validStrengths = ['HIGH', 'MEDIUM', 'LOW']
+  if (!validStrengths.includes(parsed.buyingWindowStrength)) {
+    parsed.buyingWindowStrength = input.opportunityScore >= 70 ? 'HIGH' : input.opportunityScore >= 40 ? 'MEDIUM' : 'LOW'
+  }
+  if (!Array.isArray(parsed.whyNow) || parsed.whyNow.length === 0) parsed.whyNow = ['No specific signals available']
+  parsed.confidenceScore = Math.max(0, Math.min(100, Math.round(parsed.confidenceScore ?? 50)))
+
+  return parsed
 }
 
 export async function analyzeReply(replyBody: string): Promise<string> {
