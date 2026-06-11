@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { User, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
@@ -14,6 +14,22 @@ type Props = {
   onWorkspaceUpdate: (w: Workspace) => void
 }
 
+type ProductForm = {
+  productName: string
+  productCategory: string
+  targetICP: string
+  keyPainPoints: string
+  differentiators: string
+  ctaType: string
+  calendarUrl: string
+}
+
+const EMPTY_PRODUCT: ProductForm = {
+  productName: '', productCategory: '', targetICP: '',
+  keyPainPoints: '', differentiators: '',
+  ctaType: 'book_call', calendarUrl: ''
+}
+
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
@@ -21,6 +37,49 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
   const [savingWs, setSavingWs] = useState(false)
+  const [productForm, setProductForm] = useState<ProductForm>(EMPTY_PRODUCT)
+  const [savingProduct, setSavingProduct] = useState(false)
+
+  useEffect(() => {
+    if (!workspace) return
+    api<{ workspaceProduct: ProductForm | null }>(`/api/workspaces/${workspace.id}/product`)
+      .then(d => {
+        if (d.workspaceProduct) {
+          const p = d.workspaceProduct as Record<string, unknown>
+          setProductForm({
+            productName: String(p.productName ?? ''),
+            productCategory: String(p.productCategory ?? ''),
+            targetICP: String(p.targetICP ?? ''),
+            keyPainPoints: Array.isArray(p.keyPainPoints) ? (p.keyPainPoints as string[]).join('\n') : String(p.keyPainPoints ?? ''),
+            differentiators: Array.isArray(p.differentiators) ? (p.differentiators as string[]).join('\n') : String(p.differentiators ?? ''),
+            ctaType: String(p.ctaType ?? 'book_call'),
+            calendarUrl: String(p.calendarUrl ?? ''),
+          })
+        }
+      })
+      .catch(() => {})
+  }, [workspace?.id])
+
+  async function saveProduct() {
+    if (!workspace) return
+    setSavingProduct(true)
+    try {
+      await api(`/api/workspaces/${workspace.id}/product`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          productName: productForm.productName.trim(),
+          productCategory: productForm.productCategory.trim() || null,
+          targetICP: productForm.targetICP.trim() || null,
+          keyPainPoints: productForm.keyPainPoints.split('\n').map(l => l.trim()).filter(Boolean),
+          differentiators: productForm.differentiators.split('\n').map(l => l.trim()).filter(Boolean),
+          ctaType: productForm.ctaType,
+          calendarUrl: productForm.calendarUrl.trim() || null,
+        })
+      })
+      toast.success('Product context saved')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSavingProduct(false) }
+  }
 
   async function saveProfile() {
     setSavingProfile(true)
@@ -140,6 +199,69 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           </div>
           <button style={s.btn} disabled={savingWs} onClick={saveWorkspace}>
             {savingWs ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Workspace'}
+          </button>
+        </div>
+      )}
+
+      {/* Product context */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Product Context</div>
+          <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 16 }}>
+            Used by AI to personalise outreach and research. All fields optional except Product Name.
+          </div>
+          <div style={{ display: 'grid', gap: 12, maxWidth: 480, marginBottom: 16 }}>
+            <div>
+              <label style={s.label}>Product Name <span style={{ color: colors.red }}>*</span></label>
+              <input style={s.input} value={productForm.productName}
+                onChange={e => setProductForm(f => ({ ...f, productName: e.target.value }))}
+                placeholder="e.g. Acme Field Ops" />
+            </div>
+            <div>
+              <label style={s.label}>Product Category</label>
+              <input style={s.input} value={productForm.productCategory}
+                onChange={e => setProductForm(f => ({ ...f, productCategory: e.target.value }))}
+                placeholder="e.g. Field Service Management" />
+            </div>
+            <div>
+              <label style={s.label}>Target ICP</label>
+              <input style={s.input} value={productForm.targetICP}
+                onChange={e => setProductForm(f => ({ ...f, targetICP: e.target.value }))}
+                placeholder="e.g. Trades businesses with 10–200 employees" />
+            </div>
+            <div>
+              <label style={s.label}>Key Pain Points (one per line)</label>
+              <textarea style={{ ...s.textarea, minHeight: 72 }} value={productForm.keyPainPoints}
+                onChange={e => setProductForm(f => ({ ...f, keyPainPoints: e.target.value }))}
+                placeholder={'scheduling\ndispatching\ninvoicing'} />
+            </div>
+            <div>
+              <label style={s.label}>Differentiators (one per line)</label>
+              <textarea style={{ ...s.textarea, minHeight: 72 }} value={productForm.differentiators}
+                onChange={e => setProductForm(f => ({ ...f, differentiators: e.target.value }))}
+                placeholder={'mobile-first\neasy onboarding'} />
+            </div>
+            <div>
+              <label style={s.label}>Call-to-Action Type</label>
+              <select style={{ ...s.input, cursor: 'pointer' }} value={productForm.ctaType}
+                onChange={e => setProductForm(f => ({ ...f, ctaType: e.target.value }))}>
+                <option value="book_call">Book a Call</option>
+                <option value="demo">Request a Demo</option>
+                <option value="free_trial">Start Free Trial</option>
+                <option value="contact">Contact Us</option>
+              </select>
+            </div>
+            {productForm.ctaType === 'book_call' && (
+              <div>
+                <label style={s.label}>Calendar URL</label>
+                <input style={s.input} value={productForm.calendarUrl}
+                  onChange={e => setProductForm(f => ({ ...f, calendarUrl: e.target.value }))}
+                  placeholder="https://calendly.com/yourname/30min" />
+              </div>
+            )}
+          </div>
+          <button style={s.btn} disabled={savingProduct || !productForm.productName.trim()} onClick={saveProduct}>
+            {savingProduct ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Product Context'}
           </button>
         </div>
       )}

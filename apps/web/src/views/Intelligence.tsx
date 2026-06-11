@@ -50,11 +50,93 @@ function ScoreDimension({ label, value }: { label: string; value: number }) {
   )
 }
 
+// ── Outreach Modal ────────────────────────────────────────────────────────────
+function OutreachModal({ subject, body, followup, contactEmail, prospectId, onSend, onClose }: {
+  subject: string; body: string; followup: string | null
+  contactEmail: string; prospectId: string
+  onSend: (prospectId: string, contactEmail: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [sending, setSending] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    const text = `Subject: ${subject}\n\n${body}${followup ? `\n\n─── Follow-up ───\n${followup}` : ''}`
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  async function handleSend() {
+    setSending(true)
+    try { await onSend(prospectId, contactEmail) }
+    finally { setSending(false) }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+    }} onClick={onClose}>
+      <div style={{
+        background: colors.bgElevated, border: `1px solid ${colors.border}`,
+        borderRadius: 16, padding: 24, maxWidth: 560, width: '100%',
+        display: 'flex', flexDirection: 'column', gap: 14
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Generated Outreach</div>
+          <button onClick={onClose} style={{ ...s.btnSm, background: 'none', color: colors.textFaint, fontSize: 20, lineHeight: 1, padding: '0 4px' }}>×</button>
+        </div>
+
+        <div>
+          <div style={s.label}>Subject</div>
+          <div style={{ ...s.cardInner, color: colors.text, fontSize: 14, fontWeight: 600 }}>{subject}</div>
+        </div>
+
+        <div>
+          <div style={s.label}>Email Body</div>
+          <div style={{
+            ...s.cardInner, color: colors.text, fontSize: 13, lineHeight: 1.65,
+            whiteSpace: 'pre-wrap', overflowY: 'auto', maxHeight: 260
+          }}>{body}</div>
+        </div>
+
+        {followup && (
+          <div>
+            <div style={s.label}>Follow-up</div>
+            <div style={{
+              ...s.cardInner, color: colors.textMuted, fontSize: 13, lineHeight: 1.65,
+              whiteSpace: 'pre-wrap', overflowY: 'auto', maxHeight: 120
+            }}>{followup}</div>
+          </div>
+        )}
+
+        {contactEmail && (
+          <div style={{ color: colors.textFaint, fontSize: 12 }}>
+            To: <span style={{ color: colors.blueLight }}>{contactEmail}</span>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button style={s.btnGhost} onClick={handleCopy}>
+            {copied ? '✓ Copied' : 'Copy'}
+          </button>
+          {contactEmail && (
+            <button style={s.btn} disabled={sending} onClick={handleSend}>
+              {sending ? <><Spinner size={14} color="#fff" /> Sending…</> : 'Send Now'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Prospect Card ─────────────────────────────────────────────────────────────
 function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
   prospect: Prospect
   onOutcome: (id: string, stage: string) => void
-  onOutreach: (id: string) => void
+  onOutreach: (id: string, email: string) => void
   onEnrollCadence: (id: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -208,7 +290,7 @@ function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
             <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Actions</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {prospect.contactEmail && (
-                <button onClick={() => onOutreach(prospect.id)}
+                <button onClick={() => onOutreach(prospect.id, prospect.contactEmail!)}
                   style={{ ...s.btnSm, fontSize: 11, background: '#1e3a5f', color: '#93c5fd' }}>
                   ✉ Generate Outreach
                 </button>
@@ -247,7 +329,7 @@ function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
 function TierSection({ title, prospects, color, onOutcome, onOutreach, onEnrollCadence }: {
   title: string; prospects: Prospect[]; color: string
   onOutcome: (id: string, stage: string) => void
-  onOutreach: (id: string) => void
+  onOutreach: (id: string, email: string) => void
   onEnrollCadence: (id: string) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
@@ -639,6 +721,10 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   const [forecast, setForecast] = useState<ForecastData | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<ActiveTab>('opportunities')
+  const [outreachModal, setOutreachModal] = useState<{
+    subject: string; body: string; followup: string | null
+    prospectId: string; contactEmail: string
+  } | null>(null)
 
   const load = () => {
     if (!workspace) return
@@ -667,17 +753,26 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
-  const handleOutreach = async (prospectId: string) => {
+  const handleOutreach = async (prospectId: string, contactEmail: string) => {
     if (!workspace) return
     try {
       const result = await api<{ subject: string; email: string; followup: string | null }>(`/api/prospects/${prospectId}/outreach`, {
         method: 'POST',
         body: JSON.stringify({ send: false })
       })
-      // Show the generated draft in a simple alert for now
-      const preview = `SUBJECT: ${result.subject}\n\n${result.email}${result.followup ? `\n\n—— FOLLOW-UP ——\n${result.followup}` : ''}`
-      window.alert(preview)
-      toast.success('Outreach generated')
+      setOutreachModal({ subject: result.subject, body: result.email, followup: result.followup, prospectId, contactEmail })
+    } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
+  const handleSendOutreach = async (prospectId: string, contactEmail: string) => {
+    try {
+      await api(`/api/prospects/${prospectId}/outreach`, {
+        method: 'POST',
+        body: JSON.stringify({ send: true, contactEmail })
+      })
+      setOutreachModal(null)
+      toast.success('Email sent')
+      load()
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
@@ -797,6 +892,18 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
         forecast ? <ForecastPanel forecast={forecast} /> : null
       ) : (
         <IndustryMatrixPanel workspaceId={workspace.id} api={api} toast={toast} />
+      )}
+
+      {outreachModal && (
+        <OutreachModal
+          subject={outreachModal.subject}
+          body={outreachModal.body}
+          followup={outreachModal.followup}
+          contactEmail={outreachModal.contactEmail}
+          prospectId={outreachModal.prospectId}
+          onSend={handleSendOutreach}
+          onClose={() => setOutreachModal(null)}
+        />
       )}
     </div>
   )
