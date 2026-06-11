@@ -3,7 +3,7 @@ import type { Request } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
+import { getOpportunityTier, calcWinProbability, classifyProspectSignals, toRawSignal } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
 import { enqueueScoreProspects, enqueueHarvestSignals, enqueueReEngage, enqueueGenerateOpportunityBrief } from '../lib/queues.js'
 
@@ -80,6 +80,10 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     topRecommendation: p.recommendations[0] ?? null,
     isActivated: p._count.signals > 0,
     briefSummary: p.opportunityBrief ?? null,
+    fpf: classifyProspectSignals(
+      p.signals.map(toRawSignal),
+      { industry: p.industry, employeeCount: p.employeeCount, contactEmail: p.contactEmail, contactName: p.contactName, domain: p.domain, location: p.location }
+    ),
   })
 
   res.json({

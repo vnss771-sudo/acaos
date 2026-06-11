@@ -47,6 +47,9 @@ model Workspace {
   cadences             Cadence[]
   cadenceEnrollments   CadenceEnrollment[]
   opportunityBriefs    OpportunityBrief[]
+  messageSends         MessageSend[]
+  engagementEvents     EngagementEvent[]
+  signalCombinations   SignalCombinationPerformance[]
 }
 
 model Membership {
@@ -293,6 +296,8 @@ model Prospect {
   messageOutcomes      MessageOutcome[]
   cadenceEnrollments   CadenceEnrollment[]
   opportunityBrief     OpportunityBrief?
+  messageSends         MessageSend[]
+  engagementEvents     EngagementEvent[]
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
@@ -548,4 +553,72 @@ model OpportunityBrief {
 
   @@index([workspaceId])
   @@index([workspaceId, generatedAt])
+}
+
+// ── Append-only send ledger ───────────────────────────────────────────────────
+// Every email / message send creates one row. Never mutated after creation.
+// EngagementEvent rows (opens, clicks, replies) reference this via sendId.
+
+model MessageSend {
+  id             String           @id @default(cuid())
+  workspaceId    String
+  prospectId     String
+  channel        String           // EMAIL | LINKEDIN | PHONE
+  subject        String?
+  bodyText       String?
+  recipientEmail String?
+  sentAt         DateTime         @default(now())
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect       Prospect         @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  events         EngagementEvent[]
+
+  @@index([workspaceId])
+  @@index([prospectId])
+  @@index([workspaceId, sentAt])
+}
+
+// One row per engagement event (open, click, reply, bounce, unsubscribe).
+// Append-only — preserves the SENT denominator for learning-loop calibration.
+
+model EngagementEvent {
+  id          String      @id @default(cuid())
+  workspaceId String
+  prospectId  String
+  sendId      String
+  eventType   String      // OPENED | CLICKED | REPLIED | BOUNCED | UNSUBSCRIBED
+  metadata    Json?
+  occurredAt  DateTime    @default(now())
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect    Prospect    @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  send        MessageSend @relation(fields: [sendId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([sendId])
+  @@index([prospectId])
+  @@index([workspaceId, eventType])
+  @@index([workspaceId, occurredAt])
+}
+
+// ── Signal Combination Performance ───────────────────────────────────────────
+// Tracks per-workspace outcome counts for each distinct signal pattern.
+// signalPattern = sorted signal types joined by "|", e.g. "FUNDING|HIRING|JOB_POSTING_SPIKE"
+// The learning loop reads this to calibrate scoring weights per combination.
+
+model SignalCombinationPerformance {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  vertical         String?
+  signalPattern    String    // sorted, deduplicated signal types joined by "|"
+  sentCount        Int       @default(0)
+  openCount        Int       @default(0)
+  clickCount       Int       @default(0)
+  replyCount       Int       @default(0)
+  meetingCount     Int       @default(0)
+  unsubscribeCount Int       @default(0)
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([workspaceId, signalPattern])
+  @@index([workspaceId])
+  @@index([workspaceId, replyCount])
 }

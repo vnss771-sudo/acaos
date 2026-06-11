@@ -1,4 +1,6 @@
 import 'dotenv/config'
+import { validateEnv } from '../../api/src/lib/env.js'
+validateEnv()
 import { Worker } from 'bullmq'
 import { connection, getQueue, defaultJobOptions } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, generateSignalAwareOutreach, generateOpportunityBrief } from '../../api/src/services/openai.js'
@@ -21,6 +23,8 @@ import {
   normalizeSignal,
   computeSignalExpiry,
   explainOpportunityScores,
+  classifyProspectSignals,
+  signalPatternKey,
   ROLE_KEYWORDS,
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
@@ -254,8 +258,13 @@ const replyWorker = new Worker(
       const newOutcomeStage = prospectStageMap[parsed.classification]
       const prospect = await prisma.prospect.findUnique({
         where: { id: prospectId },
-        select: { workspaceId: true, contactEmail: true, contactName: true },
+        select: { workspaceId: true, contactEmail: true, contactName: true, industry: true },
+        // include signals for combination tracking
       })
+      const prospectWithSignals = prospect ? await prisma.prospect.findUnique({
+        where:   { id: prospectId },
+        include: { signals: { select: { type: true, strength: true, sourceReliability: true, detectedAt: true } } },
+      }) : null
 
       if (prospect) {
         if (newOutcomeStage) {
@@ -275,6 +284,37 @@ const replyWorker = new Worker(
             respondedAt: new Date(),
           },
         }).catch(() => {})
+
+        // Update signal combination performance — track reply outcome
+        if (prospectWithSignals?.signals) {
+          const rawSigs = prospectWithSignals.signals.map(s => ({
+            type:              s.type as SignalType,
+            strength:          s.strength,
+            sourceReliability: s.sourceReliability,
+            industryRelevance: 70,
+            detectedAt:        s.detectedAt,
+          }))
+          const pattern = signalPatternKey(rawSigs)
+          const isPositive = ['INTERESTED', 'NEEDS_MORE_INFO', 'REFERRAL'].includes(parsed.classification ?? '')
+          const isMeeting  = parsed.classification === 'INTERESTED'
+          const isUnsub    = parsed.classification === 'NOT_INTERESTED'
+          prisma.signalCombinationPerformance.upsert({
+            where:  { workspaceId_signalPattern: { workspaceId: prospect.workspaceId, signalPattern: pattern } },
+            create: {
+              workspaceId:      prospect.workspaceId,
+              signalPattern:    pattern,
+              vertical:         prospectWithSignals.industry ?? null,
+              replyCount:       isPositive ? 1 : 0,
+              meetingCount:     isMeeting  ? 1 : 0,
+              unsubscribeCount: isUnsub    ? 1 : 0,
+            },
+            update: {
+              replyCount:       isPositive ? { increment: 1 } : undefined,
+              meetingCount:     isMeeting  ? { increment: 1 } : undefined,
+              unsubscribeCount: isUnsub    ? { increment: 1 } : undefined,
+            },
+          }).catch(() => {})
+        }
 
         // When INTERESTED and a calendar URL is configured, auto-send booking link
         if (parsed.classification === 'INTERESTED' && prospect.contactEmail && isMailConfigured()) {
@@ -509,13 +549,26 @@ const scoreProspectsWorker = new Worker(
       if (batch.length < BATCH_SIZE) break
     }
 
-    // Enqueue Opportunity Briefs for HOT prospects (score >= 72)
+    // Enqueue Opportunity Briefs for HOT prospects that pass the False Positive Filter
     const hotProspects = await prisma.prospect.findMany({
-      where: { workspaceId, opportunityScore: { gte: 72 }, outcomeStage: { notIn: ['WON', 'LOST'] } },
-      select: { id: true },
-      take: 50,
+      where:   { workspaceId, opportunityScore: { gte: 72 }, outcomeStage: { notIn: ['WON', 'LOST'] } },
+      include: { signals: true },
+      take:    50,
     })
     for (const hp of hotProspects) {
+      const rawSigs    = hp.signals.map(toRawSignal)
+      const fpf        = classifyProspectSignals(rawSigs, {
+        industry:      hp.industry,
+        employeeCount: hp.employeeCount,
+        contactEmail:  hp.contactEmail,
+        contactName:   hp.contactName,
+        domain:        hp.domain,
+        location:      hp.location,
+      })
+      if (fpf.decision === 'IGNORE') {
+        log('score-prospects', `FPF: skipping brief for ${hp.companyName} (${hp.id}) — ${fpf.reason}`)
+        continue
+      }
       await getQueue('generate-opportunity-brief').add(
         'generate-opportunity-brief',
         { prospectId: hp.id, workspaceId },
@@ -950,12 +1003,34 @@ const advanceCadenceWorker = new Worker(
       data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
     })
 
+    // Append-only send ledger — preserves denominator for learning loop
+    const messageSend = await prisma.messageSend.create({
+      data: {
+        workspaceId:    prospect.workspaceId,
+        prospectId:     prospect.id,
+        channel:        'EMAIL',
+        subject:        parsed.subject,
+        bodyText:       parsed.email,
+        recipientEmail: prospect.contactEmail,
+      },
+    })
+
+    // Record signal pattern for combination performance tracking (fire-and-forget)
+    const rawSigs = prospect.signals.map(toRawSignal)
+    const pattern = signalPatternKey(rawSigs)
+    prisma.signalCombinationPerformance.upsert({
+      where:  { workspaceId_signalPattern: { workspaceId: prospect.workspaceId, signalPattern: pattern } },
+      create: { workspaceId: prospect.workspaceId, signalPattern: pattern, vertical: prospect.industry ?? null, sentCount: 1 },
+      update: { sentCount: { increment: 1 } },
+    }).catch(() => {})
+
     await sendMail(
       prospect.contactEmail,
       parsed.subject,
       `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`,
       outcome.id
     )
+    void messageSend
 
     await job.updateProgress(80)
 

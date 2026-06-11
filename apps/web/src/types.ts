@@ -180,6 +180,22 @@ export type Recommendation = {
   createdAt: string
 }
 
+export type SignalDecision = 'IGNORE' | 'WATCH' | 'ACT'
+
+export type FPFResult = {
+  decision:         SignalDecision
+  reason:           string
+  confidence:       number
+  riskFlags:        string[]
+  rejectionReasons: string[]
+}
+
+export const FPF_COLOR: Record<SignalDecision, string> = {
+  ACT:    '#22c55e',
+  WATCH:  '#f59e0b',
+  IGNORE: '#475569',
+}
+
 export type SignalEvidenceItem = {
   type: string
   label: string
@@ -252,6 +268,7 @@ export type Prospect = {
   signals?: Signal[]
   recommendations?: Recommendation[]
   isActivated?: boolean
+  fpf?: FPFResult | null
   briefSummary?: {
     buyingWindowStrength: 'HIGH' | 'MEDIUM' | 'LOW'
     whyNow: string[]

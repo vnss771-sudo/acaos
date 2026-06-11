@@ -1,4 +1,6 @@
 import 'dotenv/config'
+import { validateEnv } from './lib/env.js'
+validateEnv()
 import express from 'express'
 import cors from 'cors'
 import { createBullBoard } from '@bull-board/api'

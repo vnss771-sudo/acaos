@@ -2,11 +2,11 @@ import React, { useEffect, useState } from 'react'
 import type {
   Workspace, OpportunitiesData, ForecastData, Prospect, View,
   StrategyCardsData, StrategyCard, IndustrySignalConfig,
-  OpportunityBrief, SignalEvidenceItem
+  OpportunityBrief, SignalEvidenceItem, SignalDecision
 } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS,
-  SIGNAL_TYPE_LABELS, ALL_SIGNAL_TYPES, TIER_COLOR
+  SIGNAL_TYPE_LABELS, ALL_SIGNAL_TYPES, TIER_COLOR, FPF_COLOR
 } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
@@ -181,6 +181,14 @@ function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
               color: BUYING_STAGE_COLOR[prospect.buyingStage],
               fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99
             }}>{BUYING_STAGE_LABELS[prospect.buyingStage]}</span>
+            {prospect.fpf && (
+              <span title={prospect.fpf.reason} style={{
+                background: FPF_COLOR[prospect.fpf.decision as SignalDecision] + '22',
+                color:      FPF_COLOR[prospect.fpf.decision as SignalDecision],
+                fontSize: 9, fontWeight: 800, padding: '1px 7px', borderRadius: 99,
+                letterSpacing: '0.06em', cursor: 'default'
+              }}>{prospect.fpf.decision}</span>
+            )}
             {prospect.isActivated && (
               <span style={{
                 background: '#78350f33', color: '#fbbf24',
@@ -251,6 +259,34 @@ function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
             <ScoreDimension label="Timing" value={prospect.timingScore} />
             <ScoreDimension label="Confidence" value={prospect.confidenceScore} />
           </div>
+
+          {prospect.fpf && (
+            <div style={{ background: '#0f172a', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase' }}>Signal Quality</div>
+                <span style={{
+                  background: FPF_COLOR[prospect.fpf.decision as SignalDecision] + '22',
+                  color:      FPF_COLOR[prospect.fpf.decision as SignalDecision],
+                  fontSize: 9, fontWeight: 800, padding: '1px 7px', borderRadius: 99
+                }}>{prospect.fpf.decision}</span>
+                <span style={{ color: colors.textFaint, fontSize: 10, marginLeft: 'auto' }}>{prospect.fpf.confidence}% confidence</span>
+              </div>
+              <div style={{ color: colors.textMuted, fontSize: 12, marginBottom: 4 }}>{prospect.fpf.reason}</div>
+              {prospect.fpf.riskFlags.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
+                  {prospect.fpf.riskFlags.map(f => (
+                    <span key={f} style={{ background: '#1e2d40', color: colors.textFaint, fontSize: 10, padding: '1px 6px', borderRadius: 4 }}>{f}</span>
+                  ))}
+                </div>
+              )}
+              {prospect.fpf.rejectionReasons.length > 0 && (
+                <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 4 }}>
+                  {prospect.fpf.rejectionReasons.slice(0, 3).map((r, i) => <div key={i}>• {r}</div>)}
+                  {prospect.fpf.rejectionReasons.length > 3 && <div>+ {prospect.fpf.rejectionReasons.length - 3} more</div>}
+                </div>
+              )}
+            </div>
+          )}
 
           {rec && (
             <div style={{ background: '#0f172a', borderRadius: 8, padding: 12, marginBottom: 12 }}>

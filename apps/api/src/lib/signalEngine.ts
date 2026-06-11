@@ -750,3 +750,224 @@ export function detectProblemOwnerActivation(
     recommendedStrength,
   }
 }
+
+// ── False Positive Filter ─────────────────────────────────────────────────────
+// Classifies signals and prospects as IGNORE / WATCH / ACT to prevent noisy
+// signals from triggering briefs, outreach, or scoring upgrades.
+
+export type SignalDecision = 'IGNORE' | 'WATCH' | 'ACT'
+
+export type SignalFilterResult = {
+  decision:   SignalDecision
+  reason:     string
+  confidence: number       // 0-100
+  riskFlags:  string[]
+}
+
+export type ProspectSignalClassification = {
+  decision:         SignalDecision
+  reason:           string
+  confidence:       number
+  riskFlags:        string[]
+  rejectionReasons: string[]   // why individual signals were ignored
+  actSignals:       RawSignal[]
+  watchSignals:     RawSignal[]
+  ignoredSignals:   RawSignal[]
+}
+
+// Signal types that are meaningful when standing alone (no corroboration needed).
+// Value = minimum decayed-strength threshold for standalone ACT (0 = any strength).
+const STRONG_STANDALONE: Partial<Record<SignalType, number>> = {
+  PROBLEM_OWNER_ACTIVATION: 0,
+  FUNDING:                  50,
+  CONTRACT_AWARDED:         55,
+  GOV_GRANT_RECEIVED:       50,
+  PERMIT_APPROVED:          55,
+  TENDER_PUBLISHED:         55,
+}
+
+// Signal type pairs/triples that converge to ACT when both sides are non-IGNORED.
+const CONVERGENCE_PATTERNS: Array<{ name: string; requires: SignalType[] }> = [
+  { name: 'contract + hiring',            requires: ['CONTRACT_AWARDED',     'HIRING']                },
+  { name: 'contract + job postings',      requires: ['CONTRACT_AWARDED',     'JOB_POSTING_SPIKE']     },
+  { name: 'tender + job postings',        requires: ['TENDER_PUBLISHED',     'JOB_POSTING_SPIKE']     },
+  { name: 'tender + hiring',              requires: ['TENDER_PUBLISHED',     'HIRING']                },
+  { name: 'grant + hiring',               requires: ['GOV_GRANT_RECEIVED',   'HIRING']                },
+  { name: 'grant + job postings',         requires: ['GOV_GRANT_RECEIVED',   'JOB_POSTING_SPIKE']     },
+  { name: 'permit + project start',       requires: ['PERMIT_APPROVED',      'PROJECT_START_DETECTED']},
+  { name: 'funding + hiring',             requires: ['FUNDING',              'HIRING']                },
+  { name: 'funding + tech adoption',      requires: ['FUNDING',              'TECH_ADOPTION']         },
+  { name: 'expansion + hiring',           requires: ['EXPANSION',            'HIRING']                },
+  { name: 'expansion + job postings',     requires: ['EXPANSION',            'JOB_POSTING_SPIKE']     },
+  { name: 'pricing + enterprise page',    requires: ['PRICING_PAGE_CHANGED', 'ENTERPRISE_PAGE_LAUNCHED']},
+  { name: 'office opening + hiring',      requires: ['OFFICE_OPENING',       'HIRING']                },
+  { name: 'office opening + job posts',   requires: ['OFFICE_OPENING',       'JOB_POSTING_SPIKE']     },
+  { name: 'leadership change + hiring',   requires: ['LEADERSHIP_CHANGE',    'HIRING']                },
+  { name: 'tech adoption + hiring',       requires: ['TECH_ADOPTION',        'HIRING']                },
+  { name: 'website change + hiring',      requires: ['WEBSITE_CHANGE',       'HIRING']                },
+]
+
+// Signal types that are too ambiguous to ACT on without a corroborating signal.
+const NOISY_ALONE: Set<SignalType> = new Set([
+  'WEBSITE_CHANGE', 'NEWS_MENTION', 'LEADERSHIP_CHANGE',
+  'TECH_STACK_CHANGED', 'BUSINESS_REGISTRATION',
+])
+
+// Per-type maximum age before a signal is considered expired / too stale.
+const SIGNAL_AGE_CUTOFFS: Partial<Record<SignalType, number>> = {
+  WEBSITE_CHANGE:           45,
+  NEWS_MENTION:             30,
+  BUSINESS_REGISTRATION:    90,
+  PRICING_PAGE_CHANGED:     45,
+  ENTERPRISE_PAGE_LAUNCHED: 60,
+}
+
+// Classify a single raw signal in isolation.
+export function classifySignal(signal: RawSignal): SignalFilterResult {
+  const ds      = decayedStrength(signal)
+  const ageDays = Math.max(0, (Date.now() - signal.detectedAt.getTime()) / 86_400_000)
+  const flags:  string[] = []
+
+  // Hard IGNORE: decayed strength too weak to matter
+  if (ds < 3) {
+    return { decision: 'IGNORE', reason: `signal too weak (decayed strength ${ds.toFixed(1)})`, confidence: 95, riskFlags: ['too_weak'] }
+  }
+  // Hard IGNORE: source too unreliable
+  if (signal.sourceReliability < 35) {
+    return { decision: 'IGNORE', reason: `low source reliability (${signal.sourceReliability})`, confidence: 90, riskFlags: ['low_reliability'] }
+  }
+  // Hard IGNORE: type-specific age cutoff exceeded
+  const maxAge = SIGNAL_AGE_CUTOFFS[signal.type]
+  if (maxAge !== undefined && ageDays > maxAge) {
+    return { decision: 'IGNORE', reason: `${signal.type} expired (>${maxAge}d limit, currently ${Math.round(ageDays)}d old)`, confidence: 88, riskFlags: ['expired'] }
+  }
+
+  // Soft risk flags (don't disqualify, but caller should note them)
+  if (signal.sourceReliability < 55) flags.push('low_reliability')
+  if (ageDays > 30) flags.push('stale')
+
+  // Strong standalone types
+  const standaloneThreshold = STRONG_STANDALONE[signal.type]
+  if (standaloneThreshold !== undefined && ds >= standaloneThreshold) {
+    return {
+      decision:   'ACT',
+      reason:     `strong standalone signal: ${signal.type} (strength ${Math.round(ds)})`,
+      confidence: Math.min(92, 60 + Math.round(ds / 4)),
+      riskFlags:  flags,
+    }
+  }
+
+  // Noisy-alone types that require corroboration
+  if (NOISY_ALONE.has(signal.type) && ds < 50) {
+    return {
+      decision:   'WATCH',
+      reason:     `${signal.type} alone is ambiguous — needs corroborating signal`,
+      confidence: 60,
+      riskFlags:  [...flags, 'needs_corroboration'],
+    }
+  }
+
+  // Default threshold: strong enough to ACT alone, otherwise WATCH
+  return {
+    decision:   ds >= 40 ? 'ACT' : 'WATCH',
+    reason:     ds >= 40
+      ? `strong signal (decayed strength ${Math.round(ds)})`
+      : `moderate signal (decayed strength ${Math.round(ds)}) — monitoring`,
+    confidence: Math.min(85, 45 + Math.round(ds / 3)),
+    riskFlags:  flags,
+  }
+}
+
+// Classify a prospect's full signal set, applying convergence rules.
+export function classifyProspectSignals(
+  signals: RawSignal[],
+  meta: ProspectMeta
+): ProspectSignalClassification {
+  if (signals.length === 0) {
+    return {
+      decision: 'IGNORE', reason: 'no signals', confidence: 100,
+      riskFlags: ['no_signals'], rejectionReasons: ['no signals detected'],
+      actSignals: [], watchSignals: [], ignoredSignals: [],
+    }
+  }
+
+  const classified   = signals.map(s => ({ signal: s, result: classifySignal(s) }))
+  const actSignals   = classified.filter(c => c.result.decision === 'ACT').map(c => c.signal)
+  const watchSignals = classified.filter(c => c.result.decision === 'WATCH').map(c => c.signal)
+  const ignoredSigs  = classified.filter(c => c.result.decision === 'IGNORE').map(c => c.signal)
+  const rejectionReasons = classified
+    .filter(c => c.result.decision === 'IGNORE')
+    .map(c => `[${c.signal.type}] ${c.result.reason}`)
+
+  // Active types: signal types that are not IGNORE
+  const activeTypes = new Set([...actSignals, ...watchSignals].map(s => s.type))
+
+  // Risk flags
+  const riskFlags: string[] = []
+  if (!meta.contactEmail) riskFlags.push('no_contact_email')
+  if (!meta.domain)       riskFlags.push('no_domain')
+  if (actSignals.length + watchSignals.length === 1) riskFlags.push('single_signal')
+  const avgAge = signals.reduce(
+    (sum, s) => sum + Math.max(0, (Date.now() - s.detectedAt.getTime()) / 86_400_000), 0
+  ) / signals.length
+  if (avgAge > 30) riskFlags.push('stale_signals')
+  const avgReliability = signals.reduce((sum, s) => sum + s.sourceReliability, 0) / signals.length
+  if (avgReliability < 60) riskFlags.push('low_avg_reliability')
+
+  // Rule 1: any POA signal → immediate ACT (buying window is open by definition)
+  const hasPoa = activeTypes.has('PROBLEM_OWNER_ACTIVATION')
+  if (hasPoa) {
+    return {
+      decision: 'ACT', reason: 'Problem-Owner Activation detected — buying window is open',
+      confidence: 92, riskFlags, rejectionReasons, actSignals, watchSignals, ignoredSignals: ignoredSigs,
+    }
+  }
+
+  // Rule 2: convergence pattern match
+  for (const pattern of CONVERGENCE_PATTERNS) {
+    if (pattern.requires.every(t => activeTypes.has(t))) {
+      return {
+        decision: 'ACT', reason: `converging signals: ${pattern.name}`,
+        confidence: 85, riskFlags, rejectionReasons, actSignals, watchSignals, ignoredSignals: ignoredSigs,
+      }
+    }
+  }
+
+  // Rule 3: 3+ distinct non-ignored signal types = convergence by volume
+  if (activeTypes.size >= 3) {
+    return {
+      decision: 'ACT', reason: `${activeTypes.size} distinct signal types converging`,
+      confidence: 80, riskFlags, rejectionReasons, actSignals, watchSignals, ignoredSignals: ignoredSigs,
+    }
+  }
+
+  // Rule 4: any individually strong ACT signal
+  if (actSignals.length > 0) {
+    const lead = actSignals[0]
+    return {
+      decision: 'ACT', reason: `${lead.type} is a strong standalone signal`,
+      confidence: 75, riskFlags, rejectionReasons, actSignals, watchSignals, ignoredSignals: ignoredSigs,
+    }
+  }
+
+  // Rule 5: only WATCH signals — monitor but don't send
+  if (watchSignals.length > 0) {
+    return {
+      decision: 'WATCH', reason: `${watchSignals.length} signal${watchSignals.length > 1 ? 's' : ''} — waiting for corroboration`,
+      confidence: 60, riskFlags, rejectionReasons, actSignals: [], watchSignals, ignoredSignals: ignoredSigs,
+    }
+  }
+
+  return {
+    decision: 'IGNORE', reason: 'all signals are too weak, expired, or unreliable',
+    confidence: 88, riskFlags: [...riskFlags, 'all_ignored'], rejectionReasons,
+    actSignals: [], watchSignals: [], ignoredSignals: ignoredSigs,
+  }
+}
+
+// Derive the sorted, deduped signal pattern key used for combination performance tracking.
+// e.g. ['JOB_POSTING_SPIKE', 'FUNDING', 'HIRING'] → "FUNDING|HIRING|JOB_POSTING_SPIKE"
+export function signalPatternKey(signals: RawSignal[]): string {
+  const types = [...new Set(signals.map(s => s.type))].sort()
+  return types.join('|') || 'NONE'
+}
