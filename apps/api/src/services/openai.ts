@@ -96,6 +96,78 @@ Make the email feel like it was written specifically for ${input.businessName}, 
   )
 }
 
+export async function generateSignalAwareOutreach(input: {
+  businessName: string
+  category?: string
+  city?: string
+  contactName?: string
+  aiSummary?: string
+  outreachAngle?: string
+  signals: Array<{ type: string; title?: string | null; description?: string | null; strength: number }>
+  buyingStage?: string
+  opportunityScore?: number
+  poaActivated?: boolean
+  poaTier?: string
+  templateType?: 'INITIAL' | 'FOLLOWUP_1' | 'FOLLOWUP_2'
+}): Promise<string> {
+  const firstName = input.contactName?.split(' ')[0] ?? null
+  const templateType = input.templateType ?? 'INITIAL'
+
+  const topSignals = input.signals
+    .filter(s => s.type !== 'PROBLEM_OWNER_ACTIVATION')
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 5)
+
+  const signalContext = topSignals.length > 0
+    ? topSignals.map(s => {
+        const label = s.title ?? s.type.replace(/_/g, ' ')
+        return s.description ? `• ${label}: ${s.description}` : `• ${label} (strength ${s.strength})`
+      }).join('\n')
+    : 'No specific signals detected yet'
+
+  const urgencyNote = input.poaActivated
+    ? `⚡ CRITICAL CONTEXT: This prospect has ${input.poaTier ?? 'CONFIRMED'} Problem-Owner Activation — a named decision-maker has both an operational trigger AND active solution-seeking behaviour. This is an open buying window. Reference the specific trigger in your opening line.`
+    : ''
+
+  const templateGuide =
+    templateType === 'INITIAL'
+      ? 'Write a first-touch cold email. Open with a specific observation from the signals. Under 90 words. One clear question CTA at the end.'
+      : templateType === 'FOLLOWUP_1'
+        ? 'Write a follow-up (4–5 days after first email). Acknowledge the first reach-out briefly. Offer a different angle. Under 60 words. End with a question.'
+        : 'Write a short, human breakup email. This is your last message. Acknowledge it, give them an easy out, keep it under 40 words. No hard sell.'
+
+  return chat(
+    `You are an elite B2B cold email copywriter for a field operations software company targeting trades and field-service businesses.
+
+Rules:
+1. Reference SPECIFIC evidence from the prospect's actual recent activity — never generic platitudes
+2. Sound like a thoughtful human, not a marketing department
+3. Every word earns its place — cut ruthlessly
+
+${urgencyNote}
+
+Return ONLY a valid JSON object:
+- subject (string): Under 8 words. Specific, not generic. Feels like a peer forwarding something.
+- email (string): Email body only. No subject line, no sign-off.
+- followup (string): 2-sentence follow-up for 4–5 days later. Different angle. Ends with a question.`,
+
+    `Write a ${templateType.replace('_', ' ').toLowerCase()} email:
+
+Business: ${input.businessName}
+Industry: ${input.category || 'field services'}
+Location: ${input.city || 'their area'}
+${firstName ? `Contact: ${firstName}` : ''}
+Buying stage: ${input.buyingStage || 'RESEARCHING'} | Score: ${input.opportunityScore ?? 0}/100
+Research: ${input.aiSummary || 'Growing field service company needing better coordination tools'}
+Hook: ${input.outreachAngle || 'streamlining field operations as they scale'}
+
+LIVE INTELLIGENCE SIGNALS (these are real — use them):
+${signalContext}
+
+${templateGuide}`
+  )
+}
+
 export async function analyzeReply(replyBody: string): Promise<string> {
   return chat(
     `You are a B2B sales intelligence system that classifies cold email replies for field-service software sales teams.

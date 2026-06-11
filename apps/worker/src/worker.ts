@@ -1,7 +1,9 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
 import { connection, getQueue, defaultJobOptions } from './lib/queue.js'
-import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, generateSignalAwareOutreach } from '../../api/src/services/openai.js'
+import { sendMail, isMailConfigured } from '../../api/src/services/mail.js'
+import { fetchJobPostings } from '../../api/src/services/apollo.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
 import type { ScoringWeights } from '../../api/src/lib/scoring.js'
@@ -16,6 +18,7 @@ import {
   detectProblemOwnerActivation,
   normalizeSignal,
   computeSignalExpiry,
+  ROLE_KEYWORDS,
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
@@ -616,6 +619,240 @@ const strategyCardsWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── advance-cadence ───────────────────────────────────────────────────────────
+const advanceCadenceWorker = new Worker(
+  'advance-cadence',
+  async (job) => {
+    const { enrollmentId } = job.data as { enrollmentId: string }
+    log('advance-cadence', `Processing enrollmentId=${enrollmentId}`)
+
+    const enrollment = await (prisma as any).cadenceEnrollment.findUnique({
+      where:   { id: enrollmentId },
+      include: {
+        prospect: {
+          include: {
+            signals:         { orderBy: { detectedAt: 'desc' }, take: 10 },
+            recommendations: { orderBy: { priority: 'desc' }, take: 1 },
+          },
+        },
+        cadence: true,
+      },
+    })
+
+    if (!enrollment) throw new Error(`Enrollment ${enrollmentId} not found`)
+    if (enrollment.status !== 'ACTIVE') {
+      log('advance-cadence', `Enrollment ${enrollmentId} is ${enrollment.status} — skipping`)
+      return { skipped: true, reason: enrollment.status }
+    }
+
+    const { prospect } = enrollment
+
+    // Auto-complete if prospect has moved past the contact stage
+    if (['MEETING', 'PROPOSAL', 'WON', 'LOST'].includes(prospect.outcomeStage)) {
+      await (prisma as any).cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data:  { status: 'COMPLETED', completedAt: new Date() },
+      })
+      log('advance-cadence', `Auto-completed: prospect ${prospect.id} is at ${prospect.outcomeStage}`)
+      return { completed: true, reason: 'prospect_advanced' }
+    }
+
+    const steps = enrollment.cadence.steps as Array<{ dayOffset: number; channel: string; templateType: string }>
+    const step  = steps[enrollment.currentStep]
+
+    if (!step) {
+      await (prisma as any).cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data:  { status: 'COMPLETED', completedAt: new Date() },
+      })
+      log('advance-cadence', `No more steps — completing ${enrollmentId}`)
+      return { completed: true }
+    }
+
+    if (!prospect.contactEmail) {
+      await (prisma as any).cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data:  { status: 'PAUSED' },
+      })
+      log('advance-cadence', `No contact email — pausing ${enrollmentId}`)
+      return { paused: true, reason: 'no_email' }
+    }
+
+    if (!isMailConfigured()) {
+      await (prisma as any).cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data:  { status: 'PAUSED' },
+      })
+      log('advance-cadence', `Mail not configured — pausing ${enrollmentId}`)
+      return { paused: true, reason: 'mail_not_configured' }
+    }
+
+    await job.updateProgress(20)
+
+    const poaSignal = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
+    const poaTier   = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
+
+    const raw = await generateSignalAwareOutreach({
+      businessName:     prospect.companyName,
+      category:         prospect.industry    ?? undefined,
+      city:             prospect.location    ?? undefined,
+      contactName:      prospect.contactName ?? undefined,
+      aiSummary:        prospect.aiSummary   ?? undefined,
+      outreachAngle:    prospect.recommendations[0]?.messageAngle ?? undefined,
+      signals:          prospect.signals.map((s: { type: string; title: string | null; description: string | null; strength: number }) => ({
+        type: s.type, title: s.title, description: s.description, strength: s.strength,
+      })),
+      buyingStage:      prospect.buyingStage,
+      opportunityScore: prospect.opportunityScore,
+      poaActivated:     Boolean(poaSignal),
+      poaTier,
+      templateType:     step.templateType as 'INITIAL' | 'FOLLOWUP_1' | 'FOLLOWUP_2',
+    })
+
+    await job.updateProgress(60)
+
+    const parsed = parseJson<{ subject?: string; email?: string }>(raw, {})
+    if (!parsed.subject || !parsed.email) {
+      log('advance-cadence', `AI output invalid for ${enrollmentId} — skipping step`)
+      return { error: 'invalid_ai_output' }
+    }
+
+    await sendMail(
+      prospect.contactEmail,
+      parsed.subject,
+      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`
+    )
+
+    await job.updateProgress(80)
+
+    const nextStep      = steps[enrollment.currentStep + 1]
+    const nextActionAt  = nextStep
+      ? new Date(new Date(enrollment.enrolledAt).getTime() + nextStep.dayOffset * 86_400_000)
+      : null
+
+    await prisma.$transaction([
+      prisma.messageOutcome.create({
+        data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
+      }),
+      prisma.prospect.update({
+        where: { id: prospect.id },
+        data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
+      }),
+      (prisma as any).cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data: {
+          currentStep:  enrollment.currentStep + 1,
+          nextActionAt,
+          status:       nextStep ? 'ACTIVE' : 'COMPLETED',
+          completedAt:  nextStep ? null : new Date(),
+        },
+      }),
+    ])
+
+    // Track AI usage — non-fatal
+    const month = new Date().toISOString().slice(0, 7)
+    prisma.usageRecord.upsert({
+      where:  { workspaceId_month_action: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH' } },
+      create: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH', count: 1 },
+      update: { count: { increment: 1 } },
+    }).catch(() => {})
+
+    await job.updateProgress(100)
+    log('advance-cadence', `Step ${enrollment.currentStep} sent to ${prospect.contactEmail} — next: ${nextActionAt?.toISOString() ?? 'none (completed)'}`)
+    return { sent: true, step: enrollment.currentStep, nextActionAt }
+  },
+  { connection, concurrency: 5 }
+)
+
+// ── harvest-signals ───────────────────────────────────────────────────────────
+const harvestSignalsWorker = new Worker(
+  'harvest-signals',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('harvest-signals', `Harvesting signals for workspaceId=${workspaceId}`)
+
+    await job.updateProgress(10)
+
+    // Find prospects with domains not harvested in the last 24h
+    const oneDayAgo = new Date(Date.now() - 86_400_000)
+    const recentRows = await prisma.signal.findMany({
+      where:    { workspaceId, type: 'JOB_POSTING_SPIKE', source: 'apollo-harvest', detectedAt: { gte: oneDayAgo } },
+      select:   { prospectId: true },
+      distinct: ['prospectId'],
+    })
+    const harvestedSet = new Set(recentRows.map(r => r.prospectId))
+
+    const prospects = await prisma.prospect.findMany({
+      where: {
+        workspaceId,
+        domain:       { not: null },
+        outcomeStage: { notIn: ['WON', 'LOST'] },
+        NOT: { id: { in: [...harvestedSet] } },
+      },
+      select: { id: true, domain: true },
+      take: 50,
+    })
+
+    await job.updateProgress(20)
+
+    let signalsCreated = 0
+    const step = Math.max(1, Math.floor(60 / Math.max(prospects.length, 1)))
+
+    for (const prospect of prospects) {
+      if (!prospect.domain) continue
+
+      try {
+        const postings        = await fetchJobPostings(prospect.domain)
+        const matchingPostings = postings.filter(p =>
+          ROLE_KEYWORDS.some(kw => p.title.toLowerCase().includes(kw.toLowerCase()))
+        )
+
+        if (matchingPostings.length > 0) {
+          const strength = Math.min(100, 45 + matchingPostings.length * 8)
+          const titles   = matchingPostings.slice(0, 3).map(p => p.title).join(', ')
+          const norm     = normalizeSignal('JOB_POSTING_SPIKE')
+          const now      = new Date()
+
+          await prisma.signal.create({
+            data: {
+              workspaceId,
+              prospectId:       prospect.id,
+              type:             'JOB_POSTING_SPIKE',
+              strength,
+              sourceReliability: 80,
+              industryRelevance: 85,
+              title:            `${matchingPostings.length} matching job posting${matchingPostings.length > 1 ? 's' : ''} detected`,
+              description:      `Roles: ${titles}`,
+              source:           'apollo-harvest',
+              ...norm,
+              detectedAt:       now,
+              expiresAt:        computeSignalExpiry('JOB_POSTING_SPIKE', now),
+            },
+          })
+          signalsCreated++
+        }
+      } catch (err) {
+        log('harvest-signals', `Failed for prospect ${prospect.id}: ${(err as Error).message}`)
+      }
+
+      await job.updateProgress(20 + step)
+    }
+
+    if (signalsCreated > 0) {
+      await getQueue('score-prospects').add(
+        'score-prospects',
+        { workspaceId },
+        { ...defaultJobOptions, jobId: `score-after-harvest:${workspaceId}` }
+      )
+    }
+
+    await job.updateProgress(100)
+    log('harvest-signals', `Done workspaceId=${workspaceId} prospects=${prospects.length} signalsCreated=${signalsCreated}`)
+    return { workspaceId, prospects: prospects.length, signalsCreated }
+  },
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers ─────────────────────────────────────────────────────────────
 for (const [name, worker] of [
   ['research-lead',            researchWorker],
@@ -626,6 +863,8 @@ for (const [name, worker] of [
   ['generate-recommendations', recommendWorker],
   ['calibrate-scoring',        calibrateWorker],
   ['generate-strategy-cards',  strategyCardsWorker],
+  ['advance-cadence',          advanceCadenceWorker],
+  ['harvest-signals',          harvestSignalsWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -647,6 +886,8 @@ async function shutdown(signal: string) {
     recommendWorker.close(),
     calibrateWorker.close(),
     strategyCardsWorker.close(),
+    advanceCadenceWorker.close(),
+    harvestSignalsWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -656,4 +897,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards)')
+console.log('[worker] Started — listening on 10 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals)')

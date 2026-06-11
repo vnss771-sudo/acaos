@@ -16,7 +16,7 @@ import {
   type ICPConfig,
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
-import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
+import { enqueueScoreProspects, enqueueCalibrate, enqueueAdvanceCadence } from '../lib/queues.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
@@ -446,4 +446,141 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
     signalsCreated: created.length,
     signalIds:      created
   })
+}))
+
+// POST /api/prospects/:id/outreach — generate (and optionally send) signal-aware outreach
+prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({
+    where: { id: req.params.id },
+    include: {
+      signals:         { orderBy: { detectedAt: 'desc' }, take: 10 },
+      recommendations: { orderBy: { priority: 'desc' }, take: 1 },
+    },
+  })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const send = req.body.send === true
+  if (send && !prospect.contactEmail) throw new ApiError(422, 'Prospect has no contact email — cannot send')
+
+  const { generateSignalAwareOutreach } = await import('../services/openai.js')
+  const { isMailConfigured, sendMail }  = await import('../services/mail.js')
+
+  const poaSignal = prospect.signals.find(s => s.type === 'PROBLEM_OWNER_ACTIVATION')
+  const poaTier   = poaSignal?.title?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
+
+  const raw = await generateSignalAwareOutreach({
+    businessName:     prospect.companyName,
+    category:         prospect.industry    ?? undefined,
+    city:             prospect.location    ?? undefined,
+    contactName:      prospect.contactName ?? undefined,
+    aiSummary:        prospect.aiSummary   ?? undefined,
+    outreachAngle:    prospect.recommendations[0]?.messageAngle ?? undefined,
+    signals:          prospect.signals.map(s => ({
+      type: s.type, title: s.title, description: s.description, strength: s.strength,
+    })),
+    buyingStage:      prospect.buyingStage,
+    opportunityScore: prospect.opportunityScore,
+    poaActivated:     Boolean(poaSignal),
+    poaTier,
+    templateType:     (req.body.templateType as 'INITIAL' | 'FOLLOWUP_1' | 'FOLLOWUP_2') ?? 'INITIAL',
+  })
+
+  const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }
+  if (!parsed.subject || !parsed.email) throw new ApiError(502, 'AI failed to generate valid outreach')
+
+  // Track AI usage
+  const month = new Date().toISOString().slice(0, 7)
+  await prisma.usageRecord.upsert({
+    where: { workspaceId_month_action: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH' } },
+    create: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH', count: 1 },
+    update: { count: { increment: 1 } },
+  })
+
+  if (send) {
+    if (!isMailConfigured()) throw new ApiError(503, 'SMTP is not configured')
+    await sendMail(
+      prospect.contactEmail!,
+      parsed.subject,
+      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`
+    )
+    await prisma.$transaction([
+      prisma.messageOutcome.create({
+        data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
+      }),
+      prisma.prospect.update({
+        where: { id: prospect.id },
+        data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
+      }),
+    ])
+  }
+
+  res.status(send ? 200 : 201).json({
+    subject:  parsed.subject,
+    email:    parsed.email,
+    followup: parsed.followup ?? null,
+    sent:     send,
+  })
+}))
+
+// POST /api/prospects/:id/enroll-cadence — enroll prospect in a multi-touch outreach sequence
+prospectsRouter.post('/:id/enroll-cadence', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  if (!prospect.contactEmail) throw new ApiError(422, 'Prospect has no contact email — cannot enroll in cadence')
+
+  let cadenceId = req.body.cadenceId as string | undefined
+
+  if (!cadenceId) {
+    // Find or create the workspace default 3-step cadence
+    let defaultCadence = await prisma.cadence.findFirst({
+      where: { workspaceId: prospect.workspaceId, isDefault: true },
+    })
+
+    if (!defaultCadence) {
+      defaultCadence = await prisma.cadence.create({
+        data: {
+          workspaceId: prospect.workspaceId,
+          name:        'Default 3-Step Email Sequence',
+          isDefault:   true,
+          steps: [
+            { dayOffset: 0,  channel: 'EMAIL', templateType: 'INITIAL'    },
+            { dayOffset: 4,  channel: 'EMAIL', templateType: 'FOLLOWUP_1' },
+            { dayOffset: 10, channel: 'EMAIL', templateType: 'FOLLOWUP_2' },
+          ],
+        },
+      })
+    }
+
+    cadenceId = defaultCadence.id
+  }
+
+  // Upsert enrollment — idempotent so re-enrolling re-activates a paused sequence
+  const enrollment = await prisma.cadenceEnrollment.upsert({
+    where:  { prospectId_cadenceId: { prospectId: prospect.id, cadenceId } },
+    create: {
+      workspaceId: prospect.workspaceId,
+      prospectId:  prospect.id,
+      cadenceId,
+      currentStep:  0,
+      status:       'ACTIVE',
+      nextActionAt: new Date(),
+    },
+    update: {
+      status:       'ACTIVE',
+      currentStep:  0,
+      nextActionAt: new Date(),
+      completedAt:  null,
+    },
+  })
+
+  await enqueueAdvanceCadence(enrollment.id)
+
+  res.status(201).json({ enrollment })
 }))

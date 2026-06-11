@@ -145,6 +145,21 @@ function extractSafeUpdates(org: Record<string, unknown>, person: Record<string,
   return updates
 }
 
+export async function fetchJobPostings(domain: string): Promise<Array<{ title: string; postedAt: Date | null }>> {
+  if (!process.env.APOLLO_API_KEY) return []
+  try {
+    const result = await apolloPost('/organizations/enrich', { domain }) as {
+      organization?: { job_postings?: Array<{ title?: string; posted_at?: string }> }
+    }
+    const postings = result?.organization?.job_postings ?? []
+    return postings
+      .filter((p): p is { title: string; posted_at?: string } => typeof p.title === 'string' && p.title.length > 0)
+      .map(p => ({ title: p.title, postedAt: p.posted_at ? new Date(p.posted_at) : null }))
+  } catch {
+    return []
+  }
+}
+
 export async function enrichProspect(prospect: ProspectInput): Promise<EnrichResult> {
   if (!process.env.APOLLO_API_KEY) {
     return { signals: [], updates: {} }

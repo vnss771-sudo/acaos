@@ -541,7 +541,7 @@ const SOLUTION_SEEKING = new Set<SignalType>([
 ])
 
 // Keywords in job posting titles/descriptions that confirm operational pain ownership
-const ROLE_KEYWORDS = [
+export const ROLE_KEYWORDS = [
   'coordinator', 'scheduling', 'compliance', 'crew', 'subcontractor', 'subcontract',
   'site management', 'field operation', 'job tracking', 'job update', 'progress report',
   'paperwork', 'documentation', 'multi-site', 'multiple site', 'project coordinator',

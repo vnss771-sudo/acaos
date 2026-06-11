@@ -43,6 +43,8 @@ model Workspace {
   industryConfigs      IndustrySignalConfig[]
   messageExperiments   MessageExperiment[]
   messageOutcomes      MessageOutcome[]
+  cadences             Cadence[]
+  cadenceEnrollments   CadenceEnrollment[]
 }
 
 model Membership {
@@ -287,6 +289,7 @@ model Prospect {
   recommendations      Recommendation[]
   outcomes             ProspectOutcome[]
   messageOutcomes      MessageOutcome[]
+  cadenceEnrollments   CadenceEnrollment[]
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
@@ -429,6 +432,47 @@ model MessageExperiment {
   @@index([workspaceId])
   @@index([workspaceId, channel])
   @@index([workspaceId, industry])
+}
+
+// ── Cadence (multi-touch outreach sequence) ────────────────────────────────────
+
+// Template for a multi-step outreach sequence
+model Cadence {
+  id          String              @id @default(cuid())
+  workspaceId String
+  name        String
+  // JSON array of CadenceStep: { dayOffset: number, channel: string, templateType: string }
+  steps       Json
+  isDefault   Boolean             @default(false)
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  enrollments CadenceEnrollment[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([workspaceId])
+}
+
+// Per-prospect enrollment tracking for cadence execution
+model CadenceEnrollment {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  prospectId   String
+  cadenceId    String
+  currentStep  Int       @default(0)
+  // ACTIVE | PAUSED | COMPLETED | REPLIED | UNSUBSCRIBED
+  status       String    @default("ACTIVE")
+  enrolledAt   DateTime  @default(now())
+  nextActionAt DateTime?
+  completedAt  DateTime?
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect     Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  cadence      Cadence   @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([prospectId, cadenceId])
+  @@index([workspaceId])
+  @@index([status, nextActionAt])
 }
 
 // Individual message outcome — feeds message-market fit learning

@@ -77,3 +77,15 @@ export async function enqueueGenerateStrategyCards(workspaceId: string) {
     { ...defaultJobOpts, jobId: `strategy-cards:${workspaceId}` }
   )
 }
+
+export async function enqueueAdvanceCadence(enrollmentId: string) {
+  return getQueue('advance-cadence').add('advance-cadence', { enrollmentId }, defaultJobOpts)
+}
+
+export async function enqueueHarvestSignals(workspaceId: string) {
+  return getQueue('harvest-signals').add(
+    'harvest-signals',
+    { workspaceId },
+    { ...defaultJobOpts, jobId: `harvest-signals:${workspaceId}` }
+  )
+}
