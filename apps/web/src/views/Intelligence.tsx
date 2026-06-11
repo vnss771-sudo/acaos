@@ -19,7 +19,7 @@ type Props = {
   setView: (v: View) => void
 }
 
-type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-matrix'
+type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-matrix' | 'cadences'
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
 function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
@@ -714,6 +714,155 @@ function IndustryMatrixPanel({ workspaceId, api, toast }: { workspaceId: string;
   )
 }
 
+// ── Cadences Panel ────────────────────────────────────────────────────────────
+type CadenceEnrollment = {
+  id: string
+  status: 'ACTIVE' | 'PAUSED' | 'COMPLETED'
+  currentStep: number
+  nextActionAt: string | null
+  enrolledAt: string
+  completedAt: string | null
+  prospect: { id: string; companyName: string; contactEmail: string | null; contactName: string | null }
+  cadence: { id: string; name: string; steps: Array<{ dayOffset: number; channel: string; templateType: string }> }
+}
+
+function CadencesPanel({ workspaceId, api, toast }: { workspaceId: string; api: ApiHook; toast: ToastHook }) {
+  const [enrollments, setEnrollments] = useState<CadenceEnrollment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [actingOn, setActingOn] = useState<string | null>(null)
+
+  const load = () => {
+    setLoading(true)
+    api<{ enrollments: CadenceEnrollment[] }>(`/api/intelligence/cadences?workspaceId=${workspaceId}`)
+      .then(d => setEnrollments(d.enrollments))
+      .catch(e => toast.error(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [workspaceId])
+
+  async function handlePause(prospectId: string, enrollmentId: string) {
+    setActingOn(enrollmentId)
+    try {
+      await api(`/api/prospects/${prospectId}/cadence-enrollments/${enrollmentId}/pause`, { method: 'POST', body: '{}' })
+      toast.success('Cadence paused')
+      load()
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setActingOn(null) }
+  }
+
+  async function handleResume(prospectId: string, enrollmentId: string) {
+    setActingOn(enrollmentId)
+    try {
+      await api(`/api/prospects/${prospectId}/cadence-enrollments/${enrollmentId}/resume`, { method: 'POST', body: '{}' })
+      toast.success('Cadence resumed')
+      load()
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setActingOn(null) }
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
+
+  if (enrollments.length === 0) {
+    return (
+      <div style={s.card}>
+        <EmptyState message="No cadence enrollments yet. Enroll a prospect from the Opportunities tab." icon="◈" />
+      </div>
+    )
+  }
+
+  const byStatus = {
+    ACTIVE:    enrollments.filter(e => e.status === 'ACTIVE'),
+    PAUSED:    enrollments.filter(e => e.status === 'PAUSED'),
+    COMPLETED: enrollments.filter(e => e.status === 'COMPLETED'),
+  }
+
+  function StatusSection({ title, items, color }: { title: string; items: CadenceEnrollment[]; color: string }) {
+    if (items.length === 0) return null
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
+          <span style={{ color, fontWeight: 700, fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{title}</span>
+          <span style={{ background: color + '22', color, fontSize: 10, fontWeight: 700, padding: '1px 8px', borderRadius: 99 }}>{items.length}</span>
+        </div>
+        <div style={{ display: 'grid', gap: 8 }}>
+          {items.map(e => {
+            const stepCount = e.cadence.steps.length
+            const nextAt = e.nextActionAt ? new Date(e.nextActionAt) : null
+            const overdue = nextAt && nextAt < new Date() && e.status === 'ACTIVE'
+            const nextLabel = nextAt
+              ? nextAt < new Date()
+                ? 'due now'
+                : `in ${Math.ceil((nextAt.getTime() - Date.now()) / 86_400_000)}d`
+              : '–'
+            return (
+              <div key={e.id} style={{ ...s.card, padding: '12px 16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: colors.text, fontWeight: 600, fontSize: 14 }}>{e.prospect.companyName}</div>
+                    {e.prospect.contactEmail && (
+                      <div style={{ color: colors.textFaint, fontSize: 12 }}>{e.prospect.contactEmail}</div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'center', minWidth: 48 }}>
+                    <div style={{ color: colors.textMuted, fontSize: 18, fontWeight: 700 }}>
+                      {e.currentStep + 1}<span style={{ color: colors.textFaint, fontSize: 12 }}>/{stepCount}</span>
+                    </div>
+                    <div style={{ color: colors.textFaint, fontSize: 10 }}>step</div>
+                  </div>
+                  <div style={{ textAlign: 'center', minWidth: 60 }}>
+                    <div style={{ color: overdue ? colors.amber : colors.textMuted, fontSize: 13, fontWeight: 600 }}>{nextLabel}</div>
+                    <div style={{ color: colors.textFaint, fontSize: 10 }}>next send</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {e.status === 'ACTIVE' && (
+                      <button
+                        disabled={actingOn === e.id}
+                        onClick={() => handlePause(e.prospect.id, e.id)}
+                        style={{ ...s.btnSm, fontSize: 11, background: '#78350f33', color: '#fbbf24' }}>
+                        {actingOn === e.id ? '…' : '⏸ Pause'}
+                      </button>
+                    )}
+                    {e.status === 'PAUSED' && (
+                      <button
+                        disabled={actingOn === e.id}
+                        onClick={() => handleResume(e.prospect.id, e.id)}
+                        style={{ ...s.btnSm, fontSize: 11, background: '#1a3020', color: '#86efac' }}>
+                        {actingOn === e.id ? '…' : '▶ Resume'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
+                  {e.cadence.steps.map((step, idx) => (
+                    <div key={idx} style={{
+                      flex: 1, height: 4, borderRadius: 2,
+                      background: idx < e.currentStep
+                        ? colors.green
+                        : idx === e.currentStep && e.status === 'ACTIVE'
+                          ? colors.blue
+                          : '#1e2d40'
+                    }} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 20 }}>
+      <StatusSection title="Active" items={byStatus.ACTIVE} color={colors.green} />
+      <StatusSection title="Paused" items={byStatus.PAUSED} color={colors.amber} />
+      <StatusSection title="Completed" items={byStatus.COMPLETED} color={colors.textFaint} />
+    </div>
+  )
+}
+
 // ── Main Intelligence View ────────────────────────────────────────────────────
 export function Intelligence({ api, workspace, toast, setView }: Props) {
   const [opportunities, setOpportunities] = useState<OpportunitiesData | null>(null)
@@ -813,6 +962,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
     { key: 'strategy-cards', label: 'Strategy Cards' },
     { key: 'forecast', label: 'Revenue Forecast' },
     { key: 'industry-matrix', label: 'Industry Matrix' },
+    { key: 'cadences', label: 'Cadences' },
   ]
 
   return (
@@ -890,6 +1040,8 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
         )
       ) : activeTab === 'forecast' ? (
         forecast ? <ForecastPanel forecast={forecast} /> : null
+      ) : activeTab === 'cadences' ? (
+        <CadencesPanel workspaceId={workspace.id} api={api} toast={toast} />
       ) : (
         <IndustryMatrixPanel workspaceId={workspace.id} api={api} toast={toast} />
       )}

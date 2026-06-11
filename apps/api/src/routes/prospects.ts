@@ -588,3 +588,54 @@ prospectsRouter.post('/:id/enroll-cadence', asyncHandler(async (req, res) => {
 
   res.status(201).json({ enrollment })
 }))
+
+// GET /api/prospects/:id/cadence-enrollments — list all cadence enrollments for a prospect
+prospectsRouter.get('/:id/cadence-enrollments', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const enrollments = await (prisma as any).cadenceEnrollment.findMany({
+    where: { prospectId: prospect.id },
+    include: { cadence: { select: { id: true, name: true, steps: true } } },
+    orderBy: { enrolledAt: 'desc' },
+  })
+
+  res.json({ enrollments })
+}))
+
+// POST /api/prospects/:id/cadence-enrollments/:enrollmentId/pause
+prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/pause', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const enrollment = await (prisma as any).cadenceEnrollment.update({
+    where: { id: req.params.enrollmentId },
+    data:  { status: 'PAUSED' },
+  })
+
+  res.json({ enrollment })
+}))
+
+// POST /api/prospects/:id/cadence-enrollments/:enrollmentId/resume
+prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/resume', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const enrollment = await (prisma as any).cadenceEnrollment.update({
+    where: { id: req.params.enrollmentId },
+    data:  { status: 'ACTIVE', nextActionAt: new Date() },
+  })
+
+  await enqueueAdvanceCadence(enrollment.id)
+
+  res.json({ enrollment })
+}))

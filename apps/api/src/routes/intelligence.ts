@@ -268,6 +268,28 @@ intelligenceRouter.delete('/industry-configs/:industry', asyncHandler(async (req
   res.json({ ok: true })
 }))
 
+// GET /api/intelligence/cadences?workspaceId= — all cadence enrollments for the workspace
+intelligenceRouter.get('/cadences', asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string | undefined
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
+  const enrollments = await (prisma as any).cadenceEnrollment.findMany({
+    where: { workspaceId },
+    include: {
+      prospect: { select: { id: true, companyName: true, contactEmail: true, contactName: true } },
+      cadence:  { select: { id: true, name: true, steps: true } },
+    },
+    orderBy: { nextActionAt: 'asc' },
+    take: 200,
+  })
+
+  res.json({ enrollments })
+}))
+
 // POST /api/intelligence/run?workspaceId= — trigger full intelligence cycle
 intelligenceRouter.post('/run', asyncHandler(async (req, res) => {
   const workspaceId = req.body?.workspaceId as string | undefined
