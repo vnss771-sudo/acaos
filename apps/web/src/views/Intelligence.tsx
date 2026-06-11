@@ -20,7 +20,7 @@ type Props = {
   setView: (v: View) => void
 }
 
-type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-matrix' | 'cadences' | 'briefs'
+type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-matrix' | 'cadences' | 'briefs' | 'review-queue'
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
 function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
@@ -1208,6 +1208,94 @@ function BriefsPanel({ workspace, api, toast, setView }: { workspace: Workspace;
   )
 }
 
+// ── Review Queue Panel ────────────────────────────────────────────────────────
+type PendingEnrollment = {
+  id: string
+  status: string
+  prospect: { id: string; companyName: string; contactEmail: string | null; industry: string | null; opportunityScore: number; buyingStage: string }
+  cadence: { id: string; name: string }
+}
+
+function ReviewQueuePanel({ api, workspace, toast }: { api: ApiHook; workspace: Workspace; toast: ToastHook }) {
+  const [enrollments, setEnrollments] = useState<PendingEnrollment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [acting, setActing] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    api<{ enrollments: PendingEnrollment[]; count: number }>(`/api/workspaces/${workspace.id}/pending-reviews`)
+      .then(d => setEnrollments(d.enrollments))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [workspace.id])
+
+  async function handleApprove(enrollment: PendingEnrollment) {
+    setActing(a => ({ ...a, [enrollment.id]: true }))
+    try {
+      await api(`/api/prospects/${enrollment.prospect.id}/cadence-enrollments/${enrollment.id}/approve`, { method: 'POST' })
+      setEnrollments(prev => prev.filter(e => e.id !== enrollment.id))
+      toast.success(`Approved — outreach queued for ${enrollment.prospect.companyName}`)
+    } catch (e) { toast.error((e as Error).message) }
+    finally { setActing(a => ({ ...a, [enrollment.id]: false })) }
+  }
+
+  async function handleDiscard(enrollment: PendingEnrollment) {
+    setActing(a => ({ ...a, [enrollment.id]: true }))
+    try {
+      await api(`/api/prospects/${enrollment.prospect.id}/cadence-enrollments/${enrollment.id}/pause`, { method: 'POST' })
+      setEnrollments(prev => prev.filter(e => e.id !== enrollment.id))
+      toast.success(`Discarded — enrollment paused`)
+    } catch (e) { toast.error((e as Error).message) }
+    finally { setActing(a => ({ ...a, [enrollment.id]: false })) }
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
+
+  if (enrollments.length === 0) {
+    return (
+      <div style={s.card}>
+        <EmptyState message="All caught up — no outreach pending review" icon="✓" />
+      </div>
+    )
+  }
+
+  return (
+    <div style={s.stack}>
+      <div style={{ color: colors.textFaint, fontSize: 13 }}>
+        {enrollments.length} outreach email{enrollments.length !== 1 ? 's' : ''} awaiting your approval
+      </div>
+      {enrollments.map(e => (
+        <div key={e.id} style={{ ...s.card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <ScoreRing score={e.prospect.opportunityScore} size={44} />
+            <div>
+              <div style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{e.prospect.companyName}</div>
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 2 }}>
+                {e.prospect.industry ?? '—'} · {e.prospect.contactEmail ?? 'No email'} · {e.cadence.name}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              style={{ ...s.btnSm, background: '#16a34a', color: '#fff', fontWeight: 600 }}
+              disabled={acting[e.id]}
+              onClick={() => handleApprove(e)}
+            >
+              {acting[e.id] ? <Spinner size={12} color="#fff" /> : 'Approve'}
+            </button>
+            <button
+              style={s.btnDanger}
+              disabled={acting[e.id]}
+              onClick={() => handleDiscard(e)}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Main Intelligence View ────────────────────────────────────────────────────
 export function Intelligence({ api, workspace, toast, setView }: Props) {
   const [opportunities, setOpportunities] = useState<OpportunitiesData | null>(null)
@@ -1291,6 +1379,14 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
+  const [pendingReviewCount, setPendingReviewCount] = useState(0)
+  useEffect(() => {
+    if (!workspace) return
+    api<{ count: number }>(`/api/workspaces/${workspace.id}/pending-reviews`)
+      .then(d => setPendingReviewCount(d.count))
+      .catch(() => {})
+  }, [workspace?.id])
+
   const [running, setRunning] = useState(false)
   const handleRunIntelligence = async () => {
     if (!workspace || running) return
@@ -1318,6 +1414,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
     { key: 'forecast', label: 'Revenue Forecast' },
     { key: 'industry-matrix', label: 'Industry Matrix' },
     { key: 'cadences', label: 'Cadences' },
+    { key: 'review-queue', label: pendingReviewCount > 0 ? `Review Queue (${pendingReviewCount})` : 'Review Queue' },
   ]
 
   return (
@@ -1399,6 +1496,8 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
         forecast ? <ForecastPanel forecast={forecast} /> : null
       ) : activeTab === 'cadences' ? (
         <CadencesPanel workspaceId={workspace.id} api={api} toast={toast} />
+      ) : activeTab === 'review-queue' ? (
+        <ReviewQueuePanel api={api} workspace={workspace} toast={toast} />
       ) : (
         <IndustryMatrixPanel workspaceId={workspace.id} api={api} toast={toast} />
       )}

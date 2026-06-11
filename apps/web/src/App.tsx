@@ -13,6 +13,7 @@ import { Billing } from './views/Billing.js'
 import { Settings } from './views/Settings.js'
 import { Intelligence } from './views/Intelligence.js'
 import { ProspectsView } from './views/Prospects.js'
+import { Onboarding } from './views/Onboarding.js'
 import { colors } from './styles.js'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
@@ -24,6 +25,7 @@ export function App() {
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
   const [view, setView] = useState<View>('dashboard')
   const [booting, setBooting] = useState(true)
+  const [onboarded, setOnboarded] = useState(true) // default true until workspace loads
 
   const { toasts, toast, removeToast } = useToast()
 
@@ -75,7 +77,9 @@ export function App() {
         if (wsList.length > 0) {
           const savedId = localStorage.getItem('acaos_workspace')
           const found = savedId ? wsList.find(w => w.id === savedId) : null
-          setActiveWsId(found ? found.id : wsList[0].id)
+          const wsId = found ? found.id : wsList[0].id
+          setActiveWsId(wsId)
+          setOnboarded(localStorage.getItem(`acaos_onboarded_${wsId}`) === '1')
         }
       })
       .catch(async () => {
@@ -124,7 +128,21 @@ export function App() {
     settings: 'Settings'
   }
 
+  function handleOnboardingComplete() {
+    if (activeWorkspace) localStorage.setItem(`acaos_onboarded_${activeWorkspace.id}`, '1')
+    setOnboarded(true)
+  }
+
   const commonProps = { api, workspace: activeWorkspace, toast }
+
+  if (activeWorkspace && !onboarded) {
+    return (
+      <>
+        <Onboarding api={api} workspace={activeWorkspace} toast={toast} onComplete={handleOnboardingComplete} />
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
+    )
+  }
 
   return (
     <div style={{

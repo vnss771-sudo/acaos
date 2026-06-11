@@ -1587,9 +1587,20 @@ const maintenanceWorker = new Worker(
       },
     })
 
+    // 5. Prune ProspectPageSession chat history older than 90 days (GDPR)
+    const sessions = await prisma.prospectPageSession.deleteMany({
+      where: { lastSeenAt: { lt: ninetyAgo } },
+    })
+
+    // 6. Prune old DailyBrief records (keep 30 days)
+    const thirtyAgo = new Date(now.getTime() - 30 * 86_400_000)
+    const dailyBriefs = await prisma.dailyBrief.deleteMany({
+      where: { createdAt: { lt: thirtyAgo } },
+    })
+
     await job.updateProgress(100)
-    log('maintenance', `Done — briefs=${briefs.count} signals=${signals.count} events=${events.count} sends=${sends.count}`)
-    return { briefs: briefs.count, signals: signals.count, events: events.count, sends: sends.count }
+    log('maintenance', `Done — briefs=${briefs.count} signals=${signals.count} events=${events.count} sends=${sends.count} sessions=${sessions.count} dailyBriefs=${dailyBriefs.count}`)
+    return { briefs: briefs.count, signals: signals.count, events: events.count, sends: sends.count, sessions: sessions.count, dailyBriefs: dailyBriefs.count }
   },
   { connection, concurrency: 1 }
 )

@@ -186,6 +186,38 @@ billingRouter.post(
   })
 )
 
+// GET /api/billing/usage?workspaceId= — returns current month usage counts
+billingRouter.get('/usage', requireAuth, asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } }
+  })
+  if (!membership) throw new ApiError(403, 'Access denied')
+
+  const month = new Date().toISOString().slice(0, 7) // YYYY-MM
+  const records = await prisma.usageRecord.findMany({
+    where: { workspaceId, month },
+    select: { action: true, count: true }
+  })
+
+  const usage = Object.fromEntries(records.map(r => [r.action, r.count]))
+
+  // Plan limits — for now hardcoded; later read from workspace.plan
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { plan: true }
+  })
+  const plan = workspace?.plan ?? 'free'
+  const limits = plan === 'pro'    ? { AI_OUTREACH: 500, AI_BRIEFS: 200, AI_RESEARCH: 200 }
+               : plan === 'scale'  ? { AI_OUTREACH: 2000, AI_BRIEFS: 1000, AI_RESEARCH: 1000 }
+               : /* free */          { AI_OUTREACH: 20, AI_BRIEFS: 5, AI_RESEARCH: 10 }
+
+  res.json({ month, usage, limits, plan })
+}))
+
 function resolvePlanFromPrice(priceId: string | undefined): string {
   if (!priceId) return 'starter'
   if (cfg.stripePriceGrowth  && priceId === cfg.stripePriceGrowth)  return 'growth'

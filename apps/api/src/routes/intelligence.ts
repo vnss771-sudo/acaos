@@ -358,6 +358,24 @@ intelligenceRouter.get('/briefs', asyncHandler(async (req, res) => {
   res.json({ briefs })
 }))
 
+// GET /api/intelligence/daily-brief?workspaceId=&date=
+intelligenceRouter.get('/daily-brief', asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
+  const date = (req.query.date as string) || new Date().toISOString().slice(0, 10)
+
+  const brief = await prisma.dailyBrief.findUnique({
+    where: { workspaceId_date: { workspaceId, date } }
+  })
+
+  res.json({ brief: brief ?? null, date })
+}))
+
 // POST /api/intelligence/briefs/generate
 // body: { workspaceId, prospectId? }
 // If prospectId is provided, enqueues for that prospect only.

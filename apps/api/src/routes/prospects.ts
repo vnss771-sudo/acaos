@@ -803,3 +803,30 @@ prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/resume', asyncHandl
 
   res.json({ enrollment })
 }))
+
+// POST /api/prospects/:id/cadence-enrollments/:enrollmentId/approve
+// Approves a PENDING_REVIEW enrollment → advances to ACTIVE and immediately dispatches
+prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/approve', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const enrollment = await prisma.cadenceEnrollment.findUnique({
+    where: { id: req.params.enrollmentId as string }
+  })
+  if (!enrollment) throw new ApiError(404, 'Enrollment not found')
+  if (enrollment.status !== 'PENDING_REVIEW') {
+    throw new ApiError(400, `Enrollment is ${enrollment.status} — only PENDING_REVIEW enrollments can be approved`)
+  }
+
+  const updated = await prisma.cadenceEnrollment.update({
+    where: { id: enrollment.id },
+    data:  { status: 'ACTIVE', nextActionAt: new Date() },
+  })
+
+  await enqueueAdvanceCadence(enrollment.id)
+
+  res.json({ enrollment: updated })
+}))

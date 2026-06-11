@@ -200,3 +200,66 @@ workspaceRouter.get(
     })
   })
 )
+
+// GET /api/workspaces/:id/suppressions — list suppressed emails
+workspaceRouter.get('/:id/suppressions', asyncHandler(async (req, res) => {
+  const workspaceId = req.params.id as string
+  const userId = (req as AuthedRequest).user.id
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } }
+  })
+  if (!membership) throw new ApiError(403, 'Access denied')
+
+  const suppressions = await prisma.emailSuppression.findMany({
+    where: { workspaceId },
+    orderBy: { suppressedAt: 'desc' },
+    take: 500,
+    select: { id: true, email: true, reason: true, suppressedAt: true }
+  })
+
+  res.json({ suppressions })
+}))
+
+// DELETE /api/workspaces/:id/suppressions/:suppressionId — remove suppression
+workspaceRouter.delete('/:id/suppressions/:suppressionId', asyncHandler(async (req, res) => {
+  const workspaceId = req.params.id as string
+  const suppressionId = req.params.suppressionId as string
+  const userId = (req as AuthedRequest).user.id
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } }
+  })
+  if (!membership) throw new ApiError(403, 'Access denied')
+
+  const suppression = await prisma.emailSuppression.findUnique({ where: { id: suppressionId } })
+  if (!suppression || suppression.workspaceId !== workspaceId) throw new ApiError(404, 'Not found')
+
+  await prisma.emailSuppression.delete({ where: { id: suppressionId } })
+  res.json({ ok: true })
+}))
+
+// GET /api/workspaces/:id/pending-reviews — list cadence enrollments awaiting review
+workspaceRouter.get('/:id/pending-reviews', asyncHandler(async (req, res) => {
+  const workspaceId = req.params.id as string
+  const userId = (req as AuthedRequest).user.id
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } }
+  })
+  if (!membership) throw new ApiError(403, 'Access denied')
+
+  const enrollments = await prisma.cadenceEnrollment.findMany({
+    where: { workspaceId, status: 'PENDING_REVIEW' },
+    include: {
+      prospect: {
+        select: {
+          id: true, companyName: true, contactName: true, contactEmail: true,
+          industry: true, opportunityScore: true, buyingStage: true,
+        }
+      },
+      cadence: { select: { id: true, name: true, steps: true } },
+    },
+    orderBy: { enrolledAt: 'desc' },
+    take: 100,
+  })
+
+  res.json({ enrollments, count: enrollments.length })
+}))

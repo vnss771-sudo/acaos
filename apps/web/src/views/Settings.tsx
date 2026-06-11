@@ -22,12 +22,26 @@ type ProductForm = {
   differentiators: string
   ctaType: string
   calendarUrl: string
+  sendLimitPerDay: number
 }
 
 const EMPTY_PRODUCT: ProductForm = {
   productName: '', productCategory: '', targetICP: '',
   keyPainPoints: '', differentiators: '',
-  ctaType: 'book_call', calendarUrl: ''
+  ctaType: 'book_call', calendarUrl: '',
+  sendLimitPerDay: 50,
+}
+
+type Suppression = {
+  id: string
+  email: string
+  reason: string
+  suppressedAt: string
+}
+
+type PendingReviewEnrollment = {
+  id: string
+  prospect: { companyName: string }
 }
 
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
@@ -39,6 +53,10 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [savingWs, setSavingWs] = useState(false)
   const [productForm, setProductForm] = useState<ProductForm>(EMPTY_PRODUCT)
   const [savingProduct, setSavingProduct] = useState(false)
+  const [suppressions, setSuppressions] = useState<Suppression[]>([])
+  const [loadingSuppressions, setLoadingSuppressions] = useState(false)
+  const [removingSuppressionId, setRemovingSuppressionId] = useState<string | null>(null)
+  const [pendingReviewCount, setPendingReviewCount] = useState<number | null>(null)
 
   useEffect(() => {
     if (!workspace) return
@@ -54,11 +72,39 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             differentiators: Array.isArray(p.differentiators) ? (p.differentiators as string[]).join('\n') : String(p.differentiators ?? ''),
             ctaType: String(p.ctaType ?? 'book_call'),
             calendarUrl: String(p.calendarUrl ?? ''),
+            sendLimitPerDay: typeof p.sendLimitPerDay === 'number' ? p.sendLimitPerDay : 50,
           })
         }
       })
       .catch(() => {})
   }, [workspace?.id])
+
+  useEffect(() => {
+    if (!workspace) return
+    setLoadingSuppressions(true)
+    api<{ suppressions: Suppression[] }>(`/api/workspaces/${workspace.id}/suppressions`)
+      .then(d => setSuppressions(d.suppressions))
+      .catch(() => {})
+      .finally(() => setLoadingSuppressions(false))
+  }, [workspace?.id])
+
+  useEffect(() => {
+    if (!workspace) return
+    api<{ count: number }>(`/api/workspaces/${workspace.id}/pending-reviews`)
+      .then(d => setPendingReviewCount(d.count))
+      .catch(() => {})
+  }, [workspace?.id])
+
+  async function removeSuppression(id: string) {
+    if (!workspace) return
+    setRemovingSuppressionId(id)
+    try {
+      await api(`/api/workspaces/${workspace.id}/suppressions/${id}`, { method: 'DELETE' })
+      setSuppressions(prev => prev.filter(s => s.id !== id))
+      toast.success('Suppression removed')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Remove failed') }
+    finally { setRemovingSuppressionId(null) }
+  }
 
   async function saveProduct() {
     if (!workspace) return
@@ -74,6 +120,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           differentiators: productForm.differentiators.split('\n').map(l => l.trim()).filter(Boolean),
           ctaType: productForm.ctaType,
           calendarUrl: productForm.calendarUrl.trim() || null,
+          sendLimitPerDay: productForm.sendLimitPerDay,
         })
       })
       toast.success('Product context saved')
@@ -259,10 +306,101 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                   placeholder="https://calendly.com/yourname/30min" />
               </div>
             )}
+            <div>
+              <label style={s.label}>Daily Email Send Limit</label>
+              <input
+                style={s.input}
+                type="number"
+                min={1}
+                max={500}
+                value={productForm.sendLimitPerDay}
+                onChange={e => setProductForm(f => ({ ...f, sendLimitPerDay: Math.max(1, Math.min(500, parseInt(e.target.value) || 1)) }))}
+              />
+              <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 4 }}>
+                Maximum emails sent per day across all cadences
+              </div>
+            </div>
           </div>
           <button style={s.btn} disabled={savingProduct || !productForm.productName.trim()} onClick={saveProduct}>
             {savingProduct ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Product Context'}
           </button>
+        </div>
+      )}
+
+      {/* Email Suppressions */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Email Suppressions</div>
+          <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 16 }}>
+            Contacts who unsubscribe from personalised brief pages will appear here.
+          </div>
+          {loadingSuppressions ? (
+            <div style={{ textAlign: 'center', padding: 20 }}><Spinner /></div>
+          ) : suppressions.length === 0 ? (
+            <div style={{ ...s.cardInner, color: colors.textFaint, fontSize: 13, textAlign: 'center', padding: 20 }}>
+              No suppressed emails — contacts who unsubscribe from personalised brief pages will appear here.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    {['Email', 'Reason', 'Suppressed', ''].map(h => (
+                      <th key={h} style={{
+                        textAlign: 'left', color: colors.textFaint, fontSize: 11, fontWeight: 600,
+                        textTransform: 'uppercase', letterSpacing: '0.05em',
+                        padding: '6px 10px', borderBottom: `1px solid ${colors.border}`
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {suppressions.map(sup => (
+                    <tr key={sup.id}>
+                      <td style={{ padding: '8px 10px', color: colors.text }}>{sup.email}</td>
+                      <td style={{ padding: '8px 10px', color: colors.textMuted }}>{sup.reason || '—'}</td>
+                      <td style={{ padding: '8px 10px', color: colors.textFaint, fontSize: 12 }}>
+                        {new Date(sup.suppressedAt).toLocaleDateString()}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <button
+                          style={s.btnDanger}
+                          disabled={removingSuppressionId === sup.id}
+                          onClick={() => removeSuppression(sup.id)}
+                        >
+                          {removingSuppressionId === sup.id ? '…' : 'Remove'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pending Review Queue */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Pending Review Queue</div>
+          {pendingReviewCount === null ? (
+            <div style={{ textAlign: 'center', padding: 16 }}><Spinner /></div>
+          ) : pendingReviewCount === 0 ? (
+            <div style={{ color: colors.textFaint, fontSize: 13 }}>No emails pending review.</div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{
+                background: colors.amber + '22', color: colors.amber,
+                padding: '4px 12px', borderRadius: 99, fontSize: 13, fontWeight: 700
+              }}>
+                {pendingReviewCount} outreach email{pendingReviewCount !== 1 ? 's' : ''} awaiting your approval
+              </span>
+              <span style={{ color: colors.textFaint, fontSize: 12 }}>
+                Go to Intelligence &gt; Cadences tab to review
+              </span>
+            </div>
+          )}
         </div>
       )}
 
