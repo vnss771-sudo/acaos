@@ -1,4 +1,5 @@
 import type { SignalType } from '../lib/signalEngine.js'
+import { cfg } from '../lib/env.js'
 
 type ProspectInput = {
   id: string
@@ -48,8 +49,9 @@ export type EnrichResult = {
 const APOLLO_BASE = 'https://api.apollo.io/v1'
 
 async function apolloPost(path: string, body: unknown): Promise<unknown> {
-  const apiKey = process.env.APOLLO_API_KEY
+  const apiKey = cfg.apolloApiKey
   if (!apiKey) throw new Error('APOLLO_API_KEY not configured')
+
 
   const res = await fetch(`${APOLLO_BASE}${path}`, {
     method: 'POST',
@@ -146,7 +148,7 @@ function extractSafeUpdates(org: Record<string, unknown>, person: Record<string,
 }
 
 export async function fetchJobPostings(domain: string): Promise<Array<{ title: string; postedAt: Date | null }>> {
-  if (!process.env.APOLLO_API_KEY) return []
+  if (!cfg.apolloApiKey) return []
   try {
     const result = await apolloPost('/organizations/enrich', { domain }) as {
       organization?: { job_postings?: Array<{ title?: string; posted_at?: string }> }
@@ -161,7 +163,7 @@ export async function fetchJobPostings(domain: string): Promise<Array<{ title: s
 }
 
 export async function enrichProspect(prospect: ProspectInput): Promise<EnrichResult> {
-  if (!process.env.APOLLO_API_KEY) {
+  if (!cfg.apolloApiKey) {
     return { signals: [], updates: {} }
   }
 

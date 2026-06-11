@@ -25,6 +25,7 @@ import {
   explainOpportunityScores,
   classifyProspectSignals,
   signalPatternKey,
+  computeLearnedWeights,
   ROLE_KEYWORDS,
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
@@ -314,6 +315,19 @@ const replyWorker = new Worker(
               unsubscribeCount: isUnsub    ? { increment: 1 } : undefined,
             },
           }).catch(() => {})
+
+          // Trigger weight retraining once workspace has enough pattern data (>=10 patterns with >=5 sends each)
+          prisma.signalCombinationPerformance.count({
+            where: { workspaceId: prospect.workspaceId, sentCount: { gte: 5 } },
+          }).then(count => {
+            if (count >= 10) {
+              getQueue('retrain-signal-weights').add(
+                'retrain-signal-weights',
+                { workspaceId: prospect.workspaceId },
+                { ...defaultJobOptions, jobId: `retrain-weights:${prospect.workspaceId}` }
+              ).catch(() => {})
+            }
+          }).catch(() => {})
         }
 
         // When INTERESTED and a calendar URL is configured, auto-send booking link
@@ -435,9 +449,24 @@ const scoreProspectsWorker = new Worker(
           prospect.retentionProbability,
           prospect.expansionProbability,
         )
+        const fpfResult = classifyProspectSignals(rawSignals, {
+          industry:      prospect.industry,
+          employeeCount: prospect.employeeCount,
+          contactEmail:  prospect.contactEmail,
+          contactName:   prospect.contactName,
+          domain:        prospect.domain,
+          location:      prospect.location,
+        })
         await prisma.prospect.update({
           where: { id: prospect.id },
-          data: { ...scores, buyingStage, winProbability, expectedRevenueScore },
+          data: {
+            ...scores,
+            buyingStage,
+            winProbability,
+            expectedRevenueScore,
+            fpfDecision: fpfResult.decision,
+            fpfReason:   fpfResult.reason,
+          },
         })
 
         // Alert owners when a prospect transitions INTO PURCHASING stage
@@ -556,17 +585,9 @@ const scoreProspectsWorker = new Worker(
       take:    50,
     })
     for (const hp of hotProspects) {
-      const rawSigs    = hp.signals.map(toRawSignal)
-      const fpf        = classifyProspectSignals(rawSigs, {
-        industry:      hp.industry,
-        employeeCount: hp.employeeCount,
-        contactEmail:  hp.contactEmail,
-        contactName:   hp.contactName,
-        domain:        hp.domain,
-        location:      hp.location,
-      })
-      if (fpf.decision === 'IGNORE') {
-        log('score-prospects', `FPF: skipping brief for ${hp.companyName} (${hp.id}) — ${fpf.reason}`)
+      // Use persisted fpfDecision from the scoring pass above — no recompute needed
+      if (hp.fpfDecision === 'IGNORE') {
+        log('score-prospects', `FPF: skipping brief for ${hp.companyName} (${hp.id}) — ${hp.fpfReason ?? 'ignored'}`)
         continue
       }
       await getQueue('generate-opportunity-brief').add(
@@ -1406,6 +1427,109 @@ const opportunityBriefWorker = new Worker(
   { connection, concurrency: 2 }
 )
 
+// ── retrain-signal-weights ────────────────────────────────────────────────────
+const retrainWeightsWorker = new Worker(
+  'retrain-signal-weights',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('retrain-signal-weights', `Retraining for workspaceId=${workspaceId}`)
+
+    await job.updateProgress(10)
+
+    const patterns = await prisma.signalCombinationPerformance.findMany({
+      where: { workspaceId },
+      select: { signalPattern: true, sentCount: true, replyCount: true, meetingCount: true },
+    })
+
+    await job.updateProgress(40)
+
+    const learnedWeights = computeLearnedWeights(patterns)
+
+    if (Object.keys(learnedWeights).length === 0) {
+      log('retrain-signal-weights', `Not enough data for workspaceId=${workspaceId} — skipping`)
+      return { workspaceId, skipped: true }
+    }
+
+    // Merge into existing ScoringModel.signalWeights — workspace may not have one yet
+    await prisma.scoringModel.upsert({
+      where:  { workspaceId },
+      create: {
+        workspaceId,
+        weights:           {},
+        signalWeights:     learnedWeights,
+        performanceMetrics: {},
+        updateCount:       1,
+        lastWeightUpdate:  new Date(),
+      },
+      update: {
+        signalWeights:    learnedWeights,
+        updateCount:      { increment: 1 },
+        lastWeightUpdate: new Date(),
+      },
+    })
+
+    await job.updateProgress(80)
+
+    // Immediately re-score so prospects reflect the new weights
+    await getQueue('score-prospects').add(
+      'score-prospects',
+      { workspaceId },
+      { ...defaultJobOptions, jobId: `score-after-retrain:${workspaceId}` }
+    )
+
+    await job.updateProgress(100)
+    log('retrain-signal-weights', `Done workspaceId=${workspaceId} updated=${Object.keys(learnedWeights).length} signal types`)
+    return { workspaceId, updatedTypes: Object.keys(learnedWeights).length }
+  },
+  { connection, concurrency: 2 }
+)
+
+// ── maintenance ───────────────────────────────────────────────────────────────
+const maintenanceWorker = new Worker(
+  'maintenance',
+  async (job) => {
+    log('maintenance', 'Daily maintenance run starting')
+    const now         = new Date()
+    const ninetyAgo   = new Date(now.getTime() - 90 * 86_400_000)
+
+    await job.updateProgress(10)
+
+    // 1. Delete expired Opportunity Briefs
+    const briefs = await prisma.opportunityBrief.deleteMany({
+      where: { expiresAt: { lt: now } },
+    })
+
+    await job.updateProgress(35)
+
+    // 2. Delete expired Signals (only those with an explicit expiresAt set)
+    const signals = await prisma.signal.deleteMany({
+      where: { expiresAt: { not: null, lt: now } },
+    })
+
+    await job.updateProgress(60)
+
+    // 3. Prune EngagementEvents older than 90 days
+    const events = await prisma.engagementEvent.deleteMany({
+      where: { occurredAt: { lt: ninetyAgo } },
+    })
+
+    await job.updateProgress(80)
+
+    // 4. Prune MessageSends with no linked events older than 90 days
+    const sends = await prisma.messageSend.deleteMany({
+      where: {
+        sentAt: { lt: ninetyAgo },
+        events: { none: {} },
+      },
+    })
+
+    await job.updateProgress(100)
+    log('maintenance', `Done — briefs=${briefs.count} signals=${signals.count} events=${events.count} sends=${sends.count}`)
+    return { briefs: briefs.count, signals: signals.count, events: events.count, sends: sends.count }
+  },
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers ─────────────────────────────────────────────────────────────
 for (const [name, worker] of [
   ['research-lead',               researchWorker],
@@ -1420,6 +1544,8 @@ for (const [name, worker] of [
   ['harvest-signals',             harvestSignalsWorker],
   ['re-engage',                   reEngageWorker],
   ['generate-opportunity-brief',  opportunityBriefWorker],
+  ['retrain-signal-weights',      retrainWeightsWorker],
+  ['maintenance',                 maintenanceWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -1445,6 +1571,8 @@ async function shutdown(signal: string) {
     harvestSignalsWorker.close(),
     reEngageWorker.close(),
     opportunityBriefWorker.close(),
+    retrainWeightsWorker.close(),
+    maintenanceWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -1454,4 +1582,11 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 12 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage, generate-opportunity-brief)')
+// Register daily maintenance as a repeatable job (03:00 UTC every day)
+getQueue('maintenance').add(
+  'maintenance',
+  {},
+  { repeat: { pattern: '0 3 * * *' }, jobId: 'maintenance:daily' }
+).catch(err => console.warn('[worker] Failed to register maintenance repeatable:', err.message))
+
+console.log('[worker] Started — listening on 14 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage, generate-opportunity-brief, retrain-signal-weights, maintenance)')

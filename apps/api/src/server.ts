@@ -25,6 +25,7 @@ import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { getQueue } from './lib/queues.js'
+import { cfg } from './lib/env.js'
 
 const app = express()
 
@@ -33,14 +34,14 @@ app.set('trust proxy', 1)
 
 function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return false
-  if (process.env.WEB_URL && origin === process.env.WEB_URL) return true
+  if (cfg.webUrl && origin === cfg.webUrl) return true
   if (origin.endsWith('.railway.app')) return true
   if (origin.endsWith('.vercel.app')) return true
   return false
 }
 
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? isAllowedOrigin : true,
+  origin: cfg.nodeEnv === 'production' ? isAllowedOrigin : true,
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -62,7 +63,7 @@ app.get('/api/health', async (_req, res) => {
     ok: dbOk,
     service: 'acaos-api',
     version: process.env.npm_package_version || '1.3.0',
-    env: process.env.NODE_ENV || 'development',
+    env: cfg.nodeEnv,
     timestamp: new Date().toISOString()
   })
 })
@@ -90,21 +91,21 @@ const QUEUE_NAMES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'score-prospects', 'generate-recommendations', 'calibrate-scoring',
   'generate-strategy-cards', 'advance-cadence', 'harvest-signals', 're-engage',
-  'generate-opportunity-brief',
+  'generate-opportunity-brief', 'retrain-signal-weights', 'maintenance',
 ]
 createBullBoard({
   queues: QUEUE_NAMES.map(name => new BullMQAdapter(getQueue(name))),
   serverAdapter: boardAdapter,
 })
 // In production the dashboard requires BULL_BOARD_USER to be set — fail closed if forgotten
-if (process.env.NODE_ENV === 'production' && !process.env.BULL_BOARD_USER) {
+if (cfg.nodeEnv === 'production' && !cfg.bullBoardUser) {
   app.use('/api/queues', (_req, res) => res.status(404).end())
 } else {
-  if (process.env.BULL_BOARD_USER) {
+  if (cfg.bullBoardUser) {
     app.use('/api/queues', (req, res, next) => {
       const b64 = (req.headers.authorization ?? '').replace('Basic ', '')
       const [user, pass] = Buffer.from(b64, 'base64').toString().split(':')
-      if (user === process.env.BULL_BOARD_USER && pass === process.env.BULL_BOARD_PASS) return next()
+      if (user === cfg.bullBoardUser && pass === cfg.bullBoardPass) return next()
       res.setHeader('WWW-Authenticate', 'Basic realm="Queue Dashboard"')
       res.status(401).end('Unauthorized')
     })
@@ -115,9 +116,9 @@ if (process.env.NODE_ENV === 'production' && !process.env.BULL_BOARD_USER) {
 app.use(notFoundHandler)
 app.use(errorHandler)
 
-const port = Number(process.env.PORT || 4000)
+const port = cfg.port
 const server = app.listen(port, () => {
-  console.log(`[api] Running on http://localhost:${port} (${process.env.NODE_ENV || 'development'})`)
+  console.log(`[api] Running on http://localhost:${port} (${cfg.nodeEnv})`)
 })
 
 async function shutdown(signal: string) {

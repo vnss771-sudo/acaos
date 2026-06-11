@@ -1,16 +1,17 @@
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import crypto from 'crypto'
+import { cfg } from './env.js'
 
 const defaultSecret = 'change-me'
 
 export type JwtPayload = { userId: string }
 
 function isProduction() {
-  return process.env.NODE_ENV === 'production'
+  return cfg.nodeEnv === 'production'
 }
 
 export function getJwtSecret() {
-  const secret = process.env.JWT_SECRET?.trim()
+  const secret = cfg.jwtSecret?.trim()
 
   if (!secret) {
     if (isProduction()) throw new Error('JWT_SECRET is required in production')
@@ -25,8 +26,7 @@ export function getJwtSecret() {
 }
 
 export function signJwt(payload: JwtPayload): string {
-  const expiresIn = (process.env.JWT_EXPIRES_IN || '15m') as SignOptions['expiresIn']
-  return jwt.sign(payload, getJwtSecret(), { expiresIn })
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: cfg.jwtExpiresIn as SignOptions['expiresIn'] })
 }
 
 export function verifyJwt(token: string): JwtPayload {
@@ -42,8 +42,7 @@ export function hashRefreshToken(token: string): string {
 }
 
 export function refreshTokenExpiresAt(): Date {
-  const days = Number(process.env.REFRESH_TOKEN_DAYS || 30)
   const d = new Date()
-  d.setDate(d.getDate() + days)
+  d.setDate(d.getDate() + cfg.refreshTokenDays)
   return d
 }

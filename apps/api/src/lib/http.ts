@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express'
+import { cfg } from './env.js'
 
 export class ApiError extends Error {
   statusCode: number
@@ -11,7 +12,7 @@ export class ApiError extends Error {
 }
 
 function isProduction() {
-  return process.env.NODE_ENV === 'production'
+  return cfg.nodeEnv === 'production'
 }
 
 export function asyncHandler(

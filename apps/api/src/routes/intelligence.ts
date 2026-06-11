@@ -4,7 +4,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability, classifyProspectSignals, toRawSignal } from '../lib/signalEngine.js'
-import type { BuyingStage } from '../lib/signalEngine.js'
+import type { BuyingStage, SignalDecision } from '../lib/signalEngine.js'
 import { enqueueScoreProspects, enqueueHarvestSignals, enqueueReEngage, enqueueGenerateOpportunityBrief } from '../lib/queues.js'
 
 type AuthedRequest = Request & { user?: { id: string; email: string; name: string | null } }
@@ -80,10 +80,14 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     topRecommendation: p.recommendations[0] ?? null,
     isActivated: p._count.signals > 0,
     briefSummary: p.opportunityBrief ?? null,
-    fpf: classifyProspectSignals(
-      p.signals.map(toRawSignal),
-      { industry: p.industry, employeeCount: p.employeeCount, contactEmail: p.contactEmail, contactName: p.contactName, domain: p.domain, location: p.location }
-    ),
+    // Use persisted FPF decision when available — avoids recomputing on every request.
+    // Falls back to live classification for prospects not yet scored in the new cycle.
+    fpf: p.fpfDecision
+      ? { decision: p.fpfDecision as SignalDecision, reason: p.fpfReason ?? '', confidence: 80, riskFlags: [], rejectionReasons: [] }
+      : classifyProspectSignals(
+          p.signals.map(toRawSignal),
+          { industry: p.industry, employeeCount: p.employeeCount, contactEmail: p.contactEmail, contactName: p.contactName, domain: p.domain, location: p.location }
+        ),
   })
 
   res.json({

@@ -7,6 +7,7 @@ import {
   toRawSignal, toFullSignal, detectProblemOwnerActivation, normalizeSignal, computeSignalExpiry
 } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
+import { enqueueScoreProspects } from '../lib/queues.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
@@ -120,6 +121,9 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
       })
     }
   }
+
+  // Enqueue a full workspace re-score so FPF decision and all scores stay fresh
+  enqueueScoreProspects(prospect.workspaceId).catch(() => {})
 
   res.status(201).json(signal)
 }))

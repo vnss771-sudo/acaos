@@ -4,6 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { createCheckoutSession, constructWebhookEvent } from '../services/stripe.js'
 import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { prisma } from '../lib/prisma.js'
+import { cfg } from '../lib/env.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const billingRouter = Router()
@@ -187,7 +188,7 @@ billingRouter.post(
 
 function resolvePlanFromPrice(priceId: string | undefined): string {
   if (!priceId) return 'starter'
-  if (priceId === process.env.STRIPE_PRICE_GROWTH) return 'growth'
-  if (priceId === process.env.STRIPE_PRICE_STARTER) return 'starter'
+  if (cfg.stripePriceGrowth  && priceId === cfg.stripePriceGrowth)  return 'growth'
+  if (cfg.stripePriceStarter && priceId === cfg.stripePriceStarter) return 'starter'
   return 'starter'
 }

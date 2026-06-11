@@ -1,11 +1,12 @@
 import IORedis from 'ioredis'
 import { Queue } from 'bullmq'
+import { cfg } from './env.js'
 
 let _connection: IORedis | null = null
 
 function getConnection(): IORedis {
   if (!_connection) {
-    _connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    _connection = new IORedis(cfg.redisUrl, {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
       lazyConnect: true
@@ -103,5 +104,21 @@ export async function enqueueGenerateOpportunityBrief(prospectId: string, worksp
     'generate-opportunity-brief',
     { prospectId, workspaceId },
     { ...defaultJobOpts, jobId: `opportunity-brief:${prospectId}` }
+  )
+}
+
+export async function enqueueRetrainSignalWeights(workspaceId: string) {
+  return getQueue('retrain-signal-weights').add(
+    'retrain-signal-weights',
+    { workspaceId },
+    { ...defaultJobOpts, jobId: `retrain-weights:${workspaceId}` }
+  )
+}
+
+export async function enqueueMaintenanceRun() {
+  return getQueue('maintenance').add(
+    'maintenance',
+    {},
+    { ...defaultJobOpts, jobId: 'maintenance:daily' }
   )
 }

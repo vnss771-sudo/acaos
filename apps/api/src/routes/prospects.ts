@@ -659,6 +659,133 @@ prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/pause', asyncHandle
   res.json({ enrollment })
 }))
 
+// POST /api/prospects/import — bulk import with validation, dedup, and industry inference
+prospectsRouter.post('/import', asyncHandler(async (req, res) => {
+  const { workspaceId, prospects: rows } = req.body as {
+    workspaceId: string
+    prospects: Array<Record<string, unknown>>
+  }
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'prospects array required')
+  if (rows.length > 500) throw new ApiError(400, 'Maximum 500 prospects per import')
+
+  const userId = (req as AuthedRequest).user!.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  // Load existing domains and emails for dedup
+  const existing = await prisma.prospect.findMany({
+    where: { workspaceId },
+    select: { domain: true, contactEmail: true },
+  })
+  const existingDomains = new Set(existing.map(e => e.domain?.toLowerCase()).filter(Boolean))
+  const existingEmails  = new Set(existing.map(e => e.contactEmail?.toLowerCase()).filter(Boolean))
+
+  const EMAIL_RE  = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const DOMAIN_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i
+
+  // Industry keywords for inference from company name / description
+  const INDUSTRY_HINTS: Array<[string[], string]> = [
+    [['construction', 'builder', 'civil', 'contractor', 'concrete', 'structural'], 'construction'],
+    [['logistics', 'transport', 'freight', 'delivery', 'warehouse', 'shipping'],  'logistics'],
+    [['tech', 'software', 'saas', 'cloud', 'digital', 'platform', 'app'],         'technology'],
+    [['financial', 'finance', 'accounting', 'insurance', 'banking', 'invest'],    'financial'],
+    [['healthcare', 'health', 'medical', 'clinic', 'pharma', 'hospital'],          'healthcare'],
+    [['retail', 'shop', 'store', 'ecommerce', 'commerce', 'wholesale'],            'retail'],
+    [['real estate', 'property', 'realty', 'housing', 'leasing'],                  'real estate'],
+    [['manufacturing', 'factory', 'production', 'industrial', 'fabricat'],        'manufacturing'],
+  ]
+
+  function inferIndustry(name: string, desc?: string): string | null {
+    const text = `${name} ${desc ?? ''}`.toLowerCase()
+    for (const [keys, industry] of INDUSTRY_HINTS) {
+      if (keys.some(k => text.includes(k))) return industry
+    }
+    return null
+  }
+
+  const created: unknown[]   = []
+  const duplicates: string[] = []
+  const invalid: Array<{ row: number; errors: string[] }> = []
+  const icp = await getICP(workspaceId)
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const errors: string[] = []
+
+    const companyName = String(row.companyName ?? row.company_name ?? row.name ?? '').trim()
+    if (!companyName) { errors.push('companyName required'); invalid.push({ row: i, errors }); continue }
+
+    const email  = row.contactEmail  ? String(row.contactEmail).trim().toLowerCase()  : null
+    const domain = row.domain        ? String(row.domain).trim().toLowerCase()        : null
+    const phone  = row.contactPhone  ? String(row.contactPhone).trim()                : null
+
+    if (email  && !EMAIL_RE.test(email))   errors.push(`invalid email: ${email}`)
+    if (domain && !DOMAIN_RE.test(domain)) errors.push(`invalid domain: ${domain}`)
+
+    if (errors.length > 0) { invalid.push({ row: i, errors }); continue }
+
+    // Dedup: skip if domain or email already exists in this workspace
+    if (domain && existingDomains.has(domain)) { duplicates.push(companyName); continue }
+    if (email  && existingEmails.has(email))   { duplicates.push(companyName); continue }
+
+    const rawIndustry = row.industry ? String(row.industry).trim() : null
+    const industry    = rawIndustry ?? inferIndustry(companyName, row.description ? String(row.description) : undefined)
+
+    const meta = {
+      industry,
+      employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
+      contactEmail:  email,
+      contactName:   row.contactName  ? String(row.contactName).trim()  : null,
+      domain,
+      location:      row.location     ? String(row.location).trim()     : null,
+    }
+
+    const scores         = calculateOpportunityScores([], meta, icp)
+    const buyingStage    = detectBuyingStage([], scores.opportunityScore)
+    const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+    const prospect = await prisma.prospect.create({
+      data: {
+        workspaceId,
+        companyName,
+        domain,
+        industry,
+        employeeCount:    meta.employeeCount,
+        location:         meta.location,
+        description:      row.description   ? String(row.description).trim()   : null,
+        contactName:      meta.contactName,
+        contactEmail:     meta.contactEmail,
+        contactPhone:     phone,
+        contactTitle:     row.contactTitle  ? String(row.contactTitle).trim()  : null,
+        linkedinUrl:      row.linkedinUrl   ? String(row.linkedinUrl).trim()   : null,
+        sourceTag:        row.sourceTag     ? String(row.sourceTag).trim()     : 'import',
+        ...scores,
+        buyingStage,
+        winProbability,
+      },
+    })
+
+    // Track for same-batch dedup
+    if (domain) existingDomains.add(domain)
+    if (email)  existingEmails.add(email)
+
+    created.push(prospect)
+  }
+
+  // Enqueue a workspace re-score so imported prospects get full FPF+signal scoring
+  if (created.length > 0) {
+    enqueueScoreProspects(workspaceId).catch(() => {})
+  }
+
+  res.status(201).json({
+    created: created.length,
+    duplicates: duplicates.length,
+    invalid: invalid.length,
+    invalidDetails: invalid,
+    duplicateNames: duplicates,
+  })
+}))
+
 // POST /api/prospects/:id/cadence-enrollments/:enrollmentId/resume
 prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/resume', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })

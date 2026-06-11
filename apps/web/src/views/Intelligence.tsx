@@ -1115,15 +1115,22 @@ function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, on
 }
 
 // ── Briefs Panel ──────────────────────────────────────────────────────────────
-function BriefsPanel({ workspace, api, toast }: { workspace: Workspace; api: ApiHook; toast: ToastHook }) {
+function BriefsPanel({ workspace, api, toast, setView }: { workspace: Workspace; api: ApiHook; toast: ToastHook; setView: (v: View) => void }) {
   const [briefs, setBriefs] = useState<OpportunityBrief[]>([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [hasProduct, setHasProduct] = useState<boolean | null>(null)
 
   const load = () => {
     setLoading(true)
-    api<{ briefs: OpportunityBrief[] }>(`/api/intelligence/briefs?workspaceId=${workspace.id}`)
-      .then(d => setBriefs(d.briefs))
+    Promise.all([
+      api<{ briefs: OpportunityBrief[] }>(`/api/intelligence/briefs?workspaceId=${workspace.id}`),
+      api<{ workspaceProduct: { productName?: string } | null }>(`/api/workspaces/${workspace.id}/product`).catch(() => ({ workspaceProduct: null })),
+    ])
+      .then(([d, p]) => {
+        setBriefs(d.briefs)
+        setHasProduct(Boolean(p.workspaceProduct?.productName?.trim()))
+      })
       .catch(e => toast.error(e.message))
       .finally(() => setLoading(false))
   }
@@ -1154,6 +1161,20 @@ function BriefsPanel({ workspace, api, toast }: { workspace: Workspace; api: Api
           {generating ? '⏳ Queuing…' : '⚡ Generate All HOT+WARM'}
         </button>
       </div>
+
+      {hasProduct === false && (
+        <div style={{
+          background: '#1e293b', border: '1px solid #f59e0b44', borderRadius: 8,
+          padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <span style={{ color: '#f59e0b', fontSize: 13 }}>
+            Your briefs will be generic until you add your product context — what you sell, who you sell to, and your key pain points.
+          </span>
+          <button onClick={() => setView('settings')} style={{ ...s.btn, fontSize: 12, flexShrink: 0 }}>
+            Add product context
+          </button>
+        </div>
+      )}
 
       {briefs.length === 0 ? (
         <div style={s.card}>
@@ -1367,7 +1388,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
           </div>
         )
       ) : activeTab === 'briefs' ? (
-        <BriefsPanel workspace={workspace} api={api} toast={toast} />
+        <BriefsPanel workspace={workspace} api={api} toast={toast} setView={setView} />
       ) : activeTab === 'strategy-cards' ? (
         strategyCards ? (
           <StrategyCardsPanel data={strategyCards} onOutcome={handleOutcome} />

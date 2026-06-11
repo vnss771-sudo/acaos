@@ -1,8 +1,10 @@
 // Injects open-tracking pixel and click-tracking wrappers into email HTML.
 // Returns the original HTML unmodified when APP_URL is not configured (dev-safe).
 
+import { cfg } from './env.js'
+
 function baseUrl(): string | null {
-  return process.env.APP_URL?.replace(/\/$/, '') || process.env.API_URL?.replace(/\/$/, '') || null
+  return cfg.appUrl?.replace(/\/$/, '') || cfg.apiUrl?.replace(/\/$/, '') || null
 }
 
 export function injectTracking(html: string, messageOutcomeId: string): string {

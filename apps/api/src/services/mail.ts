@@ -2,27 +2,23 @@ import nodemailer from 'nodemailer'
 import { ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
-
-function getRequiredEnv(key: string) {
-  const value = process.env[key]?.trim()
-  if (!value) throw new ApiError(503, `${key} is not configured`)
-  return value
-}
+import { cfg } from '../lib/env.js'
 
 export function isMailConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM)
+  return Boolean(cfg.smtpHost && cfg.smtpFrom)
 }
 
 export function isMailboxConfigured() {
-  return Boolean(process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS)
+  return Boolean(cfg.imapHost && cfg.imapUser && cfg.imapPass)
 }
 
 export function buildTransport() {
+  if (!cfg.smtpHost) throw new ApiError(503, 'SMTP_HOST is not configured')
   return nodemailer.createTransport({
-    host: getRequiredEnv('SMTP_HOST'),
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT || 587) === 465,
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+    host:   cfg.smtpHost,
+    port:   cfg.smtpPort ?? 587,
+    secure: cfg.smtpSecure,
+    auth:   cfg.smtpUser ? { user: cfg.smtpUser, pass: cfg.smtpPass ?? '' } : undefined,
   })
 }
 
@@ -33,7 +29,7 @@ export async function sendMail(
   const { injectTracking } = await import('../lib/emailTracker.js')
   const trackedHtml = messageOutcomeId ? injectTracking(html, messageOutcomeId) : html
   const transporter = buildTransport()
-  return transporter.sendMail({ from: getRequiredEnv('SMTP_FROM'), to, subject, html: trackedHtml })
+  return transporter.sendMail({ from: cfg.smtpFrom!, to, subject, html: trackedHtml })
 }
 
 // Strips quoted text and signatures to get the fresh reply content
@@ -80,11 +76,14 @@ export async function syncMailboxOnce(): Promise<{
     throw new ApiError(503, 'IMAP support is not installed in this environment')
   }
 
+  if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) {
+    throw new ApiError(503, 'IMAP is not configured')
+  }
   const client = new ImapFlow({
-    host: getRequiredEnv('IMAP_HOST'),
-    port: Number(process.env.IMAP_PORT || 993),
-    secure: String(process.env.IMAP_SECURE || 'true') === 'true',
-    auth: { user: getRequiredEnv('IMAP_USER'), pass: getRequiredEnv('IMAP_PASS') },
+    host:   cfg.imapHost,
+    port:   cfg.imapPort,
+    secure: cfg.imapSecure,
+    auth:   { user: cfg.imapUser, pass: cfg.imapPass },
     logger: false
   })
 

@@ -63,7 +63,30 @@ export const cfg = {
   get serperApiKey() { return process.env.SERPER_API_KEY ?? null },
   get apolloApiKey() { return process.env.APOLLO_API_KEY ?? null },
 
+  // Stripe
+  get stripeSecretKey()      { return process.env.STRIPE_SECRET_KEY      ?? null },
+  get stripeWebhookSecret()  { return process.env.STRIPE_WEBHOOK_SECRET  ?? null },
+  get stripePriceStarter()   { return process.env.STRIPE_PRICE_STARTER   ?? null },
+  get stripePriceGrowth()    { return process.env.STRIPE_PRICE_GROWTH    ?? null },
+
+  // JWT timing (optional overrides)
+  get jwtExpiresIn()       { return process.env.JWT_EXPIRES_IN        ?? '15m' },
+  get refreshTokenDays()   { return Number(process.env.REFRESH_TOKEN_DAYS ?? 30) },
+
+  // SMTP extras
+  get smtpSecure() {
+    const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587
+    return process.env.SMTP_SECURE === 'true' || port === 465
+  },
+
+  // IMAP extras
+  get imapPort()   { return Number(process.env.IMAP_PORT   ?? 993) },
+  get imapSecure() { return String(process.env.IMAP_SECURE ?? 'true') === 'true' },
+
   // Bull Board dashboard
   get bullBoardUser() { return process.env.BULL_BOARD_USER ?? null },
   get bullBoardPass() { return process.env.BULL_BOARD_PASS ?? null },
+
+  // API URL (for tracking pixel injection)
+  get apiUrl() { return process.env.API_URL ?? null },
 } as const

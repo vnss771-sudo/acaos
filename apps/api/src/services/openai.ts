@@ -23,13 +23,15 @@ const DEFAULT_PRODUCT: ProductContext = {
   calendarUrl:     null,
 }
 
+import { cfg } from '../lib/env.js'
+
 function getOpenAiClient() {
   if (!hasEnv(['OPENAI_API_KEY'])) throw new ApiError(503, 'OpenAI is not configured')
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  return new OpenAI({ apiKey: cfg.openaiApiKey! })
 }
 
 function model() {
-  return process.env.OPENAI_MODEL || 'gpt-4o-mini'
+  return cfg.openaiModel
 }
 
 async function chat(system: string, user: string): Promise<string> {

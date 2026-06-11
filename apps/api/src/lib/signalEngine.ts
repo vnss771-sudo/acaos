@@ -971,3 +971,49 @@ export function signalPatternKey(signals: RawSignal[]): string {
   const types = [...new Set(signals.map(s => s.type))].sort()
   return types.join('|') || 'NONE'
 }
+
+// ── Learning loop: derive adjusted signal weights from outcome performance ─────
+// Reads SignalCombinationPerformance rows and nudges each signal type's cap
+// toward performance-weighted success rates.  Returns {} when data is too thin.
+export function computeLearnedWeights(
+  patterns: Array<{ signalPattern: string; sentCount: number; replyCount: number; meetingCount: number }>
+): SignalWeights {
+  const MIN_SENDS = 5
+
+  // Accumulate: per signal type, weighted success score and total sends
+  const typeStats = new Map<SignalType, { score: number; sends: number }>()
+
+  for (const p of patterns) {
+    if (p.sentCount < MIN_SENDS) continue
+    const types = p.signalPattern
+      .split('|')
+      .filter(t => t !== 'NONE') as SignalType[]
+    if (types.length === 0) continue
+    // Meetings are double-weight: higher-value outcome than a bare reply
+    const successRate = (p.replyCount + p.meetingCount * 2) / p.sentCount
+    for (const type of types) {
+      const cur = typeStats.get(type) ?? { score: 0, sends: 0 }
+      typeStats.set(type, { score: cur.score + successRate * p.sentCount, sends: cur.sends + p.sentCount })
+    }
+  }
+
+  // Need at least 3 signal types with enough data for a reliable baseline
+  const qualified = [...typeStats.entries()].filter(([, s]) => s.sends >= MIN_SENDS)
+  if (qualified.length < 3) return {}
+
+  // Average success rate across qualified types (our normalization baseline)
+  const baseline = qualified.reduce((sum, [, s]) => sum + s.score / s.sends, 0) / qualified.length
+  if (baseline === 0) return {}
+
+  const weights: SignalWeights = {}
+  for (const [type, stats] of qualified) {
+    const typeRate   = stats.score / stats.sends
+    const multiplier = typeRate / baseline
+    const base       = EVENT_BASE_WEIGHTS[type] ?? 50
+    // Clamp to ±50% of the base weight so a thin sample can't collapse a signal
+    const learned = Math.round(Math.max(Math.max(5, base * 0.5), Math.min(100, base * 1.5, base * multiplier)))
+    weights[type]    = learned
+  }
+
+  return weights
+}

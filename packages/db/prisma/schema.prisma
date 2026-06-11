@@ -285,6 +285,8 @@ model Prospect {
   retentionProbability Float             @default(0.8)
   expansionProbability Float             @default(0.2)
   expectedRevenueScore Float             @default(0)
+  fpfDecision          String?           // 'IGNORE' | 'WATCH' | 'ACT' — persisted from last score-prospects run
+  fpfReason            String?
   lastSignalAt         DateTime?
   lastContactedAt      DateTime?
   aiSummary            String?
