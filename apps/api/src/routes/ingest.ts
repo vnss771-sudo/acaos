@@ -4,6 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
 import { requireAuth } from '../middleware/auth.js'
+import { ingestRateLimit } from '../middleware/rateLimit.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const ingestRouter = Router()
@@ -42,6 +43,7 @@ async function requireIngestKey(
 ingestRouter.post(
   '/',
   requireIngestKey,
+  ingestRateLimit,
   asyncHandler(async (req, res) => {
     const workspace = (req as any).ingestWorkspace
     const { leads, campaignId, sourceTag, autoResearch = true } = req.body ?? {}

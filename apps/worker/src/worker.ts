@@ -159,7 +159,7 @@ const outreachWorker = new Worker(
 const replyWorker = new Worker(
   'analyze-reply',
   async (job) => {
-    const { replyBody, leadId } = job.data as { replyBody: string; leadId?: string }
+    const { replyBody, leadId, prospectId } = job.data as { replyBody: string; leadId?: string; prospectId?: string }
     log('analyze-reply', `Processing${leadId ? ` leadId=${leadId}` : ''}`)
 
     await job.updateProgress(10)
@@ -236,6 +236,35 @@ const replyWorker = new Worker(
           }
         })
       }
+    }
+
+    // Prospect reply handling — update outcome stage based on classification
+    if (prospectId && parsed.classification && !parsed.isAutoReply) {
+      const prospectStageMap: Record<string, string> = {
+        INTERESTED:      'MEETING',
+        NOT_INTERESTED:  'LOST',
+        NEEDS_MORE_INFO: 'MEETING',
+        NOT_NOW:         'CONTACTED',
+        REFERRAL:        'MEETING',
+        OUT_OF_OFFICE:   'CONTACTED',
+      }
+      const newOutcomeStage = prospectStageMap[parsed.classification]
+      if (newOutcomeStage) {
+        await prisma.prospect.update({
+          where: { id: prospectId },
+          data:  { outcomeStage: newOutcomeStage as import('@prisma/client').OutcomeStage, lastContactedAt: new Date() },
+        })
+      }
+      // Record message outcome for the learning loop
+      prisma.messageOutcome.create({
+        data: {
+          workspaceId: (await prisma.prospect.findUnique({ where: { id: prospectId }, select: { workspaceId: true } }))?.workspaceId ?? '',
+          prospectId,
+          event:       'REPLIED',
+          channel:     'EMAIL',
+          respondedAt: new Date(),
+        },
+      }).catch(() => {})
     }
 
     await job.updateProgress(100)
@@ -358,12 +387,19 @@ const scoreProspectsWorker = new Worker(
     }
 
     await job.updateProgress(100)
-    log('score-prospects', `Done: ${updated} prospects rescored — triggering strategy cards`)
-    await getQueue('generate-strategy-cards').add(
-      'generate-strategy-cards',
-      { workspaceId },
-      { ...defaultJobOptions, jobId: `strategy-cards:${workspaceId}` }
-    )
+    log('score-prospects', `Done: ${updated} prospects rescored — triggering downstream jobs`)
+    await Promise.all([
+      getQueue('generate-strategy-cards').add(
+        'generate-strategy-cards',
+        { workspaceId },
+        { ...defaultJobOptions, jobId: `strategy-cards:${workspaceId}` }
+      ),
+      getQueue('harvest-signals').add(
+        'harvest-signals',
+        { workspaceId },
+        { ...defaultJobOptions, jobId: `harvest-signals:${workspaceId}` }
+      ),
+    ])
     return { workspaceId, updated }
   },
   { connection, concurrency: 1 }
@@ -717,23 +753,27 @@ const advanceCadenceWorker = new Worker(
       return { error: 'invalid_ai_output' }
     }
 
+    const nextStep     = steps[enrollment.currentStep + 1]
+    const nextActionAt = nextStep
+      ? new Date(new Date(enrollment.enrolledAt).getTime() + nextStep.dayOffset * 86_400_000)
+      : null
+
+    // Create outcome record before sending so its ID is available for tracking injection
+    const outcome = await prisma.messageOutcome.create({
+      data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
+    })
+
     await sendMail(
       prospect.contactEmail,
       parsed.subject,
-      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`
+      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`,
+      outcome.id
     )
 
     await job.updateProgress(80)
 
-    const nextStep      = steps[enrollment.currentStep + 1]
-    const nextActionAt  = nextStep
-      ? new Date(new Date(enrollment.enrolledAt).getTime() + nextStep.dayOffset * 86_400_000)
-      : null
-
+    // Advance state atomically — outcome record already created before send
     await prisma.$transaction([
-      prisma.messageOutcome.create({
-        data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
-      }),
       prisma.prospect.update({
         where: { id: prospect.id },
         data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
@@ -839,16 +879,116 @@ const harvestSignalsWorker = new Worker(
     }
 
     if (signalsCreated > 0) {
-      await getQueue('score-prospects').add(
-        'score-prospects',
-        { workspaceId },
-        { ...defaultJobOptions, jobId: `score-after-harvest:${workspaceId}` }
-      )
+      await Promise.all([
+        getQueue('score-prospects').add(
+          'score-prospects',
+          { workspaceId },
+          { ...defaultJobOptions, jobId: `score-after-harvest:${workspaceId}` }
+        ),
+        getQueue('re-engage').add(
+          're-engage',
+          { workspaceId },
+          { ...defaultJobOptions, jobId: `re-engage:${workspaceId}` }
+        ),
+      ])
     }
 
     await job.updateProgress(100)
     log('harvest-signals', `Done workspaceId=${workspaceId} prospects=${prospects.length} signalsCreated=${signalsCreated}`)
     return { workspaceId, prospects: prospects.length, signalsCreated }
+  },
+  { connection, concurrency: 1 }
+)
+
+// ── re-engage ─────────────────────────────────────────────────────────────────
+const reEngageWorker = new Worker(
+  're-engage',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+    log('re-engage', `Scanning re-engagement candidates for workspaceId=${workspaceId}`)
+
+    await job.updateProgress(10)
+
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 86_400_000)
+    const thirtyDaysAgo   = new Date(Date.now() - 30 * 86_400_000)
+
+    // Prospects with score ≥55, not yet contacted or last contacted >30 days ago,
+    // with a fresh signal in the past 14 days — worth a re-engagement nudge
+    const candidates = await prisma.prospect.findMany({
+      where: {
+        workspaceId,
+        opportunityScore: { gte: 55 },
+        outcomeStage:     { in: ['DISCOVERED', 'VIEWED', 'CONTACTED'] },
+        contactEmail:     { not: null },
+        lastSignalAt:     { gte: fourteenDaysAgo },
+        OR: [
+          { lastContactedAt: null },
+          { lastContactedAt: { lt: thirtyDaysAgo } },
+        ],
+      },
+      select: { id: true, companyName: true, lastContactedAt: true, lastSignalAt: true },
+      take: 20,
+    })
+
+    await job.updateProgress(40)
+
+    // Filter: only re-engage if there are new signals since last contact
+    const toEnroll = candidates.filter(p =>
+      !p.lastContactedAt ||
+      (p.lastSignalAt && p.lastSignalAt > p.lastContactedAt)
+    )
+
+    let enrolled = 0
+    for (const prospect of toEnroll) {
+      try {
+        // Find or create the workspace default cadence
+        let cadence = await (prisma as any).cadence.findFirst({
+          where: { workspaceId, isDefault: true },
+        })
+        if (!cadence) {
+          cadence = await (prisma as any).cadence.create({
+            data: {
+              workspaceId,
+              name:      'Default 3-Step Email Sequence',
+              isDefault: true,
+              steps: [
+                { dayOffset: 0,  channel: 'EMAIL', templateType: 'INITIAL'    },
+                { dayOffset: 4,  channel: 'EMAIL', templateType: 'FOLLOWUP_1' },
+                { dayOffset: 10, channel: 'EMAIL', templateType: 'FOLLOWUP_2' },
+              ],
+            },
+          })
+        }
+
+        const enrollment = await (prisma as any).cadenceEnrollment.upsert({
+          where:  { prospectId_cadenceId: { prospectId: prospect.id, cadenceId: cadence.id } },
+          create: {
+            workspaceId,
+            prospectId:   prospect.id,
+            cadenceId:    cadence.id,
+            currentStep:  0,
+            status:       'ACTIVE',
+            nextActionAt: new Date(),
+          },
+          update: {
+            status:       'ACTIVE',
+            currentStep:  0,
+            nextActionAt: new Date(),
+            completedAt:  null,
+          },
+        })
+
+        await getQueue('advance-cadence').add('advance-cadence', { enrollmentId: enrollment.id }, defaultJobOptions)
+        enrolled++
+        log('re-engage', `Enrolled ${prospect.companyName} (${prospect.id}) in cadence`)
+      } catch (err) {
+        log('re-engage', `Failed to enroll ${prospect.id}: ${(err as Error).message}`)
+      }
+    }
+
+    await job.updateProgress(100)
+    log('re-engage', `Done workspaceId=${workspaceId} candidates=${candidates.length} enrolled=${enrolled}`)
+    return { workspaceId, candidates: candidates.length, enrolled }
   },
   { connection, concurrency: 1 }
 )
@@ -865,6 +1005,7 @@ for (const [name, worker] of [
   ['generate-strategy-cards',  strategyCardsWorker],
   ['advance-cadence',          advanceCadenceWorker],
   ['harvest-signals',          harvestSignalsWorker],
+  ['re-engage',                reEngageWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -888,6 +1029,7 @@ async function shutdown(signal: string) {
     strategyCardsWorker.close(),
     advanceCadenceWorker.close(),
     harvestSignalsWorker.close(),
+    reEngageWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -897,4 +1039,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 10 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals)')
+console.log('[worker] Started — listening on 11 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage)')

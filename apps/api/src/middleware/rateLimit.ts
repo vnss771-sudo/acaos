@@ -92,3 +92,14 @@ export const syncRateLimit = createRateLimiter({
   max: 10,
   message: 'Too many sync requests. Please wait before syncing again.'
 })
+
+// 20 ingest batch requests per 5 minutes per API key (prevents runaway scrapers)
+export const ingestRateLimit = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 20,
+  message: 'Ingest rate limit reached. Please wait before submitting more leads.',
+  keyFn: (req) => {
+    const key = req.headers['x-api-key']
+    return (Array.isArray(key) ? key[0] : key) || req.socket.remoteAddress || 'unknown'
+  }
+})

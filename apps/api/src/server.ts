@@ -15,6 +15,7 @@ import { outcomesRouter } from './routes/outcomes.js'
 import { prospectsRouter } from './routes/prospects.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
+import { trackingRouter } from './routes/tracking.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
@@ -74,6 +75,7 @@ app.use('/api/outcomes', outcomesRouter)
 app.use('/api/prospects', prospectsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
+app.use('/api/track', trackingRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

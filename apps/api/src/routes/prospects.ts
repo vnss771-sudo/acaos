@@ -501,20 +501,20 @@ prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
 
   if (send) {
     if (!isMailConfigured()) throw new ApiError(503, 'SMTP is not configured')
+    // Create the outcome record first so we have the ID for tracking injection
+    const outcome = await prisma.messageOutcome.create({
+      data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
+    })
     await sendMail(
       prospect.contactEmail!,
       parsed.subject,
-      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`
+      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`,
+      outcome.id
     )
-    await prisma.$transaction([
-      prisma.messageOutcome.create({
-        data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
-      }),
-      prisma.prospect.update({
-        where: { id: prospect.id },
-        data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
-      }),
-    ])
+    await prisma.prospect.update({
+      where: { id: prospect.id },
+      data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
+    })
   }
 
   res.status(send ? 200 : 201).json({

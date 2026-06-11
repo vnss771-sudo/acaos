@@ -5,6 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
+import { enqueueScoreProspects, enqueueHarvestSignals, enqueueReEngage } from '../lib/queues.js'
 
 type AuthedRequest = Request & { user?: { id: string; email: string; name: string | null } }
 
@@ -265,4 +266,22 @@ intelligenceRouter.delete('/industry-configs/:industry', asyncHandler(async (req
   })
 
   res.json({ ok: true })
+}))
+
+// POST /api/intelligence/run?workspaceId= — trigger full intelligence cycle
+intelligenceRouter.post('/run', asyncHandler(async (req, res) => {
+  const workspaceId = req.body?.workspaceId as string | undefined
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required in request body')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
+  await Promise.all([
+    enqueueScoreProspects(workspaceId),
+    enqueueHarvestSignals(workspaceId),
+    enqueueReEngage(workspaceId),
+  ])
+
+  res.json({ ok: true, queued: ['score-prospects', 'harvest-signals', 're-engage'] })
 }))

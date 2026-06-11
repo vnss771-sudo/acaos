@@ -41,8 +41,8 @@ export async function enqueueGenerateOutreach(leadId: string, userId: string) {
   return getQueue('generate-outreach').add('generate-outreach', { leadId, userId }, defaultJobOpts)
 }
 
-export async function enqueueAnalyzeReply(replyBody: string, leadId?: string, userId?: string) {
-  return getQueue('analyze-reply').add('analyze-reply', { replyBody, leadId, userId }, defaultJobOpts)
+export async function enqueueAnalyzeReply(replyBody: string, leadId?: string, userId?: string, prospectId?: string) {
+  return getQueue('analyze-reply').add('analyze-reply', { replyBody, leadId, userId, prospectId }, defaultJobOpts)
 }
 
 export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {
@@ -87,5 +87,13 @@ export async function enqueueHarvestSignals(workspaceId: string) {
     'harvest-signals',
     { workspaceId },
     { ...defaultJobOpts, jobId: `harvest-signals:${workspaceId}` }
+  )
+}
+
+export async function enqueueReEngage(workspaceId: string) {
+  return getQueue('re-engage').add(
+    're-engage',
+    { workspaceId },
+    { ...defaultJobOpts, jobId: `re-engage:${workspaceId}` }
   )
 }

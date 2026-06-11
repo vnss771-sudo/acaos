@@ -26,9 +26,14 @@ export function buildTransport() {
   })
 }
 
-export async function sendMail(to: string, subject: string, html: string) {
+export async function sendMail(
+  to: string, subject: string, html: string,
+  messageOutcomeId?: string
+) {
+  const { injectTracking } = await import('../lib/emailTracker.js')
+  const trackedHtml = messageOutcomeId ? injectTracking(html, messageOutcomeId) : html
   const transporter = buildTransport()
-  return transporter.sendMail({ from: getRequiredEnv('SMTP_FROM'), to, subject, html })
+  return transporter.sendMail({ from: getRequiredEnv('SMTP_FROM'), to, subject, html: trackedHtml })
 }
 
 // Strips quoted text and signatures to get the fresh reply content
@@ -130,13 +135,20 @@ export async function syncMailboxOnce(): Promise<{
       return { inspected, matched: 0, queued: 0, skipped: 0 }
     }
 
-    // Find leads matching any of the sender addresses
+    // Find leads AND prospects matching any of the sender addresses
     const addresses = [...new Set(toProcess.map(m => m.fromAddress))]
-    const matchedLeads = await prisma.lead.findMany({
-      where: { email: { in: addresses } },
-      select: { id: true, email: true, workspaceId: true, stage: true, score: true }
-    })
-    const emailToLead = new Map(matchedLeads.map(l => [l.email!.toLowerCase(), l]))
+    const [matchedLeads, matchedProspects] = await Promise.all([
+      prisma.lead.findMany({
+        where: { email: { in: addresses } },
+        select: { id: true, email: true, workspaceId: true, stage: true, score: true }
+      }),
+      prisma.prospect.findMany({
+        where: { contactEmail: { in: addresses } },
+        select: { id: true, contactEmail: true, workspaceId: true, outcomeStage: true }
+      }),
+    ])
+    const emailToLead     = new Map(matchedLeads.map(l => [l.email!.toLowerCase(), l]))
+    const emailToProspect = new Map(matchedProspects.map(p => [p.contactEmail!.toLowerCase(), p]))
 
     let matched = 0
     let queued = 0
@@ -145,23 +157,38 @@ export async function syncMailboxOnce(): Promise<{
     for (const msg of toProcess) {
       processedRows.push({ uid: msg.uid, messageId: msg.messageId, fromAddress: msg.fromAddress })
 
-      const lead = emailToLead.get(msg.fromAddress)
-      if (!lead) continue
+      const lead     = emailToLead.get(msg.fromAddress)
+      const prospect = emailToProspect.get(msg.fromAddress)
 
+      if (!lead && !prospect) continue
       matched++
 
-      // Don't re-process if already past the reply stage
-      if (['BOOKED', 'CLOSED', 'DEAD'].includes(lead.stage)) continue
+      if (lead && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead.stage)) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { stage: 'REPLIED', lastContactedAt: new Date() }
+        })
+        await enqueueAnalyzeReply(msg.body, lead.id)
+        queued++
+      }
 
-      // Advance lead stage and record contact
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { stage: 'REPLIED', lastContactedAt: new Date() }
-      })
-
-      // Enqueue AI reply classification — worker will record a ScoringOutcome
-      await enqueueAnalyzeReply(msg.body, lead.id)
-      queued++
+      if (prospect && !['WON', 'LOST'].includes(prospect.outcomeStage)) {
+        // Advance prospect stage and pause any active cadence enrollments
+        await prisma.$transaction([
+          prisma.prospect.update({
+            where: { id: prospect.id },
+            data:  { outcomeStage: 'MEETING', lastContactedAt: new Date() }
+          }),
+          // Pause cadence — they replied, stop the sequence
+          prisma.$executeRaw`
+            UPDATE "CadenceEnrollment"
+            SET "status" = 'REPLIED', "updatedAt" = NOW()
+            WHERE "prospectId" = ${prospect.id} AND "status" = 'ACTIVE'
+          `,
+        ])
+        await enqueueAnalyzeReply(msg.body, undefined, undefined, prospect.id)
+        queued++
+      }
     }
 
     // Persist processed email records atomically
