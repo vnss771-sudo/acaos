@@ -250,22 +250,63 @@ const replyWorker = new Worker(
         OUT_OF_OFFICE:   'CONTACTED',
       }
       const newOutcomeStage = prospectStageMap[parsed.classification]
-      if (newOutcomeStage) {
-        await prisma.prospect.update({
-          where: { id: prospectId },
-          data:  { outcomeStage: newOutcomeStage as import('@prisma/client').OutcomeStage, lastContactedAt: new Date() },
-        })
+      const prospect = await prisma.prospect.findUnique({
+        where: { id: prospectId },
+        select: { workspaceId: true, contactEmail: true, contactName: true },
+      })
+
+      if (prospect) {
+        if (newOutcomeStage) {
+          await prisma.prospect.update({
+            where: { id: prospectId },
+            data:  { outcomeStage: newOutcomeStage as import('@prisma/client').OutcomeStage, lastContactedAt: new Date() },
+          })
+        }
+
+        // Record message outcome for the learning loop
+        prisma.messageOutcome.create({
+          data: {
+            workspaceId: prospect.workspaceId,
+            prospectId,
+            event:       'REPLIED',
+            channel:     'EMAIL',
+            respondedAt: new Date(),
+          },
+        }).catch(() => {})
+
+        // When INTERESTED and a calendar URL is configured, auto-send booking link
+        if (parsed.classification === 'INTERESTED' && prospect.contactEmail && isMailConfigured()) {
+          const productConfig = await (prisma as any).workspaceProduct.findUnique({
+            where: { workspaceId: prospect.workspaceId },
+            select: { calendarUrl: true, productName: true },
+          })
+          if (productConfig?.calendarUrl) {
+            const firstName = prospect.contactName?.split(' ')[0] ?? 'there'
+            const calHtml = `
+              <p>Hi ${firstName},</p>
+              <p>Great to hear from you!</p>
+              <p>Here's a link to pick a time that works for you:</p>
+              <p><a href="${productConfig.calendarUrl}" style="color:#3b82f6">${productConfig.calendarUrl}</a></p>
+              <p>Looking forward to connecting.</p>
+            `
+            sendMail(
+              prospect.contactEmail,
+              'Quick follow-up — booking link',
+              calHtml
+            ).then(() => {
+              prisma.messageOutcome.create({
+                data: {
+                  workspaceId: prospect.workspaceId,
+                  prospectId,
+                  event:   'SENT',
+                  channel: 'EMAIL',
+                  sentAt:  new Date(),
+                },
+              }).catch(() => {})
+            }).catch(() => {})
+          }
+        }
       }
-      // Record message outcome for the learning loop
-      prisma.messageOutcome.create({
-        data: {
-          workspaceId: (await prisma.prospect.findUnique({ where: { id: prospectId }, select: { workspaceId: true } }))?.workspaceId ?? '',
-          prospectId,
-          event:       'REPLIED',
-          channel:     'EMAIL',
-          respondedAt: new Date(),
-        },
-      }).catch(() => {})
     }
 
     await job.updateProgress(100)

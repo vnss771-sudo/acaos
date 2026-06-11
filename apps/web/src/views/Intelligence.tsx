@@ -51,7 +51,12 @@ function ScoreDimension({ label, value }: { label: string; value: number }) {
 }
 
 // ── Prospect Card ─────────────────────────────────────────────────────────────
-function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: (id: string, stage: string) => void }) {
+function ProspectCard({ prospect, onOutcome, onOutreach, onEnrollCadence }: {
+  prospect: Prospect
+  onOutcome: (id: string, stage: string) => void
+  onOutreach: (id: string) => void
+  onEnrollCadence: (id: string) => void
+}) {
   const [expanded, setExpanded] = useState(false)
   const rec = prospect.topRecommendation
   const sig = prospect.latestSignal
@@ -199,6 +204,24 @@ function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: 
             </div>
           )}
 
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Actions</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {prospect.contactEmail && (
+                <button onClick={() => onOutreach(prospect.id)}
+                  style={{ ...s.btnSm, fontSize: 11, background: '#1e3a5f', color: '#93c5fd' }}>
+                  ✉ Generate Outreach
+                </button>
+              )}
+              {prospect.contactEmail && (
+                <button onClick={() => onEnrollCadence(prospect.id)}
+                  style={{ ...s.btnSm, fontSize: 11, background: '#1a3020', color: '#86efac' }}>
+                  ▶ Enroll in Cadence
+                </button>
+              )}
+            </div>
+          </div>
+
           <div>
             <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Move to Stage</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -221,8 +244,11 @@ function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: 
 }
 
 // ── Tier Section ──────────────────────────────────────────────────────────────
-function TierSection({ title, prospects, color, onOutcome }: {
-  title: string; prospects: Prospect[]; color: string; onOutcome: (id: string, stage: string) => void
+function TierSection({ title, prospects, color, onOutcome, onOutreach, onEnrollCadence }: {
+  title: string; prospects: Prospect[]; color: string
+  onOutcome: (id: string, stage: string) => void
+  onOutreach: (id: string) => void
+  onEnrollCadence: (id: string) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
   return (
@@ -241,7 +267,12 @@ function TierSection({ title, prospects, color, onOutcome }: {
           {prospects.length === 0 ? (
             <div style={{ color: colors.textFaint, fontSize: 13, padding: '8px 0' }}>No {title.toLowerCase()} prospects</div>
           ) : (
-            prospects.map(p => <ProspectCard key={p.id} prospect={p} onOutcome={onOutcome} />)
+            prospects.map(p => (
+              <ProspectCard
+                key={p.id} prospect={p}
+                onOutcome={onOutcome} onOutreach={onOutreach} onEnrollCadence={onEnrollCadence}
+              />
+            ))
           )}
         </div>
       )}
@@ -636,6 +667,46 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
+  const handleOutreach = async (prospectId: string) => {
+    if (!workspace) return
+    try {
+      const result = await api<{ subject: string; email: string; followup: string | null }>(`/api/prospects/${prospectId}/outreach`, {
+        method: 'POST',
+        body: JSON.stringify({ send: false })
+      })
+      // Show the generated draft in a simple alert for now
+      const preview = `SUBJECT: ${result.subject}\n\n${result.email}${result.followup ? `\n\n—— FOLLOW-UP ——\n${result.followup}` : ''}`
+      window.alert(preview)
+      toast.success('Outreach generated')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
+  const handleEnrollCadence = async (prospectId: string) => {
+    if (!workspace) return
+    try {
+      await api(`/api/prospects/${prospectId}/enroll-cadence`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      })
+      toast.success('Enrolled in 3-step email cadence')
+      load()
+    } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
+  const [running, setRunning] = useState(false)
+  const handleRunIntelligence = async () => {
+    if (!workspace || running) return
+    setRunning(true)
+    try {
+      await api('/api/intelligence/run', {
+        method: 'POST',
+        body: JSON.stringify({ workspaceId: workspace.id })
+      })
+      toast.success('Intelligence cycle queued — scores will refresh shortly')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setRunning(false) }
+  }
+
   if (!workspace) {
     return <div style={s.card}><EmptyState message="No workspace selected" icon="◈" /></div>
   }
@@ -651,6 +722,15 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
 
   return (
     <div style={s.stack}>
+      {/* Header row with Run Intelligence button */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div />
+        <button onClick={handleRunIntelligence} disabled={running}
+          style={{ ...s.btnSm, background: '#1e3a5f', color: running ? colors.textFaint : '#93c5fd', fontSize: 12, padding: '6px 14px' }}>
+          {running ? '⏳ Running…' : '⚡ Run Intelligence'}
+        </button>
+      </div>
+
       {/* KPI Bar */}
       <div style={s.grid4}>
         <div style={s.card}>
@@ -695,9 +775,9 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
       ) : activeTab === 'opportunities' ? (
         opportunities ? (
           <div style={{ display: 'grid', gap: 24 }}>
-            <TierSection title="Hot" prospects={opportunities.hot} color={TIER_COLOR.HOT} onOutcome={handleOutcome} />
-            <TierSection title="Warm" prospects={opportunities.warm} color={TIER_COLOR.WARM} onOutcome={handleOutcome} />
-            <TierSection title="Cold" prospects={opportunities.cold} color={TIER_COLOR.COLD} onOutcome={handleOutcome} />
+            <TierSection title="Hot" prospects={opportunities.hot} color={TIER_COLOR.HOT} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
+            <TierSection title="Warm" prospects={opportunities.warm} color={TIER_COLOR.WARM} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
+            <TierSection title="Cold" prospects={opportunities.cold} color={TIER_COLOR.COLD} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
           </div>
         ) : (
           <div style={s.card}>
