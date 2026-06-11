@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { Worker } from 'bullmq'
 import { connection, getQueue, defaultJobOptions } from './lib/queue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, generateSignalAwareOutreach } from '../../api/src/services/openai.js'
+import type { ProductContext } from '../../api/src/services/openai.js'
 import { sendMail, isMailConfigured } from '../../api/src/services/mail.js'
 import { fetchJobPostings } from '../../api/src/services/apollo.js'
 import { prisma } from '../../api/src/lib/prisma.js'
@@ -301,11 +302,16 @@ const scoreProspectsWorker = new Worker(
 
     await job.updateProgress(10)
 
-    const [icp, scoringModel] = await Promise.all([
+    const [icp, scoringModel, ownerEmails] = await Promise.all([
       prisma.workspaceICP.findUnique({ where: { workspaceId } }),
-      prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } })
+      prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } }),
+      prisma.membership.findMany({
+        where: { workspaceId, role: 'owner' },
+        include: { user: { select: { email: true } } },
+      }),
     ])
-    const signalWeights = (scoringModel?.signalWeights ?? null) as SignalWeights | null
+    const signalWeights  = (scoringModel?.signalWeights ?? null) as SignalWeights | null
+    const alertAddresses = ownerEmails.map(m => m.user.email).filter(Boolean)
 
     const BATCH_SIZE = 200
     let cursor: string | undefined
@@ -343,6 +349,27 @@ const scoreProspectsWorker = new Worker(
           where: { id: prospect.id },
           data: { ...scores, buyingStage, winProbability, expectedRevenueScore },
         })
+
+        // Alert owners when a prospect transitions INTO PURCHASING stage
+        const previousStage = prospect.buyingStage
+        if (buyingStage === 'PURCHASING' && previousStage !== 'PURCHASING') {
+          log('score-prospects', `🚨 PURCHASING transition: ${prospect.companyName} (${prospect.id})`)
+          if (alertAddresses.length > 0 && isMailConfigured()) {
+            const alertHtml = `
+              <h2 style="color:#f59e0b">⚡ Buying Window Open</h2>
+              <p><strong>${prospect.companyName}</strong> has entered the <strong>PURCHASING</strong> stage.</p>
+              <ul>
+                <li>Opportunity Score: ${scores.opportunityScore}/100</li>
+                <li>Win Probability: ${Math.round(winProbability * 100)}%</li>
+                ${prospect.contactEmail ? `<li>Contact: ${prospect.contactName ?? ''} &lt;${prospect.contactEmail}&gt;</li>` : ''}
+              </ul>
+              <p>Act now — this buying window typically closes within 7–14 days.</p>
+            `
+            for (const email of alertAddresses) {
+              sendMail(email, `⚡ ${prospect.companyName} is ready to buy`, alertHtml).catch(() => {})
+            }
+          }
+        }
 
         // Problem-Owner Activation detection
         const fullSignals = prospect.signals.map(s => toFullSignal({
@@ -725,8 +752,11 @@ const advanceCadenceWorker = new Worker(
 
     await job.updateProgress(20)
 
-    const poaSignal = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
-    const poaTier   = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
+    const poaSignal      = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
+    const poaTier        = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
+    const workspaceProduct = await (prisma as any).workspaceProduct.findUnique({
+      where: { workspaceId: prospect.workspaceId },
+    }) as ProductContext | null
 
     const raw = await generateSignalAwareOutreach({
       businessName:     prospect.companyName,
@@ -743,6 +773,7 @@ const advanceCadenceWorker = new Worker(
       poaActivated:     Boolean(poaSignal),
       poaTier,
       templateType:     step.templateType as 'INITIAL' | 'FOLLOWUP_1' | 'FOLLOWUP_2',
+      product:          workspaceProduct ?? undefined,
     })
 
     await job.updateProgress(60)

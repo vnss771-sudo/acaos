@@ -40,6 +40,7 @@ model Workspace {
   recommendations      Recommendation[]
   prospectOutcomes     ProspectOutcome[]
   workspaceICP         WorkspaceICP?
+  workspaceProduct     WorkspaceProduct?
   industryConfigs      IndustrySignalConfig[]
   messageExperiments   MessageExperiment[]
   messageOutcomes      MessageOutcome[]
@@ -392,6 +393,23 @@ model WorkspaceICP {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// Workspace-configurable product/ICP context — drives all AI prompts
+model WorkspaceProduct {
+  id              String    @id @default(cuid())
+  workspaceId     String    @unique
+  productName     String    @default("field operations software")
+  productCategory String?   // e.g. "FSM", "ERP", "CRM", "SaaS"
+  targetICP       String?   // free-text ICP description for prompts
+  keyPainPoints   String[]  // e.g. ["scheduling", "dispatching", "job costing"]
+  differentiators String[]  // e.g. ["mobile-first", "no setup fees", "integrates with Xero"]
+  // CTA configuration
+  ctaType         String    @default("book_call") // book_call | demo | free_trial | reply
+  calendarUrl     String?   // Calendly/Cal.com URL injected into INTERESTED follow-ups
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 // Per-workspace database-backed industry signal weight matrix

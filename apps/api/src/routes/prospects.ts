@@ -468,7 +468,10 @@ prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
   const { generateSignalAwareOutreach } = await import('../services/openai.js')
   const { isMailConfigured, sendMail }  = await import('../services/mail.js')
 
-  const poaSignal = prospect.signals.find(s => s.type === 'PROBLEM_OWNER_ACTIVATION')
+  const [poaSignal, workspaceProduct] = [
+    prospect.signals.find(s => s.type === 'PROBLEM_OWNER_ACTIVATION'),
+    await prisma.workspaceProduct.findUnique({ where: { workspaceId: prospect.workspaceId } }),
+  ]
   const poaTier   = poaSignal?.title?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
 
   const raw = await generateSignalAwareOutreach({
@@ -486,6 +489,7 @@ prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
     poaActivated:     Boolean(poaSignal),
     poaTier,
     templateType:     (req.body.templateType as 'INITIAL' | 'FOLLOWUP_1' | 'FOLLOWUP_2') ?? 'INITIAL',
+    product:          workspaceProduct ?? undefined,
   })
 
   const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }

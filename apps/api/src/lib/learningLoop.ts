@@ -75,37 +75,44 @@ export function calibrate(outcomes: Outcome[], messageOutcomes: MessageOutcomeDa
     signalWeights[type] = Math.round(base * multiplier)
   }
 
-  // ── Channel effectiveness from message outcomes ───────────────────────────
-  const channelMet: Record<string, { meetings: number; sent: number }> = {}
+  // ── Channel effectiveness (full-funnel weighted engagement) ─────────────
+  // Weights: SENT=base, OPENED=0.05, CLICKED=0.15, REPLIED=0.4, MEETING/WON=1.0
+  const channelMet: Record<string, { engagement: number; sent: number }> = {}
   for (const mo of messageOutcomes) {
-    if (!channelMet[mo.channel]) channelMet[mo.channel] = { meetings: 0, sent: 0 }
-    if (mo.event === 'SENT') channelMet[mo.channel].sent++
-    if (mo.event === 'MEETING_BOOKED' || mo.event === 'WON') channelMet[mo.channel].meetings++
+    if (!channelMet[mo.channel]) channelMet[mo.channel] = { engagement: 0, sent: 0 }
+    if (mo.event === 'SENT')                                      channelMet[mo.channel].sent++
+    if (mo.event === 'OPENED')                                    channelMet[mo.channel].engagement += 0.05
+    if (mo.event === 'CLICKED')                                   channelMet[mo.channel].engagement += 0.15
+    if (mo.event === 'REPLIED')                                   channelMet[mo.channel].engagement += 0.40
+    if (mo.event === 'MEETING_BOOKED' || mo.event === 'WON')     channelMet[mo.channel].engagement += 1.00
   }
 
   const channelWeights: Record<string, number> = {}
   for (const [channel, counts] of Object.entries(channelMet)) {
     if (counts.sent < 5) continue
-    const meetingRate = counts.meetings / counts.sent
-    // Normalise: assume 10% meeting rate = score 50; clamp 0-100
-    channelWeights[channel] = Math.round(Math.min(100, Math.max(0, meetingRate * 500)))
+    const engagementRate = counts.engagement / counts.sent
+    // Normalise: 10% full-meeting equivalent rate = score 50
+    channelWeights[channel] = Math.round(Math.min(100, Math.max(0, engagementRate * 500)))
   }
 
   // ── Timing effectiveness (day-of-week + hour) ─────────────────────────────
-  const timingMet: Record<string, { meetings: number; sent: number }> = {}
+  const timingMet: Record<string, { engagement: number; sent: number }> = {}
   for (const mo of messageOutcomes) {
     if (mo.sentAtDow === undefined || mo.sentAtHour === undefined) continue
     const key = `${mo.sentAtDow}:${mo.sentAtHour}`
-    if (!timingMet[key]) timingMet[key] = { meetings: 0, sent: 0 }
-    if (mo.event === 'SENT') timingMet[key].sent++
-    if (mo.event === 'MEETING_BOOKED' || mo.event === 'WON') timingMet[key].meetings++
+    if (!timingMet[key]) timingMet[key] = { engagement: 0, sent: 0 }
+    if (mo.event === 'SENT')                                      timingMet[key].sent++
+    if (mo.event === 'OPENED')                                    timingMet[key].engagement += 0.05
+    if (mo.event === 'CLICKED')                                   timingMet[key].engagement += 0.15
+    if (mo.event === 'REPLIED')                                   timingMet[key].engagement += 0.40
+    if (mo.event === 'MEETING_BOOKED' || mo.event === 'WON')     timingMet[key].engagement += 1.00
   }
 
   const timingWeights: Record<string, number> = {}
   for (const [key, counts] of Object.entries(timingMet)) {
     if (counts.sent < 3) continue
-    const meetingRate = counts.meetings / counts.sent
-    timingWeights[key] = Math.round(Math.min(100, Math.max(0, meetingRate * 500)))
+    const engagementRate = counts.engagement / counts.sent
+    timingWeights[key] = Math.round(Math.min(100, Math.max(0, engagementRate * 500)))
   }
 
   // ── ICP update from WON prospect characteristics ──────────────────────────

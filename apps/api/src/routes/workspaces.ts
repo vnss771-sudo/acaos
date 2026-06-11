@@ -133,6 +133,49 @@ workspaceRouter.post(
   })
 )
 
+// GET /api/workspaces/:id/product — fetch product context (or defaults)
+workspaceRouter.get(
+  '/:id/product',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId }
+    })
+    if (!membership) throw new ApiError(403, 'Access denied')
+
+    const product = await prisma.workspaceProduct.findUnique({ where: { workspaceId } })
+    res.json({ product })
+  })
+)
+
+// PUT /api/workspaces/:id/product — upsert product context
+workspaceRouter.put(
+  '/:id/product',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!membership) throw new ApiError(403, 'Must be owner or admin')
+
+    const allowed = ['productName', 'productCategory', 'targetICP', 'keyPainPoints', 'differentiators', 'ctaType', 'calendarUrl'] as const
+    const data: Record<string, unknown> = {}
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) data[key] = req.body[key]
+    }
+    if (Object.keys(data).length === 0) throw new ApiError(400, 'No valid fields provided')
+
+    const product = await prisma.workspaceProduct.upsert({
+      where:  { workspaceId },
+      create: { workspaceId, productName: 'field operations software', keyPainPoints: [], differentiators: [], ...data },
+      update: data,
+    })
+    res.json({ product })
+  })
+)
+
 workspaceRouter.get(
   '/:id/members',
   asyncHandler(async (req, res) => {
