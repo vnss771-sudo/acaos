@@ -447,7 +447,10 @@ export function generateRuleBasedRecommendation(
   const predictedNeed = norm?.predictedNeeds.slice(0, 3).join(', ') ?? 'Operational support'
 
   const freshnessMultiplier = isProblemOwner ? 2.0 : ageDays < 7 ? 1.3 : ageDays < 30 ? 1.0 : 0.7
-  const meetingProbability = Math.min(0.95, winProbability * freshnessMultiplier * 1.5)
+  // Floor at 0.35 for Problem-Owner Activation: a confirmed activation warrants a meaningful
+  // meeting probability even before the first scoring cycle sets winProbability > 0
+  const rawMeetingProb = winProbability * freshnessMultiplier * 1.5
+  const meetingProbability = Math.min(0.95, isProblemOwner ? Math.max(0.35, rawMeetingProb) : rawMeetingProb)
 
   return { bestContact, bestTiming, bestChannel, messageAngle, reasoning, actionText, urgency, priority, predictedNeed, meetingProbability }
 }

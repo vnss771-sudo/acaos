@@ -27,7 +27,9 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
     include: {
       signals: { orderBy: { detectedAt: 'desc' }, take: 5 },
-      recommendations: { orderBy: { priority: 'desc' }, take: 1 }
+      recommendations: { orderBy: { priority: 'desc' }, take: 1 },
+      // Accurate POA check independent of the take:5 signal window
+      _count: { select: { signals: { where: { type: 'PROBLEM_OWNER_ACTIVATION' } } } }
     },
     orderBy: { opportunityScore: 'desc' },
     take: 200
@@ -62,7 +64,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     latestSignal: p.signals[0] ?? null,
     signalCount: p.signals.length,
     topRecommendation: p.recommendations[0] ?? null,
-    isActivated: p.signals.some(s => s.type === 'PROBLEM_OWNER_ACTIVATION'),
+    isActivated: p._count.signals > 0,
   })
 
   res.json({
@@ -248,11 +250,11 @@ intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, r
 }))
 
 // DELETE /api/intelligence/industry-configs/:industry
-// workspaceId in request body to avoid URL-based workspace spoofing
+// workspaceId must come from the request body — never from query params (CSRF defence)
 intelligenceRouter.delete('/industry-configs/:industry', asyncHandler(async (req, res) => {
   const { industry } = req.params
-  const workspaceId = (req.body?.workspaceId ?? req.query.workspaceId) as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const workspaceId = req.body?.workspaceId as string | undefined
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required in request body')
 
   const userId = (req as AuthedRequest).user?.id
   if (!userId) throw new ApiError(401, 'Unauthorized')

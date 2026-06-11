@@ -4,16 +4,12 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import {
   calculateOpportunityScores, detectBuyingStage, calcWinProbability,
-  toFullSignal, detectProblemOwnerActivation, normalizeSignal, computeSignalExpiry
+  toRawSignal, toFullSignal, detectProblemOwnerActivation, normalizeSignal, computeSignalExpiry
 } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
-
-function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
-  return { type: s.type as RawSignal['type'], strength: s.strength, sourceReliability: s.sourceReliability, industryRelevance: s.industryRelevance, detectedAt: s.detectedAt }
-}
 
 // GET /api/signals?workspaceId=&prospectId=&type=
 signalsRouter.get('/', asyncHandler(async (req, res) => {
@@ -97,6 +93,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     )
     if (!hasRecent) {
       const norm = normalizeSignal('PROBLEM_OWNER_ACTIVATION')
+      const now = new Date()
       await prisma.signal.create({
         data: {
           workspaceId,
@@ -109,8 +106,17 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
           description: activation.evidencePieces.join(' · '),
           source: 'system',
           ...norm,
-          expiresAt: computeSignalExpiry('PROBLEM_OWNER_ACTIVATION', new Date()),
+          expiresAt: computeSignalExpiry('PROBLEM_OWNER_ACTIVATION', now),
         }
+      })
+      // Re-evaluate buying stage now that the POA signal exists — it maps to PURCHASING
+      const updatedRaw = [...allSignals.map(s => toRawSignal({ ...s, type: s.type as RawSignal['type'] })),
+        toRawSignal({ type: 'PROBLEM_OWNER_ACTIVATION', strength: activation.recommendedStrength, sourceReliability: 85, industryRelevance: 90, detectedAt: now })]
+      const newBuyingStage = detectBuyingStage(updatedRaw, scores.opportunityScore)
+      const newWinProbability = calcWinProbability(newBuyingStage, scores.opportunityScore)
+      await prisma.prospect.update({
+        where: { id: prospectId },
+        data: { buyingStage: newBuyingStage, winProbability: newWinProbability, lastSignalAt: now }
       })
     }
   }
