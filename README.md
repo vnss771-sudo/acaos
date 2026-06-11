@@ -30,6 +30,66 @@ This package is a production-oriented scaffold for **Agentic Client Acquisition 
 - Worker processors and external services remain scaffolds rather than live business logic
 - Stripe webhook handling is still only scaffold-level and not fully implemented end to end
 
+## Environment variables
+
+All variables are required unless marked optional.
+
+### Core infrastructure
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (`postgresql://user:pass@host:5432/db`) |
+| `REDIS_URL` | Redis connection string (`redis://host:6379`) |
+| `JWT_SECRET` | Secret for signing auth tokens — must be ≥32 chars in production |
+
+### AI
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | OpenAI API key for lead research, outreach generation, reply analysis |
+| `OPENAI_MODEL` | Model ID (default: `gpt-4o`) |
+
+### Email (SMTP outbound)
+| Variable | Description |
+|---|---|
+| `SMTP_HOST` | SMTP server hostname |
+| `SMTP_PORT` | SMTP port (optional, defaults to 587) |
+| `SMTP_USER` | SMTP login username |
+| `SMTP_PASS` | SMTP login password |
+| `SMTP_FROM` | Sender address, e.g. `ACAOS <noreply@yourdomain.com>` |
+
+### Email (IMAP inbound — prospect reply matching)
+| Variable | Description |
+|---|---|
+| `IMAP_HOST` | IMAP server hostname |
+| `IMAP_USER` | IMAP login username |
+| `IMAP_PASS` | IMAP login password |
+
+### Tracking & app URLs
+| Variable | Description |
+|---|---|
+| `APP_URL` | Public base URL of the API, e.g. `https://api.acaos.app` — used to inject open/click tracking pixels into emails |
+| `WEB_URL` | Public base URL of the web frontend — used in transactional email links |
+
+### Signal harvesting (optional — gracefully skipped when absent)
+| Variable | Description |
+|---|---|
+| `APOLLO_API_KEY` | Apollo.io API key for job-posting spike signals |
+| `SERPER_API_KEY` | Serper.dev API key for Google News mention signals |
+
+### Payments (optional)
+| Variable | Description |
+|---|---|
+| `STRIPE_SECRET_KEY` | Stripe secret key |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
+
+### Deployment checklist
+Before first deploy (and after any schema changes):
+```bash
+npx prisma generate --schema packages/db/prisma/schema.prisma
+npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+npm run typecheck
+npm test
+```
+
 ## Local setup
 ### Option A: local processes
 1. Copy `.env.example` to `.env` and fill values

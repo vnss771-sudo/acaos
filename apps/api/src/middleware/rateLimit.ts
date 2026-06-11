@@ -5,6 +5,7 @@ interface RateLimitOptions {
   max: number
   message?: string
   keyFn?: (req: Request) => string
+  skipFn?: (req: Request) => boolean
 }
 
 interface WindowEntry {
@@ -34,6 +35,7 @@ export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
   const keyFn = opts.keyFn ?? defaultKey
 
   return (req: Request, res: Response, next: NextFunction) => {
+    if (opts.skipFn?.(req)) return next()
     const key = keyFn(req)
     const now = Date.now()
 
@@ -91,6 +93,14 @@ export const syncRateLimit = createRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 10,
   message: 'Too many sync requests. Please wait before syncing again.'
+})
+
+// 10 outreach sends per hour per IP — only counts actual sends (send: true), not previews
+export const outreachSendRateLimit = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: 'Too many outreach emails sent. Please wait before sending more.',
+  skipFn: (req) => req.body?.send !== true,
 })
 
 // 20 ingest batch requests per 5 minutes per API key (prevents runaway scrapers)

@@ -431,7 +431,7 @@ const scoreProspectsWorker = new Worker(
           )
           if (!hasRecent) {
             const norm = normalizeSignal('PROBLEM_OWNER_ACTIVATION')
-            await prisma.signal.create({
+            const poaSignal = await prisma.signal.create({
               data: {
                 workspaceId,
                 prospectId: prospect.id,
@@ -446,6 +446,52 @@ const scoreProspectsWorker = new Worker(
                 expiresAt: computeSignalExpiry('PROBLEM_OWNER_ACTIVATION', new Date()),
               }
             })
+
+            // Immediately rescore with the new POA signal so this prospect's
+            // buying stage and opportunity score reflect activation in this cycle
+            // (not waiting for the next score-prospects run).
+            const updatedRawSignals = [...prospect.signals, poaSignal].map(toRawSignal)
+            const updatedScores = calculateOpportunityScores(updatedRawSignals, {
+              industry:      prospect.industry,
+              employeeCount: prospect.employeeCount,
+              contactEmail:  prospect.contactEmail,
+              contactName:   prospect.contactName,
+              domain:        prospect.domain,
+              location:      prospect.location,
+            }, icp ?? undefined, signalWeights ?? undefined)
+            const updatedStage   = detectBuyingStage(updatedRawSignals, updatedScores.opportunityScore)
+            const updatedWinProb = calcWinProbability(updatedStage, updatedScores.opportunityScore)
+            const updatedExpRev  = calculateExpectedRevenue(
+              updatedWinProb,
+              prospect.expectedDealValue,
+              prospect.retentionProbability,
+              prospect.expansionProbability,
+            )
+            await prisma.prospect.update({
+              where: { id: prospect.id },
+              data:  { ...updatedScores, buyingStage: updatedStage, winProbability: updatedWinProb, expectedRevenueScore: updatedExpRev },
+            })
+
+            // Check for PURCHASING transition triggered by the POA signal
+            if (updatedStage === 'PURCHASING' && buyingStage !== 'PURCHASING') {
+              log('score-prospects', `🚨 POA-triggered PURCHASING transition: ${prospect.companyName}`)
+              if (alertAddresses.length > 0 && isMailConfigured()) {
+                const alertHtml = `
+                  <h2 style="color:#f59e0b">⚡ Buying Window Open (POA Triggered)</h2>
+                  <p><strong>${prospect.companyName}</strong> just activated a Problem-Owner signal and entered <strong>PURCHASING</strong> stage.</p>
+                  <ul>
+                    <li>Opportunity Score: ${updatedScores.opportunityScore}/100</li>
+                    <li>Win Probability: ${Math.round(updatedWinProb * 100)}%</li>
+                    <li>POA Tier: ${activation.activationTier}</li>
+                    ${prospect.contactEmail ? `<li>Contact: ${prospect.contactName ?? ''} &lt;${prospect.contactEmail}&gt;</li>` : ''}
+                  </ul>
+                  <p>Act now — this buying window typically closes within 7–14 days.</p>
+                `
+                for (const email of alertAddresses) {
+                  sendMail(email, `⚡ ${prospect.companyName} is ready to buy (POA)`, alertHtml).catch(() => {})
+                }
+              }
+            }
           }
         }
       }))
@@ -954,6 +1000,7 @@ const harvestSignalsWorker = new Worker(
     await job.updateProgress(20)
 
     let signalsCreated = 0
+    let prospectFailures = 0
     const step = Math.max(1, Math.floor(60 / Math.max(prospects.length, 1)))
 
     for (const prospect of prospects) {
@@ -1018,10 +1065,20 @@ const harvestSignalsWorker = new Worker(
           signalsCreated++
         }
       } catch (err) {
+        prospectFailures++
         log('harvest-signals', `Failed for prospect ${prospect.id}: ${(err as Error).message}`)
       }
 
       await job.updateProgress(20 + step)
+    }
+
+    // Degraded-job detection: >50% failure rate means the integration is broken
+    if (prospects.length > 0 && prospectFailures / prospects.length > 0.5) {
+      console.error(
+        `[harvest-signals] DEGRADED workspaceId=${workspaceId} — ` +
+        `${prospectFailures}/${prospects.length} prospects failed. ` +
+        `Check APOLLO_API_KEY and SERPER_API_KEY.`
+      )
     }
 
     if (signalsCreated > 0) {

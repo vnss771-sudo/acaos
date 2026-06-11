@@ -914,10 +914,18 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   }
 
   const handleSendOutreach = async (prospectId: string, contactEmail: string) => {
+    if (!outreachModal) return
     try {
+      // Pass the exact reviewed copy so the API sends what the user approved,
+      // not a freshly generated version that may differ.
       await api(`/api/prospects/${prospectId}/outreach`, {
         method: 'POST',
-        body: JSON.stringify({ send: true, contactEmail })
+        body: JSON.stringify({
+          send:        true,
+          contactEmail,
+          subject:     outreachModal.subject,
+          emailBody:   outreachModal.body,
+        })
       })
       setOutreachModal(null)
       toast.success('Email sent')

@@ -17,6 +17,7 @@ import {
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate, enqueueAdvanceCadence } from '../lib/queues.js'
+import { outreachSendRateLimit } from '../middleware/rateLimit.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
@@ -449,7 +450,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
 }))
 
 // POST /api/prospects/:id/outreach — generate (and optionally send) signal-aware outreach
-prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
+prospectsRouter.post('/:id/outreach', outreachSendRateLimit, asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
     where: { id: req.params.id },
     include: {
@@ -462,17 +463,37 @@ prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const send = req.body.send === true
+  const send         = req.body.send === true
+  const clientSubject = req.body.subject   as string | undefined
+  const clientBody    = req.body.emailBody as string | undefined
+
   if (send && !prospect.contactEmail) throw new ApiError(422, 'Prospect has no contact email — cannot send')
 
+  const { isMailConfigured, sendMail } = await import('../services/mail.js')
+
+  // ── Fast path: user reviewed a draft and clicked Send — use that exact copy ──
+  if (send && clientSubject && clientBody) {
+    if (!isMailConfigured()) throw new ApiError(503, 'SMTP is not configured')
+    const html = `<p style="font-family:sans-serif;line-height:1.6">${clientBody.replace(/\n/g, '<br>')}</p>`
+    const outcome = await prisma.messageOutcome.create({
+      data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
+    })
+    await sendMail(prospect.contactEmail!, clientSubject, html, outcome.id)
+    await prisma.prospect.update({
+      where: { id: prospect.id },
+      data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
+    })
+    return res.json({ subject: clientSubject, email: clientBody, followup: null, sent: true })
+  }
+
+  // ── Generate path: call AI to produce fresh copy ──────────────────────────
   const { generateSignalAwareOutreach } = await import('../services/openai.js')
-  const { isMailConfigured, sendMail }  = await import('../services/mail.js')
 
   const [poaSignal, workspaceProduct] = [
     prospect.signals.find(s => s.type === 'PROBLEM_OWNER_ACTIVATION'),
     await prisma.workspaceProduct.findUnique({ where: { workspaceId: prospect.workspaceId } }),
   ]
-  const poaTier   = poaSignal?.title?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
+  const poaTier = poaSignal?.title?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
 
   const raw = await generateSignalAwareOutreach({
     businessName:     prospect.companyName,
@@ -498,14 +519,14 @@ prospectsRouter.post('/:id/outreach', asyncHandler(async (req, res) => {
   // Track AI usage
   const month = new Date().toISOString().slice(0, 7)
   await prisma.usageRecord.upsert({
-    where: { workspaceId_month_action: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH' } },
+    where:  { workspaceId_month_action: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH' } },
     create: { workspaceId: prospect.workspaceId, month, action: 'AI_OUTREACH', count: 1 },
     update: { count: { increment: 1 } },
   })
 
+  // This branch: send === true but no reviewed copy was provided (direct API callers)
   if (send) {
     if (!isMailConfigured()) throw new ApiError(503, 'SMTP is not configured')
-    // Create the outcome record first so we have the ID for tracking injection
     const outcome = await prisma.messageOutcome.create({
       data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
     })
