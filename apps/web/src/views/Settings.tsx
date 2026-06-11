@@ -39,10 +39,6 @@ type Suppression = {
   suppressedAt: string
 }
 
-type PendingReviewEnrollment = {
-  id: string
-  prospect: { companyName: string }
-}
 
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
