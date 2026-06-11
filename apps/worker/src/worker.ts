@@ -5,6 +5,7 @@ import { generateLeadResearch, generateOutreach, analyzeReply, generateSignalAwa
 import type { ProductContext } from '../../api/src/services/openai.js'
 import { sendMail, isMailConfigured } from '../../api/src/services/mail.js'
 import { fetchJobPostings } from '../../api/src/services/apollo.js'
+import { fetchNewsForCompany } from '../../api/src/services/news.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
 import type { ScoringWeights } from '../../api/src/lib/scoring.js'
@@ -773,6 +774,59 @@ const advanceCadenceWorker = new Worker(
       return { completed: true }
     }
 
+    const nextStep     = steps[enrollment.currentStep + 1]
+    const nextActionAt = nextStep
+      ? new Date(new Date(enrollment.enrolledAt).getTime() + nextStep.dayOffset * 86_400_000)
+      : null
+
+    await job.updateProgress(20)
+
+    // ── Channel dispatch ──────────────────────────────────────────────────────
+    if (step.channel === 'LINKEDIN' || step.channel === 'PHONE') {
+      // Non-email channels: record the touch as a manual-task placeholder and advance.
+      // The CRM records the event so the rep knows what to do; no automated send.
+      const hasLinkedIn = step.channel === 'LINKEDIN' && Boolean(prospect.linkedinUrl)
+      const hasPhone    = step.channel === 'PHONE'    && Boolean(prospect.contactPhone)
+
+      if (!hasLinkedIn && !hasPhone && step.channel === 'LINKEDIN') {
+        log('advance-cadence', `No LinkedIn URL for ${prospect.id} — skipping step ${enrollment.currentStep}`)
+      } else if (!hasPhone && step.channel === 'PHONE') {
+        log('advance-cadence', `No phone for ${prospect.id} — skipping step ${enrollment.currentStep}`)
+      } else {
+        await prisma.messageOutcome.create({
+          data: {
+            workspaceId: prospect.workspaceId,
+            prospectId:  prospect.id,
+            event:       'SENT',
+            channel:     step.channel,
+            sentAt:      new Date(),
+          },
+        })
+        log('advance-cadence', `${step.channel} touch recorded for ${prospect.id} step ${enrollment.currentStep}`)
+      }
+
+      await prisma.$transaction([
+        prisma.prospect.update({
+          where: { id: prospect.id },
+          data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
+        }),
+        (prisma as any).cadenceEnrollment.update({
+          where: { id: enrollmentId },
+          data: {
+            currentStep:  enrollment.currentStep + 1,
+            nextActionAt,
+            status:       nextStep ? 'ACTIVE' : 'COMPLETED',
+            completedAt:  nextStep ? null : new Date(),
+          },
+        }),
+      ])
+
+      await job.updateProgress(100)
+      log('advance-cadence', `${step.channel} step ${enrollment.currentStep} done — next: ${nextActionAt?.toISOString() ?? 'none'}`)
+      return { channel: step.channel, step: enrollment.currentStep, nextActionAt }
+    }
+
+    // ── EMAIL channel ─────────────────────────────────────────────────────────
     if (!prospect.contactEmail) {
       await (prisma as any).cadenceEnrollment.update({
         where: { id: enrollmentId },
@@ -790,8 +844,6 @@ const advanceCadenceWorker = new Worker(
       log('advance-cadence', `Mail not configured — pausing ${enrollmentId}`)
       return { paused: true, reason: 'mail_not_configured' }
     }
-
-    await job.updateProgress(20)
 
     const poaSignal      = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
     const poaTier        = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
@@ -824,11 +876,6 @@ const advanceCadenceWorker = new Worker(
       log('advance-cadence', `AI output invalid for ${enrollmentId} — skipping step`)
       return { error: 'invalid_ai_output' }
     }
-
-    const nextStep     = steps[enrollment.currentStep + 1]
-    const nextActionAt = nextStep
-      ? new Date(new Date(enrollment.enrolledAt).getTime() + nextStep.dayOffset * 86_400_000)
-      : null
 
     // Create outcome record before sending so its ID is available for tracking injection
     const outcome = await prisma.messageOutcome.create({
@@ -888,7 +935,7 @@ const harvestSignalsWorker = new Worker(
     // Find prospects with domains not harvested in the last 24h
     const oneDayAgo = new Date(Date.now() - 86_400_000)
     const recentRows = await prisma.signal.findMany({
-      where:    { workspaceId, type: 'JOB_POSTING_SPIKE', source: 'apollo-harvest', detectedAt: { gte: oneDayAgo } },
+      where:    { workspaceId, source: { in: ['apollo-harvest', 'serper-news'] }, detectedAt: { gte: oneDayAgo } },
       select:   { prospectId: true },
       distinct: ['prospectId'],
     })
@@ -897,11 +944,10 @@ const harvestSignalsWorker = new Worker(
     const prospects = await prisma.prospect.findMany({
       where: {
         workspaceId,
-        domain:       { not: null },
         outcomeStage: { notIn: ['WON', 'LOST'] },
         NOT: { id: { in: [...harvestedSet] } },
       },
-      select: { id: true, domain: true },
+      select: { id: true, companyName: true, domain: true },
       take: 50,
     })
 
@@ -911,34 +957,62 @@ const harvestSignalsWorker = new Worker(
     const step = Math.max(1, Math.floor(60 / Math.max(prospects.length, 1)))
 
     for (const prospect of prospects) {
-      if (!prospect.domain) continue
-
       try {
-        const postings        = await fetchJobPostings(prospect.domain)
-        const matchingPostings = postings.filter(p =>
-          ROLE_KEYWORDS.some(kw => p.title.toLowerCase().includes(kw.toLowerCase()))
-        )
+        // ── Apollo job postings ──
+        if (prospect.domain) {
+          const postings        = await fetchJobPostings(prospect.domain)
+          const matchingPostings = postings.filter(p =>
+            ROLE_KEYWORDS.some(kw => p.title.toLowerCase().includes(kw.toLowerCase()))
+          )
 
-        if (matchingPostings.length > 0) {
-          const strength = Math.min(100, 45 + matchingPostings.length * 8)
-          const titles   = matchingPostings.slice(0, 3).map(p => p.title).join(', ')
-          const norm     = normalizeSignal('JOB_POSTING_SPIKE')
-          const now      = new Date()
+          if (matchingPostings.length > 0) {
+            const strength = Math.min(100, 45 + matchingPostings.length * 8)
+            const titles   = matchingPostings.slice(0, 3).map(p => p.title).join(', ')
+            const norm     = normalizeSignal('JOB_POSTING_SPIKE')
+            const now      = new Date()
+
+            await prisma.signal.create({
+              data: {
+                workspaceId,
+                prospectId:        prospect.id,
+                type:              'JOB_POSTING_SPIKE',
+                strength,
+                sourceReliability: 80,
+                industryRelevance: 85,
+                title:             `${matchingPostings.length} matching job posting${matchingPostings.length > 1 ? 's' : ''} detected`,
+                description:       `Roles: ${titles}`,
+                source:            'apollo-harvest',
+                ...norm,
+                detectedAt:        now,
+                expiresAt:         computeSignalExpiry('JOB_POSTING_SPIKE', now),
+              },
+            })
+            signalsCreated++
+          }
+        }
+
+        // ── News mentions (Serper) ──
+        const articles = await fetchNewsForCompany(prospect.companyName, prospect.domain, { limit: 5, withinDays: 14 })
+        if (articles.length > 0) {
+          const strength = Math.min(100, 40 + articles.length * 10)
+          const headlines = articles.slice(0, 3).map(a => a.title).join(' · ')
+          const norm      = normalizeSignal('NEWS_MENTION')
+          const now       = new Date()
 
           await prisma.signal.create({
             data: {
               workspaceId,
-              prospectId:       prospect.id,
-              type:             'JOB_POSTING_SPIKE',
+              prospectId:        prospect.id,
+              type:              'NEWS_MENTION',
               strength,
-              sourceReliability: 80,
-              industryRelevance: 85,
-              title:            `${matchingPostings.length} matching job posting${matchingPostings.length > 1 ? 's' : ''} detected`,
-              description:      `Roles: ${titles}`,
-              source:           'apollo-harvest',
+              sourceReliability: 70,
+              industryRelevance: 70,
+              title:             `${articles.length} news article${articles.length > 1 ? 's' : ''} in the last 14 days`,
+              description:       headlines,
+              source:            'serper-news',
               ...norm,
-              detectedAt:       now,
-              expiresAt:        computeSignalExpiry('JOB_POSTING_SPIKE', now),
+              detectedAt:        now,
+              expiresAt:         computeSignalExpiry('NEWS_MENTION', now),
             },
           })
           signalsCreated++
