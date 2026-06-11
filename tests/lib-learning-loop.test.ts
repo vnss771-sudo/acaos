@@ -247,6 +247,44 @@ describe('calibrate() message weights', () => {
     assert.deepEqual(result.channelWeights, {})
     assert.deepEqual(result.timingWeights, {})
   })
+
+  it('full-funnel: REPLIED contributes 0.40 engagement weight per event', () => {
+    const msgOutcomes = [
+      ...Array.from({ length: 10 }, () => ({ event: 'SENT',    channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 5 },  () => ({ event: 'REPLIED', channel: 'EMAIL', industry: null })),
+    ]
+    const result = calibrate(makeOutcomes(10), msgOutcomes)
+    // engagement = 5 * 0.40 = 2.0; rate = 2.0/10 = 0.2; score = 0.2*500 = 100 (clamped)
+    assert.ok('EMAIL' in result.channelWeights)
+    assert.equal(result.channelWeights['EMAIL'], 100)
+  })
+
+  it('full-funnel: OPENED contributes 0.05 and CLICKED 0.15 engagement weight', () => {
+    const msgOutcomes = [
+      ...Array.from({ length: 10 }, () => ({ event: 'SENT',    channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 4 },  () => ({ event: 'OPENED',  channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 2 },  () => ({ event: 'CLICKED', channel: 'EMAIL', industry: null })),
+    ]
+    const result = calibrate(makeOutcomes(10), msgOutcomes)
+    // engagement = 4*0.05 + 2*0.15 = 0.2 + 0.3 = 0.5; rate = 0.5/10 = 0.05; score = 0.05*500 = 25
+    assert.ok('EMAIL' in result.channelWeights)
+    assert.equal(result.channelWeights['EMAIL'], 25)
+  })
+
+  it('full-funnel: mixed funnel events produce correct composite score', () => {
+    const msgOutcomes = [
+      ...Array.from({ length: 20 }, () => ({ event: 'SENT',           channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 10 }, () => ({ event: 'OPENED',         channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 5 },  () => ({ event: 'CLICKED',        channel: 'EMAIL', industry: null })),
+      ...Array.from({ length: 2 },  () => ({ event: 'REPLIED',        channel: 'EMAIL', industry: null })),
+      { event: 'MEETING_BOOKED', channel: 'EMAIL', industry: null },
+    ]
+    const result = calibrate(makeOutcomes(10), msgOutcomes)
+    // engagement = 10*0.05 + 5*0.15 + 2*0.40 + 1*1.0 = 0.5 + 0.75 + 0.8 + 1.0 = 3.05
+    // rate = 3.05/20 = 0.1525; score = 0.1525*500 = 76.25 → round = 76
+    assert.ok('EMAIL' in result.channelWeights)
+    assert.equal(result.channelWeights['EMAIL'], 76)
+  })
 })
 
 // ── predictBuyingIntent() ─────────────────────────────────────────────────────
