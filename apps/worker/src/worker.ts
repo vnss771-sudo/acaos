@@ -31,6 +31,7 @@ import {
 import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
 import { cfg } from '../../api/src/lib/env.js'
+import { detectVertical } from '../../api/src/lib/verticals.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -970,6 +971,21 @@ const advanceCadenceWorker = new Worker(
     }
 
     // ── EMAIL channel ─────────────────────────────────────────────────────────
+    // Check email suppression list before sending
+    if (prospect.contactEmail) {
+      const suppressed = await prisma.emailSuppression.findUnique({
+        where: { workspaceId_email: { workspaceId: prospect.workspaceId, email: prospect.contactEmail } },
+      })
+      if (suppressed) {
+        await prisma.cadenceEnrollment.update({
+          where: { id: enrollmentId },
+          data:  { status: 'PAUSED' },
+        })
+        log('advance-cadence', `Email suppressed for ${prospect.contactEmail} — pausing ${enrollmentId}`)
+        return { paused: true, reason: 'email_suppressed' }
+      }
+    }
+
     if (!prospect.contactEmail) {
       await prisma.cadenceEnrollment.update({
         where: { id: enrollmentId },
@@ -988,11 +1004,39 @@ const advanceCadenceWorker = new Worker(
       return { paused: true, reason: 'mail_not_configured' }
     }
 
-    const poaSignal      = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
-    const poaTier        = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
+    // Require human review for INITIAL step when cadence has requiresReview=true
+    if (enrollment.cadence.requiresReview && step.templateType === 'INITIAL') {
+      await prisma.cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data:  { status: 'PENDING_REVIEW' },
+      })
+      log('advance-cadence', `Cadence ${enrollment.cadenceId} requires review — pausing enrollment ${enrollmentId} for human approval`)
+      return { paused: true, reason: 'pending_review' }
+    }
+
+    // Enforce workspace daily send limit
     const workspaceProduct = await prisma.workspaceProduct.findUnique({
       where: { workspaceId: prospect.workspaceId },
     }) as ProductContext | null
+    const sendLimit = (workspaceProduct as { sendLimitPerDay?: number | null } | null)?.sendLimitPerDay ?? 50
+    const todayStart = new Date()
+    todayStart.setUTCHours(0, 0, 0, 0)
+    const todaySends = await prisma.messageSend.count({
+      where: { workspaceId: prospect.workspaceId, channel: 'EMAIL', sentAt: { gte: todayStart } },
+    })
+    if (todaySends >= sendLimit) {
+      // Re-schedule for tomorrow
+      const tomorrow = new Date(todayStart.getTime() + 86_400_000)
+      await prisma.cadenceEnrollment.update({
+        where: { id: enrollmentId },
+        data:  { nextActionAt: tomorrow },
+      })
+      log('advance-cadence', `Daily send limit reached (${todaySends}/${sendLimit}) — rescheduling ${enrollmentId} for tomorrow`)
+      return { rescheduled: true, nextActionAt: tomorrow, reason: 'daily_send_limit' }
+    }
+
+    const poaSignal      = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
+    const poaTier        = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
 
     const raw = await generateSignalAwareOutreach({
       businessName:     prospect.companyName,
@@ -1391,6 +1435,7 @@ const opportunityBriefWorker = new Worker(
       ageDays:     Math.round((Date.now() - s.detectedAt.getTime()) / 86_400_000),
     }))
 
+    const vertical = detectVertical(prospect.industry, prospect.description)
     const brief = await generateOpportunityBrief({
       companyName:      prospect.companyName,
       industry:         prospect.industry,
@@ -1402,6 +1447,7 @@ const opportunityBriefWorker = new Worker(
       signals:          signalsForBrief,
       evidence,
       product:          (prospect.workspace.workspaceProduct as ProductContext | null) ?? null,
+      verticalContext:  vertical ? { likelyProblems: vertical.likelyProblems, ownerRoles: vertical.ownerRoles, offerAngles: vertical.offerAngles } : null,
     })
 
     await job.updateProgress(80)
@@ -1548,6 +1594,124 @@ const maintenanceWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── daily-brief ───────────────────────────────────────────────────────────────
+const dailyBriefWorker = new Worker(
+  'daily-brief',
+  async (job) => {
+    const { workspaceId } = job.data as { workspaceId: string }
+
+    // Scheduler sentinel — broadcast to all workspaces
+    if (workspaceId === '__scheduler__') {
+      const workspaces = await prisma.workspace.findMany({ select: { id: true } })
+      for (const ws of workspaces) {
+        await getQueue('daily-brief').add(
+          'daily-brief',
+          { workspaceId: ws.id },
+          { ...defaultJobOptions, jobId: `daily-brief:${ws.id}:${new Date().toISOString().slice(0, 10)}` }
+        )
+      }
+      log('daily-brief', `Scheduled daily briefs for ${workspaces.length} workspaces`)
+      return { scheduled: workspaces.length }
+    }
+
+    const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+    log('daily-brief', `Generating daily brief for workspaceId=${workspaceId} date=${today}`)
+
+    await job.updateProgress(10)
+
+    const [hotProspects, warmProspects, ownerEmails] = await Promise.all([
+      prisma.prospect.findMany({
+        where: { workspaceId, opportunityScore: { gte: 72 }, outcomeStage: { notIn: ['WON', 'LOST'] } },
+        include: { opportunityBrief: { select: { whyNow: true, offerAngle: true } } },
+        orderBy: { opportunityScore: 'desc' },
+        take: 10,
+      }),
+      prisma.prospect.findMany({
+        where: { workspaceId, opportunityScore: { gte: 45, lt: 72 }, outcomeStage: { notIn: ['WON', 'LOST'] } },
+        orderBy: { opportunityScore: 'desc' },
+        take: 5,
+      }),
+      prisma.membership.findMany({
+        where: { workspaceId, role: 'owner' },
+        include: { user: { select: { email: true } } },
+      }),
+    ])
+
+    await job.updateProgress(40)
+
+    const topOpps = hotProspects.slice(0, 5).map(p => ({
+      id: p.id,
+      companyName: p.companyName,
+      score: p.opportunityScore,
+      tier: 'HOT' as const,
+      whyNow: (p.opportunityBrief?.whyNow as string[] | null)?.[0] ?? null,
+      action: p.contactEmail ? 'Send outreach' : 'Find contact email',
+    }))
+
+    // Upsert — idempotent so if re-run same day it updates not duplicates
+    await prisma.dailyBrief.upsert({
+      where: { workspaceId_date: { workspaceId, date: today } },
+      create: { workspaceId, date: today, hotCount: hotProspects.length, warmCount: warmProspects.length, topOpps },
+      update: { hotCount: hotProspects.length, warmCount: warmProspects.length, topOpps },
+    })
+
+    await job.updateProgress(70)
+
+    // Send morning digest email to owners
+    if (isMailConfigured() && ownerEmails.length > 0 && (hotProspects.length > 0 || warmProspects.length > 0)) {
+      const topOppRows = topOpps.map(o => `
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #1e293b">${o.companyName}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#f59e0b">${o.score}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#94a3b8;font-size:13px">${o.whyNow ?? '—'}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#22c55e;font-size:13px">${o.action}</td>
+        </tr>
+      `).join('')
+
+      const html = `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#0f172a;color:#e2e8f0;padding:24px;border-radius:12px">
+          <h2 style="color:#f59e0b;margin:0 0 4px">⚡ Buying Window Brief — ${today}</h2>
+          <p style="color:#94a3b8;margin:0 0 20px">Your pipeline snapshot for today</p>
+          <div style="background:#1e293b;border-radius:8px;padding:16px;margin-bottom:20px">
+            <span style="color:#f59e0b;font-size:24px;font-weight:bold">${hotProspects.length}</span>
+            <span style="color:#94a3b8;margin-left:8px">HOT</span>
+            <span style="margin:0 16px;color:#334155">·</span>
+            <span style="color:#3b82f6;font-size:24px;font-weight:bold">${warmProspects.length}</span>
+            <span style="color:#94a3b8;margin-left:8px">WARM</span>
+          </div>
+          ${topOpps.length > 0 ? `
+          <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+            <thead>
+              <tr style="background:#1e293b">
+                <th style="text-align:left;padding:8px 12px;color:#94a3b8;font-weight:500">Company</th>
+                <th style="text-align:left;padding:8px 12px;color:#94a3b8;font-weight:500">Score</th>
+                <th style="text-align:left;padding:8px 12px;color:#94a3b8;font-weight:500">Why Now</th>
+                <th style="text-align:left;padding:8px 12px;color:#94a3b8;font-weight:500">Next Action</th>
+              </tr>
+            </thead>
+            <tbody>${topOppRows}</tbody>
+          </table>` : ''}
+          <p style="color:#475569;font-size:12px;margin:0">Powered by ACAOS signal intelligence</p>
+        </div>
+      `
+
+      for (const m of ownerEmails) {
+        sendMail(m.user.email, `⚡ ${hotProspects.length} HOT prospect${hotProspects.length !== 1 ? 's' : ''} in your pipeline — ${today}`, html).catch(() => {})
+      }
+
+      await prisma.dailyBrief.update({
+        where: { workspaceId_date: { workspaceId, date: today } },
+        data:  { sentAt: new Date() },
+      })
+    }
+
+    await job.updateProgress(100)
+    log('daily-brief', `Done workspaceId=${workspaceId} hot=${hotProspects.length} warm=${warmProspects.length}`)
+    return { workspaceId, date: today, hotCount: hotProspects.length, warmCount: warmProspects.length }
+  },
+  { connection, concurrency: 2 }
+)
+
 // ── Error handlers ─────────────────────────────────────────────────────────────
 for (const [name, worker] of [
   ['research-lead',               researchWorker],
@@ -1564,6 +1728,7 @@ for (const [name, worker] of [
   ['generate-opportunity-brief',  opportunityBriefWorker],
   ['retrain-signal-weights',      retrainWeightsWorker],
   ['maintenance',                 maintenanceWorker],
+  ['daily-brief',                 dailyBriefWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -1591,6 +1756,7 @@ async function shutdown(signal: string) {
     opportunityBriefWorker.close(),
     retrainWeightsWorker.close(),
     maintenanceWorker.close(),
+    dailyBriefWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -1607,4 +1773,11 @@ getQueue('maintenance').add(
   { repeat: { pattern: '0 3 * * *' }, jobId: 'maintenance:daily' }
 ).catch(err => console.warn('[worker] Failed to register maintenance repeatable:', err.message))
 
-console.log('[worker] Started — listening on 14 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage, generate-opportunity-brief, retrain-signal-weights, maintenance)')
+// Register daily-brief scheduler as a repeatable job (07:00 UTC every day)
+getQueue('daily-brief').add(
+  'daily-brief',
+  { workspaceId: '__scheduler__' },
+  { repeat: { pattern: '0 7 * * *' }, jobId: 'daily-brief:scheduler' }
+).catch(err => console.warn('[worker] Failed to register daily-brief repeatable:', err.message))
+
+console.log('[worker] Started — listening on 15 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage, generate-opportunity-brief, retrain-signal-weights, maintenance, daily-brief)')

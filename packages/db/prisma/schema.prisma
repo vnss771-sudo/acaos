@@ -50,6 +50,8 @@ model Workspace {
   messageSends         MessageSend[]
   engagementEvents     EngagementEvent[]
   signalCombinations   SignalCombinationPerformance[]
+  emailSuppressions    EmailSuppression[]
+  dailyBriefs          DailyBrief[]
 }
 
 model Membership {
@@ -420,6 +422,7 @@ model WorkspaceProduct {
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+  sendLimitPerDay Int       @default(50)
 }
 
 // Per-workspace database-backed industry signal weight matrix
@@ -472,6 +475,7 @@ model Cadence {
   // JSON array of CadenceStep: { dayOffset: number, channel: string, templateType: string }
   steps       Json
   isDefault   Boolean             @default(false)
+  requiresReview Boolean          @default(true)
   workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   enrollments CadenceEnrollment[]
   createdAt   DateTime            @default(now())
@@ -624,4 +628,45 @@ model SignalCombinationPerformance {
   @@unique([workspaceId, signalPattern])
   @@index([workspaceId])
   @@index([workspaceId, replyCount])
+}
+
+// ── Prospect page session — persists chat history for /for/:token pages ───────
+model ProspectPageSession {
+  id          String   @id @default(cuid())
+  token       String   @unique
+  chatHistory Json     @default("[]")
+  dealStage   String   @default("EXPLORE")  // EXPLORE | EVALUATE | CLOSE | DONE
+  viewCount   Int      @default(0)
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+// ── Email suppression list — unsubscribes, bounces, complaints ────────────────
+model EmailSuppression {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  email        String
+  reason       String    // UNSUBSCRIBE | BOUNCE | COMPLAINT | MANUAL
+  suppressedAt DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+  @@index([workspaceId, email])
+}
+
+// ── Daily buying-window brief — generated at 07:00 UTC per workspace ──────────
+model DailyBrief {
+  id          String    @id @default(cuid())
+  workspaceId String
+  date        String    // YYYY-MM-DD
+  hotCount    Int       @default(0)
+  warmCount   Int       @default(0)
+  topOpps     Json      // Array of { id, companyName, score, tier, whyNow, action }
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, date])
+  @@index([workspaceId])
 }

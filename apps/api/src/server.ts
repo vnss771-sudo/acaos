@@ -69,6 +69,28 @@ app.get('/api/health', async (_req, res) => {
   })
 })
 
+// GET /api/readyz — Kubernetes-style readiness probe
+app.get('/api/readyz', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`
+    res.status(200).json({ ready: true })
+  } catch {
+    res.status(503).json({ ready: false, reason: 'database_unavailable' })
+  }
+})
+
+// GET /api/status — extended operational status
+app.get('/api/status', (_req, res) => {
+  res.json({
+    service:   'acaos-api',
+    version:   process.env.npm_package_version || '1.3.0',
+    env:       cfg.nodeEnv,
+    uptime:    Math.floor(process.uptime()),
+    memory:    process.memoryUsage(),
+    timestamp: new Date().toISOString(),
+  })
+})
+
 app.use('/api/auth', authRouter)
 app.use('/api/billing', billingRouter)
 app.use('/api/ai', aiRouter)
@@ -93,7 +115,7 @@ const QUEUE_NAMES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'score-prospects', 'generate-recommendations', 'calibrate-scoring',
   'generate-strategy-cards', 'advance-cadence', 'harvest-signals', 're-engage',
-  'generate-opportunity-brief', 'retrain-signal-weights', 'maintenance',
+  'generate-opportunity-brief', 'retrain-signal-weights', 'maintenance', 'daily-brief',
 ]
 createBullBoard({
   queues: QUEUE_NAMES.map(name => new BullMQAdapter(getQueue(name))),

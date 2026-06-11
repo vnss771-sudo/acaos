@@ -122,3 +122,11 @@ export async function enqueueMaintenanceRun() {
     { ...defaultJobOpts, jobId: 'maintenance:daily' }
   )
 }
+
+export async function enqueueDailyBrief(workspaceId: string) {
+  return getQueue('daily-brief').add(
+    'daily-brief',
+    { workspaceId },
+    { ...defaultJobOpts, jobId: `daily-brief:${workspaceId}:${new Date().toISOString().slice(0, 10)}` }
+  )
+}

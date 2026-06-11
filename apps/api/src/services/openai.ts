@@ -227,6 +227,11 @@ export type OpportunityBriefInput = {
   }>
   evidence:  ScoreEvidence
   product:   ProductContext | null
+  verticalContext?: {
+    likelyProblems: string[]
+    ownerRoles: string[]
+    offerAngles: string[]
+  } | null
 }
 
 export type OpportunityBriefOutput = {
@@ -270,6 +275,13 @@ Pain points: ${p.keyPainPoints.join(', ')}
 Differentiators: ${p.differentiators.join(', ')}`
     : 'Product context not available.'
 
+  const verticalSection = input.verticalContext
+    ? `\nVERTICAL CONTEXT (${input.industry ?? 'unknown'} vertical):
+Typical problems: ${input.verticalContext.likelyProblems.slice(0, 3).join(' / ')}
+Likely problem owner roles: ${input.verticalContext.ownerRoles.slice(0, 3).join(', ')}
+Recommended offer angles: ${input.verticalContext.offerAngles.slice(0, 2).join(' / ')}`
+    : ''
+
   const raw = await chat(
     `You are a B2B sales intelligence analyst. Given company signals and scoring context, answer five questions: why this company, why now, what is the likely problem, who owns it, and what offer angle is most likely to land. Be specific to the signals provided — never generic.
 
@@ -301,7 +313,7 @@ ${evidenceSummary}
 ${rejectionSummary}
 
 ${productContext}
-
+${verticalSection}
 Answer the five questions with evidence-based specificity. If signals are sparse, reflect that in a lower confidenceScore.`
   )
 
