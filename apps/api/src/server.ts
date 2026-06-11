@@ -1,6 +1,9 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import { createBullBoard } from '@bull-board/api'
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
+import { ExpressAdapter } from '@bull-board/express'
 import { authRouter } from './routes/auth.js'
 import { billingRouter } from './routes/billing.js'
 import { aiRouter } from './routes/ai.js'
@@ -19,6 +22,7 @@ import { trackingRouter } from './routes/tracking.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
+import { getQueue } from './lib/queues.js'
 
 const app = express()
 
@@ -76,6 +80,30 @@ app.use('/api/prospects', prospectsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
 app.use('/api/track', trackingRouter)
+
+// ── Bull Board — queue dashboard (auth-gated in production via BULL_BOARD_USER/PASS) ──
+const boardAdapter = new ExpressAdapter()
+boardAdapter.setBasePath('/api/queues')
+const QUEUE_NAMES = [
+  'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
+  'score-prospects', 'generate-recommendations', 'calibrate-scoring',
+  'generate-strategy-cards', 'advance-cadence', 'harvest-signals', 're-engage',
+]
+createBullBoard({
+  queues: QUEUE_NAMES.map(name => new BullMQAdapter(getQueue(name))),
+  serverAdapter: boardAdapter,
+})
+// Basic-auth gate when BULL_BOARD_USER is set — skip auth in development
+if (process.env.BULL_BOARD_USER) {
+  app.use('/api/queues', (req, res, next) => {
+    const b64 = (req.headers.authorization ?? '').replace('Basic ', '')
+    const [user, pass] = Buffer.from(b64, 'base64').toString().split(':')
+    if (user === process.env.BULL_BOARD_USER && pass === process.env.BULL_BOARD_PASS) return next()
+    res.setHeader('WWW-Authenticate', 'Basic realm="Queue Dashboard"')
+    res.status(401).end('Unauthorized')
+  })
+}
+app.use('/api/queues', boardAdapter.getRouter())
 
 app.use(notFoundHandler)
 app.use(errorHandler)

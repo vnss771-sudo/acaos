@@ -232,7 +232,7 @@ intelligenceRouter.get('/industry-configs', asyncHandler(async (req, res) => {
 
 // PUT /api/intelligence/industry-configs/:industry
 intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, res) => {
-  const { industry } = req.params
+  const industry = req.params.industry as string
   const { workspaceId, signalBoosts, description } = req.body
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
   if (!signalBoosts || typeof signalBoosts !== 'object') throw new ApiError(400, 'signalBoosts must be an object')
@@ -253,7 +253,7 @@ intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, r
 // DELETE /api/intelligence/industry-configs/:industry
 // workspaceId must come from the request body — never from query params (CSRF defence)
 intelligenceRouter.delete('/industry-configs/:industry', asyncHandler(async (req, res) => {
-  const { industry } = req.params
+  const industry = req.params.industry as string
   const workspaceId = req.body?.workspaceId as string | undefined
   if (!workspaceId) throw new ApiError(400, 'workspaceId required in request body')
 
@@ -277,7 +277,7 @@ intelligenceRouter.get('/cadences', asyncHandler(async (req, res) => {
   if (!userId) throw new ApiError(401, 'Unauthorized')
   await assertMembership(userId, workspaceId)
 
-  const enrollments = await (prisma as any).cadenceEnrollment.findMany({
+  const enrollments = await prisma.cadenceEnrollment.findMany({
     where: { workspaceId },
     include: {
       prospect: { select: { id: true, companyName: true, contactEmail: true, contactName: true } },

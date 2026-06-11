@@ -137,7 +137,7 @@ function getIndustryWeight(type: SignalType, industry?: string | null, industryB
   const lower = industry.toLowerCase()
   const boostMap = industryBoosts ?? INDUSTRY_SIGNAL_BOOST
   for (const [key, boosts] of Object.entries(boostMap)) {
-    if (lower.includes(key)) {
+    if (lower.includes(key) && boosts) {
       return boosts[type] ?? EVENT_BASE_WEIGHTS[type]
     }
   }

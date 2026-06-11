@@ -277,7 +277,7 @@ const replyWorker = new Worker(
 
         // When INTERESTED and a calendar URL is configured, auto-send booking link
         if (parsed.classification === 'INTERESTED' && prospect.contactEmail && isMailConfigured()) {
-          const productConfig = await (prisma as any).workspaceProduct.findUnique({
+          const productConfig = await prisma.workspaceProduct.findUnique({
             where: { workspaceId: prospect.workspaceId },
             select: { calendarUrl: true, productName: true },
           })
@@ -354,6 +354,13 @@ const scoreProspectsWorker = new Worker(
     ])
     const signalWeights  = (scoringModel?.signalWeights ?? null) as SignalWeights | null
     const alertAddresses = ownerEmails.map(m => m.user.email).filter(Boolean)
+    const icpConfig = icp ? {
+      targetIndustries: icp.targetIndustries,
+      minEmployees:     icp.minEmployees  ?? undefined,
+      maxEmployees:     icp.maxEmployees  ?? undefined,
+      targetGeos:       icp.targetGeos,
+      mustHaveEmail:    icp.mustHaveEmail,
+    } : undefined
 
     const BATCH_SIZE = 200
     let cursor: string | undefined
@@ -378,7 +385,7 @@ const scoreProspectsWorker = new Worker(
           contactName:   prospect.contactName,
           domain:        prospect.domain,
           location:      prospect.location,
-        }, icp ?? undefined, signalWeights ?? undefined)
+        }, icpConfig, signalWeights ?? undefined)
         const buyingStage          = detectBuyingStage(rawSignals, scores.opportunityScore)
         const winProbability       = calcWinProbability(buyingStage, scores.opportunityScore)
         const expectedRevenueScore = calculateExpectedRevenue(
@@ -458,7 +465,7 @@ const scoreProspectsWorker = new Worker(
               contactName:   prospect.contactName,
               domain:        prospect.domain,
               location:      prospect.location,
-            }, icp ?? undefined, signalWeights ?? undefined)
+            }, icpConfig, signalWeights ?? undefined)
             const updatedStage   = detectBuyingStage(updatedRawSignals, updatedScores.opportunityScore)
             const updatedWinProb = calcWinProbability(updatedStage, updatedScores.opportunityScore)
             const updatedExpRev  = calculateExpectedRevenue(
@@ -777,7 +784,7 @@ const advanceCadenceWorker = new Worker(
     const { enrollmentId } = job.data as { enrollmentId: string }
     log('advance-cadence', `Processing enrollmentId=${enrollmentId}`)
 
-    const enrollment = await (prisma as any).cadenceEnrollment.findUnique({
+    const enrollment = await prisma.cadenceEnrollment.findUnique({
       where:   { id: enrollmentId },
       include: {
         prospect: {
@@ -800,7 +807,7 @@ const advanceCadenceWorker = new Worker(
 
     // Auto-complete if prospect has moved past the contact stage
     if (['MEETING', 'PROPOSAL', 'WON', 'LOST'].includes(prospect.outcomeStage)) {
-      await (prisma as any).cadenceEnrollment.update({
+      await prisma.cadenceEnrollment.update({
         where: { id: enrollmentId },
         data:  { status: 'COMPLETED', completedAt: new Date() },
       })
@@ -812,7 +819,7 @@ const advanceCadenceWorker = new Worker(
     const step  = steps[enrollment.currentStep]
 
     if (!step) {
-      await (prisma as any).cadenceEnrollment.update({
+      await prisma.cadenceEnrollment.update({
         where: { id: enrollmentId },
         data:  { status: 'COMPLETED', completedAt: new Date() },
       })
@@ -856,7 +863,7 @@ const advanceCadenceWorker = new Worker(
           where: { id: prospect.id },
           data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
         }),
-        (prisma as any).cadenceEnrollment.update({
+        prisma.cadenceEnrollment.update({
           where: { id: enrollmentId },
           data: {
             currentStep:  enrollment.currentStep + 1,
@@ -874,7 +881,7 @@ const advanceCadenceWorker = new Worker(
 
     // ── EMAIL channel ─────────────────────────────────────────────────────────
     if (!prospect.contactEmail) {
-      await (prisma as any).cadenceEnrollment.update({
+      await prisma.cadenceEnrollment.update({
         where: { id: enrollmentId },
         data:  { status: 'PAUSED' },
       })
@@ -883,7 +890,7 @@ const advanceCadenceWorker = new Worker(
     }
 
     if (!isMailConfigured()) {
-      await (prisma as any).cadenceEnrollment.update({
+      await prisma.cadenceEnrollment.update({
         where: { id: enrollmentId },
         data:  { status: 'PAUSED' },
       })
@@ -893,7 +900,7 @@ const advanceCadenceWorker = new Worker(
 
     const poaSignal      = prospect.signals.find((s: { type: string }) => s.type === 'PROBLEM_OWNER_ACTIVATION')
     const poaTier        = (poaSignal?.title as string | undefined)?.match(/\((POSSIBLE|PROBABLE|CONFIRMED)\)/)?.[1]
-    const workspaceProduct = await (prisma as any).workspaceProduct.findUnique({
+    const workspaceProduct = await prisma.workspaceProduct.findUnique({
       where: { workspaceId: prospect.workspaceId },
     }) as ProductContext | null
 
@@ -943,7 +950,7 @@ const advanceCadenceWorker = new Worker(
         where: { id: prospect.id },
         data:  { outcomeStage: 'CONTACTED', lastContactedAt: new Date() },
       }),
-      (prisma as any).cadenceEnrollment.update({
+      prisma.cadenceEnrollment.update({
         where: { id: enrollmentId },
         data: {
           currentStep:  enrollment.currentStep + 1,
@@ -1145,11 +1152,11 @@ const reEngageWorker = new Worker(
     for (const prospect of toEnroll) {
       try {
         // Find or create the workspace default cadence
-        let cadence = await (prisma as any).cadence.findFirst({
+        let cadence = await prisma.cadence.findFirst({
           where: { workspaceId, isDefault: true },
         })
         if (!cadence) {
-          cadence = await (prisma as any).cadence.create({
+          cadence = await prisma.cadence.create({
             data: {
               workspaceId,
               name:      'Default 3-Step Email Sequence',
@@ -1163,7 +1170,7 @@ const reEngageWorker = new Worker(
           })
         }
 
-        const enrollment = await (prisma as any).cadenceEnrollment.upsert({
+        const enrollment = await prisma.cadenceEnrollment.upsert({
           where:  { prospectId_cadenceId: { prospectId: prospect.id, cadenceId: cadence.id } },
           create: {
             workspaceId,

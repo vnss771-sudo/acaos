@@ -7,6 +7,8 @@
     "start": "npx prisma migrate deploy --schema ../../packages/db/prisma/schema.prisma && tsx src/server.ts"
   },
   "dependencies": {
+    "@bull-board/api": "^7.2.1",
+    "@bull-board/express": "^7.2.1",
     "@prisma/client": "^5.18.0",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.12.12",
