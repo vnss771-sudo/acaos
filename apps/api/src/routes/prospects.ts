@@ -23,6 +23,19 @@ import type { AuthedRequest } from '../types/auth.js'
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function bodyToHtml(text: string): string {
+  return `<p style="font-family:sans-serif;line-height:1.6">${escapeHtml(text).replace(/\n/g, '<br>')}</p>`
+}
+
 // Single canonical ICP loader — returns shaped ICPConfig or undefined
 async function getICP(workspaceId: string): Promise<ICPConfig | undefined> {
   const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
@@ -463,10 +476,13 @@ prospectsRouter.post('/:id/outreach', outreachSendRateLimit, asyncHandler(async 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const send         = req.body.send === true
+  const send          = req.body.send === true
+  const confirmSend   = req.body.confirmSend === true
   const clientSubject = req.body.subject   as string | undefined
   const clientBody    = req.body.emailBody as string | undefined
 
+  // Require explicit confirmation token to prevent accidental sends
+  if (send && !confirmSend) throw new ApiError(400, 'confirmSend must be true to send email')
   if (send && !prospect.contactEmail) throw new ApiError(422, 'Prospect has no contact email — cannot send')
 
   const { isMailConfigured, sendMail } = await import('../services/mail.js')
@@ -474,7 +490,7 @@ prospectsRouter.post('/:id/outreach', outreachSendRateLimit, asyncHandler(async 
   // ── Fast path: user reviewed a draft and clicked Send — use that exact copy ──
   if (send && clientSubject && clientBody) {
     if (!isMailConfigured()) throw new ApiError(503, 'SMTP is not configured')
-    const html = `<p style="font-family:sans-serif;line-height:1.6">${clientBody.replace(/\n/g, '<br>')}</p>`
+    const html = bodyToHtml(clientBody)
     const outcome = await prisma.messageOutcome.create({
       data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
     })
@@ -533,7 +549,7 @@ prospectsRouter.post('/:id/outreach', outreachSendRateLimit, asyncHandler(async 
     await sendMail(
       prospect.contactEmail!,
       parsed.subject,
-      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`,
+      bodyToHtml(parsed.email),
       outcome.id
     )
     await prisma.prospect.update({

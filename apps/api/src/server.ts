@@ -93,17 +93,21 @@ createBullBoard({
   queues: QUEUE_NAMES.map(name => new BullMQAdapter(getQueue(name))),
   serverAdapter: boardAdapter,
 })
-// Basic-auth gate when BULL_BOARD_USER is set — skip auth in development
-if (process.env.BULL_BOARD_USER) {
-  app.use('/api/queues', (req, res, next) => {
-    const b64 = (req.headers.authorization ?? '').replace('Basic ', '')
-    const [user, pass] = Buffer.from(b64, 'base64').toString().split(':')
-    if (user === process.env.BULL_BOARD_USER && pass === process.env.BULL_BOARD_PASS) return next()
-    res.setHeader('WWW-Authenticate', 'Basic realm="Queue Dashboard"')
-    res.status(401).end('Unauthorized')
-  })
+// In production the dashboard requires BULL_BOARD_USER to be set — fail closed if forgotten
+if (process.env.NODE_ENV === 'production' && !process.env.BULL_BOARD_USER) {
+  app.use('/api/queues', (_req, res) => res.status(404).end())
+} else {
+  if (process.env.BULL_BOARD_USER) {
+    app.use('/api/queues', (req, res, next) => {
+      const b64 = (req.headers.authorization ?? '').replace('Basic ', '')
+      const [user, pass] = Buffer.from(b64, 'base64').toString().split(':')
+      if (user === process.env.BULL_BOARD_USER && pass === process.env.BULL_BOARD_PASS) return next()
+      res.setHeader('WWW-Authenticate', 'Basic realm="Queue Dashboard"')
+      res.status(401).end('Unauthorized')
+    })
+  }
+  app.use('/api/queues', boardAdapter.getRouter())
 }
-app.use('/api/queues', boardAdapter.getRouter())
 
 app.use(notFoundHandler)
 app.use(errorHandler)

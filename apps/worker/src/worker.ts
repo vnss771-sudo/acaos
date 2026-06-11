@@ -1081,11 +1081,26 @@ const harvestSignalsWorker = new Worker(
 
     // Degraded-job detection: >50% failure rate means the integration is broken
     if (prospects.length > 0 && prospectFailures / prospects.length > 0.5) {
-      console.error(
-        `[harvest-signals] DEGRADED workspaceId=${workspaceId} — ` +
-        `${prospectFailures}/${prospects.length} prospects failed. ` +
-        `Check APOLLO_API_KEY and SERPER_API_KEY.`
-      )
+      const msg = `[harvest-signals] DEGRADED workspaceId=${workspaceId} — ${prospectFailures}/${prospects.length} prospects failed. Check APOLLO_API_KEY and SERPER_API_KEY.`
+      console.error(msg)
+      // Alert workspace owner by email when SMTP is available
+      if (isMailConfigured()) {
+        const ownerMembership = await prisma.membership.findFirst({
+          where: { workspaceId, role: 'OWNER' },
+          include: { user: { select: { email: true } } }
+        }).catch(() => null)
+        const ownerEmail = ownerMembership?.user?.email
+        if (ownerEmail) {
+          await sendMail(
+            ownerEmail,
+            '[ACAOS] Signal harvesting degraded — action required',
+            `<p style="font-family:sans-serif;line-height:1.6">` +
+            `${prospectFailures} out of ${prospects.length} prospects failed signal harvesting.<br><br>` +
+            `This usually means <strong>APOLLO_API_KEY</strong> or <strong>SERPER_API_KEY</strong> is missing or rate-limited.<br><br>` +
+            `Please check your integration keys in the environment settings.</p>`
+          ).catch(() => {}) // fire-and-forget, never block the job
+        }
+      }
     }
 
     if (signalsCreated > 0) {

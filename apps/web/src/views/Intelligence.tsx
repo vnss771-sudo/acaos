@@ -59,6 +59,7 @@ function OutreachModal({ subject, body, followup, contactEmail, prospectId, onSe
 }) {
   const [sending, setSending] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [confirming, setConfirming] = useState(false)
 
   async function handleCopy() {
     const text = `Subject: ${subject}\n\n${body}${followup ? `\n\n─── Follow-up ───\n${followup}` : ''}`
@@ -69,6 +70,7 @@ function OutreachModal({ subject, body, followup, contactEmail, prospectId, onSe
 
   async function handleSend() {
     setSending(true)
+    setConfirming(false)
     try { await onSend(prospectId, contactEmail) }
     finally { setSending(false) }
   }
@@ -117,14 +119,31 @@ function OutreachModal({ subject, body, followup, contactEmail, prospectId, onSe
           </div>
         )}
 
+        {confirming && (
+          <div style={{
+            background: '#1a2535', border: `1px solid ${colors.amber}`, borderRadius: 8,
+            padding: '10px 14px', fontSize: 13, color: colors.amber
+          }}>
+            Send to <strong>{contactEmail}</strong>? This will deliver the email immediately.
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button style={s.btnGhost} onClick={handleCopy}>
             {copied ? '✓ Copied' : 'Copy'}
           </button>
-          {contactEmail && (
-            <button style={s.btn} disabled={sending} onClick={handleSend}>
-              {sending ? <><Spinner size={14} color="#fff" /> Sending…</> : 'Send Now'}
+          {contactEmail && !confirming && (
+            <button style={s.btn} onClick={() => setConfirming(true)}>
+              Send Now
             </button>
+          )}
+          {contactEmail && confirming && (
+            <>
+              <button style={s.btnGhost} onClick={() => setConfirming(false)}>Cancel</button>
+              <button style={{ ...s.btn, background: colors.green }} disabled={sending} onClick={handleSend}>
+                {sending ? <><Spinner size={14} color="#fff" /> Sending…</> : 'Confirm Send'}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -922,6 +941,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
         method: 'POST',
         body: JSON.stringify({
           send:        true,
+          confirmSend: true,
           contactEmail,
           subject:     outreachModal.subject,
           emailBody:   outreachModal.body,
