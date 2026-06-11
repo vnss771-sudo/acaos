@@ -30,6 +30,7 @@ import {
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
+import { cfg } from '../../api/src/lib/env.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -1045,6 +1046,13 @@ const advanceCadenceWorker = new Worker(
       update: { sentCount: { increment: 1 } },
     }).catch(() => {})
 
+    // Personalise email with brief page URL when available
+    const appUrl = cfg.appUrl
+    const pageToken = prospect.prospectPageToken
+    if (appUrl && pageToken) {
+      parsed.email += `\n\nP.S. I've put together a quick intelligence brief on ${prospect.companyName}: ${appUrl}/for/${pageToken}`
+    }
+
     await sendMail(
       prospect.contactEmail,
       parsed.subject,
@@ -1419,6 +1427,16 @@ const opportunityBriefWorker = new Worker(
         expiresAt,
       },
     })
+
+    // Generate and persist the public brief page token if this prospect doesn't have one yet
+    if (!prospect.prospectPageToken) {
+      const { randomBytes } = await import('node:crypto')
+      const pageToken = randomBytes(20).toString('hex')
+      await prisma.prospect.update({
+        where: { id: prospectId },
+        data:  { prospectPageToken: pageToken },
+      })
+    }
 
     await job.updateProgress(100)
     log('generate-opportunity-brief', `Done prospectId=${prospectId} confidence=${brief.confidenceScore} window=${brief.buyingWindowStrength}`)

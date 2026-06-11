@@ -21,6 +21,7 @@ import { prospectsRouter } from './routes/prospects.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
 import { trackingRouter } from './routes/tracking.js'
+import { publicRouter } from './routes/public.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
@@ -83,6 +84,7 @@ app.use('/api/prospects', prospectsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
 app.use('/api/track', trackingRouter)
+app.use('/api/pub', publicRouter)
 
 // ── Bull Board — queue dashboard (auth-gated in production via BULL_BOARD_USER/PASS) ──
 const boardAdapter = new ExpressAdapter()

@@ -323,6 +323,47 @@ Answer the five questions with evidence-based specificity. If signals are sparse
   return parsed
 }
 
+export async function prospectGuidedChat(
+  context: {
+    companyName: string
+    industry: string | null
+    brief: {
+      whyNow: string[]
+      likelyProblem: string
+      problemOwnerRole: string
+      offerAngle: string
+    } | null
+    product: ProductContext | null
+  },
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<string> {
+  const p = context.product ?? DEFAULT_PRODUCT
+  const systemPrompt = `You are an intelligent assistant helping ${context.companyName}${context.industry ? ` (${context.industry})` : ''} understand how ${p.productName} can solve their specific problems.
+
+${context.brief ? `What we know about their situation:
+- Likely operational problem: ${context.brief.likelyProblem}
+- Who typically owns this problem: ${context.brief.problemOwnerRole}
+- Why now: ${context.brief.whyNow.slice(0, 3).join('; ')}
+- Recommended approach: ${context.brief.offerAngle}` : ''}
+
+${p.keyPainPoints.length > 0 ? `Key pain points ${p.productName} solves: ${p.keyPainPoints.join(', ')}.` : ''}
+${p.differentiators.length > 0 ? `What makes it different: ${p.differentiators.join(', ')}.` : ''}
+
+Rules:
+- Be conversational, honest, and specific to their context.
+- Never be pushy or use sales clichés.
+- Keep replies to 1–3 sentences unless a longer answer is genuinely needed.
+- If you don't know something, say so rather than making it up.`
+
+  const client = getOpenAiClient()
+  const completion = await client.chat.completions.create({
+    model: model(),
+    temperature: 0.6,
+    messages: [{ role: 'system', content: systemPrompt }, ...messages],
+  })
+  return completion.choices[0]?.message?.content ?? "I'm not sure how to answer that — please feel free to reach out directly."
+}
+
 export async function analyzeReply(replyBody: string): Promise<string> {
   return chat(
     `You are a B2B sales intelligence system that classifies cold email replies for field-service software sales teams.
