@@ -77,9 +77,13 @@ test('poll rejects an unknown queue name', async () => {
 test('SSE rejects an unknown queue name', async () => {
   assert.equal((await get('/api/jobs/events/not-a-queue/job123?token=x')).status, 400)
 })
-test('SSE requires a token', async () => {
+test('SSE requires a ticket', async () => {
+  // No ticket query param → rejected before any Redis lookup.
   assert.equal((await get('/api/jobs/events/research-lead/job123')).status, 401)
 })
-test('SSE rejects an invalid token', async () => {
-  assert.equal((await get('/api/jobs/events/research-lead/job123?token=garbage')).status, 401)
+test('issuing an SSE ticket requires authentication', async () => {
+  const res = await server.request('/api/jobs/events/ticket', { method: 'POST' })
+  assert.equal(res.status, 401)
 })
+// (valid-ticket single-use, invalid-ticket, and cross-user cases need real
+//  Redis and are covered in tests-redis/sse.test.ts)
