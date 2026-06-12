@@ -1,0 +1,54 @@
+// Integration tests for /api/mailbox — config guards, validation, and auth.
+// SMTP/IMAP are intentionally left unconfigured so the routes return 503.
+
+import { test, beforeEach, afterEach } from 'node:test'
+import assert from 'node:assert/strict'
+import { mailboxRouter } from '../apps/api/src/routes/mailbox.ts'
+import {
+  createFakePrisma, installPrisma, resetPrisma, startTestServer, bearer, type TestServer,
+} from './helpers/integration.ts'
+
+let server: TestServer
+
+beforeEach(async () => {
+  // Ensure mail/mailbox are not configured.
+  for (const k of ['SMTP_HOST', 'SMTP_FROM', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASS']) delete process.env[k]
+  installPrisma(createFakePrisma({ user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null }) } }))
+  server = await startTestServer('/api/mailbox', mailboxRouter)
+})
+afterEach(async () => { await server.close(); resetPrisma() })
+
+const jsonAuth = { Authorization: bearer('u1'), 'Content-Type': 'application/json' }
+
+test('send-test requires authentication', async () => {
+  const res = await server.request('/api/mailbox/send-test', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '1.1.1.1' },
+    body: JSON.stringify({ to: 'a@b.test' }),
+  })
+  assert.equal(res.status, 401)
+})
+
+test('send-test returns 503 when SMTP is not configured', async () => {
+  const res = await server.request('/api/mailbox/send-test', {
+    method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.2' },
+    body: JSON.stringify({ to: 'a@b.test' }),
+  })
+  assert.equal(res.status, 503)
+})
+
+test('send-test validates the recipient when SMTP IS configured', async () => {
+  process.env.SMTP_HOST = 'smtp.test'
+  process.env.SMTP_FROM = 'noreply@test'
+  const res = await server.request('/api/mailbox/send-test', {
+    method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.3' },
+    body: JSON.stringify({ to: 'not-an-email' }),
+  })
+  assert.equal(res.status, 400)
+})
+
+test('sync returns 503 when IMAP is not configured', async () => {
+  const res = await server.request('/api/mailbox/sync', {
+    method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.4' },
+  })
+  assert.equal(res.status, 503)
+})
