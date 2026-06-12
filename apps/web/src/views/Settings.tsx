@@ -40,6 +40,53 @@ type Suppression = {
 }
 
 
+function DeliverabilityChecker({ api, workspaceId }: { api: ApiHook; workspaceId: string }) {
+  const [domain, setDomain] = useState('')
+  const [result, setResult] = useState<null | {
+    domain: string; readyToSend: boolean
+    checks: Record<string, { pass: boolean; label: string; description: string }>
+  }>(null)
+  const [checking, setChecking] = useState(false)
+
+  async function check() {
+    if (!domain.trim()) return
+    setChecking(true)
+    try {
+      const r = await api<typeof result>(`/api/intelligence/deliverability-check?workspaceId=${workspaceId}&domain=${encodeURIComponent(domain.trim())}`)
+      setResult(r)
+    } catch { /* ignore */ }
+    finally { setChecking(false) }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, maxWidth: 400, marginBottom: 12 }}>
+        <input style={{ ...s.input, flex: 1 }} value={domain} onChange={e => setDomain(e.target.value)}
+          placeholder="yourdomain.com" onKeyDown={e => e.key === 'Enter' && check()} />
+        <button style={s.btn} onClick={check} disabled={checking || !domain.trim()}>
+          {checking ? <Spinner size={14} color="#fff" /> : 'Check'}
+        </button>
+      </div>
+      {result && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {Object.values(result.checks).map(c => (
+            <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <span style={{ color: c.pass ? colors.green : colors.red, fontWeight: 700, width: 16 }}>{c.pass ? '✓' : '✗'}</span>
+              <span style={{ color: colors.textMuted, fontWeight: 500, width: 100 }}>{c.label}</span>
+              <span style={{ color: colors.textFaint }}>{c.description}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 6, background: result.readyToSend ? '#0f2a1a' : '#1a0a0a', border: `1px solid ${result.readyToSend ? colors.green : colors.red}33` }}>
+            <span style={{ color: result.readyToSend ? colors.green : colors.red, fontWeight: 700 }}>
+              {result.readyToSend ? '✓ Domain is ready for outreach' : '✗ Fix DNS issues before sending bulk email'}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
@@ -397,6 +444,17 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Deliverability Guard */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Deliverability Guard</div>
+          <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 16 }}>
+            Check your sending domain's DNS records before launching outreach. SPF + DMARC required for Google/Yahoo bulk sender compliance.
+          </div>
+          <DeliverabilityChecker api={api} workspaceId={workspace.id} />
         </div>
       )}
 

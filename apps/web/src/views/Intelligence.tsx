@@ -6,7 +6,8 @@ import type {
 } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS,
-  SIGNAL_TYPE_LABELS, ALL_SIGNAL_TYPES, TIER_COLOR, FPF_COLOR
+  SIGNAL_TYPE_LABELS, ALL_SIGNAL_TYPES, TIER_COLOR, FPF_COLOR,
+  ACTION_COLORS, ACTION_LABELS,
 } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
@@ -952,6 +953,55 @@ function CadencesPanel({ workspaceId, api, toast }: { workspaceId: string; api: 
   )
 }
 
+// ── Buying Window Timeline ────────────────────────────────────────────────────
+function BuyingWindowTimeline({ signals, windowExpiresInDays }: {
+  signals: Array<{ type: string; title: string | null; strength: number; detectedAt: string }>
+  windowExpiresInDays: number | null
+}) {
+  const sorted = [...signals].sort((a, b) => new Date(a.detectedAt).getTime() - new Date(b.detectedAt).getTime())
+  const now = new Date()
+
+  return (
+    <div style={{ position: 'relative', paddingLeft: 20 }}>
+      {/* Vertical line */}
+      <div style={{ position: 'absolute', left: 7, top: 8, bottom: 8, width: 2, background: colors.border }} />
+
+      {sorted.map((sig, i) => {
+        const ageDays = Math.round((now.getTime() - new Date(sig.detectedAt).getTime()) / 86_400_000)
+        const icon = SIGNAL_TYPE_ICONS[sig.type as keyof typeof SIGNAL_TYPE_ICONS] ?? '◈'
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, position: 'relative' }}>
+            <div style={{
+              width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+              background: sig.strength >= 70 ? colors.red : sig.strength >= 45 ? colors.amber : colors.border,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 8, marginTop: 1,
+            }}>{icon}</div>
+            <div>
+              <div style={{ color: colors.textMuted, fontSize: 12, fontWeight: 500 }}>
+                {SIGNAL_TYPE_LABELS[sig.type as keyof typeof SIGNAL_TYPE_LABELS] ?? sig.type}
+              </div>
+              <div style={{ color: colors.textFaint, fontSize: 11 }}>
+                {sig.title ? `${sig.title} · ` : ''}{ageDays === 0 ? 'today' : `${ageDays}d ago`}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+
+      {/* Window expiry marker */}
+      {windowExpiresInDays !== null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+          <div style={{ width: 16, height: 16, borderRadius: '50%', background: windowExpiresInDays <= 7 ? colors.red : colors.amber, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8 }}>⏱</div>
+          <div style={{ color: windowExpiresInDays <= 7 ? colors.red : colors.amber, fontSize: 12, fontWeight: 600 }}>
+            {windowExpiresInDays <= 0 ? 'Window closing' : `Window closes in ~${windowExpiresInDays} days`}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Brief Card ────────────────────────────────────────────────────────────────
 function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, onRefresh }: {
   brief: OpportunityBrief | null
@@ -1003,6 +1053,16 @@ function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, on
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ color: colors.text, fontWeight: 700, fontSize: 15, flex: 1 }}>{companyName}</div>
+        {brief.actionRecommendation && (
+          <span style={{
+            background: ACTION_COLORS[brief.actionRecommendation] + '22',
+            color: ACTION_COLORS[brief.actionRecommendation],
+            padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 800,
+            letterSpacing: '0.08em', border: `1px solid ${ACTION_COLORS[brief.actionRecommendation]}44`
+          }}>
+            {ACTION_LABELS[brief.actionRecommendation]}
+          </span>
+        )}
         <span style={{
           background: windowColor + '22', color: windowColor,
           fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99
@@ -1063,6 +1123,13 @@ function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, on
         </div>
       )}
 
+      {brief.whatNotToSay && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', background: '#1a0a0a', border: `1px solid ${colors.red}33`, borderRadius: 6 }}>
+          <span style={{ color: colors.red, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>What not to say: </span>
+          <span style={{ color: colors.textMuted, fontSize: 13 }}>{brief.whatNotToSay}</span>
+        </div>
+      )}
+
       {/* Score dimensions mini-bar */}
       {brief.scoreBenchmark && (
         <div style={{ marginBottom: 12 }}>
@@ -1089,6 +1156,20 @@ function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, on
               <span style={{ color: colors.blueLight, fontSize: 11, fontWeight: 700 }}>+{item.contribution}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Buying Window Timeline */}
+      {brief.evidenceItems && brief.evidenceItems.length > 0 && (
+        <div style={{ marginTop: 16, marginBottom: 12 }}>
+          <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Signal Timeline</div>
+          <BuyingWindowTimeline
+            signals={brief.evidenceItems.map(e => ({
+              type: e.type, title: e.label, strength: e.rawStrength,
+              detectedAt: new Date(Date.now() - e.ageDays * 86_400_000).toISOString()
+            }))}
+            windowExpiresInDays={brief.windowExpiresInDays ?? null}
+          />
         </div>
       )}
 
@@ -1435,13 +1516,13 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
           <div style={{ color: colors.blueLight, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.total ?? 0)}</div>
         </div>
         <div style={s.card}>
-          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Hot</div>
-          <div style={{ color: TIER_COLOR.HOT, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.hot ?? 0)}</div>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>ACT</div>
+          <div style={{ color: ACTION_COLORS.ACT, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.hot ?? 0)}</div>
           <div style={{ color: colors.textFaint, fontSize: 11 }}>Score ≥ 72</div>
         </div>
         <div style={s.card}>
-          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Warm</div>
-          <div style={{ color: TIER_COLOR.WARM, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.warm ?? 0)}</div>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>WATCH</div>
+          <div style={{ color: ACTION_COLORS.WATCH, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.warm ?? 0)}</div>
           <div style={{ color: colors.textFaint, fontSize: 11 }}>Score 45–71</div>
         </div>
         <div style={s.card}>
@@ -1472,9 +1553,9 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
       ) : activeTab === 'opportunities' ? (
         opportunities ? (
           <div style={{ display: 'grid', gap: 24 }}>
-            <TierSection title="Hot" prospects={opportunities.hot} color={TIER_COLOR.HOT} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
-            <TierSection title="Warm" prospects={opportunities.warm} color={TIER_COLOR.WARM} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
-            <TierSection title="Cold" prospects={opportunities.cold} color={TIER_COLOR.COLD} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
+            <TierSection title="ACT" prospects={opportunities.hot} color={ACTION_COLORS.ACT} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
+            <TierSection title="WATCH" prospects={opportunities.warm} color={ACTION_COLORS.WATCH} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
+            <TierSection title="IGNORE" prospects={opportunities.cold} color={ACTION_COLORS.IGNORE} onOutcome={handleOutcome} onOutreach={handleOutreach} onEnrollCadence={handleEnrollCadence} />
           </div>
         ) : (
           <div style={s.card}>

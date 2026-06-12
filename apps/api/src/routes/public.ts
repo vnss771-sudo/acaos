@@ -63,6 +63,9 @@ publicRouter.get('/:token', asyncHandler(async (req, res) => {
       offerAngle:           prospect.opportunityBrief.offerAngle,
       outreachApproach:     prospect.opportunityBrief.outreachApproach,
       confidenceScore:      prospect.opportunityBrief.confidenceScore,
+      actionRecommendation: prospect.opportunityBrief.actionRecommendation,
+      whatNotToSay:         prospect.opportunityBrief.whatNotToSay,
+      windowExpiresInDays:  prospect.opportunityBrief.windowExpiresInDays,
     } : null,
     product: product ? {
       productName:     product.productName,

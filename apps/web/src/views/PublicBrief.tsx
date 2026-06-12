@@ -26,6 +26,9 @@ type BriefData = {
     offerAngle: string
     outreachApproach: string
     confidenceScore: number
+    actionRecommendation?: 'ACT' | 'WATCH' | 'IGNORE' | null
+    whatNotToSay?: string | null
+    windowExpiresInDays?: number | null
   } | null
   product: {
     productName: string
@@ -212,8 +215,18 @@ export function PublicBrief({ token }: { token: string }) {
               )}
             </div>
             {brief && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
                 <WindowBadge strength={brief.buyingWindowStrength} />
+                {brief.actionRecommendation && (
+                  <span style={{
+                    background: brief.actionRecommendation === 'ACT' ? 'rgba(239,68,68,0.15)' : brief.actionRecommendation === 'WATCH' ? 'rgba(245,158,11,0.15)' : 'rgba(71,85,105,0.15)',
+                    color: brief.actionRecommendation === 'ACT' ? '#ef4444' : brief.actionRecommendation === 'WATCH' ? '#f59e0b' : '#64748b',
+                    padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 800,
+                    letterSpacing: '0.06em'
+                  }}>
+                    {brief.actionRecommendation}
+                  </span>
+                )}
                 <span style={{
                   fontSize: 11, color: clr.faint,
                   background: '#1e2d40', padding: '3px 8px', borderRadius: 4,
@@ -270,6 +283,12 @@ export function PublicBrief({ token }: { token: string }) {
             {brief.outreachApproach && (
               <div style={{ marginTop: 10, padding: '10px 14px', background: '#1e2d40', borderRadius: 8, fontSize: 13, color: clr.muted, fontStyle: 'italic' }}>
                 💬 {brief.outreachApproach}
+              </div>
+            )}
+            {brief.whatNotToSay && (
+              <div style={{ marginTop: 10, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8 }}>
+                <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Avoid: </span>
+                <span style={{ color: '#94a3b8', fontSize: 13 }}>{brief.whatNotToSay}</span>
               </div>
             )}
           </section>

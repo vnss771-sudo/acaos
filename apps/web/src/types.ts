@@ -227,7 +227,22 @@ export type OpportunityBrief = {
   rejectionReasons: string[]
   generatedAt: string
   expiresAt: string
+  actionRecommendation:  'ACT' | 'WATCH' | 'IGNORE' | null
+  whatNotToSay:          string | null
+  windowExpiresInDays:   number | null
 }
+
+export const ACTION_COLORS = {
+  ACT:    '#ef4444',  // red — act now
+  WATCH:  '#f59e0b',  // amber — keep watching
+  IGNORE: '#475569',  // muted — ignore
+} as const
+
+export const ACTION_LABELS = {
+  ACT:    'ACT NOW',
+  WATCH:  'WATCH',
+  IGNORE: 'IGNORE',
+} as const
 
 export type Prospect = {
   id: string
@@ -279,6 +294,9 @@ export type Prospect = {
     confidenceScore: number
     generatedAt: string
     expiresAt: string
+    actionRecommendation?: 'ACT' | 'WATCH' | 'IGNORE' | null
+    whatNotToSay?: string | null
+    windowExpiresInDays?: number | null
   } | null
   opportunityBrief?: OpportunityBrief | null
   createdAt: string

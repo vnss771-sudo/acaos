@@ -40,6 +40,9 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
           confidenceScore: true,
           generatedAt: true,
           expiresAt: true,
+          actionRecommendation: true,
+          whatNotToSay: true,
+          windowExpiresInDays: true,
         }
       },
       // Accurate POA check independent of the take:5 signal window
@@ -415,4 +418,52 @@ intelligenceRouter.post('/briefs/generate', asyncHandler(async (req, res) => {
 
   await Promise.all(prospects.map(p => enqueueGenerateOpportunityBrief(p.id, workspaceId)))
   res.json({ ok: true, queued: prospects.length })
+}))
+
+// GET /api/intelligence/deliverability-check?domain=&workspaceId=
+intelligenceRouter.get('/deliverability-check', asyncHandler(async (req, res) => {
+  const workspaceId = req.query.workspaceId as string
+  const domain      = (req.query.domain as string)?.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0]
+
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  if (!domain)      throw new ApiError(400, 'domain required')
+
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
+
+  const { promises: dns } = await import('node:dns')
+
+  async function checkTxt(name: string, contains: string): Promise<boolean> {
+    try {
+      const records = await dns.resolveTxt(name)
+      return records.some(r => r.join('').includes(contains))
+    } catch { return false }
+  }
+
+  const [spf, dmarc] = await Promise.all([
+    checkTxt(domain,          'v=spf1'),
+    checkTxt(`_dmarc.${domain}`, 'v=DMARC1'),
+  ])
+
+  // DKIM requires knowing the selector — we check common ones
+  const DKIM_SELECTORS = ['default', 'google', 'mail', 'k1', 'smtp', 'email', 'selector1', 'selector2']
+  let dkim = false
+  for (const sel of DKIM_SELECTORS) {
+    try {
+      const r = await dns.resolveTxt(`${sel}._domainkey.${domain}`)
+      if (r.some(t => t.join('').includes('v=DKIM1'))) { dkim = true; break }
+    } catch { /* try next */ }
+  }
+
+  const checks = {
+    spf:   { pass: spf,   label: 'SPF record',   description: spf   ? 'SPF record found'           : 'No SPF record — emails may be rejected' },
+    dkim:  { pass: dkim,  label: 'DKIM record',  description: dkim  ? 'DKIM record found'          : 'No DKIM found — check common selectors in your DNS' },
+    dmarc: { pass: dmarc, label: 'DMARC policy', description: dmarc ? 'DMARC policy configured'    : 'No DMARC policy — configure p=none to start monitoring' },
+  }
+
+  const allPass   = spf && dmarc  // DKIM selector lookup is best-effort
+  const readyToSend = spf && dmarc
+
+  res.json({ domain, checks, readyToSend, allPass })
 }))

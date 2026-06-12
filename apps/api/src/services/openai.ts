@@ -242,6 +242,9 @@ export type OpportunityBriefOutput = {
   offerAngle:       string     // one-sentence offer framing
   outreachApproach: string     // tone/style guidance
   confidenceScore:  number     // 0-100
+  whatNotToSay:          string   // one sentence: what to avoid (false urgency, competitor names, price-led)
+  actionRecommendation:  'ACT' | 'WATCH' | 'IGNORE'
+  windowExpiresInDays:   number   // estimated days before this window closes (1-60)
 }
 
 export async function generateOpportunityBrief(input: OpportunityBriefInput): Promise<OpportunityBriefOutput> {
@@ -283,7 +286,7 @@ Recommended offer angles: ${input.verticalContext.offerAngles.slice(0, 2).join('
     : ''
 
   const raw = await chat(
-    `You are a B2B sales intelligence analyst. Given company signals and scoring context, answer five questions: why this company, why now, what is the likely problem, who owns it, and what offer angle is most likely to land. Be specific to the signals provided — never generic.
+    `You are a B2B sales intelligence analyst. Given company signals and scoring context, answer five questions: why this company, why now, what is the likely problem, who owns it, and what offer angle is most likely to land. Be specific to the signals provided — never generic. Your recommendations must be evidence-backed. For every claim, cite the specific signal that supports it. Never make generic statements.
 
 Return ONLY a valid JSON object with these exact keys:
 - buyingWindowStrength ("HIGH" | "MEDIUM" | "LOW"): Overall buying window strength. HIGH = multiple recent strong signals, MEDIUM = some signals, LOW = weak or old signals.
@@ -292,7 +295,10 @@ Return ONLY a valid JSON object with these exact keys:
 - problemOwnerRole (string): Job title or role who owns this problem (the person to reach). Be specific: "Head of Field Operations", not "Manager".
 - offerAngle (string): One sentence. How to frame the offer specifically for this company's situation. Must reference the inferred problem.
 - outreachApproach (string): Tone and style guidance for the outreach message — e.g. "Lead with the hiring signal, peer-to-peer tone, no jargon, ask a yes/no question".
-- confidenceScore (number): 0–100. Your confidence in this brief. Deduct for few signals, old signals, low reliability, or poor ICP fit.`,
+- confidenceScore (number): 0–100. Your confidence in this brief. Deduct for few signals, old signals, low reliability, or poor ICP fit.
+- whatNotToSay (string): One sentence on what to avoid in outreach for this specific account (e.g. "Do not lead with price or reference competitors — this buyer responds to operational impact framing.")
+- actionRecommendation ("ACT" | "WATCH" | "IGNORE"): "ACT" if buying window is strong and timing is urgent, "WATCH" if signals are credible but not yet peaked, "IGNORE" if signals are too weak or ambiguous.
+- windowExpiresInDays (number): Integer 1-60, your best estimate of how many days this buying window remains open based on signal recency and type.`,
 
     `Analyse this prospect for a targeted B2B opportunity brief:
 
@@ -331,6 +337,19 @@ Answer the five questions with evidence-based specificity. If signals are sparse
   }
   if (!Array.isArray(parsed.whyNow) || parsed.whyNow.length === 0) parsed.whyNow = ['No specific signals available']
   parsed.confidenceScore = Math.max(0, Math.min(100, Math.round(parsed.confidenceScore ?? 50)))
+
+  // Normalise new fields
+  const validActions = ['ACT', 'WATCH', 'IGNORE']
+  if (!validActions.includes(parsed.actionRecommendation)) {
+    parsed.actionRecommendation = input.opportunityScore >= 65 ? 'ACT' : input.opportunityScore >= 35 ? 'WATCH' : 'IGNORE'
+  }
+  if (typeof parsed.windowExpiresInDays !== 'number' || !Number.isFinite(parsed.windowExpiresInDays)) {
+    parsed.windowExpiresInDays = 30
+  }
+  parsed.windowExpiresInDays = Math.max(1, Math.min(60, Math.round(parsed.windowExpiresInDays)))
+  if (typeof parsed.whatNotToSay !== 'string' || !parsed.whatNotToSay) {
+    parsed.whatNotToSay = ''
+  }
 
   return parsed
 }

@@ -27,8 +27,10 @@ import {
   signalPatternKey,
   computeLearnedWeights,
   ROLE_KEYWORDS,
+  getActionRecommendation,
+  getWindowExpiresInDays,
 } from '../../api/src/lib/signalEngine.js'
-import type { SignalWeights, SignalType } from '../../api/src/lib/signalEngine.js'
+import type { SignalWeights, SignalType, SignalDecision } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
 import { cfg } from '../../api/src/lib/env.js'
 import { detectVertical } from '../../api/src/lib/verticals.js'
@@ -1452,6 +1454,19 @@ const opportunityBriefWorker = new Worker(
 
     await job.updateProgress(80)
 
+    // Enrich with computed action recommendation and window expiry
+    const computedAction = getActionRecommendation(
+      scores.opportunityScore,
+      scores.confidenceScore,
+      prospect.fpfDecision as SignalDecision | null,
+      prospect.buyingStage,
+    )
+    const computedWindowDays = getWindowExpiresInDays(prospect.signals, prospect.buyingStage)
+
+    // Prefer AI recommendation when present and makes sense, fall back to computed
+    const actionRecommendation = brief.actionRecommendation ?? computedAction
+    const windowExpiresInDays  = brief.windowExpiresInDays  ?? computedWindowDays
+
     const expiresAt = new Date(Date.now() + 3 * 86_400_000) // 3 days
     await prisma.opportunityBrief.upsert({
       where:  { prospectId },
@@ -1462,6 +1477,9 @@ const opportunityBriefWorker = new Worker(
         evidenceItems:    evidence.intentContributions,
         scoreBenchmark:   scores,
         rejectionReasons: evidence.rejectionReasons,
+        actionRecommendation,
+        whatNotToSay:       brief.whatNotToSay ?? null,
+        windowExpiresInDays,
         expiresAt,
       },
       update: {
@@ -1469,6 +1487,9 @@ const opportunityBriefWorker = new Worker(
         evidenceItems:    evidence.intentContributions,
         scoreBenchmark:   scores,
         rejectionReasons: evidence.rejectionReasons,
+        actionRecommendation,
+        whatNotToSay:       brief.whatNotToSay ?? null,
+        windowExpiresInDays,
         generatedAt:      new Date(),
         expiresAt,
       },

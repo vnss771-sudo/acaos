@@ -555,6 +555,10 @@ model OpportunityBrief {
   scoreBenchmark       Json      // { intentScore, fitScore, timingScore, confidenceScore, opportunityScore }
   rejectionReasons     String[]  // why weak/expired signals were excluded
 
+  actionRecommendation  String?   // 'ACT' | 'WATCH' | 'IGNORE'
+  whatNotToSay          String?   // one sentence on what to avoid in outreach
+  windowExpiresInDays   Int?      // estimated days until buying window closes
+
   generatedAt          DateTime  @default(now())
   expiresAt            DateTime
 

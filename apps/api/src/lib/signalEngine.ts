@@ -462,6 +462,44 @@ export function getOpportunityTier(score: number): 'HOT' | 'WARM' | 'COLD' {
   return 'COLD'
 }
 
+export type ActionRecommendation = 'ACT' | 'WATCH' | 'IGNORE'
+
+export function getActionRecommendation(
+  opportunityScore: number,
+  confidenceScore: number,
+  fpfDecision: SignalDecision | null | undefined,
+  buyingStage: BuyingStage | string,
+): ActionRecommendation {
+  // FPF hard veto — don't send to false positives
+  if (fpfDecision === 'IGNORE') return 'IGNORE'
+  // High confidence buying window — act now
+  if (opportunityScore >= 65 && confidenceScore >= 45) return 'ACT'
+  // Credible signal but not yet strong enough — watch
+  if (opportunityScore >= 35) return 'WATCH'
+  // Weak signal
+  return 'IGNORE'
+}
+
+export function getWindowExpiresInDays(
+  signals: Array<{ detectedAt: Date; type: string }>,
+  buyingStage: BuyingStage | string,
+): number {
+  // The most recently detected signal determines the freshness window
+  const now = Date.now()
+  const mostRecentMs = signals.reduce((max, s) => Math.max(max, s.detectedAt.getTime()), 0)
+  const ageDays = mostRecentMs > 0 ? Math.round((now - mostRecentMs) / 86_400_000) : 999
+
+  // Window lifetimes by stage — PURCHASING is urgent, AWARENESS is slow-burn
+  const stageWindow: Record<string, number> = {
+    PURCHASING: 14,
+    CONSIDERATION: 21,
+    AWARENESS: 45,
+    EARLY_AWARENESS: 60,
+  }
+  const stageMax = stageWindow[buyingStage as string] ?? 30
+  return Math.max(0, stageMax - ageDays)
+}
+
 // ── Strategy card generation ──────────────────────────────────────────────────
 
 export type RecommendationInput = {
