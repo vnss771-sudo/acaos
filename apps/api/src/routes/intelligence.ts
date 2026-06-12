@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { centsToDollars } from '../lib/money.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const intelligenceRouter = Router()
@@ -56,7 +57,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     contactName: p.contactName,
     contactEmail: p.contactEmail,
     contactTitle: p.contactTitle,
-    expectedDealValue: p.expectedDealValue,
+    expectedDealValue: centsToDollars(p.expectedDealValue),
     winProbability: p.winProbability,
     lastSignalAt: p.lastSignalAt,
     latestSignal: p.signals[0] ?? null,
@@ -103,7 +104,8 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   }
 
   const pipeline = prospects.map(p => {
-    const dealValue = p.expectedDealValue ?? defaultDealValue(p.industry)
+    // expectedDealValue is stored in cents; forecast math works in whole units.
+    const dealValue = centsToDollars(p.expectedDealValue) ?? defaultDealValue(p.industry)
     const winProb = p.winProbability ?? calcWinProbability(p.buyingStage as BuyingStage, p.opportunityScore)
     const expectedRevenue = dealValue * winProb
     return {
@@ -120,7 +122,7 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 
   const totalPipelineValue = pipeline.reduce((s, p) => s + p.dealValue, 0)
   const weightedForecast = pipeline.reduce((s, p) => s + p.expectedRevenue, 0)
-  const wonRevenue = won.reduce((s, o) => s + (o.dealValue ?? 0), 0)
+  const wonRevenue = won.reduce((s, o) => s + (centsToDollars(o.dealValue) ?? 0), 0)
   const wonCount = won.length
 
   // Stage breakdown

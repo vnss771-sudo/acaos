@@ -231,7 +231,7 @@ model Prospect {
   domain           String?
   industry         String?
   employeeCount    Int?
-  estimatedRevenue Float?
+  estimatedRevenue Int?    // cents
   location         String?
   description      String?
   notes            String?
@@ -247,7 +247,7 @@ model Prospect {
   confidenceScore  Int          @default(0)
   buyingStage      BuyingStage  @default(RESEARCHING)
   outcomeStage     OutcomeStage @default(DISCOVERED)
-  expectedDealValue Float?
+  expectedDealValue Int?   // cents
   winProbability   Float?
   lastSignalAt     DateTime?
   lastContactedAt  DateTime?
@@ -318,7 +318,7 @@ model ProspectOutcome {
   prospectId  String
   stage       OutcomeStage
   notes       String?
-  dealValue   Float?
+  dealValue   Int?      // cents
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect    Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   recordedAt  DateTime     @default(now())
