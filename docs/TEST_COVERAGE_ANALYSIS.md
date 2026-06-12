@@ -124,10 +124,34 @@ constraints, `$transaction` behavior, and cascade deletes.
 - **Boundary:** `npm test` (the fast fake tier) stays default and
   dependency-free; the DB tier is opt-in via `test:db` and requires a Postgres.
 
+## Measured coverage
+
+Run via Node's built-in coverage: `tsx --test --experimental-test-coverage`.
+
+- **419 fast-tier tests** (+ 15 DB-backed) passing; typecheck clean across
+  api / web / worker.
+- **All 14 route handlers now have tests** (previously 7 were at 0% because no
+  test loaded them).
+- **Weighted line coverage of `apps/api/src` ≈ 88%.** Highlights:
+  `stats` 100%, `campaigns`/`mailbox`/`signals`/`ingest`/`intelligence` 95–98%,
+  `workspaces` 95%, `ai` 94%, `auth` 90%, `prospects` 88%, `outcomes` 88%,
+  `billing` 86%, `leads` 82%.
+- **Known lower spots (need integration infra, not just a fake):**
+  - `jobs.ts` 61% — the enqueue happy-path, live job polling, and SSE streaming
+    require Redis + a running worker. All pre-queue branches (validation, lead
+    authorization, unknown-queue, SSE token auth) are covered.
+  - `services/mail.ts` 44% — SMTP send and IMAP sync require a mail server; only
+    the config guards and validation are covered.
+  - `lib/queues.ts` 76%, `lib/jwt.ts` 69% — BullMQ wiring and a few
+    production-secret branches.
+- **Not covered at all:** the React frontend (`apps/web`) and the worker
+  processors (`apps/worker`) — separate efforts (component tests; a worker
+  harness against Redis).
+
 ## Work completed — full roadmap (P1–P6) closed
 
-All six priorities are done. **195 tests pass**, `npm run typecheck` is **clean
-across api / web / worker**, and CI enforces both.
+All six priorities are done. `npm run typecheck` is **clean across api / web /
+worker**, and CI enforces both tiers.
 
 ### Test additions (harness + ~100 new tests)
 1. **Integration harness** — `tests/helpers/integration.ts`
