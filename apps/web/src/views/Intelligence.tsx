@@ -1276,7 +1276,7 @@ function BriefsPanel({ workspace, api, toast, setView }: { workspace: Workspace;
                 key={brief.id}
                 brief={brief}
                 prospectId={brief.prospectId}
-                companyName={brief.prospectId}
+                companyName={brief.prospect?.companyName ?? brief.prospectId}
                 workspaceId={workspace.id}
                 api={api}
                 toast={toast}

@@ -230,6 +230,7 @@ export type OpportunityBrief = {
   actionRecommendation:  'ACT' | 'WATCH' | 'IGNORE' | null
   whatNotToSay:          string | null
   windowExpiresInDays:   number | null
+  prospect?: { companyName: string; contactName: string | null }
 }
 
 export const ACTION_COLORS = {

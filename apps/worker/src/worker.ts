@@ -1251,7 +1251,7 @@ const harvestSignalsWorker = new Worker(
       // Alert workspace owner by email when SMTP is available
       if (isMailConfigured()) {
         const ownerMembership = await prisma.membership.findFirst({
-          where: { workspaceId, role: 'OWNER' },
+          where: { workspaceId, role: 'owner' },
           include: { user: { select: { email: true } } }
         }).catch(() => null)
         const ownerEmail = ownerMembership?.user?.email

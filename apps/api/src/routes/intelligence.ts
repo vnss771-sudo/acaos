@@ -344,9 +344,12 @@ intelligenceRouter.get('/briefs', asyncHandler(async (req, res) => {
   if (!userId) throw new ApiError(401, 'Unauthorized')
   await assertMembership(userId, workspaceId)
 
+  const briefInclude = { prospect: { select: { companyName: true, contactName: true } } }
+
   if (prospectId) {
     const brief = await prisma.opportunityBrief.findUnique({
-      where: { prospectId }
+      where: { prospectId },
+      include: briefInclude,
     })
     if (!brief || brief.workspaceId !== workspaceId) throw new ApiError(404, 'Brief not found')
     res.json({ brief })
@@ -357,6 +360,7 @@ intelligenceRouter.get('/briefs', asyncHandler(async (req, res) => {
     where: { workspaceId },
     orderBy: { generatedAt: 'desc' },
     take: 200,
+    include: briefInclude,
   })
   res.json({ briefs })
 }))
@@ -427,6 +431,11 @@ intelligenceRouter.get('/deliverability-check', asyncHandler(async (req, res) =>
 
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
   if (!domain)      throw new ApiError(400, 'domain required')
+
+  // Reject anything that isn't a valid public hostname: letters, digits, hyphens, dots only,
+  // at least one dot, TLD ≥ 2 chars. Blocks IP literals, RFC-1918, and DNS rebinding attempts.
+  const SAFE_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/
+  if (!SAFE_DOMAIN_RE.test(domain)) throw new ApiError(400, 'Invalid domain format')
 
   const userId = (req as AuthedRequest).user?.id
   if (!userId) throw new ApiError(401, 'Unauthorized')

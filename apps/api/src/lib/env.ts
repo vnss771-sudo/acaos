@@ -5,12 +5,20 @@ const REQUIRED_VARS = ['DATABASE_URL', 'REDIS_URL', 'JWT_SECRET'] as const
 
 export function validateEnv(): void {
   const missing = REQUIRED_VARS.filter(k => !process.env[k]?.trim())
-  if (missing.length === 0) return
-  throw new Error(
-    `[boot] Missing required environment variables:\n` +
-    missing.map(v => `  • ${v}`).join('\n') +
-    `\n\nCheck your .env file or deployment environment config.`
-  )
+  if (missing.length > 0) {
+    throw new Error(
+      `[boot] Missing required environment variables:\n` +
+      missing.map(v => `  • ${v}`).join('\n') +
+      `\n\nCheck your .env file or deployment environment config.`
+    )
+  }
+  // TRACKING_SECRET should be distinct from JWT_SECRET so tracking HMACs and auth tokens
+  // don't share a key. Enforce in production; warn in development.
+  if (!process.env.TRACKING_SECRET?.trim()) {
+    const msg = '[boot] TRACKING_SECRET is not set — falling back to JWT_SECRET. Set a distinct TRACKING_SECRET in production.'
+    if (process.env.NODE_ENV === 'production') throw new Error(msg)
+    else console.warn(msg)
+  }
 }
 
 // Returns true only when all listed vars are non-empty.
