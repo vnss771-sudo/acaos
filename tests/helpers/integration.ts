@@ -17,7 +17,9 @@ import { signJwt } from '../../apps/api/src/lib/jwt.ts'
 
 export type PrismaMethod = (...args: any[]) => unknown
 export type FakeModel = Record<string, PrismaMethod>
-export type FakePrismaSpec = Record<string, FakeModel>
+// A spec entry is either a model (object of methods) or a top-level client
+// function such as `$transaction`.
+export type FakePrismaSpec = Record<string, FakeModel | PrismaMethod>
 
 export type RecordedCall = { model: string; method: string; args: unknown[] }
 
@@ -41,6 +43,11 @@ export function createFakePrisma(spec: FakePrismaSpec): FakePrisma {
   }
 
   for (const [model, methods] of Object.entries(spec)) {
+    // Top-level client functions (e.g. $transaction) are attached directly.
+    if (typeof methods === 'function') {
+      fake[model] = methods
+      continue
+    }
     const wrapped: FakeModel = {}
     for (const [method, fn] of Object.entries(methods)) {
       wrapped[method] = (...args: unknown[]) => {
@@ -49,6 +56,14 @@ export function createFakePrisma(spec: FakePrismaSpec): FakePrisma {
       }
     }
     fake[model] = wrapped
+  }
+
+  // Default $transaction supporting both the array form
+  // (prisma.$transaction([...promises])) and the interactive callback form
+  // (prisma.$transaction(async (tx) => ...)), unless the spec overrides it.
+  if (!('$transaction' in fake)) {
+    fake.$transaction = (arg: unknown) =>
+      Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(fake)
   }
 
   return fake as FakePrisma

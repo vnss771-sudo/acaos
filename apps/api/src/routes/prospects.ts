@@ -14,6 +14,7 @@ import {
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
+import { enrichProspect } from '../services/apollo.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
@@ -103,7 +104,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
 // GET /api/prospects/:id
 prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: {
       signals:         { orderBy: { detectedAt: 'desc' } },
       recommendations: { orderBy: { priority: 'desc' } },
@@ -174,7 +175,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
 
 // PATCH /api/prospects/:id
 prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -193,26 +194,26 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
   }
   if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
 
-  const updated = await prisma.prospect.update({ where: { id: req.params.id }, data })
+  const updated = await prisma.prospect.update({ where: { id: req.params.id as string }, data })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
 }))
 
 // DELETE /api/prospects/:id
 prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  await prisma.prospect.delete({ where: { id: req.params.id } })
+  await prisma.prospect.delete({ where: { id: req.params.id as string } })
   res.json({ ok: true })
 }))
 
 // POST /api/prospects/:id/rescore
 prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: { signals: true },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
@@ -234,7 +235,7 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
   const updated = await prisma.prospect.update({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     data: { ...scores, buyingStage, winProbability },
   })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
@@ -242,7 +243,7 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
 
 // POST /api/prospects/:id/outcome
 prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -282,7 +283,7 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
 // POST /api/prospects/:id/recommend
 prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: { signals: true },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
@@ -319,13 +320,12 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
 
 // POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore
 prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const { enrichProspect } = await import('../services/apollo.js')
   const result = await enrichProspect(prospect)
 
   const created: string[] = []

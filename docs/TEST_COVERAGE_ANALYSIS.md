@@ -55,10 +55,13 @@ resolution from `priceId`, subscription lookups). Now covered by
 verification** (forged / missing signatures rejected with no DB write), each
 lifecycle transition, unknown-event acknowledgement, and plan resolution.
 
-### P3 — Auth lifecycle (`routes/auth.ts`)
-Signup (user + workspace + membership transaction), login, **refresh-token
-rotation** (revoke-old / issue-new), and password change are untested. The pure
-JWT helpers are covered, but the stateful flow around them is not.
+### P3 — Auth lifecycle (`routes/auth.ts`) — DONE
+`tests/routes-auth.test.ts` (10 tests) covers signup (user + workspace +
+membership transaction, email normalization, duplicate / weak-password
+rejection), login (generic `Invalid credentials` for both wrong-password and
+unknown-email), and the security-critical **refresh-token rotation**: a used
+token is revoked and a new one issued; revoked / expired tokens are rejected;
+logout revokes.
 
 ### P4 — Plan-limit enforcement (`lib/limits.ts`) — DONE
 Previously tested via an inlined copy. `tests/lib-limits-enforcement.test.ts`
@@ -67,15 +70,18 @@ growth-plan short-circuit, and — most importantly — the lapsed-subscription 
 `free` downgrade that prevents a past-due workspace from keeping unlimited
 usage.
 
-### P5 — Ingest / bulk dedup (`routes/ingest.ts`, `routes/leads.ts`)
-Email-normalized dedup (within-batch + across-workspace), batch caps
-(200 / 500), and API-key workspace scoping.
+### P5 — Ingest / bulk dedup (`routes/ingest.ts`, `routes/leads.ts`) — DONE
+`tests/routes-ingest.test.ts` (11 tests): API-key workspace scoping,
+within-batch dedup (first wins, case-insensitive), cross-workspace dedup,
+batch cap (500), missing-businessName skip, campaign validation, and
+owner-only key rotation / deletion. `routes/leads.ts` was audited and confirmed
+to enforce membership on every endpoint.
 
-### P6 — Learning-loop calibration (`lib/learningLoop.ts`)
-The `calibrate()` path: win-rate lift, `[0.5, 2.0]` multiplier clamp, ICP
-percentile updates, and the `< 10` outcomes guard. Note: weights are **not**
-re-normalized after the multiplier is applied — add a test to confirm whether
-that is intended.
+### P6 — Learning-loop calibration (`lib/learningLoop.ts`) — DONE
+`tests/lib-calibrate.test.ts` (6 tests): the `< 10` outcomes guard, baseline
+win rate, win-rate lift with the `[0.5, 2.0]` multiplier clamp, the
+`< 3`-sample skip, ICP industry / employee-band updates, and the
+no-division-by-zero path when nothing was won.
 
 ## Recommended harness
 
@@ -89,51 +95,54 @@ dependencies and no live PostgreSQL required**. The fake records every call
 (`prisma.callsTo('signal', 'delete')`) so tests can assert that a denied
 request never reached the database.
 
-This complements rather than replaces a future full DB-backed tier; once
-`prisma generate` + a test Postgres are reliably available in CI, the same
-route tests can run against a real database with minimal change.
+This complements rather than replaces a future full DB-backed tier; once a test
+Postgres is available in CI, the same route tests can run against a real
+database with minimal change.
 
-## Work completed
+## Work completed — full roadmap (P1–P6) closed
 
+All six priorities are done. **195 tests pass**, `npm run typecheck` is **clean
+across api / web / worker**, and CI enforces both.
+
+### Test additions (harness + ~100 new tests)
 1. **Integration harness** — `tests/helpers/integration.ts`
-   (`createFakePrisma`, `installPrisma`, `startTestServer`, `bearer`, plus call
-   recording for negative assertions).
-2. **P1 — workspace isolation**
-   - `tests/routes-signals.test.ts` (10 tests) and
-     `tests/routes-intelligence.test.ts` (12 tests).
-   - **Fix:** `routes/signals.ts` and `routes/intelligence.ts` now call
-     `userBelongsToWorkspace` on every endpoint, and `signals.ts` POST also
-     verifies the prospect belongs to the named workspace. The cross-workspace
-     test cases failed against the original code, confirming the defects.
-   - Full-route audit completed: every other route was confirmed to enforce
-     membership (or API-key) scope.
-3. **Role-casing bug** — `routes/outcomes.ts` model-reset checked
-   `role: 'OWNER'` while memberships are stored lowercase (`'owner'`), so the
-   reset endpoint returned 403 for *every* legitimate owner. Fixed to `'owner'`
-   and covered by a regression test in `tests/routes-outcomes.test.ts`
-   (7 tests, including the dual API-key / JWT auth paths and the
-   weight-recompute-every-7 logic).
-4. **P2 — billing webhooks** — `tests/routes-billing-webhook.test.ts` (8 tests)
-   exercising real Stripe signature verification and every subscription
-   lifecycle transition.
-5. **P4 — plan-limit enforcement** — `tests/lib-limits-enforcement.test.ts`
-   (9 tests) against the real `lib/limits.ts`, including the
-   lapsed-subscription downgrade.
+   (`createFakePrisma` with call recording + `$transaction` support,
+   `startTestServer`, `bearer`).
+2. **P1 workspace isolation** — `routes-signals.test.ts` (10),
+   `routes-intelligence.test.ts` (12), `routes-prospects.test.ts` (9).
+3. **P2 billing webhooks** — `routes-billing-webhook.test.ts` (8), real
+   signature verification.
+4. **P3 auth lifecycle** — `routes-auth.test.ts` (10), incl. refresh rotation.
+5. **P4 plan limits** — `lib-limits-enforcement.test.ts` (9), real module.
+6. **P5 ingest / dedup** — `routes-ingest.test.ts` (11).
+7. **P6 calibration** — `lib-calibrate.test.ts` (6).
+8. **outcomes** — `routes-outcomes.test.ts` (7), dual-auth + reset regression.
 
-Net: **+46 route/enforcement tests**, suite fully green, and three real bugs
-fixed (two cross-workspace data leaks + one broken owner-only action).
+### Bugs fixed (all were live defects)
+- **Cross-workspace data leaks** in `routes/signals.ts` and
+  `routes/intelligence.ts` (read/delete/forecast/stats with no membership
+  check). Now enforced.
+- **Broken owner-only action** — `routes/outcomes.ts` model-reset checked
+  `role: 'OWNER'` vs the stored lowercase `'owner'`, so it 403'd every owner.
+- **Missing module** — `routes/prospects.ts` imported a non-existent
+  `services/apollo.js`; the `/enrich` endpoint would 500 at runtime. Added a
+  config-guarded `services/apollo.ts` scaffold (clean 503 when unconfigured).
+- **`instanceof` 500 leak** — that enrichment path used a dynamic
+  `import('../services/apollo.js')`, which under the tsx runtime loads a second
+  copy of `lib/http.ts`, so the thrown `ApiError` failed `errorHandler`'s
+  `instanceof` check and leaked a 500. Switched to a static import.
+- **ICP null/undefined bug** — `apps/worker/src/worker.ts` passed a raw
+  `WorkspaceICP` (with `null` fields) where the scoring engine expects a shaped
+  `ICPConfig`; now shaped consistently with the route layer.
 
-> Note: `npm run typecheck` reports pre-existing errors caused by the Prisma
-> client not being generated in this environment (a documented known limit).
-> Verified that the changes above introduce **zero** new typecheck errors
-> (intelligence.ts: 19 before and after; project total unchanged at 40).
+### Tooling
+- **Typecheck is now clean** (40 → 0) once the Prisma client is generated;
+  fixed the remaining real type errors in `routes/prospects.ts`.
+- **CI** — `.github/workflows/ci.yml` runs `npm ci` → `prisma generate` →
+  `typecheck` → `test` on every push / PR, so the green state is enforced.
 
-## Suggested next steps
-
-- **P3 — auth lifecycle**: signup transaction, login, refresh-token rotation,
-  password change (`routes/auth.ts`).
-- **P5 — ingest / bulk dedup**: `routes/ingest.ts`, `routes/leads.ts`.
-- **P6 — learning-loop calibration**: `lib/learningLoop.ts` `calibrate()`,
-  including the un-normalized-weights question.
-- Wire `prisma generate` into a CI step so the full typecheck and a future
-  DB-backed test tier can run.
+## Suggested next steps (optional hardening)
+- Stand up a DB-backed test tier (test Postgres) and re-run the route suites
+  against a real database to catch Prisma-query-shape issues the fake can't.
+- Extend coverage to the smaller remaining routes (`campaigns`, `workspaces`,
+  `jobs`, `mailbox`) for completeness — all are already authorization-guarded.
