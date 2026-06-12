@@ -23,6 +23,7 @@
     "test:db:local": "bash scripts/test-db-local.sh",
     "test:redis": "tsx --test --test-concurrency=1 --test-force-exit tests-redis/**/*.test.ts",
     "test:redis:local": "bash scripts/test-redis-local.sh",
+    "test:web": "npm test -w @acaos/web",
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {
