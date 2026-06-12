@@ -493,6 +493,13 @@ prospectsRouter.post('/:id/outreach', outreachSendRateLimit, asyncHandler(async 
   if (send && !confirmSend) throw new ApiError(400, 'confirmSend must be true to send email')
   if (send && !prospect.contactEmail) throw new ApiError(422, 'Prospect has no contact email — cannot send')
 
+  if (send && prospect.contactEmail) {
+    const suppressed = await prisma.emailSuppression.findUnique({
+      where: { workspaceId_email: { workspaceId: prospect.workspaceId, email: prospect.contactEmail } },
+    })
+    if (suppressed) throw new ApiError(409, 'Recipient is suppressed / unsubscribed')
+  }
+
   const { isMailConfigured, sendMail } = await import('../services/mail.js')
 
   // ── Fast path: user reviewed a draft and clicked Send — use that exact copy ──
