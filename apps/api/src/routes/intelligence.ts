@@ -4,15 +4,27 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
+import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import type { AuthedRequest } from '../types/auth.js'
 
 export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
 
+// Resolve the requested workspace and confirm the caller is a member.
+async function requireWorkspace(req: import('express').Request): Promise<string> {
+  const workspaceId = req.query.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const user = (req as AuthedRequest).user
+  if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
+    throw new ApiError(403, 'Workspace access denied')
+  }
+  return workspaceId
+}
+
 // GET /api/intelligence/opportunities?workspaceId=
 // Returns hot/warm/cold prospects with recommendations
 intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
-  const workspaceId = req.query.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const workspaceId = await requireWorkspace(req)
 
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
@@ -63,8 +75,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
 // GET /api/intelligence/forecast?workspaceId=
 // Revenue prediction engine
 intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
-  const workspaceId = req.query.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const workspaceId = await requireWorkspace(req)
 
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
@@ -141,8 +152,7 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 // GET /api/intelligence/stats?workspaceId=
 // Signal and scoring statistics
 intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
-  const workspaceId = req.query.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const workspaceId = await requireWorkspace(req)
 
   const [totalProspects, signalCounts, tierDist, stageDist] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId } }),

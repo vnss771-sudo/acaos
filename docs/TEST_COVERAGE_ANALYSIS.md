@@ -38,30 +38,34 @@ priority item has been implemented (see _Work completed_ below).
 The routes scoped by a **client-supplied `workspaceId` / record id** are the
 highest risk. `routes/signals.ts` was verified to have **no membership check**
 on `GET`, `POST`, or `DELETE` — any authenticated user could read or delete
-another workspace's signals by guessing an id. `routes/intelligence.ts` and
-`routes/stats.ts` show the same implicit-scope pattern and need the same
-treatment.
+another workspace's signals by guessing an id. A full audit found the same
+defect in `routes/intelligence.ts` (all three endpoints leaked another
+workspace's pipeline, revenue forecast, and prospect stats). `routes/stats.ts`
+was audited and is **already correctly guarded** (the earlier "implicit scope"
+note was a false alarm).
 
-→ **Status: signals.ts fixed and covered (see below). intelligence.ts and
-stats.ts still pending.**
+→ **Status: DONE. `signals.ts` and `intelligence.ts` fixed and covered; the
+rest of the route layer was audited and confirmed guarded.**
 
-### P2 — Billing & Stripe webhooks (money-critical)
-`routes/billing.ts` contains a ~100-line untested webhook state machine
+### P2 — Billing & Stripe webhooks (money-critical) — DONE
+`routes/billing.ts` had a ~100-line untested webhook state machine
 (`checkout.session.completed` → `active` → `past_due` → `canceled`, plan
-resolution from `priceId`, subscription lookups). Tests needed for: invalid /
-missing signature rejection, unknown-event acknowledgement, the
-`active`-subscription-blocks-checkout guard, owner/admin-only access, and
-`resolvePlanFromPrice` defaulting unknown prices to `starter`.
+resolution from `priceId`, subscription lookups). Now covered by
+`tests/routes-billing-webhook.test.ts`, including **real signature
+verification** (forged / missing signatures rejected with no DB write), each
+lifecycle transition, unknown-event acknowledgement, and plan resolution.
 
 ### P3 — Auth lifecycle (`routes/auth.ts`)
 Signup (user + workspace + membership transaction), login, **refresh-token
 rotation** (revoke-old / issue-new), and password change are untested. The pure
 JWT helpers are covered, but the stateful flow around them is not.
 
-### P4 — Plan-limit enforcement (`lib/limits.ts`)
-Currently tested via an inlined copy. Test the **real module**: the `>=`
-boundary on lead / AI caps, monthly-counter upsert idempotency, and the
-lapsed-subscription → `free` downgrade — these are the actual bypass risks.
+### P4 — Plan-limit enforcement (`lib/limits.ts`) — DONE
+Previously tested via an inlined copy. `tests/lib-limits-enforcement.test.ts`
+now exercises the **real module**: the `>=` boundary on lead / AI caps, the
+growth-plan short-circuit, and — most importantly — the lapsed-subscription →
+`free` downgrade that prevents a past-due workspace from keeping unlimited
+usage.
 
 ### P5 — Ingest / bulk dedup (`routes/ingest.ts`, `routes/leads.ts`)
 Email-normalized dedup (within-batch + across-workspace), batch caps
@@ -89,27 +93,47 @@ This complements rather than replaces a future full DB-backed tier; once
 `prisma generate` + a test Postgres are reliably available in CI, the same
 route tests can run against a real database with minimal change.
 
-## Work completed in this pass
+## Work completed
 
 1. **Integration harness** — `tests/helpers/integration.ts`
-   (`createFakePrisma`, `installPrisma`, `startTestServer`, `bearer`).
-2. **P1 signals authorization tests** — `tests/routes-signals.test.ts`
-   (10 tests). The three cross-workspace cases failed against the original
-   code, confirming the isolation defect.
-3. **Bug fix** — `apps/api/src/routes/signals.ts` now calls
-   `userBelongsToWorkspace` on `GET`, `POST`, and `DELETE`, and verifies the
-   target prospect belongs to the named workspace on `POST`. Suite is green
-   (264 tests).
+   (`createFakePrisma`, `installPrisma`, `startTestServer`, `bearer`, plus call
+   recording for negative assertions).
+2. **P1 — workspace isolation**
+   - `tests/routes-signals.test.ts` (10 tests) and
+     `tests/routes-intelligence.test.ts` (12 tests).
+   - **Fix:** `routes/signals.ts` and `routes/intelligence.ts` now call
+     `userBelongsToWorkspace` on every endpoint, and `signals.ts` POST also
+     verifies the prospect belongs to the named workspace. The cross-workspace
+     test cases failed against the original code, confirming the defects.
+   - Full-route audit completed: every other route was confirmed to enforce
+     membership (or API-key) scope.
+3. **Role-casing bug** — `routes/outcomes.ts` model-reset checked
+   `role: 'OWNER'` while memberships are stored lowercase (`'owner'`), so the
+   reset endpoint returned 403 for *every* legitimate owner. Fixed to `'owner'`
+   and covered by a regression test in `tests/routes-outcomes.test.ts`
+   (7 tests, including the dual API-key / JWT auth paths and the
+   weight-recompute-every-7 logic).
+4. **P2 — billing webhooks** — `tests/routes-billing-webhook.test.ts` (8 tests)
+   exercising real Stripe signature verification and every subscription
+   lifecycle transition.
+5. **P4 — plan-limit enforcement** — `tests/lib-limits-enforcement.test.ts`
+   (9 tests) against the real `lib/limits.ts`, including the
+   lapsed-subscription downgrade.
+
+Net: **+46 route/enforcement tests**, suite fully green, and three real bugs
+fixed (two cross-workspace data leaks + one broken owner-only action).
 
 > Note: `npm run typecheck` reports pre-existing errors caused by the Prisma
-> client not being generated in this environment (a documented known limit);
-> none originate from the changes above.
+> client not being generated in this environment (a documented known limit).
+> Verified that the changes above introduce **zero** new typecheck errors
+> (intelligence.ts: 19 before and after; project total unchanged at 40).
 
 ## Suggested next steps
 
-- Apply the same membership check + tests to `routes/intelligence.ts` and
-  `routes/stats.ts` (P1).
-- Add billing webhook tests using the harness with `express.raw` body and a
-  stubbed `constructWebhookEvent` (P2).
+- **P3 — auth lifecycle**: signup transaction, login, refresh-token rotation,
+  password change (`routes/auth.ts`).
+- **P5 — ingest / bulk dedup**: `routes/ingest.ts`, `routes/leads.ts`.
+- **P6 — learning-loop calibration**: `lib/learningLoop.ts` `calibrate()`,
+  including the un-normalized-weights question.
 - Wire `prisma generate` into a CI step so the full typecheck and a future
   DB-backed test tier can run.
