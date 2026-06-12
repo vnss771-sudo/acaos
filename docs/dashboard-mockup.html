@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ACAOS — Acquisition Intelligence (concept)</title>
+<title>ACAOS — Buying Window Intelligence (concept v2)</title>
 <style>
   :root{
     --bg:#030712; --surface:#080e1a; --card:#0d1626; --elevated:#111827;
     --border:#1e2d40; --border2:#1f2937;
     --text:#e2e8f0; --muted:#94a3b8; --faint:#475569;
-    --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --purple:#8b5cf6;
+    --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --purple:#8b5cf6; --slate:#64748b;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
@@ -23,13 +23,14 @@
   .brand .dot{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--blue),var(--purple))}
   .nav{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;color:var(--muted);font-weight:500}
   .nav.active{background:var(--elevated);color:var(--text)}
-  .nav:hover:not(.active){background:#0c1424}
   .nav .ic{width:16px;text-align:center;opacity:.85}
   .side .spacer{flex:1}
-  .upsell{margin:8px 6px 0;padding:12px;border:1px solid var(--border);border-radius:10px;background:#0a1322}
-  .upsell b{font-size:13px}
-  .upsell p{margin:4px 0 10px;color:var(--muted);font-size:12px}
-  .btn{display:inline-block;background:var(--blue);color:#fff;border:none;border-radius:7px;padding:7px 12px;font-weight:600;font-size:12px;cursor:pointer}
+  .queue{margin:8px 6px 0;padding:13px;border:1px solid var(--border);border-radius:10px;background:linear-gradient(160deg,#0c1a14,#0a1322)}
+  .queue .qn{font-size:26px;font-weight:700;line-height:1}
+  .queue b{font-size:13px}
+  .queue p{margin:4px 0 10px;color:var(--muted);font-size:12px}
+  .btn{display:inline-block;background:var(--green);color:#04210f;border:none;border-radius:7px;padding:7px 12px;font-weight:700;font-size:12px;cursor:pointer;width:100%}
+  .btn.b{background:var(--blue);color:#fff}
 
   /* Topbar */
   .main{display:flex;flex-direction:column;min-width:0}
@@ -40,66 +41,89 @@
 
   .wrap{padding:22px 24px;display:flex;flex-direction:column;gap:18px}
   .h1{font-size:22px;font-weight:700;margin:0}
-  .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  .sub{color:var(--muted);font-size:13px;margin-top:3px}
   .row{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
   .seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:12px}
   .seg span{padding:7px 12px;color:var(--muted)}
   .seg span.on{background:var(--elevated);color:var(--text)}
 
-  /* KPI strip */
-  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-  .kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:15px 16px}
-  .kpi .label{color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;display:flex;align-items:center;gap:7px}
-  .kpi .num{font-size:28px;font-weight:700;margin:8px 0 2px;letter-spacing:-.02em}
-  .kpi .delta{font-size:12px;font-weight:600}
+  /* KPI strip: 6 incl. ACT/WATCH/IGNORE */
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:13px 14px}
+  .kpi.tier{position:relative;overflow:hidden}
+  .kpi.tier::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+  .kpi.act::before{background:var(--green)} .kpi.watch::before{background:var(--amber)} .kpi.ignore::before{background:var(--slate)}
+  .kpi .label{color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+  .kpi .num{font-size:24px;font-weight:700;margin:7px 0 2px;letter-spacing:-.02em}
+  .kpi.act .num{color:#86efac} .kpi.watch .num{color:#fcd34d} .kpi.ignore .num{color:#cbd5e1}
+  .kpi .delta{font-size:11px;font-weight:600}
   .up{color:var(--green)} .down{color:var(--red)}
-  .pill{font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px}
-  .pill.hot{background:rgba(239,68,68,.16);color:#fca5a5}
-  .pill.warm{background:rgba(245,158,11,.16);color:#fcd34d}
-  .pill.cold{background:rgba(148,163,184,.14);color:#cbd5e1}
 
-  /* Grid panels */
-  .grid{display:grid;grid-template-columns:1.15fr 1fr;gap:18px}
-  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
   .panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
   .panel h3{margin:0 0 14px;font-size:14px;font-weight:700;display:flex;justify-content:space-between;align-items:center}
   .panel h3 .link{color:var(--blue);font-size:12px;font-weight:600}
+  .grid-hero{display:grid;grid-template-columns:.9fr 1.15fr 1fr;gap:18px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
 
-  /* Pipeline funnel */
-  .stage{display:flex;align-items:center;gap:12px;margin-bottom:11px}
-  .stage .name{width:104px;color:var(--muted);font-size:12px}
-  .bar{flex:1;height:24px;background:#0a1322;border-radius:6px;overflow:hidden}
-  .bar i{display:block;height:100%;border-radius:6px}
-  .stage .v{width:34px;text-align:right;font-weight:700;font-size:13px}
+  .chip{font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;letter-spacing:.04em}
+  .c-act{background:rgba(34,197,94,.16);color:#86efac} .c-watch{background:rgba(245,158,11,.16);color:#fcd34d} .c-ignore{background:rgba(100,116,139,.18);color:#cbd5e1}
 
-  /* Opportunity list */
-  .opp{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--border2)}
+  /* Buying Window Score hero */
+  .score-hero{display:flex;flex-direction:column;align-items:center;text-align:center}
+  .score-co{color:var(--muted);font-size:12px;margin-bottom:6px}
+  .score-co b{color:var(--text)}
+  .bws-meta{width:100%;margin-top:12px;display:flex;flex-direction:column;gap:7px}
+  .mrow{display:flex;justify-content:space-between;font-size:12px;border-top:1px solid var(--border2);padding-top:7px}
+  .mrow span{color:var(--muted)} .mrow b{font-weight:700}
+  .open{color:#86efac}
+
+  /* Timeline */
+  .tl{position:relative;margin-left:6px}
+  .tl::before{content:"";position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:var(--border)}
+  .ev{position:relative;padding:0 0 14px 22px}
+  .ev:last-child{padding-bottom:0}
+  .ev .d{position:absolute;left:0;top:2px;width:12px;height:12px;border-radius:50%;background:#13203a;border:2px solid var(--faint)}
+  .ev.sig .d{border-color:var(--blue)}
+  .ev.open .d{border-color:var(--green);background:var(--green)}
+  .ev.cool .d{border-color:var(--amber)}
+  .ev .dt{font-size:11px;color:var(--faint)}
+  .ev .lb{font-size:13px;font-weight:500}
+  .ev.open .lb{color:#86efac;font-weight:700}
+  .ev.cool .lb{color:#fcd34d}
+
+  /* Opportunities */
+  .opp{display:flex;align-items:center;gap:11px;padding:9px 0;border-top:1px solid var(--border2)}
   .opp:first-of-type{border-top:none}
-  .logo{width:34px;height:34px;border-radius:8px;background:#13203a;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#93c5fd;flex-shrink:0}
-  .opp .co{font-weight:600}
-  .opp .meta{color:var(--faint);font-size:12px}
-  .score{margin-left:auto;text-align:right}
-  .score b{font-size:16px}
-  .score .s{font-size:11px;color:var(--muted)}
+  .logo{width:32px;height:32px;border-radius:8px;background:#13203a;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#93c5fd;flex-shrink:0}
+  .opp .co{font-weight:600;font-size:13px}
+  .opp .meta{color:var(--faint);font-size:11px}
+  .score{margin-left:auto;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  .score b{font-size:15px}
 
-  /* Signals feed */
-  .sig{display:flex;gap:11px;padding:9px 0;border-top:1px solid var(--border2)}
+  /* Signal receipts */
+  .sig{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--border2);align-items:flex-start}
   .sig:first-of-type{border-top:none}
-  .sig .tag{font-size:10px;font-weight:700;padding:3px 7px;border-radius:6px;height:fit-content;white-space:nowrap}
+  .sig .tag{font-size:10px;font-weight:700;padding:3px 7px;border-radius:6px;white-space:nowrap}
   .t-fund{background:rgba(34,197,94,.14);color:#86efac}
-  .t-hire{background:rgba(59,130,246,.14);color:#93c5fd}
   .t-proc{background:rgba(139,92,246,.16);color:#c4b5fd}
+  .t-hire{background:rgba(59,130,246,.14);color:#93c5fd}
+  .t-web{background:rgba(245,158,11,.14);color:#fcd34d}
   .sig .txt{font-size:13px}
-  .sig .when{color:var(--faint);font-size:11px;margin-top:2px}
+  .sig .rel{color:var(--faint);font-size:11px;margin-top:2px}
+  .rel b{color:#86efac}
 
-  .ring-wrap{display:flex;align-items:center;gap:18px}
-  .legend{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted)}
-  .legend span b{color:var(--text)}
-  .swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px}
-  .forecast{display:flex;align-items:baseline;gap:10px}
-  .forecast .big{font-size:30px;font-weight:700;letter-spacing:-.02em}
+  /* Opportunity brief */
+  .brief .bco{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .brief .why{font-size:13px;color:var(--text);background:#0a1322;border:1px solid var(--border2);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  .brief .why .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em;display:block;margin-bottom:3px}
+  .brief .ang{font-size:12px;color:var(--muted);margin-bottom:12px}
+  .brief .ang em{color:#c4b5fd;font-style:normal}
+
+  .forecast{display:flex;align-items:baseline;gap:9px}
+  .forecast .big{font-size:26px;font-weight:700;letter-spacing:-.02em}
   .foot{color:var(--faint);font-size:11px;margin-top:10px}
-  .note{color:var(--faint);font-size:11px;text-align:center;padding:6px 0 18px}
+  .note{color:var(--faint);font-size:11px;text-align:center;padding:6px 0 20px}
+  .twocol{display:flex;gap:16px}.twocol>div{flex:1}
 </style>
 </head>
 <body>
@@ -115,10 +139,11 @@
     <a class="nav"><span class="ic">📈</span> Intelligence</a>
     <a class="nav"><span class="ic">⚙</span> Settings</a>
     <div class="spacer"></div>
-    <div class="upsell">
-      <b>Free plan</b>
-      <p>9 / 15 AI actions used this month.</p>
-      <button class="btn">Upgrade</button>
+    <div class="queue">
+      <b>Review queue</b>
+      <p>opportunities awaiting your approval</p>
+      <div class="qn" style="margin-bottom:10px">12</div>
+      <button class="btn">Review now</button>
     </div>
   </aside>
 
@@ -134,23 +159,33 @@
       <!-- Header -->
       <div class="row">
         <div>
-          <h1 class="h1">Acquisition Intelligence</h1>
-          <div class="sub">Who's in a buying window right now — and what to do about it.</div>
+          <h1 class="h1">Buying Window Intelligence</h1>
+          <div class="sub">Find who is entering a buying window, why now, and what action to take.</div>
         </div>
         <div class="seg"><span>7d</span><span class="on">30d</span><span>90d</span></div>
       </div>
 
-      <!-- KPI strip: focused, tier-coloured, with trend -->
+      <!-- KPI strip -->
       <div class="kpis">
         <div class="kpi">
-          <div class="label"><span class="pill hot">HOT</span> Hot opportunities</div>
-          <div class="num">23</div>
-          <div class="delta up">▲ 6 vs last month</div>
+          <div class="label">Active opportunities</div>
+          <div class="num">148</div>
+          <div class="delta up">▲ 19 this month</div>
         </div>
-        <div class="kpi">
-          <div class="label">Weighted pipeline</div>
-          <div class="num">$486k</div>
-          <div class="delta up">▲ 12% &nbsp;<span style="color:var(--faint)">· $1.8M gross</span></div>
+        <div class="kpi tier act">
+          <div class="label">Act</div>
+          <div class="num">23</div>
+          <div class="delta up">strong window</div>
+        </div>
+        <div class="kpi tier watch">
+          <div class="label">Watch</div>
+          <div class="num">51</div>
+          <div class="delta" style="color:var(--muted)">evidence forming</div>
+        </div>
+        <div class="kpi tier ignore">
+          <div class="label">Ignore</div>
+          <div class="num">74</div>
+          <div class="delta" style="color:var(--faint)">weak / noisy</div>
         </div>
         <div class="kpi">
           <div class="label">Reply rate</div>
@@ -160,90 +195,91 @@
         <div class="kpi">
           <div class="label">Meetings booked</div>
           <div class="num">14</div>
-          <div class="delta down">▼ 2 vs last month</div>
+          <div class="delta down">▼ 2 vs last</div>
         </div>
       </div>
 
-      <!-- Hero row: pipeline + top opportunities -->
-      <div class="grid">
+      <!-- HERO: Score + Timeline + Top opportunities (all anchored to the featured opp) -->
+      <div class="grid-hero">
+        <div class="panel score-hero">
+          <h3 style="width:100%">Buying Window Score</h3>
+          <div class="score-co">Top opportunity · <b>Meridian Roofing</b></div>
+          <svg width="150" height="150" viewBox="0 0 42 42">
+            <circle cx="21" cy="21" r="15.9" fill="none" stroke="#0a1322" stroke-width="4"/>
+            <circle cx="21" cy="21" r="15.9" fill="none" stroke="#22c55e" stroke-width="4"
+              stroke-dasharray="84 16" stroke-dashoffset="25" stroke-linecap="round"/>
+            <text x="21" y="20" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="700">84</text>
+            <text x="21" y="27" text-anchor="middle" fill="#86efac" font-size="3.6" font-weight="700">ACT NOW</text>
+          </svg>
+          <div class="bws-meta">
+            <div class="mrow"><span>Recommended action</span><b class="open">ACT</b></div>
+            <div class="mrow"><span>Window status</span><b class="open">● Open</b></div>
+            <div class="mrow"><span>Likely cools in</span><b>18 days</b></div>
+            <div class="mrow"><span>Win probability</span><b>62%</b></div>
+          </div>
+        </div>
+
         <div class="panel">
-          <h3>Opportunity pipeline <span class="link">by buying stage</span></h3>
-          <div class="stage"><div class="name">Researching</div><div class="bar"><i style="width:100%;background:#1e3a5f"></i></div><div class="v">61</div></div>
-          <div class="stage"><div class="name">Evaluating</div><div class="bar"><i style="width:72%;background:#2563eb"></i></div><div class="v">44</div></div>
-          <div class="stage"><div class="name">Comparing</div><div class="bar"><i style="width:46%;background:#f59e0b"></i></div><div class="v">28</div></div>
-          <div class="stage"><div class="name">Purchasing</div><div class="bar"><i style="width:24%;background:#ef4444"></i></div><div class="v">15</div></div>
-          <div class="foot">Stage inferred from live buying signals · refreshed 4 min ago</div>
+          <h3>Buying Window Timeline <span class="link">Meridian Roofing</span></h3>
+          <div class="tl">
+            <div class="ev sig"><span class="d"></span><div class="dt">May 2</div><div class="lb">Hiring spike — 6 field roles</div></div>
+            <div class="ev sig"><span class="d"></span><div class="dt">May 6</div><div class="lb">RFP posted for field software</div></div>
+            <div class="ev sig"><span class="d"></span><div class="dt">May 9</div><div class="lb">Procurement lead role opened</div></div>
+            <div class="ev open"><span class="d"></span><div class="dt">May 11</div><div class="lb">▸ Recommended window opens</div></div>
+            <div class="ev cool"><span class="d"></span><div class="dt">May 28</div><div class="lb">Window likely cools</div></div>
+          </div>
+          <div class="foot">Window inferred from signal velocity + buying stage + win probability</div>
         </div>
 
         <div class="panel">
           <h3>Top opportunities <span class="link">View all →</span></h3>
-          <div class="opp">
-            <div class="logo">MR</div>
-            <div><div class="co">Meridian Roofing</div><div class="meta">Construction · 80 emp · FUNDING + HIRING</div></div>
-            <div class="score"><b style="color:#fca5a5">91</b><span class="pill hot">HOT</span><div class="s">Purchasing</div></div>
-          </div>
-          <div class="opp">
-            <div class="logo">AP</div>
-            <div><div class="co">Apex Plumbing Co</div><div class="meta">Field services · 45 emp · PROCUREMENT</div></div>
-            <div class="score"><b style="color:#fca5a5">84</b><span class="pill hot">HOT</span><div class="s">Comparing</div></div>
-          </div>
-          <div class="opp">
-            <div class="logo">CV</div>
-            <div><div class="co">CityWide HVAC</div><div class="meta">HVAC · 120 emp · HIRING</div></div>
-            <div class="score"><b style="color:#fcd34d">67</b><span class="pill warm">WARM</span><div class="s">Evaluating</div></div>
-          </div>
-          <div class="opp">
-            <div class="logo">GL</div>
-            <div><div class="co">Greenline Electric</div><div class="meta">Electrical · 30 emp · NEWS_MENTION</div></div>
-            <div class="score"><b style="color:#fcd34d">58</b><span class="pill warm">WARM</span><div class="s">Researching</div></div>
-          </div>
+          <div class="opp"><div class="logo">MR</div><div><div class="co">Meridian Roofing</div><div class="meta">Construction · FUNDING + HIRING</div></div><div class="score"><b style="color:#86efac">84</b><span class="chip c-act">ACT</span></div></div>
+          <div class="opp"><div class="logo">AP</div><div><div class="co">Apex Plumbing Co</div><div class="meta">Field services · PROCUREMENT</div></div><div class="score"><b style="color:#86efac">79</b><span class="chip c-act">ACT</span></div></div>
+          <div class="opp"><div class="logo">CV</div><div><div class="co">CityWide HVAC</div><div class="meta">HVAC · HIRING</div></div><div class="score"><b style="color:#fcd34d">67</b><span class="chip c-watch">WATCH</span></div></div>
+          <div class="opp"><div class="logo">GL</div><div><div class="co">Greenline Electric</div><div class="meta">Electrical · NEWS</div></div><div class="score"><b style="color:#fcd34d">58</b><span class="chip c-watch">WATCH</span></div></div>
+          <div class="opp"><div class="logo">BM</div><div><div class="co">BlueMart Retail</div><div class="meta">Retail · low signal</div></div><div class="score"><b style="color:#cbd5e1">31</b><span class="chip c-ignore">IGNORE</span></div></div>
         </div>
       </div>
 
-      <!-- Detail row: signals + tiers + forecast -->
+      <!-- BOTTOM: Receipts + Brief + Outcomes -->
       <div class="grid3">
         <div class="panel">
-          <h3>Live signals</h3>
-          <div class="sig"><span class="tag t-fund">FUNDING</span><div><div class="txt">Meridian Roofing raised a $4M growth round</div><div class="when">12 min ago · reliability 92%</div></div></div>
-          <div class="sig"><span class="tag t-proc">PROCUREMENT</span><div><div class="txt">Apex Plumbing posted an RFP for field software</div><div class="when">1 h ago · reliability 88%</div></div></div>
-          <div class="sig"><span class="tag t-hire">HIRING</span><div><div class="txt">CityWide HVAC opened 6 dispatcher roles</div><div class="when">3 h ago · reliability 74%</div></div></div>
-          <div class="sig"><span class="tag t-hire">HIRING</span><div><div class="txt">Greenline Electric hiring an ops manager</div><div class="when">5 h ago · reliability 70%</div></div></div>
+          <h3>Signal Receipts <span class="link">Meridian Roofing</span></h3>
+          <div class="sig"><span class="tag t-fund">FUNDING</span><div><div class="txt">Raised a $4M growth round</div><div class="rel">May 2 · reliability <b>92%</b> · Crunchbase</div></div></div>
+          <div class="sig"><span class="tag t-proc">PROCUREMENT</span><div><div class="txt">RFP posted for field-service software</div><div class="rel">May 6 · reliability <b>88%</b> · gov portal</div></div></div>
+          <div class="sig"><span class="tag t-hire">HIRING</span><div><div class="txt">6 dispatcher / field roles opened</div><div class="rel">May 8 · reliability <b>74%</b> · careers page</div></div></div>
+          <div class="sig"><span class="tag t-web">WEBSITE</span><div><div class="txt">Pricing page updated</div><div class="rel">May 10 · reliability <b>71%</b> · crawl</div></div></div>
+        </div>
+
+        <div class="panel brief">
+          <h3>Opportunity Brief <span class="link">Open full brief →</span></h3>
+          <div class="bco"><div class="logo">MR</div><div><div class="co" style="font-weight:700">Meridian Roofing</div><div class="meta" style="color:var(--faint);font-size:11px">Mark Ellis · Ops Director</div></div><span class="chip c-act" style="margin-left:auto">ACT</span></div>
+          <div class="why"><span class="k">Why now</span>Fresh capital + an active RFP + field hiring = they're buying field-ops tooling in the next ~3 weeks.</div>
+          <div class="ang"><span class="k" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em">Recommended angle</span><em>Lead with RFP-fit + fast onboarding before the procurement window closes.</em></div>
+          <button class="btn b">Generate outreach</button>
         </div>
 
         <div class="panel">
-          <h3>Tier distribution</h3>
-          <div class="ring-wrap">
-            <svg width="120" height="120" viewBox="0 0 42 42">
-              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#0a1322" stroke-width="6"/>
-              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#ef4444" stroke-width="6" stroke-dasharray="23 77" stroke-dashoffset="25"/>
-              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#f59e0b" stroke-width="6" stroke-dasharray="34 66" stroke-dashoffset="2"/>
-              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#3b556f" stroke-width="6" stroke-dasharray="43 57" stroke-dashoffset="-32"/>
-              <text x="21" y="20" text-anchor="middle" fill="#e2e8f0" font-size="7" font-weight="700">148</text>
-              <text x="21" y="26" text-anchor="middle" fill="#94a3b8" font-size="3.4">prospects</text>
-            </svg>
-            <div class="legend">
-              <span><i class="swatch" style="background:#ef4444"></i><b>23</b> Hot &nbsp;(≥72)</span>
-              <span><i class="swatch" style="background:#f59e0b"></i><b>51</b> Warm (45–71)</span>
-              <span><i class="swatch" style="background:#3b556f"></i><b>74</b> Cold &nbsp;(&lt;45)</span>
+          <h3>Engagement &amp; Outcomes</h3>
+          <div class="twocol">
+            <div>
+              <div class="foot" style="margin:0 0 4px">Reply rate (30d)</div>
+              <svg width="100%" height="48" viewBox="0 0 200 48" preserveAspectRatio="none">
+                <polyline fill="none" stroke="#3b82f6" stroke-width="2" points="0,40 28,36 56,38 84,28 112,30 140,22 168,18 200,12"/>
+              </svg>
+              <div class="forecast" style="margin-top:4px"><span class="big">18.7%</span><span class="up" style="font-size:12px;font-weight:600">▲2.4</span></div>
+            </div>
+            <div>
+              <div class="foot" style="margin:0 0 4px">Closed this quarter</div>
+              <div class="big" style="font-size:26px;font-weight:700;letter-spacing:-.02em">$1.84M</div>
+              <div class="foot">8 won · 3 lost · 73% win rate</div>
+              <div class="foot" style="margin-top:8px">Weighted pipeline <b style="color:var(--text)">$486k</b></div>
             </div>
           </div>
-          <div class="foot">Scored from fit + intent + timing + confidence</div>
-        </div>
-
-        <div class="panel">
-          <h3>Forecast</h3>
-          <div class="forecast"><span class="big">$486k</span><span class="up" style="font-weight:600;font-size:13px">weighted</span></div>
-          <svg width="100%" height="64" viewBox="0 0 240 64" preserveAspectRatio="none" style="margin-top:8px">
-            <polyline fill="none" stroke="#22c55e" stroke-width="2"
-              points="0,52 30,46 60,48 90,38 120,40 150,30 180,26 210,18 240,12"/>
-            <polyline fill="rgba(34,197,94,.10)" stroke="none"
-              points="0,52 30,46 60,48 90,38 120,40 150,30 180,26 210,18 240,12 240,64 0,64"/>
-          </svg>
-          <div class="foot">Σ (deal value × win probability) · 8 won this quarter · $1.84M closed</div>
         </div>
       </div>
 
-      <div class="note">Concept mockup · data is illustrative · maps to ACAOS's live prospects / signals / intelligence APIs</div>
+      <div class="note">Concept v2 · illustrative data · ACT/WATCH/IGNORE + Buying Window Score map to ACAOS's intelligence / signals / prospects APIs</div>
     </div>
   </div>
 </div>
