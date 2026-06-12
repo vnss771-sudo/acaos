@@ -17,7 +17,7 @@ export function validateEnv(): void {
   if (!process.env.TRACKING_SECRET?.trim()) {
     const msg = '[boot] TRACKING_SECRET is not set — falling back to JWT_SECRET. Set a distinct TRACKING_SECRET in production.'
     if (process.env.NODE_ENV === 'production') throw new Error(msg)
-    else console.warn(msg)
+    else process.stderr.write(`WARN ${msg}\n`)
   }
 }
 
@@ -80,6 +80,22 @@ export const cfg = {
   // JWT timing (optional overrides)
   get jwtExpiresIn()       { return process.env.JWT_EXPIRES_IN        ?? '15m' },
   get refreshTokenDays()   { return Number(process.env.REFRESH_TOKEN_DAYS ?? 30) },
+
+  // Rate limits — tuneable via env without redeploying
+  get rateLimitAuthMax()     { return Number(process.env.RATE_LIMIT_AUTH_MAX     ?? 10)  },
+  get rateLimitGeneralMax()  { return Number(process.env.RATE_LIMIT_GENERAL_MAX  ?? 200) },
+  get rateLimitAiMax()       { return Number(process.env.RATE_LIMIT_AI_MAX       ?? 60)  },
+  get rateLimitMailMax()     { return Number(process.env.RATE_LIMIT_MAIL_MAX     ?? 5)   },
+  get rateLimitSyncMax()     { return Number(process.env.RATE_LIMIT_SYNC_MAX     ?? 10)  },
+  get rateLimitOutreachMax() { return Number(process.env.RATE_LIMIT_OUTREACH_MAX ?? 10)  },
+  get rateLimitIngestMax()   { return Number(process.env.RATE_LIMIT_INGEST_MAX   ?? 20)  },
+
+  // CORS — comma-separated exact origins allowed in production beyond WEB_URL / APP_URL
+  // e.g. ALLOWED_ORIGINS=https://app.acaos.io,https://staging.railway.app
+  get allowedOrigins() {
+    const raw = process.env.ALLOWED_ORIGINS ?? ''
+    return raw.split(',').map(s => s.trim()).filter(Boolean)
+  },
 
   // SMTP extras
   get smtpSecure() {

@@ -27,18 +27,26 @@ import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { getQueue, getConnection } from './lib/queues.js'
 import { cfg } from './lib/env.js'
+import { logger } from './lib/logger.js'
 
 const app = express()
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 
+// Exact-origin allowlist — no suffix wildcards in production
+function buildAllowedOriginSet(): Set<string> {
+  const origins = new Set<string>()
+  if (cfg.webUrl) origins.add(cfg.webUrl)
+  if (cfg.appUrl) origins.add(cfg.appUrl)
+  cfg.allowedOrigins.forEach(o => origins.add(o))
+  return origins
+}
+const _allowedOrigins = buildAllowedOriginSet()
+
 function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return false
-  if (cfg.webUrl && origin === cfg.webUrl) return true
-  if (origin.endsWith('.railway.app')) return true
-  if (origin.endsWith('.vercel.app')) return true
-  return false
+  return _allowedOrigins.has(origin)
 }
 
 app.use(cors({
@@ -147,18 +155,18 @@ app.use(errorHandler)
 
 const port = cfg.port
 const server = app.listen(port, () => {
-  console.log(`[api] Running on http://localhost:${port} (${cfg.nodeEnv})`)
+  logger.info({ port, env: cfg.nodeEnv }, `[api] Running on http://localhost:${port} (${cfg.nodeEnv})`)
 })
 
 async function shutdown(signal: string) {
-  console.log(`[api] ${signal} received — shutting down gracefully`)
+  logger.info({ signal }, `[api] ${signal} received — shutting down gracefully`)
   server.close(async () => {
     await prisma.$disconnect()
-    console.log('[api] Shutdown complete')
+    logger.info('[api] Shutdown complete')
     process.exit(0)
   })
   setTimeout(() => {
-    console.error('[api] Forced exit after timeout')
+    logger.error('[api] Forced exit after timeout')
     process.exit(1)
   }, 10_000).unref()
 }

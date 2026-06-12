@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
+import { cfg } from '../lib/env.js'
 
 interface RateLimitOptions {
   windowMs: number
@@ -60,53 +61,53 @@ export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
   }
 }
 
-// 10 auth attempts per 15 minutes per IP
+// 10 auth attempts per 15 min per IP (RATE_LIMIT_AUTH_MAX to override)
 export const authRateLimit = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: cfg.rateLimitAuthMax,
   message: 'Too many authentication attempts. Please wait before trying again.'
 })
 
-// 60 AI requests per hour per IP (generous for demos)
+// 60 AI requests per hour per IP (RATE_LIMIT_AI_MAX to override)
 export const aiRateLimit = createRateLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 60,
+  max: cfg.rateLimitAiMax,
   message: 'AI rate limit reached. Please wait before making more AI requests.'
 })
 
-// 200 general API requests per minute per IP
+// 200 general API requests per minute per IP (RATE_LIMIT_GENERAL_MAX to override)
 export const generalRateLimit = createRateLimiter({
   windowMs: 60 * 1000,
-  max: 200,
+  max: cfg.rateLimitGeneralMax,
   message: 'Request limit reached. Please slow down.'
 })
 
-// 5 outbound mail sends per hour per IP (prevents spam abuse)
+// 5 outbound mail sends per hour per IP (RATE_LIMIT_MAIL_MAX to override)
 export const mailRateLimit = createRateLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 5,
+  max: cfg.rateLimitMailMax,
   message: 'Too many emails sent. Please wait before sending more.'
 })
 
-// 10 IMAP sync triggers per hour per IP
+// 10 IMAP sync triggers per hour per IP (RATE_LIMIT_SYNC_MAX to override)
 export const syncRateLimit = createRateLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 10,
+  max: cfg.rateLimitSyncMax,
   message: 'Too many sync requests. Please wait before syncing again.'
 })
 
-// 10 outreach sends per hour per IP — only counts actual sends (send: true), not previews
+// 10 outreach sends per hour per IP — only counts actual sends (RATE_LIMIT_OUTREACH_MAX to override)
 export const outreachSendRateLimit = createRateLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 10,
+  max: cfg.rateLimitOutreachMax,
   message: 'Too many outreach emails sent. Please wait before sending more.',
   skipFn: (req) => req.body?.send !== true,
 })
 
-// 20 ingest batch requests per 5 minutes per API key (prevents runaway scrapers)
+// 20 ingest batch requests per 5 min per API key (RATE_LIMIT_INGEST_MAX to override)
 export const ingestRateLimit = createRateLimiter({
   windowMs: 5 * 60 * 1000,
-  max: 20,
+  max: cfg.rateLimitIngestMax,
   message: 'Ingest rate limit reached. Please wait before submitting more leads.',
   keyFn: (req) => {
     const key = req.headers['x-api-key']

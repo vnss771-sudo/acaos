@@ -5,6 +5,7 @@ import { createCheckoutSession, constructWebhookEvent } from '../services/stripe
 import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { prisma } from '../lib/prisma.js'
 import { cfg } from '../lib/env.js'
+import { logger } from '../lib/logger.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const billingRouter = Router()
@@ -104,7 +105,7 @@ billingRouter.post(
               plan
             }
           })
-          console.log(`[billing] checkout.session.completed workspace=${workspaceId} plan=${plan}`)
+          logger.info({ workspaceId, plan }, '[billing] checkout.session.completed')
         }
         break
       }
@@ -128,7 +129,7 @@ billingRouter.post(
             where: { id: ws.id },
             data: { subscriptionStatus: sub.status, plan }
           })
-          console.log(`[billing] subscription.updated ws=${ws.id} status=${sub.status}`)
+          logger.info({ workspaceId: ws.id, status: sub.status }, '[billing] subscription.updated')
         }
         break
       }
@@ -144,7 +145,7 @@ billingRouter.post(
             where: { id: ws.id },
             data: { subscriptionStatus: 'canceled', plan: 'free', stripeSubscriptionId: null }
           })
-          console.log(`[billing] subscription.deleted ws=${ws.id}`)
+          logger.info({ workspaceId: ws.id }, '[billing] subscription.deleted')
         }
         break
       }
@@ -161,7 +162,7 @@ billingRouter.post(
               where: { id: ws.id },
               data: { subscriptionStatus: 'past_due' }
             })
-            console.log(`[billing] invoice.payment_failed ws=${ws.id}`)
+            logger.warn({ workspaceId: ws.id }, '[billing] invoice.payment_failed')
           }
         }
         break

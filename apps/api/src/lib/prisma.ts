@@ -6,8 +6,16 @@ declare global {
   var __acaosPrisma__: PrismaClient | undefined
 }
 
+function buildDatabaseUrl(): string {
+  const url = new URL(cfg.databaseUrl)
+  if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', '10')
+  if (!url.searchParams.has('pool_timeout'))    url.searchParams.set('pool_timeout', '10')
+  return url.toString()
+}
+
 function createPrismaClient() {
   return new PrismaClient({
+    datasources: { db: { url: buildDatabaseUrl() } },
     log: cfg.nodeEnv === 'development' ? ['warn', 'error'] : ['error']
   })
 }

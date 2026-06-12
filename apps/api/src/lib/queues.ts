@@ -1,6 +1,7 @@
 import IORedis from 'ioredis'
 import { Queue } from 'bullmq'
 import { cfg } from './env.js'
+import { logger } from './logger.js'
 
 let _connection: IORedis | null = null
 
@@ -12,7 +13,7 @@ export function getConnection(): IORedis {
       lazyConnect: true
     })
     _connection.on('error', (err) => {
-      console.warn('[redis] Connection error:', err.message)
+      logger.warn({ err: err.message }, '[redis] Connection error')
     })
   }
   return _connection

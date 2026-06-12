@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express'
 import { cfg } from './env.js'
+import { logger } from './logger.js'
 
 export class ApiError extends Error {
   statusCode: number
@@ -32,7 +33,7 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
     return res.status(error.statusCode).json({ error: error.message })
   }
 
-  console.error(error)
+  logger.error({ err: error }, 'Unhandled error')
 
   const message =
     !isProduction() && error instanceof Error && error.message

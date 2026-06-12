@@ -33,10 +33,13 @@ import {
 import type { SignalWeights, SignalType, SignalDecision } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
 import { cfg } from '../../api/src/lib/env.js'
+import { logger as _baseLogger } from '../../api/src/lib/logger.js'
 import { detectVertical } from '../../api/src/lib/verticals.js'
 
+const workerLogger = _baseLogger.child({ service: 'acaos-worker' })
+
 function log(queue: string, msg: string) {
-  console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
+  workerLogger.info({ queue }, msg)
 }
 
 function parseJson<T>(raw: string, fallback: T): T {
@@ -1112,7 +1115,7 @@ const advanceCadenceWorker = new Worker(
       where:  { workspaceId_signalPattern: { workspaceId: prospect.workspaceId, signalPattern: pattern } },
       create: { workspaceId: prospect.workspaceId, signalPattern: pattern, vertical: prospect.industry ?? null, sentCount: 1 },
       update: { sentCount: { increment: 1 } },
-    }).catch(err => console.error('[advance-cadence] signal pattern upsert failed:', err.message))
+    }).catch(err => workerLogger.error({ err: (err as Error).message }, '[advance-cadence] signal pattern upsert failed'))
 
     await job.updateProgress(80)
 
@@ -1254,7 +1257,7 @@ const harvestSignalsWorker = new Worker(
     // Degraded-job detection: >50% failure rate means the integration is broken
     if (prospects.length > 0 && prospectFailures / prospects.length > 0.5) {
       const msg = `[harvest-signals] DEGRADED workspaceId=${workspaceId} — ${prospectFailures}/${prospects.length} prospects failed. Check APOLLO_API_KEY and SERPER_API_KEY.`
-      console.error(msg)
+      workerLogger.error({ workspaceId, prospectFailures, total: prospects.length }, msg)
       // Alert workspace owner by email when SMTP is available
       if (isMailConfigured()) {
         const ownerMembership = await prisma.membership.findFirst({
@@ -1739,7 +1742,7 @@ const dailyBriefWorker = new Worker(
       )
       const anySent = mailResults.some(r => r.status === 'fulfilled')
       if (!anySent) {
-        console.error(`[daily-brief] All mail sends failed for workspaceId=${workspaceId}`)
+        workerLogger.error({ workspaceId }, '[daily-brief] All mail sends failed')
       }
 
       // Only mark sentAt if at least one email was delivered
@@ -1786,7 +1789,7 @@ for (const [name, worker] of [
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
-  console.log(`[worker] ${signal} received — shutting down`)
+  workerLogger.info({ signal }, '[worker] Shutting down')
   await Promise.all([
     researchWorker.close(),
     outreachWorker.close(),
@@ -1805,7 +1808,7 @@ async function shutdown(signal: string) {
     dailyBriefWorker.close(),
   ])
   await prisma.$disconnect()
-  console.log('[worker] Shutdown complete')
+  workerLogger.info('[worker] Shutdown complete')
   process.exit(0)
 }
 
@@ -1817,13 +1820,13 @@ getQueue('maintenance').add(
   'maintenance',
   {},
   { repeat: { pattern: '0 3 * * *' }, jobId: 'maintenance:daily' }
-).catch(err => console.warn('[worker] Failed to register maintenance repeatable:', err.message))
+).catch(err => workerLogger.warn({ err: (err as Error).message }, '[worker] Failed to register maintenance repeatable'))
 
 // Register daily-brief scheduler as a repeatable job (07:00 UTC every day)
 getQueue('daily-brief').add(
   'daily-brief',
   { workspaceId: '__scheduler__' },
   { repeat: { pattern: '0 7 * * *' }, jobId: 'daily-brief:scheduler' }
-).catch(err => console.warn('[worker] Failed to register daily-brief repeatable:', err.message))
+).catch(err => workerLogger.warn({ err: (err as Error).message }, '[worker] Failed to register daily-brief repeatable'))
 
-console.log('[worker] Started — listening on 15 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, generate-strategy-cards, advance-cadence, harvest-signals, re-engage, generate-opportunity-brief, retrain-signal-weights, maintenance, daily-brief)')
+workerLogger.info('[worker] Started — listening on 15 queues')
