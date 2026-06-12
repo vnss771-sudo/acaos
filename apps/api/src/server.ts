@@ -17,6 +17,7 @@ import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
+import { requestContext } from './middleware/requestContext.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig } from './lib/config.js'
@@ -29,6 +30,7 @@ const app = express()
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 app.use(securityHeaders)
+app.use(requestContext)
 
 app.use(cors({
   // In production, allow only explicitly configured origins. In dev, reflect
