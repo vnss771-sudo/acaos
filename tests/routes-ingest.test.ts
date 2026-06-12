@@ -1,0 +1,182 @@
+// Integration tests for the /api/ingest router (P5 — ingest / bulk dedup).
+//
+// Covers API-key workspace scoping, batch + cross-workspace email
+// deduplication, batch caps, campaign validation, and owner-only API-key
+// management.
+
+import { test, beforeEach, afterEach } from 'node:test'
+import assert from 'node:assert/strict'
+import { ingestRouter } from '../apps/api/src/routes/ingest.ts'
+import {
+  createFakePrisma,
+  installPrisma,
+  resetPrisma,
+  startTestServer,
+  bearer,
+  type FakePrisma,
+  type TestServer,
+} from './helpers/integration.ts'
+
+const WS = 'ws1'
+const API_KEY = 'ingest-key-xyz'
+const OWNER = 'owner-1'
+const NON_OWNER = 'member-1'
+
+// Emails already present in the workspace (lowercased).
+let existingEmails: string[]
+let prisma: FakePrisma
+let server: TestServer
+
+function spec() {
+  return {
+    workspace: {
+      findUnique: async (args: any) =>
+        args?.where?.ingestApiKey === API_KEY ? { id: WS } : null,
+      update: async (args: any) => ({ id: args?.where?.id }),
+    },
+    campaign: {
+      findFirst: async (args: any) =>
+        args?.where?.id === 'camp-1' && args?.where?.workspaceId === WS ? { id: 'camp-1' } : null,
+    },
+    lead: {
+      findMany: async (args: any) => {
+        const wanted = (args?.where?.email?.in ?? []) as string[]
+        return existingEmails
+          .filter((e) => wanted.includes(e))
+          .map((email) => ({ email }))
+      },
+      create: async (args: any) => ({ id: `lead-${Math.random().toString(36).slice(2)}`, ...args.data }),
+    },
+    user: {
+      findUnique: async (args: any) => ({ id: args?.where?.id, email: 'x@y.test', name: null }),
+    },
+    membership: {
+      findFirst: async (args: any) => {
+        if (args?.where?.workspaceId !== WS) return null
+        if (args?.where?.userId === OWNER) return { role: 'owner' }
+        if (args?.where?.userId === NON_OWNER) return { role: 'member' }
+        return null
+      },
+    },
+  }
+}
+
+beforeEach(async () => {
+  existingEmails = []
+  prisma = createFakePrisma(spec())
+  installPrisma(prisma)
+  server = await startTestServer('/api/ingest', ingestRouter)
+})
+
+afterEach(async () => {
+  await server.close()
+  resetPrisma()
+})
+
+function ingest(body: unknown, key: string | null = API_KEY) {
+  return server.request('/api/ingest', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(key ? { 'x-api-key': key } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+}
+
+// --- API-key auth ---
+
+test('rejects a missing API key', async () => {
+  const res = await ingest({ leads: [{ businessName: 'A' }] }, null)
+  assert.equal(res.status, 401)
+})
+
+test('rejects an invalid API key', async () => {
+  const res = await ingest({ leads: [{ businessName: 'A' }] }, 'nope')
+  assert.equal(res.status, 401)
+})
+
+// --- validation / caps ---
+
+test('rejects an empty leads array', async () => {
+  const res = await ingest({ leads: [] })
+  assert.equal(res.status, 400)
+})
+
+test('rejects a batch larger than 500', async () => {
+  const leads = Array.from({ length: 501 }, (_, i) => ({ businessName: `B${i}` }))
+  const res = await ingest({ leads, autoResearch: false })
+  assert.equal(res.status, 400)
+})
+
+test('rejects an unknown campaignId for the workspace', async () => {
+  const res = await ingest({ leads: [{ businessName: 'A' }], campaignId: 'other-camp', autoResearch: false })
+  assert.equal(res.status, 400)
+})
+
+// --- dedup ---
+
+test('skips leads without a businessName', async () => {
+  const res = await ingest({
+    leads: [{ businessName: 'Keep' }, { email: 'no-name@x.test' }, { businessName: '   ' }],
+    autoResearch: false,
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 1)
+  assert.equal(res.body.skipped, 2)
+})
+
+test('deduplicates emails within the batch (first occurrence wins)', async () => {
+  const res = await ingest({
+    leads: [
+      { businessName: 'First', email: 'dup@x.test' },
+      { businessName: 'Second', email: 'DUP@x.test' }, // same email, different case
+    ],
+    autoResearch: false,
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 1)
+  assert.equal(prisma.callsTo('lead', 'create').length, 1)
+})
+
+test('skips emails that already exist in the workspace (case-insensitive)', async () => {
+  existingEmails = ['taken@x.test']
+  const res = await ingest({
+    leads: [
+      { businessName: 'Taken', email: 'Taken@X.test' },
+      { businessName: 'Fresh', email: 'fresh@x.test' },
+    ],
+    autoResearch: false,
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 1)
+})
+
+// --- key management (owner only) ---
+
+test('key rotation is denied for a non-owner', async () => {
+  const res = await server.request(`/api/ingest/keys/rotate?workspaceId=${WS}`, {
+    method: 'POST',
+    headers: { Authorization: bearer(NON_OWNER) },
+  })
+  assert.equal(res.status, 403)
+  assert.equal(prisma.callsTo('workspace', 'update').length, 0)
+})
+
+test('key rotation succeeds for the owner and returns a new key', async () => {
+  const res = await server.request(`/api/ingest/keys/rotate?workspaceId=${WS}`, {
+    method: 'POST',
+    headers: { Authorization: bearer(OWNER) },
+  })
+  assert.equal(res.status, 200)
+  assert.match(res.body.ingestApiKey, /^[a-f0-9]{64}$/)
+  assert.equal(prisma.callsTo('workspace', 'update').length, 1)
+})
+
+test('key deletion is denied for a non-owner', async () => {
+  const res = await server.request(`/api/ingest/keys?workspaceId=${WS}`, {
+    method: 'DELETE',
+    headers: { Authorization: bearer(NON_OWNER) },
+  })
+  assert.equal(res.status, 403)
+})

@@ -275,6 +275,17 @@ const scoreProspectsWorker = new Worker(
     ])
     const signalWeights = (scoringModel?.signalWeights ?? null) as SignalWeights | null
 
+    // Shape the raw WorkspaceICP record into the engine's ICPConfig (null → undefined).
+    const icpConfig = icp
+      ? {
+          targetIndustries: icp.targetIndustries,
+          minEmployees:     icp.minEmployees ?? undefined,
+          maxEmployees:     icp.maxEmployees ?? undefined,
+          targetGeos:       icp.targetGeos,
+          mustHaveEmail:    icp.mustHaveEmail,
+        }
+      : undefined
+
     let updated = 0
     for (const prospect of prospects) {
       const rawSignals = prospect.signals.map(toRawSignal)
@@ -285,7 +296,7 @@ const scoreProspectsWorker = new Worker(
         contactName:   prospect.contactName,
         domain:        prospect.domain,
         location:      prospect.location,
-      }, icp ?? undefined, signalWeights ?? undefined)
+      }, icpConfig, signalWeights ?? undefined)
       const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
       const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
       await prisma.prospect.update({

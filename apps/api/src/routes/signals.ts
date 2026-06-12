@@ -4,6 +4,8 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
+import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import type { AuthedRequest } from '../types/auth.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
@@ -16,6 +18,11 @@ function toRawSignal(s: { type: string; strength: number; sourceReliability: num
 signalsRouter.get('/', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const user = (req as AuthedRequest).user
+  if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
+    throw new ApiError(403, 'Workspace access denied')
+  }
 
   const where: Record<string, unknown> = { workspaceId }
   if (req.query.prospectId) where.prospectId = req.query.prospectId
@@ -39,8 +46,16 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   if (!type) throw new ApiError(400, 'type required')
   if (strength === undefined || strength < 0 || strength > 100) throw new ApiError(400, 'strength must be 0-100')
 
+  const user = (req as AuthedRequest).user
+  if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
+    throw new ApiError(403, 'Workspace access denied')
+  }
+
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
+  if (prospect.workspaceId !== workspaceId) {
+    throw new ApiError(403, 'Prospect does not belong to this workspace')
+  }
 
   const signal = await prisma.signal.create({
     data: {
@@ -84,6 +99,12 @@ signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const signalId = req.params.id as string
   const signal = await prisma.signal.findUnique({ where: { id: signalId } })
   if (!signal) throw new ApiError(404, 'Signal not found')
+
+  const user = (req as AuthedRequest).user
+  if (!(await userBelongsToWorkspace(user.id, signal.workspaceId))) {
+    throw new ApiError(403, 'Workspace access denied')
+  }
+
   await prisma.signal.delete({ where: { id: signalId } })
   res.json({ ok: true })
 }))
