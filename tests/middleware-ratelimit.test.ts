@@ -187,19 +187,31 @@ test('rate limiter: custom keyFn partitions requests correctly', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// X-Forwarded-For extraction
+// Client IP keying (must not trust a raw, spoofable X-Forwarded-For header)
 // ---------------------------------------------------------------------------
-test('rate limiter: uses first IP from X-Forwarded-For header', async () => {
+test('rate limiter: keys on the framework-resolved req.ip', async () => {
   const limiter = createRateLimiter({ windowMs: 60_000, max: 1 })
-  const proxyReq = {
-    headers: { 'x-forwarded-for': '203.0.113.1, 10.0.0.1' },
-    socket: { remoteAddress: '10.0.0.1' }
-  } as unknown as Request
+  // Express sets req.ip from the trusted-proxy chain; the limiter must use it.
+  const req = { headers: {}, ip: '203.0.113.9', socket: {} } as unknown as Request
 
   const { res: r1 } = makeRes()
-  await runMiddleware(limiter, proxyReq, r1)  // uses 203.0.113.1 as key
+  await runMiddleware(limiter, req, r1)
 
   const { res: r2, status } = makeRes()
-  await runMiddleware(limiter, proxyReq, r2)
+  await runMiddleware(limiter, req, r2)
   assert.equal(status.mock.calls[0]?.arguments[0], 429)
+})
+
+test('rate limiter: a spoofed X-Forwarded-For header does NOT create new buckets', async () => {
+  const limiter = createRateLimiter({ windowMs: 60_000, max: 1 })
+  // Same resolved client (req.ip), but attacker rotates the raw header each call.
+  const mk = (xff: string) =>
+    ({ headers: { 'x-forwarded-for': xff }, ip: '198.51.100.7', socket: { remoteAddress: '198.51.100.7' } }) as unknown as Request
+
+  const { res: r1 } = makeRes()
+  await runMiddleware(limiter, mk('1.1.1.1'), r1)
+
+  const { res: r2, status } = makeRes()
+  await runMiddleware(limiter, mk('2.2.2.2'), r2) // different spoofed header, same req.ip
+  assert.equal(status.mock.calls[0]?.arguments[0], 429, 'spoofing the header must not bypass the limit')
 })

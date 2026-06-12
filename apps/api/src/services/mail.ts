@@ -22,7 +22,12 @@ export function buildTransport() {
     host: getRequiredEnv('SMTP_HOST'),
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT || 587) === 465,
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+    // Bound every phase of the SMTP handshake so a stalled server can't hang the
+    // caller (or a worker slot) indefinitely.
+    connectionTimeout: 15_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   })
 }
 
@@ -80,7 +85,10 @@ export async function syncMailboxOnce(): Promise<{
     port: Number(process.env.IMAP_PORT || 993),
     secure: String(process.env.IMAP_SECURE || 'true') === 'true',
     auth: { user: getRequiredEnv('IMAP_USER'), pass: getRequiredEnv('IMAP_PASS') },
-    logger: false
+    logger: false,
+    // Don't let a stalled IMAP socket pin a worker slot forever.
+    socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 30_000),
+    greetingTimeout: 10_000,
   })
 
   try {
