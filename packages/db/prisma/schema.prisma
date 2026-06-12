@@ -135,7 +135,9 @@ model ScoringOutcome {
   id               String       @id @default(cuid())
   workspaceId      String
   leadId           String?
-  prospectId       String
+  // Nullable: reply outcomes sourced from a Lead (via the worker) have no
+  // Prospect. Previously a Lead id was written here, corrupting the data.
+  prospectId       String?
   score            Float
   replied          Boolean
   replyIntent      String?

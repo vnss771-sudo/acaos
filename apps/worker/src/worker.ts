@@ -218,7 +218,9 @@ const replyWorker = new Worker(
           data: {
             workspaceId: lead.workspaceId,
             leadId,
-            prospectId: leadId,
+            // Lead-sourced outcome — there is no Prospect. (Previously this
+            // wrote the Lead id into prospectId, corrupting the column.)
+            prospectId: null,
             score: lead.score,
             replied,
             replyIntent: replyIntentMap[parsed.classification!] ?? null,

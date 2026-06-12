@@ -49,6 +49,23 @@ test('creates leads for a valid key and persists them scoped to the workspace', 
   assert.equal(await prisma.lead.count({ where: { workspaceId } }), 2)
 })
 
+test('auto-research respects the monthly AI plan limit (ROB-5)', async () => {
+  const { workspaceId, key } = await workspaceWithKey() // free plan: 15 AI calls/mo
+  const month = new Date().toISOString().slice(0, 7) // YYYY-MM
+  // Already at the free-plan AI cap for this month.
+  await prisma.usageRecord.create({
+    data: { workspaceId, action: 'AI_RESEARCH', month, count: 15 },
+  })
+
+  const res = await ingest(key, {
+    leads: [{ businessName: 'One' }, { businessName: 'Two' }, { businessName: 'Three' }],
+    autoResearch: true,
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 3) // leads are still saved
+  assert.equal(res.body.queued, 0) // but none auto-researched — cap enforced
+})
+
 test('dedupes within the batch and against existing workspace rows (case-insensitive)', async () => {
   const { workspaceId, key } = await workspaceWithKey()
   await prisma.lead.create({ data: { workspaceId, businessName: 'Existing', email: 'taken@x.test' } })
