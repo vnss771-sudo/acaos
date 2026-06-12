@@ -23,15 +23,17 @@ function spec(opts: {
   leadCount?: number
 }) {
   const { workspace = { plan: 'free', subscriptionStatus: null }, aiUsed = 0, leadCount = 0 } = opts
-  // Represent current AI usage as a single record so findMany.reduce == aiUsed.
-  const usageRecords = aiUsed > 0 ? [{ action: 'AI_RESEARCH', count: aiUsed }] : []
+  // Stateful AI usage so the increment-then-check-then-refund flow is modeled
+  // realistically: upsert increments, findMany reflects it, update refunds.
+  let count = aiUsed
   return {
     workspace: {
       findUnique: async () => workspace,
     },
     usageRecord: {
-      findMany: async () => usageRecords,
-      upsert: async () => ({ id: 'u1' }),
+      findMany: async () => (count > 0 ? [{ action: 'AI_RESEARCH', count }] : []),
+      upsert: async () => { count += 1; return { id: 'u1' } },
+      update: async () => { count -= 1; return { id: 'u1' } },
     },
     lead: {
       count: async () => leadCount,
@@ -65,12 +67,13 @@ test('AI usage increments when under the free limit', async () => {
   assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1)
 })
 
-test('AI usage throws 429 at the free limit and does NOT increment', async () => {
-  install(spec({ aiUsed: 15 })) // free cap is 15, boundary is `>=`
+test('AI usage throws 429 at the free limit without incrementing', async () => {
+  install(spec({ aiUsed: 15 })) // already at the free cap of 15
   await assert.rejects(
     () => checkAndIncrementAiUsage('ws1', 'AI_RESEARCH'),
     (err: any) => err.statusCode === 429
   )
+  // The advisory-locked check rejects before incrementing.
   assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 0)
 })
 

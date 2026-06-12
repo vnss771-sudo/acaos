@@ -65,6 +65,9 @@ export function createFakePrisma(spec: FakePrismaSpec): FakePrisma {
     fake.$transaction = (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(fake)
   }
+  // Raw query helpers (e.g. advisory locks) default to no-ops.
+  if (!('$executeRaw' in fake)) fake.$executeRaw = async () => 0
+  if (!('$queryRaw' in fake)) fake.$queryRaw = async () => []
 
   return fake as FakePrisma
 }
