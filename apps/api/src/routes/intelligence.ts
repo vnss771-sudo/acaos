@@ -154,29 +154,16 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
   const workspaceId = await requireWorkspace(req)
 
-  const [totalProspects, signalCounts, tierDist, stageDist] = await Promise.all([
+  // Tier counts are computed with bounded SQL range counts rather than loading
+  // every prospect into memory and bucketing in JS (which grows unbounded).
+  const [totalProspects, signalCounts, stageDist, hot, warm, cold] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId } }),
     prisma.signal.groupBy({ by: ['type'], where: { workspaceId }, _count: true }),
-    prisma.prospect.groupBy({
-      by: ['opportunityScore'],
-      where: { workspaceId },
-      _count: true
-    }),
-    prisma.prospect.groupBy({
-      by: ['buyingStage'],
-      where: { workspaceId },
-      _count: true
-    })
+    prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId }, _count: true }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 72 } } }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 45, lt: 72 } } }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { lt: 45 } } }),
   ])
-
-  // Bucket tier distribution
-  const allProspects = await prisma.prospect.findMany({
-    where: { workspaceId },
-    select: { opportunityScore: true }
-  })
-  const hot = allProspects.filter(p => p.opportunityScore >= 72).length
-  const warm = allProspects.filter(p => p.opportunityScore >= 45 && p.opportunityScore < 72).length
-  const cold = allProspects.filter(p => p.opportunityScore < 45).length
 
   res.json({
     totalProspects,

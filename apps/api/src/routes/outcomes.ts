@@ -3,6 +3,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { hashApiKey } from '../lib/apiKeys.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const outcomesRouter = Router()
@@ -143,7 +144,7 @@ async function requireIngestKeyOrAuth(
   // Try API key first (FieldOps machine-to-machine)
   const apiKey = req.headers['x-api-key']
   if (apiKey && typeof apiKey === 'string') {
-    const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: apiKey } })
+    const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: hashApiKey(apiKey) } })
     if (!workspace) { res.status(401).json({ error: 'Invalid API key' }); return }
     ;(req as any).resolvedWorkspaceId = workspace.id
     ;(req as any).resolvedViaApiKey = true

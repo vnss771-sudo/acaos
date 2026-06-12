@@ -8,6 +8,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { outcomesRouter } from '../apps/api/src/routes/outcomes.ts'
+import { hashApiKey } from '../apps/api/src/lib/apiKeys.ts'
 import {
   createFakePrisma,
   installPrisma,
@@ -53,7 +54,7 @@ function baseSpec(extra: Record<string, any> = {}) {
     membership: { findFirst: async (args: any) => membershipFor(args) },
     workspace: {
       findUnique: async (args: any) =>
-        args?.where?.ingestApiKey === API_KEY ? { id: WS } : null,
+        args?.where?.ingestApiKey === hashApiKey(API_KEY) ? { id: WS } : null,
     },
     scoringModel: {
       upsert: async () => ({ id: 'model-1', weights: {}, performanceMetrics: {} }),
