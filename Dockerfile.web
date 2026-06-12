@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json ./apps/web/
 
-RUN npm ci --ignore-optional
+RUN npm ci
 
 COPY apps/web ./apps/web
 

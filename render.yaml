@@ -1,0 +1,70 @@
+services:
+  # ── API ──────────────────────────────────────────────────────────────────────
+  - type: web
+    name: acaos-api
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm ci && npm run prisma:generate
+    # Release command runs migration ONCE before new instances boot — safe for zero-downtime deploys
+    releaseCommand: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+    startCommand: node --loader tsx/esm apps/api/src/server.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: acaos-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: acaos-redis
+          type: redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 4000
+
+  # ── Worker ───────────────────────────────────────────────────────────────────
+  - type: worker
+    name: acaos-worker
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm ci && npm run prisma:generate
+    # Worker does NOT run migrations — only the API release command does
+    startCommand: node --loader tsx/esm apps/worker/src/worker.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: acaos-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: acaos-redis
+          type: redis
+          property: connectionString
+
+  # ── Web ──────────────────────────────────────────────────────────────────────
+  - type: web
+    name: acaos-web
+    runtime: static
+    region: oregon
+    buildCommand: npm ci && npm --workspace @acaos/web run build
+    staticPublishPath: ./apps/web/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          name: acaos-api
+          type: web
+          property: host
+
+databases:
+  - name: acaos-db
+    region: oregon
+    plan: starter
+    databaseName: acaos
+    user: acaos

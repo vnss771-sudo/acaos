@@ -6,7 +6,7 @@ COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
 COPY apps/worker/package.json ./apps/worker/
 
-RUN npm ci --ignore-optional
+RUN npm ci
 
 COPY packages/db ./packages/db
 COPY apps/worker ./apps/worker

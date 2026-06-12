@@ -1,14 +1,6 @@
 import 'dotenv/config'
 import { validateEnv } from './lib/env.js'
 validateEnv()
-import { execSync } from 'node:child_process'
-// Ensure schema is up-to-date on cold start
-try {
-  execSync('npx prisma migrate deploy --schema=../../packages/db/prisma/schema.prisma', { stdio: 'inherit' })
-} catch (e) {
-  console.error('[api] Prisma migrate deploy failed:', (e as Error).message)
-  process.exit(1)
-}
 import express from 'express'
 import cors from 'cors'
 import { createBullBoard } from '@bull-board/api'

@@ -6,8 +6,7 @@ COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
 COPY apps/api/package.json ./apps/api/
 
-# Install all deps (optional deps like imapflow will be skipped if unavailable)
-RUN npm ci --ignore-optional
+RUN npm ci
 
 # Copy source
 COPY packages/db ./packages/db

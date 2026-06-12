@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { asyncHandler } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
+import { verifyTrackingUrl } from '../lib/trackingUrl.js'
 
 export const trackingRouter = Router()
 
@@ -61,14 +62,20 @@ trackingRouter.get('/open/:id', asyncHandler(async (req, res) => {
   res.end(PIXEL_GIF)
 }))
 
-// GET /api/track/click/:id?url=... — click tracking + redirect
-// Same append-only pattern: creates a new CLICKED row.
+// GET /api/track/click/:id?url=...&sig=... — click tracking + redirect
+// URL must be HMAC-signed (via signTrackingUrl) to prevent open redirect abuse.
 trackingRouter.get('/click/:id', asyncHandler(async (req, res) => {
   const id     = req.params.id as string
   const target = req.query.url as string | undefined
+  const sig    = req.query.sig as string | undefined
 
   if (!target || !/^https?:\/\//.test(target)) {
     res.status(400).send('Missing or invalid url parameter')
+    return
+  }
+
+  if (!sig || !verifyTrackingUrl(id, target, sig)) {
+    res.status(403).send('Invalid tracking signature')
     return
   }
 

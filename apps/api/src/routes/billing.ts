@@ -15,9 +15,16 @@ billingRouter.post(
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const workspaceId = String(req.body?.workspaceId || '').trim()
-    const priceId = typeof req.body?.priceId === 'string' ? req.body.priceId.trim() : undefined
+    const rawPriceId = typeof req.body?.priceId === 'string' ? req.body.priceId.trim() : undefined
 
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+    // Allowlist priceId against configured Stripe price IDs — never accept arbitrary IDs from the client
+    const ALLOWED_PRICE_IDS = [cfg.stripePriceStarter, cfg.stripePriceGrowth].filter(Boolean) as string[]
+    if (rawPriceId && !ALLOWED_PRICE_IDS.includes(rawPriceId)) {
+      throw new ApiError(400, 'Invalid priceId')
+    }
+    const priceId = rawPriceId
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
     if (!allowed) throw new ApiError(403, 'Workspace billing access denied')
@@ -211,9 +218,9 @@ billingRouter.get('/usage', requireAuth, asyncHandler(async (req, res) => {
     select: { plan: true }
   })
   const plan = workspace?.plan ?? 'free'
-  const limits = plan === 'pro'    ? { AI_OUTREACH: 500, AI_BRIEFS: 200, AI_RESEARCH: 200 }
-               : plan === 'scale'  ? { AI_OUTREACH: 2000, AI_BRIEFS: 1000, AI_RESEARCH: 1000 }
-               : /* free */          { AI_OUTREACH: 20, AI_BRIEFS: 5, AI_RESEARCH: 10 }
+  const limits = plan === 'growth'  ? { AI_OUTREACH: 2000, AI_BRIEFS: 1000, AI_RESEARCH: 1000 }
+               : plan === 'starter' ? { AI_OUTREACH: 500,  AI_BRIEFS: 200,  AI_RESEARCH: 200  }
+               : /* free */           { AI_OUTREACH: 20,   AI_BRIEFS: 5,    AI_RESEARCH: 10   }
 
   res.json({ month, usage, limits, plan })
 }))

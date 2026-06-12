@@ -89,4 +89,7 @@ export const cfg = {
 
   // API URL (for tracking pixel injection)
   get apiUrl() { return process.env.API_URL ?? null },
+
+  // Tracking — HMAC secret for signed click-redirect URLs (falls back to jwtSecret)
+  get trackingSecret() { return process.env.TRACKING_SECRET ?? process.env.JWT_SECRET! },
 } as const
