@@ -95,9 +95,34 @@ dependencies and no live PostgreSQL required**. The fake records every call
 (`prisma.callsTo('signal', 'delete')`) so tests can assert that a denied
 request never reached the database.
 
-This complements rather than replaces a future full DB-backed tier; once a test
-Postgres is available in CI, the same route tests can run against a real
-database with minimal change.
+This complements rather than replaces the DB-backed tier below.
+
+## Database-backed tier (`tests-db/`)
+
+A second tier runs the **real** Prisma client against a **live PostgreSQL**
+instance, to catch what the fake can't: actual query shapes, unique
+constraints, `$transaction` behavior, and cascade deletes.
+
+- **Isolation model:** set `DATABASE_URL`, inject *no* fake — `lib/prisma.ts`'s
+  lazy client connects to the test DB. `tests-db/helpers/db.ts` provides
+  `resetDb()` (truncates all tables between tests via
+  `TRUNCATE … RESTART IDENTITY CASCADE`) and seed helpers, and reuses
+  `startTestServer` / `bearer` from the fake-tier harness.
+- **Serial execution:** the tier shares one database, so it runs with
+  `--test-concurrency=1` (one file's `resetDb` must not truncate mid-test in
+  another). This is wired into the `test:db` script.
+- **Coverage (15 tests):** `auth` (real signup transaction, unique
+  email/slug constraints, refresh-token rotation with real revocation),
+  `ingest` (real within-batch + cross-workspace email dedup, workspace-scoped
+  uniqueness), and `signals` (authorization + real rescore side effects).
+- **Running it:**
+  - Local: `npm run test:db:local` — `scripts/test-db-local.sh` boots an
+    ephemeral Postgres cluster, applies migrations, runs the tier, and tears
+    down. (Runs the server as the `postgres` OS user when invoked as root.)
+  - CI: the `verify-db` job uses a `postgres:16` service container, runs
+    `prisma migrate deploy`, then `npm run test:db`.
+- **Boundary:** `npm test` (the fast fake tier) stays default and
+  dependency-free; the DB tier is opt-in via `test:db` and requires a Postgres.
 
 ## Work completed — full roadmap (P1–P6) closed
 
