@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import type { SignalType } from '../types.js'
-import { SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '../types.js'
+import { SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, ACTION_COLORS, ACTION_LABELS } from '../types.js'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -219,12 +219,12 @@ export function PublicBrief({ token }: { token: string }) {
                 <WindowBadge strength={brief.buyingWindowStrength} />
                 {brief.actionRecommendation && (
                   <span style={{
-                    background: brief.actionRecommendation === 'ACT' ? 'rgba(239,68,68,0.15)' : brief.actionRecommendation === 'WATCH' ? 'rgba(245,158,11,0.15)' : 'rgba(71,85,105,0.15)',
-                    color: brief.actionRecommendation === 'ACT' ? '#ef4444' : brief.actionRecommendation === 'WATCH' ? '#f59e0b' : '#64748b',
+                    background: `${ACTION_COLORS[brief.actionRecommendation]}26`,
+                    color: ACTION_COLORS[brief.actionRecommendation],
                     padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 800,
                     letterSpacing: '0.06em'
                   }}>
-                    {brief.actionRecommendation}
+                    {ACTION_LABELS[brief.actionRecommendation]}
                   </span>
                 )}
                 <span style={{

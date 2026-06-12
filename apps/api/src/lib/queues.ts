@@ -4,7 +4,7 @@ import { cfg } from './env.js'
 
 let _connection: IORedis | null = null
 
-function getConnection(): IORedis {
+export function getConnection(): IORedis {
   if (!_connection) {
     _connection = new IORedis(cfg.redisUrl, {
       maxRetriesPerRequest: null,

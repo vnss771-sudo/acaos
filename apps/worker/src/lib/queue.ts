@@ -2,7 +2,7 @@ import 'dotenv/config'
 import IORedis from 'ioredis'
 import { Queue } from 'bullmq'
 
-export const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+export const connection = new IORedis(process.env.REDIS_URL!, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
   retryStrategy: (times) => Math.min(times * 1000, 10_000)
@@ -18,7 +18,7 @@ export const defaultJobOptions = {
   removeOnFail: { count: 200, age: 7 * 24 * 60 * 60 }
 }
 
-// Named queue registry — all 14 queues the worker listens on
+// Named queue registry — all 15 queues the worker listens on
 export const QUEUE_NAMES = [
   'research-lead',
   'generate-outreach',
@@ -34,6 +34,7 @@ export const QUEUE_NAMES = [
   'generate-opportunity-brief',
   'retrain-signal-weights',
   'maintenance',
+  'daily-brief',
 ] as const
 
 export type QueueName = typeof QUEUE_NAMES[number]

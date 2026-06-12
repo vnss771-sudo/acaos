@@ -25,7 +25,7 @@ type ActiveTab = 'opportunities' | 'strategy-cards' | 'forecast' | 'industry-mat
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
 function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
-  const tier = score >= 72 ? 'HOT' : score >= 45 ? 'WARM' : 'COLD'
+  const tier = score >= 72 ? 'HOT' : score >= 48 ? 'WARM' : 'COLD'
   const color = TIER_COLOR[tier]
   return (
     <div style={{
@@ -1166,7 +1166,7 @@ function BriefCard({ brief, prospectId, companyName, workspaceId, api, toast, on
           <BuyingWindowTimeline
             signals={brief.evidenceItems.map(e => ({
               type: e.type, title: e.label, strength: e.rawStrength,
-              detectedAt: new Date(Date.now() - e.ageDays * 86_400_000).toISOString()
+              detectedAt: new Date(Date.now() - (e.ageDays ?? 0) * 86_400_000).toISOString()
             }))}
             windowExpiresInDays={brief.windowExpiresInDays ?? null}
           />
@@ -1300,14 +1300,17 @@ type PendingEnrollment = {
 function ReviewQueuePanel({ api, workspace, toast }: { api: ApiHook; workspace: Workspace; toast: ToastHook }) {
   const [enrollments, setEnrollments] = useState<PendingEnrollment[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [acting, setActing] = useState<Record<string, boolean>>({})
 
-  useEffect(() => {
+  function fetchQueue() {
     api<{ enrollments: PendingEnrollment[]; count: number }>(`/api/workspaces/${workspace.id}/pending-reviews`)
-      .then(d => setEnrollments(d.enrollments))
-      .catch(() => {})
+      .then(d => { setEnrollments(d.enrollments); setLoadError(null) })
+      .catch(e => setLoadError((e as Error).message ?? 'Failed to load review queue'))
       .finally(() => setLoading(false))
-  }, [workspace.id])
+  }
+
+  useEffect(() => { fetchQueue() }, [workspace.id])
 
   async function handleApprove(enrollment: PendingEnrollment) {
     setActing(a => ({ ...a, [enrollment.id]: true }))
@@ -1330,6 +1333,12 @@ function ReviewQueuePanel({ api, workspace, toast }: { api: ApiHook; workspace: 
   }
 
   if (loading) return <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
+
+  if (loadError) return (
+    <div style={s.card}>
+      <EmptyState message={`Failed to load review queue: ${loadError}`} icon="!" />
+    </div>
+  )
 
   if (enrollments.length === 0) {
     return (
@@ -1382,7 +1391,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   const [opportunities, setOpportunities] = useState<OpportunitiesData | null>(null)
   const [strategyCards, setStrategyCards] = useState<StrategyCardsData | null>(null)
   const [forecast, setForecast] = useState<ForecastData | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<ActiveTab>('opportunities')
   const [outreachModal, setOutreachModal] = useState<{
     subject: string; body: string; followup: string | null

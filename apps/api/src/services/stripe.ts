@@ -3,7 +3,7 @@ import { ApiError } from '../lib/http.js'
 import { hasEnv, cfg } from '../lib/env.js'
 
 function getStripe() {
-  if (!hasEnv(['STRIPE_SECRET_KEY', 'WEB_URL'])) {
+  if (!hasEnv(['STRIPE_SECRET_KEY'])) {
     throw new ApiError(503, 'Stripe is not configured')
   }
   return new Stripe(cfg.stripeSecretKey!, { apiVersion: '2024-06-20' })

@@ -8,7 +8,7 @@ services:
     buildCommand: npm ci && npm run prisma:generate
     # Release command runs migration ONCE before new instances boot — safe for zero-downtime deploys
     releaseCommand: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
-    startCommand: node --loader tsx/esm apps/api/src/server.ts
+    startCommand: npx tsx apps/api/src/server.ts
     envVars:
       - key: NODE_ENV
         value: production
@@ -25,6 +25,29 @@ services:
         generateValue: true
       - key: PORT
         value: 4000
+      - key: TRACKING_SECRET
+        generateValue: true
+      - key: APP_URL
+        fromService:
+          name: acaos-api
+          type: web
+          property: host
+      - key: WEB_URL
+        fromService:
+          name: acaos-web
+          type: web
+          property: host
+      - key: API_URL
+        fromService:
+          name: acaos-api
+          type: web
+          property: host
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: BULL_BOARD_USER
+        sync: false
+      - key: BULL_BOARD_PASS
+        sync: false
 
   # ── Worker ───────────────────────────────────────────────────────────────────
   - type: worker
@@ -34,7 +57,7 @@ services:
     plan: starter
     buildCommand: npm ci && npm run prisma:generate
     # Worker does NOT run migrations — only the API release command does
-    startCommand: node --loader tsx/esm apps/worker/src/worker.ts
+    startCommand: npx tsx apps/worker/src/worker.ts
     envVars:
       - key: NODE_ENV
         value: production
@@ -47,6 +70,8 @@ services:
           name: acaos-redis
           type: redis
           property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
 
   # ── Web ──────────────────────────────────────────────────────────────────────
   - type: web

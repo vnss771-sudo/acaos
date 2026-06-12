@@ -66,6 +66,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const outcomeFilter = req.query.outcome as string | undefined
   const search        = req.query.search  as string | undefined
   const sortBy        = req.query.sortBy  as string | undefined  // opportunityScore | expectedRevenueScore
+  if (search && search.length > 200) throw new ApiError(400, 'search too long (max 200)')
 
   const where: Record<string, unknown> = { workspaceId }
   if (stageFilter)   where.buyingStage  = stageFilter
@@ -150,6 +151,9 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
   const workspaceId = req.body.workspaceId as string
   if (!workspaceId)          throw new ApiError(400, 'workspaceId required')
   if (!req.body.companyName) throw new ApiError(400, 'companyName required')
+  if (String(req.body.companyName).length > 255)   throw new ApiError(400, 'companyName too long (max 255)')
+  if (req.body.description && String(req.body.description).length > 5000) throw new ApiError(400, 'description too long (max 5000)')
+  if (req.body.notes && String(req.body.notes).length > 5000)             throw new ApiError(400, 'notes too long (max 5000)')
 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
@@ -218,7 +222,11 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
   for (const key of allowed) {
     if (req.body[key] !== undefined) data[key] = req.body[key]
   }
-  if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
+  if (req.body.lastContactedAt) {
+    const d = new Date(req.body.lastContactedAt)
+    if (isNaN(d.getTime())) throw new ApiError(400, 'Invalid lastContactedAt date')
+    data.lastContactedAt = d
+  }
 
   const updated = await prisma.prospect.update({ where: { id: req.params.id as string }, data })
   res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
@@ -651,8 +659,11 @@ prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/pause', asyncHandle
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
+  const existing = await prisma.cadenceEnrollment.findUnique({ where: { id: req.params.enrollmentId as string } })
+  if (!existing || existing.prospectId !== prospect.id) throw new ApiError(404, 'Enrollment not found')
+
   const enrollment = await prisma.cadenceEnrollment.update({
-    where: { id: req.params.enrollmentId as string },
+    where: { id: existing.id },
     data:  { status: 'PAUSED' },
   })
 
@@ -794,8 +805,11 @@ prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/resume', asyncHandl
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
+  const existing = await prisma.cadenceEnrollment.findUnique({ where: { id: req.params.enrollmentId as string } })
+  if (!existing || existing.prospectId !== prospect.id) throw new ApiError(404, 'Enrollment not found')
+
   const enrollment = await prisma.cadenceEnrollment.update({
-    where: { id: req.params.enrollmentId as string },
+    where: { id: existing.id },
     data:  { status: 'ACTIVE', nextActionAt: new Date() },
   })
 
@@ -816,7 +830,7 @@ prospectsRouter.post('/:id/cadence-enrollments/:enrollmentId/approve', asyncHand
   const enrollment = await prisma.cadenceEnrollment.findUnique({
     where: { id: req.params.enrollmentId as string }
   })
-  if (!enrollment) throw new ApiError(404, 'Enrollment not found')
+  if (!enrollment || enrollment.prospectId !== prospect.id) throw new ApiError(404, 'Enrollment not found')
   if (enrollment.status !== 'PENDING_REVIEW') {
     throw new ApiError(400, `Enrollment is ${enrollment.status} — only PENDING_REVIEW enrollments can be approved`)
   }

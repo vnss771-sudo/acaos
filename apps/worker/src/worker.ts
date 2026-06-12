@@ -1062,17 +1062,36 @@ const advanceCadenceWorker = new Worker(
 
     const parsed = parseJson<{ subject?: string; email?: string }>(raw, {})
     if (!parsed.subject || !parsed.email) {
-      log('advance-cadence', `AI output invalid for ${enrollmentId} — skipping step`)
-      return { error: 'invalid_ai_output' }
+      throw new Error(`advance-cadence: invalid AI output for enrollment ${enrollmentId} — retrying`)
     }
 
-    // Create outcome record before sending so its ID is available for tracking injection
+    // Personalise email with brief page URL when available
+    const appUrl = cfg.appUrl
+    const pageToken = prospect.prospectPageToken
+    if (appUrl && pageToken) {
+      parsed.email += `\n\nP.S. I've put together a quick intelligence brief on ${prospect.companyName}: ${appUrl}/for/${pageToken}`
+    }
+
+    // Create outcome record first so its ID can be used for the tracking pixel
     const outcome = await prisma.messageOutcome.create({
       data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, event: 'SENT', channel: 'EMAIL', sentAt: new Date() },
     })
 
-    // Append-only send ledger — preserves denominator for learning loop
-    const messageSend = await prisma.messageSend.create({
+    // Send — on failure, delete the dangling outcome record and throw so BullMQ retries
+    try {
+      await sendMail(
+        prospect.contactEmail,
+        parsed.subject,
+        `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`,
+        outcome.id
+      )
+    } catch (mailErr) {
+      await prisma.messageOutcome.delete({ where: { id: outcome.id } }).catch(() => {})
+      throw mailErr
+    }
+
+    // Email confirmed sent — write the send ledger record
+    await prisma.messageSend.create({
       data: {
         workspaceId:    prospect.workspaceId,
         prospectId:     prospect.id,
@@ -1090,22 +1109,7 @@ const advanceCadenceWorker = new Worker(
       where:  { workspaceId_signalPattern: { workspaceId: prospect.workspaceId, signalPattern: pattern } },
       create: { workspaceId: prospect.workspaceId, signalPattern: pattern, vertical: prospect.industry ?? null, sentCount: 1 },
       update: { sentCount: { increment: 1 } },
-    }).catch(() => {})
-
-    // Personalise email with brief page URL when available
-    const appUrl = cfg.appUrl
-    const pageToken = prospect.prospectPageToken
-    if (appUrl && pageToken) {
-      parsed.email += `\n\nP.S. I've put together a quick intelligence brief on ${prospect.companyName}: ${appUrl}/for/${pageToken}`
-    }
-
-    await sendMail(
-      prospect.contactEmail,
-      parsed.subject,
-      `<p style="font-family:sans-serif;line-height:1.6">${parsed.email.replace(/\n/g, '<br>')}</p>`,
-      outcome.id
-    )
-    void messageSend
+    }).catch(err => console.error('[advance-cadence] signal pattern upsert failed:', err.message))
 
     await job.updateProgress(80)
 
@@ -1727,14 +1731,21 @@ const dailyBriefWorker = new Worker(
         </div>
       `
 
-      for (const m of ownerEmails) {
-        sendMail(m.user.email, `⚡ ${hotProspects.length} HOT prospect${hotProspects.length !== 1 ? 's' : ''} in your pipeline — ${today}`, html).catch(() => {})
+      const mailResults = await Promise.allSettled(
+        ownerEmails.map(m => sendMail(m.user.email, `⚡ ${hotProspects.length} HOT prospect${hotProspects.length !== 1 ? 's' : ''} in your pipeline — ${today}`, html))
+      )
+      const anySent = mailResults.some(r => r.status === 'fulfilled')
+      if (!anySent) {
+        console.error(`[daily-brief] All mail sends failed for workspaceId=${workspaceId}`)
       }
 
-      await prisma.dailyBrief.update({
-        where: { workspaceId_date: { workspaceId, date: today } },
-        data:  { sentAt: new Date() },
-      })
+      // Only mark sentAt if at least one email was delivered
+      if (anySent) {
+        await prisma.dailyBrief.update({
+          where: { workspaceId_date: { workspaceId, date: today } },
+          data:  { sentAt: new Date() },
+        })
+      }
     }
 
     await job.updateProgress(100)

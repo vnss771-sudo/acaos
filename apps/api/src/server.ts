@@ -25,7 +25,7 @@ import { publicRouter } from './routes/public.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
-import { getQueue } from './lib/queues.js'
+import { getQueue, getConnection } from './lib/queues.js'
 import { cfg } from './lib/env.js'
 
 const app = express()
@@ -69,14 +69,19 @@ app.get('/api/health', async (_req, res) => {
   })
 })
 
-// GET /api/readyz — Kubernetes-style readiness probe
+// GET /api/readyz — Kubernetes-style readiness probe (checks DB + Redis)
 app.get('/api/readyz', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`
-    res.status(200).json({ ready: true })
   } catch {
-    res.status(503).json({ ready: false, reason: 'database_unavailable' })
+    res.status(503).json({ ready: false, reason: 'database_unavailable' }); return
   }
+  try {
+    await getConnection().ping()
+  } catch {
+    res.status(503).json({ ready: false, reason: 'redis_unavailable' }); return
+  }
+  res.status(200).json({ ready: true })
 })
 
 // GET /api/status — extended operational status

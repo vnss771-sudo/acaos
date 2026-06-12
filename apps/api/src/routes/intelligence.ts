@@ -23,6 +23,9 @@ intelligenceRouter.use(requireAuth)
 intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
 
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
@@ -105,6 +108,9 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/strategy-cards', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
   const limit = Math.min(50, parseInt(req.query.limit as string ?? '20') || 20)
 
   const prospects = await prisma.prospect.findMany({
@@ -142,9 +148,13 @@ intelligenceRouter.get('/strategy-cards', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
 
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
+    take: 500,
     select: {
       id: true, companyName: true, buyingStage: true, outcomeStage: true,
       opportunityScore: true, expectedDealValue: true, winProbability: true,
@@ -217,20 +227,18 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
 
-  const [totalProspects, signalCounts, stageDist] = await Promise.all([
+  const [totalProspects, signalCounts, stageDist, hot, warm, cold] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId } }),
     prisma.signal.groupBy({ by: ['type'], where: { workspaceId }, _count: true }),
-    prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId }, _count: true })
+    prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId }, _count: true }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 72 } } }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 45, lt: 72 } } }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { lt: 45 } } }),
   ])
-
-  const allProspects = await prisma.prospect.findMany({
-    where: { workspaceId },
-    select: { opportunityScore: true }
-  })
-  const hot  = allProspects.filter(p => p.opportunityScore >= 72).length
-  const warm = allProspects.filter(p => p.opportunityScore >= 45 && p.opportunityScore < 72).length
-  const cold = allProspects.filter(p => p.opportunityScore < 45).length
 
   res.json({
     totalProspects,
@@ -246,6 +254,9 @@ intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/industry-configs', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user?.id
+  if (!userId) throw new ApiError(401, 'Unauthorized')
+  await assertMembership(userId, workspaceId)
 
   const configs = await prisma.industrySignalConfig.findMany({
     where: { workspaceId },
@@ -260,7 +271,7 @@ intelligenceRouter.put('/industry-configs/:industry', asyncHandler(async (req, r
   const industry = req.params.industry as string
   const { workspaceId, signalBoosts, description } = req.body
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-  if (!signalBoosts || typeof signalBoosts !== 'object') throw new ApiError(400, 'signalBoosts must be an object')
+  if (!signalBoosts || typeof signalBoosts !== 'object' || Array.isArray(signalBoosts)) throw new ApiError(400, 'signalBoosts must be a non-null object')
 
   const userId = (req as AuthedRequest).user?.id
   if (!userId) throw new ApiError(401, 'Unauthorized')
@@ -420,8 +431,10 @@ intelligenceRouter.post('/briefs/generate', asyncHandler(async (req, res) => {
     orderBy: { opportunityScore: 'desc' },
   })
 
-  await Promise.all(prospects.map(p => enqueueGenerateOpportunityBrief(p.id, workspaceId)))
-  res.json({ ok: true, queued: prospects.length })
+  const results = await Promise.allSettled(prospects.map(p => enqueueGenerateOpportunityBrief(p.id, workspaceId)))
+  const queued = results.filter(r => r.status === 'fulfilled').length
+  const failed = results.filter(r => r.status === 'rejected').length
+  res.json({ ok: true, queued, failed })
 }))
 
 // GET /api/intelligence/deliverability-check?domain=&workspaceId=

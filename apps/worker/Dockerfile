@@ -4,11 +4,13 @@ WORKDIR /app
 # Copy workspace manifests
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
+COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
 
 RUN npm ci
 
 COPY packages/db ./packages/db
+COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 
 RUN npm run prisma:generate
