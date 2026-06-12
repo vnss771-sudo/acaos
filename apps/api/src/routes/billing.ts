@@ -77,7 +77,29 @@ billingRouter.post(
       throw new ApiError(400, `Webhook signature invalid: ${err instanceof Error ? err.message : ''}`)
     }
 
-    switch (event.type) {
+    // Idempotency: Stripe delivers at-least-once. Claim the event id first; if
+    // it already exists we've handled this delivery, so acknowledge and stop.
+    try {
+      await prisma.processedStripeEvent.create({ data: { id: event.id, type: event.type } })
+    } catch {
+      return res.json({ received: true, duplicate: true })
+    }
+
+    try {
+      await handleWebhookEvent(event)
+    } catch (err) {
+      // Processing failed after claiming the event — release the claim so
+      // Stripe's redelivery is reprocessed rather than skipped as a duplicate.
+      await prisma.processedStripeEvent.delete({ where: { id: event.id } }).catch(() => {})
+      throw err
+    }
+
+    res.json({ received: true })
+  })
+)
+
+async function handleWebhookEvent(event: { type: string; data: { object: unknown } }) {
+  switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as {
           customer?: string
@@ -86,7 +108,11 @@ billingRouter.post(
         }
         const workspaceId = session.metadata?.workspaceId
         if (workspaceId) {
-          const plan = resolvePlanFromPrice(session.metadata?.priceId)
+          // New subscription: default an unrecognized price to starter, but log it.
+          const plan = resolvePlanFromPrice(session.metadata?.priceId) ?? 'starter'
+          if (!resolvePlanFromPrice(session.metadata?.priceId)) {
+            console.warn(`[billing] unrecognized priceId on checkout for workspace=${workspaceId}; defaulting to starter`)
+          }
           await prisma.workspace.update({
             where: { id: workspaceId },
             data: {
@@ -116,9 +142,15 @@ billingRouter.post(
           select: { id: true }
         })
         if (ws) {
+          // Only touch the plan when the price maps to a known plan. An
+          // unrecognized price (proration line, add-on, or an env not set in
+          // this service) must NOT silently downgrade a paying customer.
+          if (plan === null) {
+            console.warn(`[billing] subscription.updated ws=${ws.id} unrecognized priceId=${priceId}; preserving existing plan`)
+          }
           await prisma.workspace.update({
             where: { id: ws.id },
-            data: { subscriptionStatus: sub.status, plan }
+            data: { subscriptionStatus: sub.status, ...(plan !== null ? { plan } : {}) }
           })
           console.log(`[billing] subscription.updated ws=${ws.id} status=${sub.status}`)
         }
@@ -180,14 +212,14 @@ billingRouter.post(
         // Silently acknowledge unknown events
         break
     }
+}
 
-    res.json({ received: true })
-  })
-)
-
-function resolvePlanFromPrice(priceId: string | undefined): string {
-  if (!priceId) return 'starter'
+// Maps a Stripe price id to a plan, or null when the price is not recognized.
+// Callers decide whether an unrecognized price should default (new checkout) or
+// be preserved (subscription update) — it must never blindly downgrade.
+function resolvePlanFromPrice(priceId: string | undefined): string | null {
+  if (!priceId) return null
   if (priceId === process.env.STRIPE_PRICE_GROWTH) return 'growth'
   if (priceId === process.env.STRIPE_PRICE_STARTER) return 'starter'
-  return 'starter'
+  return null
 }

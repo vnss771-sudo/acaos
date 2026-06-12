@@ -65,7 +65,7 @@ test('appendSlugSuffix preserves a safe slug', () => {
 })
 
 // ── JWT ───────────────────────────────────────────────────────────────────────
-test('getJwtSecret allows the development fallback secret', () => {
+test('getJwtSecret uses a strong ephemeral dev secret, never the known placeholder', () => {
   const originalNodeEnv = process.env.NODE_ENV
   const originalJwtSecret = process.env.JWT_SECRET
 
@@ -73,14 +73,20 @@ test('getJwtSecret allows the development fallback secret', () => {
   delete process.env.JWT_SECRET
 
   try {
-    assert.equal(getJwtSecret(), 'change-me')
+    const secret = getJwtSecret()
+    assert.notEqual(secret, 'change-me')
+    assert.ok(secret.length >= 32, 'dev fallback should be a strong random value')
+    // Stable within the process so sign and verify agree.
+    assert.equal(getJwtSecret(), secret)
+    // And it actually works for signing/verifying.
+    assert.equal(verifyJwt(signJwt({ userId: 'dev' })).userId, 'dev')
   } finally {
     process.env.NODE_ENV = originalNodeEnv
     process.env.JWT_SECRET = originalJwtSecret
   }
 })
 
-test('getJwtSecret requires an explicit non-default production secret', () => {
+test('getJwtSecret requires a strong, non-placeholder secret', () => {
   const originalNodeEnv = process.env.NODE_ENV
   const originalJwtSecret = process.env.JWT_SECRET
 
@@ -88,11 +94,16 @@ test('getJwtSecret requires an explicit non-default production secret', () => {
   delete process.env.JWT_SECRET
   assert.throws(() => getJwtSecret(), /JWT_SECRET is required in production/)
 
+  // The known placeholder is rejected in every environment.
   process.env.JWT_SECRET = 'change-me'
-  assert.throws(() => getJwtSecret(), /JWT_SECRET must be changed in production/)
+  assert.throws(() => getJwtSecret(), /JWT_SECRET must not be the default placeholder/)
 
-  process.env.JWT_SECRET = 'production-secret'
-  assert.equal(getJwtSecret(), 'production-secret')
+  // Too-short secrets are rejected.
+  process.env.JWT_SECRET = 'short'
+  assert.throws(() => getJwtSecret(), /at least 16 characters/)
+
+  process.env.JWT_SECRET = 'a-strong-production-secret'
+  assert.equal(getJwtSecret(), 'a-strong-production-secret')
 
   process.env.NODE_ENV = originalNodeEnv
   process.env.JWT_SECRET = originalJwtSecret

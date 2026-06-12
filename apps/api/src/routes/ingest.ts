@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
+import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -107,19 +108,26 @@ ingestRouter.post(
     // Insert new leads one-by-one so we get their IDs for queue jobs
     const created = await prisma.$transaction(rows.map((data) => prisma.lead.create({ data })))
 
-    // Enqueue AI research for each new lead if requested
+    // Enqueue AI research for each new lead if requested — subject to the same
+    // monthly AI plan limit as the dashboard, so the ingest key cannot drive
+    // uncapped OpenAI spend. Processed sequentially so we stop at the cap.
     let queued = 0
     if (autoResearch) {
-      await Promise.all(
-        created.map(async (lead) => {
-          try {
-            await enqueueResearchLead(lead.id, workspace.id)
-            queued++
-          } catch {
-            // Queue failures are non-fatal — leads are already saved
-          }
-        })
-      )
+      for (const lead of created) {
+        try {
+          await checkAndIncrementAiUsage(workspace.id, 'AI_RESEARCH')
+        } catch {
+          // Monthly AI limit reached — stop auto-researching further leads.
+          // The leads themselves are already saved.
+          break
+        }
+        try {
+          await enqueueResearchLead(lead.id, workspace.id)
+          queued++
+        } catch {
+          // Queue failures are non-fatal — leads are already saved.
+        }
+      }
     }
 
     res.status(201).json({

@@ -135,7 +135,9 @@ model ScoringOutcome {
   id               String       @id @default(cuid())
   workspaceId      String
   leadId           String?
-  prospectId       String
+  // Nullable: reply outcomes sourced from a Lead (via the worker) have no
+  // Prospect. Previously a Lead id was written here, corrupting the data.
+  prospectId       String?
   score            Float
   replied          Boolean
   replyIntent      String?
@@ -181,6 +183,14 @@ model ProcessedEmail {
   uid         Int      @unique
   messageId   String?  @unique
   fromAddress String?
+  processedAt DateTime @default(now())
+}
+
+// Idempotency log for Stripe webhook events. Stripe delivers at-least-once and
+// out of order; we record each processed event id so re-deliveries are ignored.
+model ProcessedStripeEvent {
+  id          String   @id // Stripe event id (evt_...)
+  type        String
   processedAt DateTime @default(now())
 }
 

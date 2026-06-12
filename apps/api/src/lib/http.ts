@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express'
+import { verboseErrors } from './config.js'
 
 export class ApiError extends Error {
   statusCode: number
@@ -8,10 +9,6 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.statusCode = statusCode
   }
-}
-
-function isProduction() {
-  return process.env.NODE_ENV === 'production'
 }
 
 export function asyncHandler(
@@ -34,7 +31,7 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
   console.error(error)
 
   const message =
-    !isProduction() && error instanceof Error && error.message
+    verboseErrors() && error instanceof Error && error.message
       ? error.message
       : 'Internal server error'
 
