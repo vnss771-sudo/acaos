@@ -336,11 +336,14 @@ const replyWorker = new Worker(
 
         // When INTERESTED and a calendar URL is configured, auto-send booking link
         if (parsed.classification === 'INTERESTED' && prospect.contactEmail && isMailConfigured()) {
-          const productConfig = await prisma.workspaceProduct.findUnique({
+          const suppressed = await prisma.emailSuppression.findUnique({
+            where: { workspaceId_email: { workspaceId: prospect.workspaceId, email: prospect.contactEmail } },
+          })
+          const productConfig = suppressed ? null : await prisma.workspaceProduct.findUnique({
             where: { workspaceId: prospect.workspaceId },
             select: { calendarUrl: true, productName: true },
           })
-          if (productConfig?.calendarUrl) {
+          if (!suppressed && productConfig?.calendarUrl) {
             const firstName = prospect.contactName?.split(' ')[0] ?? 'there'
             const calHtml = `
               <p>Hi ${firstName},</p>

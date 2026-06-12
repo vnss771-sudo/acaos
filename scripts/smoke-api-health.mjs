@@ -6,7 +6,10 @@ const env = {
   ...process.env,
   PORT: String(port),
   WEB_URL: `http://localhost:${port + 1}`,
-  JWT_SECRET: 'smoke-secret'
+  JWT_SECRET: 'smoke-secret',
+  TRACKING_SECRET: 'smoke-tracking-secret',
+  DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://smoke:smoke@localhost:5432/smoke',
+  REDIS_URL: process.env.REDIS_URL ?? 'redis://localhost:6379',
 }
 
 const child = spawn('npx', ['tsx', 'apps/api/src/server.ts'], {
@@ -31,7 +34,7 @@ function cleanup(code = 0) {
 child.stdout.on('data', (chunk) => {
   const text = chunk.toString()
   process.stdout.write(text)
-  if (text.includes('API running on')) {
+  if (text.includes('[api] Running on')) {
     void runCheck()
   }
 })

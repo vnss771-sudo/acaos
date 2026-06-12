@@ -1,7 +1,9 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
+import type { AuthedRequest } from '../types/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
+import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import {
   calculateOpportunityScores, detectBuyingStage, calcWinProbability,
   toRawSignal, toFullSignal, detectProblemOwnerActivation, normalizeSignal, computeSignalExpiry
@@ -16,6 +18,9 @@ signalsRouter.use(requireAuth)
 signalsRouter.get('/', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const where: Record<string, unknown> = { workspaceId }
   if (req.query.prospectId) where.prospectId = req.query.prospectId
@@ -32,15 +37,20 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
 
 // POST /api/signals — add a manual signal
 signalsRouter.post('/', asyncHandler(async (req, res) => {
-  const { workspaceId, prospectId, type, strength, title, description, sourceUrl, source,
+  const { prospectId, type, strength, title, description, sourceUrl, source,
     sourceReliability, industryRelevance, detectedAt } = req.body
 
-  if (!workspaceId || !prospectId) throw new ApiError(400, 'workspaceId and prospectId required')
+  if (!prospectId) throw new ApiError(400, 'prospectId required')
   if (!type) throw new ApiError(400, 'type required')
   if (strength === undefined || strength < 0 || strength > 100) throw new ApiError(400, 'strength must be 0-100')
 
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const workspaceId = prospect.workspaceId
 
   const signal = await prisma.signal.create({
     data: {
@@ -131,8 +141,12 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
 // DELETE /api/signals/:id
 signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const signalId = req.params.id as string
-  const signal = await prisma.signal.findUnique({ where: { id: signalId } })
+  const signal = await prisma.signal.findUnique({ where: { id: signalId }, select: { id: true, workspaceId: true } })
   if (!signal) throw new ApiError(404, 'Signal not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, signal.workspaceId)) throw new ApiError(403, 'Access denied')
+
   await prisma.signal.delete({ where: { id: signalId } })
   res.json({ ok: true })
 }))
