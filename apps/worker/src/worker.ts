@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
 import { connection } from './lib/queue.js'
+import { startHealthServer } from './health.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
@@ -352,8 +353,12 @@ for (const [name, worker] of [
   })
 }
 
+// ── Liveness probe ──────────────────────────────────────────────────────────────
+const healthServer = startHealthServer(Number(process.env.WORKER_HEALTH_PORT || 9090))
+
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
+  healthServer.close()
   console.log(`[worker] ${signal} received — shutting down`)
   await Promise.all([
     researchWorker.close(),
