@@ -32,12 +32,24 @@ function setEnv() {
   process.env.STRIPE_PRICE_STARTER = STARTER_PRICE
 }
 
-function baseSpec() {
+function baseSpec(workspaceRow: any = { id: 'ws1' }) {
+  // Tracks processed event ids so re-deliveries are recognized, mirroring the
+  // unique-constraint on ProcessedStripeEvent.
+  const seen = new Set<string>()
   return {
+    processedStripeEvent: {
+      create: async (a: any) => {
+        const id = String(a?.data?.id)
+        if (seen.has(id)) throw new Error('duplicate event')
+        seen.add(id)
+        return { id }
+      },
+      delete: async (a: any) => { seen.delete(String(a?.where?.id)); return {} },
+    },
     workspace: {
       update: async (args: any) => ({ id: args?.where?.id }),
       findFirst: async (args: any) =>
-        args?.where?.stripeSubscriptionId === 'sub_known' ? { id: 'ws1' } : null,
+        args?.where?.stripeSubscriptionId === 'sub_known' ? workspaceRow : null,
     },
   }
 }
@@ -54,8 +66,12 @@ function signedBody(event: object): { body: string; signature: string } {
   return { body, signature }
 }
 
-async function postWebhook(event: object, opts: { badSig?: boolean } = {}) {
-  const { body, signature } = signedBody(event)
+let eventSeq = 0
+async function postWebhook(event: Record<string, any>, opts: { badSig?: boolean } = {}) {
+  // Stripe events always carry an id; default a unique one so each delivery is
+  // treated as new unless a test deliberately reuses an id.
+  const withId = { id: event.id ?? `evt_${++eventSeq}`, ...event }
+  const { body, signature } = signedBody(withId)
   return server.request('/api/billing/webhook', {
     method: 'POST',
     headers: {
@@ -173,4 +189,58 @@ test('an unhandled event type is acknowledged as a no-op', async () => {
   assert.equal(res.status, 200)
   assert.equal(res.body.received, true)
   assert.equal(prisma.callsTo('workspace', 'update').length, 0)
+})
+
+// --- idempotency (BILL-1) ---
+
+test('a re-delivered event (same id) is processed only once', async () => {
+  const event = {
+    id: 'evt_dup_1',
+    type: 'checkout.session.completed',
+    data: { object: { customer: 'cus_1', subscription: 'sub_1', metadata: { workspaceId: 'ws1', priceId: GROWTH_PRICE } } },
+  }
+  const first = await postWebhook(event)
+  assert.equal(first.status, 200)
+  assert.equal(first.body.duplicate, undefined)
+
+  const second = await postWebhook(event) // same id
+  assert.equal(second.status, 200)
+  assert.equal(second.body.duplicate, true)
+
+  // The side effect ran exactly once despite two deliveries.
+  assert.equal(prisma.callsTo('workspace', 'update').length, 1)
+})
+
+// --- plan-downgrade safety (BILL-2) ---
+
+test('subscription.updated with an unrecognized price does NOT change the plan', async () => {
+  const res = await postWebhook({
+    type: 'customer.subscription.updated',
+    data: { object: { id: 'sub_known', status: 'active', customer: 'cus_1', items: { data: [{ price: { id: 'price_unrecognized' } }] } } },
+  })
+  assert.equal(res.status, 200)
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal(data.subscriptionStatus, 'active')
+  assert.equal('plan' in data, false, 'plan must be preserved, not downgraded')
+})
+
+test('subscription.updated with a known price still sets that plan', async () => {
+  const res = await postWebhook({
+    type: 'customer.subscription.updated',
+    data: { object: { id: 'sub_known', status: 'active', customer: 'cus_1', items: { data: [{ price: { id: GROWTH_PRICE } }] } } },
+  })
+  assert.equal(res.status, 200)
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal(data.plan, 'growth')
+})
+
+test('checkout with an unrecognized price still activates, defaulting to starter', async () => {
+  const res = await postWebhook({
+    type: 'checkout.session.completed',
+    data: { object: { customer: 'cus_1', subscription: 'sub_1', metadata: { workspaceId: 'ws1', priceId: 'price_unrecognized' } } },
+  })
+  assert.equal(res.status, 200)
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal(data.subscriptionStatus, 'active')
+  assert.equal(data.plan, 'starter')
 })
