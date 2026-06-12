@@ -7,7 +7,8 @@
 import { test, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { ingestRouter } from '../apps/api/src/routes/ingest.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, type TestServer } from './helpers/db.ts'
+import { hashApiKey } from '../apps/api/src/lib/apiKeys.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
 let server: TestServer
 
@@ -22,11 +23,12 @@ beforeEach(async () => {
   await resetDb()
 })
 
-// Give a workspace an ingest API key and return it.
+// Give a workspace an ingest API key. Only the hash is stored (as in
+// production); the raw key is returned for the test to authenticate with.
 async function workspaceWithKey() {
   const { workspace } = await seedUserWithWorkspace()
   const key = `key-${Math.random().toString(36).slice(2)}`
-  await prisma.workspace.update({ where: { id: workspace.id }, data: { ingestApiKey: key } })
+  await prisma.workspace.update({ where: { id: workspace.id }, data: { ingestApiKey: hashApiKey(key) } })
   return { workspaceId: workspace.id, key }
 }
 
@@ -47,6 +49,26 @@ test('creates leads for a valid key and persists them scoped to the workspace', 
   assert.equal(res.status, 201)
   assert.equal(res.body.created, 2)
   assert.equal(await prisma.lead.count({ where: { workspaceId } }), 2)
+})
+
+test('key rotation stores only a hash and returns a working raw key (SEC-5)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace() // owner
+  const rotate = await server.request(`/api/ingest/keys/rotate?workspaceId=${workspace.id}`, {
+    method: 'POST', headers: { Authorization: bearer(user.id) },
+  })
+  assert.equal(rotate.status, 200)
+  const rawKey = rotate.body.ingestApiKey
+  assert.match(rawKey, /^[a-f0-9]{64}$/)
+
+  // The database stores the hash, never the raw key.
+  const ws = await prisma.workspace.findUnique({ where: { id: workspace.id }, select: { ingestApiKey: true } })
+  assert.notEqual(ws!.ingestApiKey, rawKey)
+  assert.equal(ws!.ingestApiKey, hashApiKey(rawKey))
+
+  // The raw key still authenticates an ingest request.
+  const res = await ingest(rawKey, { leads: [{ businessName: 'Via rotated key' }], autoResearch: false })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 1)
 })
 
 test('auto-research respects the monthly AI plan limit (ROB-5)', async () => {

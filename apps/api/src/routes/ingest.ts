@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { randomBytes } from 'node:crypto'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
@@ -25,7 +25,7 @@ async function requireIngestKey(
     res.status(401).json({ error: 'Missing x-api-key header' })
     return
   }
-  const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: key } })
+  const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: hashApiKey(key) } })
   if (!workspace) {
     res.status(401).json({ error: 'Invalid API key' })
     return
@@ -155,10 +155,11 @@ keyRouter.post(
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
-    const ingestApiKey = randomBytes(32).toString('hex')
-    await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey } })
+    // Show the raw key to the caller once; persist only its hash.
+    const rawKey = generateApiKey()
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: hashApiKey(rawKey) } })
 
-    res.json({ ingestApiKey })
+    res.json({ ingestApiKey: rawKey })
   })
 )
 
