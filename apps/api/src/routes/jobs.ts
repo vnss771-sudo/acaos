@@ -11,13 +11,94 @@ import {
   enqueueAnalyzeReply,
   getJobById
 } from '../lib/queues.js'
+import { issueSseTicket, consumeSseTicket } from '../lib/sseTickets.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const jobsRouter = Router()
-jobsRouter.use(requireAuth)
 
 const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox']
 const MAX_REPLY_BODY = 10_000
+
+// Server-Sent Events stream for real-time job progress. Registered BEFORE
+// requireAuth because EventSource cannot send an Authorization header; it
+// authenticates with a short-lived, single-use ticket (see /events/ticket)
+// exchanged from Redis, rather than a long-lived JWT in the URL.
+jobsRouter.get('/events/:queue/:jobId', asyncHandler(async (req, res) => {
+  const queue = req.params.queue as string
+  const jobId = req.params.jobId as string
+  if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
+
+  const userId = await consumeSseTicket(String(req.query.ticket || '').trim())
+  if (!userId) throw new ApiError(401, 'Invalid or expired ticket')
+
+  const job = await getJobById(queue, jobId)
+  if (!job) throw new ApiError(404, 'Job not found')
+
+  const jobUserId = (job.data as Record<string, unknown>).userId
+  if (jobUserId && jobUserId !== userId) throw new ApiError(403, 'Access denied')
+
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+
+  const TICK_MS = 800
+  const MAX_TICKS = 450 // 6 minutes
+
+  let ticks = 0
+  let timer: ReturnType<typeof setTimeout>
+
+  function send(event: string, data: unknown) {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+
+  async function poll() {
+    try {
+      const j = await getJobById(queue, jobId)
+      if (!j) { send('error', { message: 'Job disappeared' }); res.end(); return }
+
+      const state = await j.getState()
+      send('progress', { state, progress: j.progress, jobId })
+
+      if (state === 'completed') {
+        send('done', { state: 'completed', result: j.returnvalue, jobId })
+        res.end()
+        return
+      }
+      if (state === 'failed') {
+        send('done', { state: 'failed', error: j.failedReason, jobId })
+        res.end()
+        return
+      }
+
+      ticks++
+      if (ticks >= MAX_TICKS) {
+        send('timeout', { message: 'Monitoring timed out — job still running', jobId })
+        res.end()
+        return
+      }
+
+      timer = setTimeout(poll, TICK_MS)
+    } catch {
+      res.end()
+    }
+  }
+
+  timer = setTimeout(poll, 0)
+  req.on('close', () => clearTimeout(timer))
+}))
+
+// Everything below requires a normal authenticated session.
+jobsRouter.use(requireAuth)
+
+// Issue a one-time SSE ticket (authenticated via the Authorization header).
+// The browser exchanges this for the EventSource URL above.
+jobsRouter.post('/events/ticket', asyncHandler(async (req, res) => {
+  const user = (req as AuthedRequest).user
+  const ticket = await issueSseTicket(user.id)
+  res.json({ ticket })
+}))
 
 jobsRouter.post(
   '/research',
@@ -147,83 +228,3 @@ jobsRouter.get(
   })
 )
 
-// Server-Sent Events stream for real-time job progress
-// EventSource can't send custom headers, so auth goes via ?token= query param
-jobsRouter.get(
-  '/events/:queue/:jobId',
-  asyncHandler(async (req, res) => {
-    const queue = req.params.queue as string
-    const jobId = req.params.jobId as string
-    if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
-
-    // Authenticate via query param (EventSource limitation)
-    const token = String(req.query.token || '').trim()
-    if (!token) throw new ApiError(401, 'Authentication required')
-
-    let userId: string
-    try {
-      const { verifyJwt } = await import('../lib/jwt.js')
-      const payload = verifyJwt(token) as { userId: string }
-      userId = payload.userId
-    } catch {
-      throw new ApiError(401, 'Invalid or expired token')
-    }
-
-    const job = await getJobById(queue as string, jobId as string)
-    if (!job) throw new ApiError(404, 'Job not found')
-
-    const jobUserId = (job.data as Record<string, unknown>).userId
-    if (jobUserId && jobUserId !== userId) throw new ApiError(403, 'Access denied')
-
-    res.setHeader('Content-Type', 'text/event-stream')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no')
-    res.flushHeaders()
-
-    const TICK_MS = 800
-    const MAX_TICKS = 450 // 6 minutes
-
-    let ticks = 0
-    let timer: ReturnType<typeof setTimeout>
-
-    function send(event: string, data: unknown) {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-    }
-
-    async function poll() {
-      try {
-        const j = await getJobById(queue, jobId)
-        if (!j) { send('error', { message: 'Job disappeared' }); res.end(); return }
-
-        const state = await j.getState()
-        send('progress', { state, progress: j.progress, jobId })
-
-        if (state === 'completed') {
-          send('done', { state: 'completed', result: j.returnvalue, jobId })
-          res.end()
-          return
-        }
-        if (state === 'failed') {
-          send('done', { state: 'failed', error: j.failedReason, jobId })
-          res.end()
-          return
-        }
-
-        ticks++
-        if (ticks >= MAX_TICKS) {
-          send('timeout', { message: 'Monitoring timed out — job still running', jobId })
-          res.end()
-          return
-        }
-
-        timer = setTimeout(poll, TICK_MS)
-      } catch {
-        res.end()
-      }
-    }
-
-    timer = setTimeout(poll, 0)
-    req.on('close', () => clearTimeout(timer))
-  })
-)
