@@ -75,6 +75,9 @@ authRouter.post(
     const { token, refreshToken } = issueTokens(result.user.id)
     await persistRefreshToken(result.user.id, refreshToken)
 
+    // Send verification email (non-blocking — don't fail signup if SMTP is down)
+    sendVerificationEmail(result.user.id, result.user.email).catch(() => {})
+
     res.status(201).json({ token, refreshToken, user: result.user, workspace: result.workspace })
   })
 )
@@ -153,16 +156,23 @@ authRouter.get(
   '/me',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
-    const workspaces = await prisma.workspace.findMany({
-      where: { memberships: { some: { userId: user.id } } },
-      select: {
-        id: true, name: true, slug: true, plan: true,
-        subscriptionStatus: true, createdAt: true
-      },
-      orderBy: { createdAt: 'asc' }
-    })
-    res.json({ user, workspaces })
+    const authedUser = (req as AuthedRequest).user
+    const [dbUser, workspaces] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: authedUser.id },
+        select: { id: true, email: true, name: true, emailVerified: true }
+      }),
+      prisma.workspace.findMany({
+        where: { memberships: { some: { userId: authedUser.id } } },
+        select: {
+          id: true, name: true, slug: true, plan: true,
+          subscriptionStatus: true, createdAt: true,
+          _count: { select: { leads: true, campaigns: true } }
+        },
+        orderBy: { createdAt: 'asc' }
+      })
+    ])
+    res.json({ user: dbUser ?? authedUser, workspaces })
   })
 )
 
@@ -265,6 +275,63 @@ authRouter.patch(
     })
 
     res.json({ user: updated })
+  })
+)
+
+// ── Email verification ────────────────────────────────────────────────────────
+
+async function sendVerificationEmail(userId: string, email: string) {
+  const rawToken = generateRefreshToken()
+  const tokenHash = hashRefreshToken(rawToken)
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+
+  await prisma.emailVerificationToken.create({ data: { userId, tokenHash, expiresAt } })
+
+  const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+  const verifyUrl = `${appUrl}?verify=${rawToken}`
+
+  if (isMailConfigured()) {
+    await sendMail(email, 'Verify your ACAOS email address',
+      `<p>Please verify your email address by clicking the link below. This link expires in 24 hours.</p>` +
+      `<p><a href="${verifyUrl}">Verify email address</a></p>` +
+      `<p>If you didn't sign up for ACAOS, you can ignore this email.</p>`
+    )
+  } else {
+    console.log(`[auth] Verification URL (SMTP not configured): ${verifyUrl}`)
+  }
+}
+
+authRouter.get(
+  '/verify-email/:token',
+  asyncHandler(async (req, res) => {
+    const rawToken = String(req.params.token || '').trim()
+    const tokenHash = hashRefreshToken(rawToken)
+    const record = await prisma.emailVerificationToken.findUnique({ where: { tokenHash } })
+
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      throw new ApiError(400, 'Verification link is invalid or has expired')
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: record.userId }, data: { emailVerified: true } }),
+      prisma.emailVerificationToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
+    ])
+
+    res.json({ ok: true })
+  })
+)
+
+authRouter.post(
+  '/resend-verification',
+  authRateLimit,
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { emailVerified: true, email: true } })
+    if (dbUser?.emailVerified) return res.json({ ok: true }) // already verified
+
+    await sendVerificationEmail(user.id, user.email)
+    res.json({ ok: true })
   })
 )
 

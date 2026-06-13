@@ -8,15 +8,17 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @default(cuid())
-  email               String               @unique
+  id                  String                  @id @default(cuid())
+  email               String                  @unique
   name                String?
   passwordHash        String?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  emailVerified       Boolean                 @default(false)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
   memberships         Membership[]
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  emailVerifications  EmailVerificationToken[]
 }
 
 model Workspace {
@@ -257,6 +259,19 @@ model WorkspaceEmailConfig {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// Email address verification token sent on signup
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // Time-limited one-use token for password reset

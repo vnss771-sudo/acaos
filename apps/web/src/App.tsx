@@ -50,6 +50,7 @@ export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('acaos_token'))
   const [resetToken] = useState<string | null>(() => getUrlParam('reset'))
   const [inviteToken] = useState<string | null>(() => getUrlParam('invite'))
+  const [verifyToken] = useState<string | null>(() => getUrlParam('verify'))
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
@@ -147,6 +148,14 @@ export function App() {
       </>
     )
   }
+
+  // Verify email address when ?verify=TOKEN is present
+  useEffect(() => {
+    if (!verifyToken) return
+    fetch(`${API}/api/auth/verify-email/${verifyToken}`)
+      .then(() => window.history.replaceState({}, '', window.location.pathname))
+      .catch(() => {})
+  }, [verifyToken])
 
   // Accept a pending invite once we know who the user is
   useEffect(() => {
