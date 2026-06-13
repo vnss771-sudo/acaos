@@ -118,29 +118,48 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
 
   if (!await userHasWorkspaceAccess(user.id, workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const prospects = await prisma.prospect.findMany({
-    where: { workspaceId },
-    select: {
-      id: true, companyName: true, domain: true, industry: true, employeeCount: true,
-      location: true, contactName: true, contactEmail: true, contactPhone: true, contactTitle: true,
-      linkedinUrl: true, opportunityScore: true, intentScore: true, fitScore: true,
-      buyingStage: true, outcomeStage: true, winProbability: true,
-      expectedDealValue: true, estimatedRevenue: true, sourceTag: true,
-      createdAt: true, updatedAt: true
-    },
-    orderBy: { opportunityScore: 'desc' }
-  })
-
-  const headers = ['id','companyName','domain','industry','employeeCount','location','contactName','contactEmail','contactPhone','contactTitle','linkedinUrl','opportunityScore','intentScore','fitScore','buyingStage','outcomeStage','winProbability','expectedDealValue','estimatedRevenue','sourceTag','createdAt','updatedAt']
+  const HEADERS = ['id','companyName','domain','industry','employeeCount','location','contactName','contactEmail','contactPhone','contactTitle','linkedinUrl','opportunityScore','intentScore','fitScore','buyingStage','outcomeStage','winProbability','expectedDealValue','estimatedRevenue','sourceTag','createdAt','updatedAt']
   const escCsv = (v: unknown) => {
     const s = v == null ? '' : String(v)
     return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const rows = [headers.join(','), ...prospects.map((p: Record<string, unknown>) => headers.map(h => escCsv(p[h])).join(','))]
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="prospects-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
-  res.send(rows.join('\n'))
+  res.write(HEADERS.join(',') + '\n')
+
+  // Cursor-based pagination prevents OOM on large workspaces
+  const PAGE = 500
+  let cursor: string | undefined
+  let totalWritten = 0
+  const MAX = 50_000
+
+  while (totalWritten < MAX) {
+    const batch = await prisma.prospect.findMany({
+      where: { workspaceId },
+      select: {
+        id: true, companyName: true, domain: true, industry: true, employeeCount: true,
+        location: true, contactName: true, contactEmail: true, contactPhone: true, contactTitle: true,
+        linkedinUrl: true, opportunityScore: true, intentScore: true, fitScore: true,
+        buyingStage: true, outcomeStage: true, winProbability: true,
+        expectedDealValue: true, estimatedRevenue: true, sourceTag: true,
+        createdAt: true, updatedAt: true
+      },
+      orderBy: { createdAt: 'desc' },
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {})
+    })
+
+    if (batch.length === 0) break
+    for (const p of batch) {
+      res.write(HEADERS.map(h => escCsv((p as Record<string, unknown>)[h])).join(',') + '\n')
+    }
+    totalWritten += batch.length
+    cursor = batch[batch.length - 1].id
+    if (batch.length < PAGE) break
+  }
+
+  res.end()
 }))
 
 // GET /api/prospects/:id

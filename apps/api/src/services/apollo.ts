@@ -8,6 +8,7 @@
 
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
+import { apolloBreaker } from '../lib/circuit.js'
 
 export type EnrichmentSignal = {
   type: string
@@ -46,8 +47,10 @@ export async function enrichProspect(_prospect: EnrichableProspect): Promise<Enr
     throw new ApiError(503, 'Apollo enrichment is not configured')
   }
 
-  // Live Apollo API integration is not yet wired up. Returning an empty result
-  // keeps the rescore pipeline well-defined for configured-but-unimplemented
-  // environments without fabricating signals.
-  return { signals: [], updates: {} }
+  return apolloBreaker.call(async () => {
+    // Live Apollo API integration is not yet wired up. Returning an empty result
+    // keeps the rescore pipeline well-defined for configured-but-unimplemented
+    // environments without fabricating signals.
+    return { signals: [], updates: {} }
+  })
 }
