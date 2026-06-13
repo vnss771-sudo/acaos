@@ -27,17 +27,20 @@ export function getQueue(name: string): Queue {
 }
 
 const defaultJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 5000 } } as const
+// AI jobs use a longer backoff so retries always wait past the OpenAI circuit
+// breaker's resetAfterMs (30s) — prevents burning all attempts while OPEN.
+const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 } } as const
 
 export async function enqueueResearchLead(leadId: string, userId: string) {
-  return getQueue('research-lead').add('research-lead', { leadId, userId }, defaultJobOpts)
+  return getQueue('research-lead').add('research-lead', { leadId, userId }, aiJobOpts)
 }
 
 export async function enqueueGenerateOutreach(leadId: string, userId: string) {
-  return getQueue('generate-outreach').add('generate-outreach', { leadId, userId }, defaultJobOpts)
+  return getQueue('generate-outreach').add('generate-outreach', { leadId, userId }, aiJobOpts)
 }
 
 export async function enqueueAnalyzeReply(replyBody: string, leadId?: string, userId?: string) {
-  return getQueue('analyze-reply').add('analyze-reply', { replyBody, leadId, userId }, defaultJobOpts)
+  return getQueue('analyze-reply').add('analyze-reply', { replyBody, leadId, userId }, aiJobOpts)
 }
 
 export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {

@@ -25,6 +25,15 @@ export function notFoundHandler(_req: Request, res: Response) {
 }
 
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction) {
+  // When headers have already been sent (e.g. a streaming export mid-flight),
+  // attempting to set status/headers again throws ERR_HTTP_HEADERS_SENT.
+  // Destroy the socket so the client sees a network error rather than a
+  // silently truncated file.
+  if (res.headersSent) {
+    res.destroy()
+    return
+  }
+
   if (error instanceof ApiError) {
     return res.status(error.statusCode).json({ error: error.message })
   }

@@ -92,9 +92,12 @@ export async function recordProcessedReply(params: {
         where: { id: lead!.id },
         data: { stage: 'REPLIED', lastContactedAt: new Date() },
       })
-      // Close the loop: mark the most recent OutreachSent for this lead as REPLIED
+    }
+    // Always close the outreach loop regardless of lead stage — a BOOKED or
+    // CLOSED lead that replies still deserves an accurate outreach record.
+    if (lead) {
       await tx.outreachSent.updateMany({
-        where: { leadId: lead!.id, status: 'SENT' },
+        where: { leadId: lead.id, status: 'SENT' },
         data: { status: 'REPLIED', repliedAt: new Date() },
       })
     }

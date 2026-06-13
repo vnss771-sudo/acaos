@@ -4,6 +4,13 @@
 
 type State = 'CLOSED' | 'OPEN' | 'HALF_OPEN'
 
+export class CircuitOpenError extends Error {
+  constructor(label: string, public readonly retryAfterMs: number) {
+    super(`${label} temporarily unavailable — circuit open`)
+    this.name = 'CircuitOpenError'
+  }
+}
+
 export class CircuitBreaker {
   private failures = 0
   private lastFailureAt = 0
@@ -21,7 +28,7 @@ export class CircuitBreaker {
         this.state = 'HALF_OPEN'
         console.warn(`[circuit:${this.label}] probing after ${this.resetAfterMs / 1000}s`)
       } else {
-        throw new Error(`${this.label} temporarily unavailable — circuit open`)
+        throw new CircuitOpenError(this.label, this.resetAfterMs)
       }
     }
 

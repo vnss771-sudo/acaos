@@ -16,6 +16,7 @@ import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
+import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
@@ -119,16 +120,14 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
   if (!await userHasWorkspaceAccess(user.id, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const HEADERS = ['id','companyName','domain','industry','employeeCount','location','contactName','contactEmail','contactPhone','contactTitle','linkedinUrl','opportunityScore','intentScore','fitScore','buyingStage','outcomeStage','winProbability','expectedDealValue','estimatedRevenue','sourceTag','createdAt','updatedAt']
-  const escCsv = (v: unknown) => {
-    const s = v == null ? '' : String(v)
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
-  }
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="prospects-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
   res.write(HEADERS.join(',') + '\n')
 
-  // Cursor-based pagination prevents OOM on large workspaces
+  // Cursor-based pagination prevents OOM on large workspaces.
+  // Sort by id (unique, stable) to avoid skipped/duplicated rows when multiple
+  // rows share the same createdAt timestamp (common in bulk imports).
   const PAGE = 500
   let cursor: string | undefined
   let totalWritten = 0
@@ -145,7 +144,7 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
         expectedDealValue: true, estimatedRevenue: true, sourceTag: true,
         createdAt: true, updatedAt: true
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {})
     })

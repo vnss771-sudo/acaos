@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
-import { openAiBreaker } from '../lib/circuit.js'
+import { openAiBreaker, CircuitOpenError } from '../lib/circuit.js'
 
 function getOpenAiClient() {
   if (!hasEnv(['OPENAI_API_KEY'])) throw new ApiError(503, 'OpenAI is not configured')
@@ -19,19 +19,26 @@ function model() {
 }
 
 async function chat(system: string, user: string): Promise<string> {
-  return openAiBreaker.call(async () => {
-    const client = getOpenAiClient()
-    const completion = await client.chat.completions.create({
-      model: model(),
-      response_format: { type: 'json_object' },
-      temperature: 0.4,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user }
-      ]
+  try {
+    return await openAiBreaker.call(async () => {
+      const client = getOpenAiClient()
+      const completion = await client.chat.completions.create({
+        model: model(),
+        response_format: { type: 'json_object' },
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ]
+      })
+      return completion.choices[0]?.message?.content ?? '{}'
     })
-    return completion.choices[0]?.message?.content ?? '{}'
-  })
+  } catch (err) {
+    if (err instanceof CircuitOpenError) {
+      throw new ApiError(503, 'AI service temporarily unavailable — try again shortly')
+    }
+    throw err
+  }
 }
 
 export async function generateLeadResearch(input: {

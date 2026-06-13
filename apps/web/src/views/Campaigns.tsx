@@ -9,6 +9,7 @@ import type { ToastHook } from '../hooks/useToast.js'
 type CampaignStats = {
   totalLeads: number
   leadsWithEmail: number
+  eligible: number
   sent: number
   replied: number
   replyRate: number
@@ -46,7 +47,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
   const [stats, setStats]           = useState<Record<string, CampaignStats>>({})
   const [launching, setLaunching]   = useState<Record<string, boolean>>({})
   const [expanded, setExpanded]     = useState<string | null>(null)
-  const [outreach, setOutreach]     = useState<OutreachRecord[]>([])
+  const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
 
   const loadStats = useCallback(async (id: string) => {
@@ -132,7 +133,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
     setOutreachLoading(true)
     try {
       const d = await api<{ outreach: OutreachRecord[] }>(`/api/campaigns/${id}/outreach`)
-      setOutreach(d.outreach || [])
+      setOutreach(prev => ({ ...prev, [id]: d.outreach || [] }))
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
     finally { setOutreachLoading(false) }
   }
@@ -222,6 +223,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
                 <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
                   <Stat label="Total Leads" value={st?.totalLeads ?? (c._count?.leads ?? 0)} />
                   <Stat label="Has Email" value={st?.leadsWithEmail ?? '—'} />
+                  <Stat label="Eligible" value={st?.eligible ?? '—'} color={colors.green} />
                   <Stat label="Sent" value={st?.sent ?? 0} color={colors.blue} />
                   <Stat label="Replied" value={st?.replied ?? 0} color="#22c55e" />
                   <Stat
@@ -242,11 +244,11 @@ export function Campaigns({ api, workspace, toast }: Props) {
                     style={{
                       ...s.btn,
                       background: isLaunching ? '#374151' : '#16a34a',
-                      opacity: isLaunching || !st?.leadsWithEmail ? 0.6 : 1,
-                      cursor: isLaunching || !st?.leadsWithEmail ? 'not-allowed' : 'pointer',
+                      opacity: isLaunching || !st?.eligible ? 0.6 : 1,
+                      cursor: isLaunching || !st?.eligible ? 'not-allowed' : 'pointer',
                     }}
-                    disabled={isLaunching || !st?.leadsWithEmail}
-                    onClick={() => st && launchCampaign(c.id, st.leadsWithEmail)}
+                    disabled={isLaunching || !st?.eligible}
+                    onClick={() => st && launchCampaign(c.id, st.eligible)}
                   >
                     {isLaunching ? '⏳ Sending…' : '🚀 Launch Campaign'}
                   </button>
@@ -269,11 +271,11 @@ export function Campaigns({ api, workspace, toast }: Props) {
                     </div>
                     {outreachLoading ? (
                       <Spinner />
-                    ) : outreach.length === 0 ? (
+                    ) : (outreach[c.id] ?? []).length === 0 ? (
                       <div style={{ color: colors.textMuted, fontSize: 13 }}>No outreach records yet.</div>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
-                        {outreach.map(o => (
+                        {(outreach[c.id] ?? []).map(o => (
                           <div key={o.id} style={{
                             background: '#111827',
                             borderRadius: 6,

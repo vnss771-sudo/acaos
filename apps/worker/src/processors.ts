@@ -252,9 +252,13 @@ export async function sendCampaignBatch(
       }
     }
 
-    // Send
+    // Send — HTML-escape the AI-generated body before interpolation so that
+    // prompt-injection artifacts or special chars in CRM data can't inject
+    // arbitrary HTML into the email.
+    const escHtml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     try {
-      const info = await sendMail(lead.email!, subject, `<p>${body.replace(/\n/g, '<br>')}</p>`)
+      const info = await sendMail(lead.email!, subject, `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>`)
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([

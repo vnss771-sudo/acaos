@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit } from '../lib/limits.js'
+import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const leadsRouter = Router()
@@ -158,16 +159,14 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
   if (!member) throw new ApiError(403, 'Access denied')
 
   const HEADERS = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
-  const escCsv = (v: unknown) => {
-    const s = v == null ? '' : String(v)
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
-  }
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="leads-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
   res.write(HEADERS.join(',') + '\n')
 
-  // Cursor-based pagination prevents OOM on large workspaces
+  // Cursor-based pagination prevents OOM on large workspaces.
+  // Sort by id (unique, stable) rather than createdAt alone to avoid skipped/
+  // duplicated rows when multiple rows share the same createdAt timestamp.
   const PAGE = 500
   let cursor: string | undefined
   let totalWritten = 0
@@ -182,7 +181,7 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
         sourceTag: true, notes: true, aiSummary: true, outreachAngle: true,
         createdAt: true, updatedAt: true
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {})
     })

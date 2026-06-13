@@ -88,13 +88,18 @@ campaignsRouter.patch(
     const member = await userBelongsToWorkspace(user.id, existing.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    const updates: { name?: string; goalType?: string } = {}
+    const updates: { name?: string; goalType?: string; description?: string } = {}
     if (typeof req.body?.name === 'string' && req.body.name.trim()) {
       updates.name = req.body.name.trim()
     }
     if (typeof req.body?.goalType === 'string' && req.body.goalType.trim()) {
       updates.goalType = req.body.goalType.trim()
     }
+    if (typeof req.body?.description === 'string') {
+      updates.description = req.body.description.trim() || null as unknown as string
+    }
+
+    if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updatable fields provided')
 
     const campaign = await prisma.campaign.update({ where: { id: campaignId }, data: updates })
     res.json({ campaign })
@@ -115,8 +120,10 @@ campaignsRouter.get(
     const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    const [leadWithEmail, sent, replied] = await Promise.all([
+    const TERMINAL = ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
+    const [leadWithEmail, eligible, sent, replied] = await Promise.all([
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null } } }),
+      prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null }, stage: { notIn: [...TERMINAL] } } }),
       prisma.outreachSent.count({ where: { campaignId: campaign.id } }),
       prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'REPLIED' } }),
     ])
@@ -125,6 +132,7 @@ campaignsRouter.get(
       stats: {
         totalLeads: campaign._count.leads,
         leadsWithEmail: leadWithEmail,
+        eligible,
         sent,
         replied,
         replyRate: sent > 0 ? Math.round((replied / sent) * 100) / 100 : 0,
@@ -181,9 +189,11 @@ campaignsRouter.post(
     const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    // Resolve which leads to send to
-    const requestedIds: string[] | undefined =
-      Array.isArray(req.body?.leadIds) ? req.body.leadIds : undefined
+    // Resolve which leads to send to — filter to string IDs only so non-string
+    // elements (numbers, objects) from untrusted input don't reach Prisma.
+    const requestedIds: string[] | undefined = Array.isArray(req.body?.leadIds)
+      ? (req.body.leadIds as unknown[]).filter((id): id is string => typeof id === 'string')
+      : undefined
 
     const where = {
       campaignId: campaign.id,
