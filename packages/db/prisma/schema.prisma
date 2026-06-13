@@ -43,6 +43,7 @@ model Workspace {
   workspaceICP         WorkspaceICP?
   outreachSent         OutreachSent[]
   emailConfig          WorkspaceEmailConfig?
+  invites              WorkspaceInvite[]
 }
 
 model Membership {
@@ -222,6 +223,22 @@ model ProcessedEmail {
 
 // Idempotency log for Stripe webhook events. Stripe delivers at-least-once and
 // out of order; we record each processed event id so re-deliveries are ignored.
+// Email invite for new users to join a workspace without a pre-existing account
+model WorkspaceInvite {
+  id          String    @id @default(cuid())
+  workspaceId String
+  email       String
+  role        String    @default("member")
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+}
+
 // Per-workspace SMTP/IMAP credentials — falls back to env vars when absent
 model WorkspaceEmailConfig {
   id          String    @id @default(cuid())

@@ -6,15 +6,16 @@ const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 type AuthScreenProps = {
   onToken: (token: string, refreshToken: string) => void
   resetToken?: string | null
+  inviteToken?: string | null
 }
 
-export function AuthScreen({ onToken, resetToken }: AuthScreenProps) {
+export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot' | 'reset'>(
-    resetToken ? 'reset' : 'login'
+    resetToken ? 'reset' : inviteToken ? 'signup' : 'login'
   )
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
@@ -98,6 +99,16 @@ export function AuthScreen({ onToken, resetToken }: AuthScreenProps) {
         </div>
 
         <div style={{ ...s.card, padding: 28 }}>
+          {/* Invite banner */}
+          {inviteToken && !isForgotOrReset && (
+            <div style={{
+              background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: 8,
+              padding: '10px 14px', marginBottom: 20, color: '#93c5fd', fontSize: 13
+            }}>
+              You've been invited to join a workspace. Sign in or create an account to accept.
+            </div>
+          )}
+
           {/* Mode toggle (only for login/signup) */}
           {!isForgotOrReset && (
             <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#0b1220', borderRadius: 8, padding: 4 }}>

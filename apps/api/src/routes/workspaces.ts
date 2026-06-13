@@ -6,6 +6,9 @@ import { ensureWorkspaceSlug, userCanManageWorkspaceBilling } from '../lib/works
 import { normalizeOptionalString } from '../lib/validation.js'
 import { createBillingPortalSession } from '../services/stripe.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
+import { generateRefreshToken, hashRefreshToken } from '../lib/jwt.js'
+import { isMailConfigured, sendMail } from '../services/mail.js'
+import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const workspaceRouter = Router()
@@ -182,6 +185,101 @@ workspaceRouter.post(
     await prisma.membership.create({ data: { userId: invitee.id, workspaceId, role } })
 
     res.status(201).json({ member: { ...invitee, role } })
+  })
+)
+
+// ── Workspace invites ─────────────────────────────────────────────────────────
+
+workspaceRouter.post(
+  '/:id/invites',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin to invite members')
+
+    const rawEmail = typeof req.body?.email === 'string' ? req.body.email : ''
+    const email = normalizeEmail(rawEmail)
+    if (!isValidEmail(email)) throw new ApiError(400, 'Valid email required')
+
+    const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+
+    // Check if already a member
+    const existingUser = await prisma.user.findUnique({ where: { email } })
+    if (existingUser) {
+      const isMember = await prisma.membership.findFirst({ where: { userId: existingUser.id, workspaceId } })
+      if (isMember) throw new ApiError(409, 'This person is already a member — add them directly using their email')
+    }
+
+    const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } })
+
+    const rawToken = generateRefreshToken()
+    const tokenHash = hashRefreshToken(rawToken)
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+
+    await prisma.workspaceInvite.upsert({
+      where: { workspaceId_email: { workspaceId, email } },
+      create: { workspaceId, email, role, tokenHash, expiresAt },
+      update: { role, tokenHash, expiresAt, acceptedAt: null }, // refresh existing invite
+    })
+
+    const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+    const inviteUrl = `${appUrl}?invite=${rawToken}`
+
+    if (isMailConfigured()) {
+      await sendMail(email, `You've been invited to join ${workspace?.name ?? 'a workspace'} on ACAOS`,
+        `<p>You've been invited to join <strong>${workspace?.name ?? 'a workspace'}</strong> on ACAOS as ${role === 'admin' ? 'an admin' : 'a member'}.</p>` +
+        `<p><a href="${inviteUrl}">Accept invitation</a></p>` +
+        `<p>This link expires in 7 days. If you don't have an ACAOS account yet, you'll be asked to create one first.</p>`
+      )
+    } else {
+      console.log(`[invites] Invite URL for ${email}: ${inviteUrl}`)
+    }
+
+    res.status(201).json({ ok: true, email })
+  })
+)
+
+workspaceRouter.get(
+  '/:id/invites',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+
+    const invites = await prisma.workspaceInvite.findMany({
+      where: { workspaceId, acceptedAt: null, expiresAt: { gt: new Date() } },
+      select: { id: true, email: true, role: true, expiresAt: true, createdAt: true },
+      orderBy: { createdAt: 'desc' }
+    })
+
+    res.json({ invites })
+  })
+)
+
+workspaceRouter.delete(
+  '/:id/invites/:inviteId',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+
+    await prisma.workspaceInvite.deleteMany({
+      where: { id: req.params.inviteId as string, workspaceId }
+    })
+
+    res.json({ ok: true })
   })
 )
 

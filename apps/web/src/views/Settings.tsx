@@ -52,6 +52,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [memberForm, setMemberForm] = useState({ email: '', role: 'member' })
   const [addingMember, setAddingMember] = useState(false)
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null)
+  const [pendingInvites, setPendingInvites] = useState<{ id: string; email: string; role: string; expiresAt: string }[]>([])
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'member' })
 
   // ICP
   const [icp, setIcp] = useState<IcpConfig | null>(null)
@@ -80,6 +83,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .then(d => setMembers(d.members || []))
       .catch(() => {})
       .finally(() => setMembersLoading(false))
+    api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
+      .then(d => setPendingInvites(d.invites || []))
+      .catch(() => {})
     api<{ icp: IcpConfig | null }>(`/api/workspaces/${workspace.id}/icp`)
       .then(d => {
         if (d.icp) {
@@ -191,6 +197,32 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       toast.success('Member removed')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
     finally { setRemovingMemberId(null) }
+  }
+
+  async function sendInvite() {
+    if (!workspace || !inviteForm.email.trim()) return
+    setSendingInvite(true)
+    try {
+      await api(`/api/workspaces/${workspace.id}/invites`, {
+        method: 'POST',
+        body: JSON.stringify({ email: inviteForm.email.trim(), role: inviteForm.role })
+      })
+      setInviteForm({ email: '', role: 'member' })
+      toast.success('Invite sent')
+      // Refresh pending invites
+      const d = await api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
+      setPendingInvites(d.invites || [])
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to send invite') }
+    finally { setSendingInvite(false) }
+  }
+
+  async function cancelInvite(inviteId: string) {
+    if (!workspace) return
+    try {
+      await api(`/api/workspaces/${workspace.id}/invites/${inviteId}`, { method: 'DELETE' })
+      setPendingInvites(prev => prev.filter(i => i.id !== inviteId))
+      toast.success('Invite cancelled')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
   }
 
   async function saveEmailConfig() {
@@ -419,35 +451,85 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               </div>
 
               {isOwnerOrAdmin && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                  <div>
-                    <label style={s.label}>Email</label>
-                    <input
-                      style={{ ...s.input, width: 220 }}
-                      placeholder="colleague@company.com"
-                      value={memberForm.email}
-                      onChange={e => setMemberForm(f => ({ ...f, email: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label style={s.label}>Role</label>
-                    <select
-                      style={{ ...s.input, width: 120 }}
-                      value={memberForm.role}
-                      onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
+                <>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
+                    <div>
+                      <label style={s.label}>Email (existing account)</label>
+                      <input
+                        style={{ ...s.input, width: 220 }}
+                        placeholder="colleague@company.com"
+                        value={memberForm.email}
+                        onChange={e => setMemberForm(f => ({ ...f, email: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label style={s.label}>Role</label>
+                      <select
+                        style={{ ...s.input, width: 120 }}
+                        value={memberForm.role}
+                        onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
+                      >
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </div>
+                    <button
+                      style={s.btn}
+                      disabled={addingMember || !memberForm.email.trim()}
+                      onClick={addMember}
                     >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                      {addingMember ? <><Spinner size={14} color="#fff" /> Adding…</> : 'Add Member'}
+                    </button>
                   </div>
-                  <button
-                    style={s.btn}
-                    disabled={addingMember || !memberForm.email.trim()}
-                    onClick={addMember}
-                  >
-                    {addingMember ? <><Spinner size={14} color="#fff" /> Adding…</> : 'Add Member'}
-                  </button>
-                </div>
+                  <div style={{ borderTop: `1px solid #1f2937`, paddingTop: 12, marginTop: 8 }}>
+                    <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Send Invite Email</div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div>
+                        <label style={s.label}>Email</label>
+                        <input
+                          style={{ ...s.input, width: 220 }}
+                          placeholder="new-user@company.com"
+                          value={inviteForm.email}
+                          onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={s.label}>Role</label>
+                        <select
+                          style={{ ...s.input, width: 120 }}
+                          value={inviteForm.role}
+                          onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}
+                        >
+                          <option value="member">Member</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <button
+                        style={{ ...s.btn, background: colors.purple }}
+                        disabled={sendingInvite || !inviteForm.email.trim()}
+                        onClick={sendInvite}
+                      >
+                        {sendingInvite ? <><Spinner size={14} color="#fff" /> Sending…</> : 'Send Invite'}
+                      </button>
+                    </div>
+                    {pendingInvites.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Pending Invites</div>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          {pendingInvites.map(inv => (
+                            <div key={inv.id} style={{ ...s.cardInner, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div>
+                                <span style={{ color: colors.text, fontSize: 13 }}>{inv.email}</span>
+                                <span style={{ color: colors.textFaint, fontSize: 12, marginLeft: 8 }}>({inv.role})</span>
+                              </div>
+                              <button style={s.btnDanger} onClick={() => cancelInvite(inv.id)}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </>
           )}

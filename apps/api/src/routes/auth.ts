@@ -267,3 +267,56 @@ authRouter.patch(
     res.json({ user: updated })
   })
 )
+
+// ── Invite verification (public) ──────────────────────────────────────────────
+
+authRouter.get(
+  '/invite/:token',
+  asyncHandler(async (req, res) => {
+    const rawToken = String(req.params.token || '').trim()
+    const tokenHash = hashRefreshToken(rawToken)
+    const invite = await prisma.workspaceInvite.findUnique({
+      where: { tokenHash },
+      include: { workspace: { select: { id: true, name: true } } }
+    })
+    if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) {
+      throw new ApiError(400, 'Invite link is invalid or has expired')
+    }
+    res.json({ invite: { email: invite.email, role: invite.role, workspaceName: invite.workspace.name, workspaceId: invite.workspaceId } })
+  })
+)
+
+authRouter.post(
+  '/invite/:token/accept',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const authedUser = (req as AuthedRequest).user
+    const rawToken = String(req.params.token || '').trim()
+    const tokenHash = hashRefreshToken(rawToken)
+
+    const invite = await prisma.workspaceInvite.findUnique({ where: { tokenHash } })
+    if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) {
+      throw new ApiError(400, 'Invite link is invalid or has expired')
+    }
+
+    // Email must match the invited address
+    if (normalizeEmail(authedUser.email) !== normalizeEmail(invite.email)) {
+      throw new ApiError(403, `This invite was sent to ${invite.email} — please sign in with that account`)
+    }
+
+    const alreadyMember = await prisma.membership.findFirst({
+      where: { userId: authedUser.id, workspaceId: invite.workspaceId }
+    })
+
+    await prisma.$transaction([
+      ...(alreadyMember ? [] : [
+        prisma.membership.create({
+          data: { userId: authedUser.id, workspaceId: invite.workspaceId, role: invite.role }
+        })
+      ]),
+      prisma.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } }),
+    ])
+
+    res.json({ workspaceId: invite.workspaceId, role: invite.role })
+  })
+)

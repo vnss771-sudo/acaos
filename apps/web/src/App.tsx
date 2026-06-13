@@ -42,13 +42,14 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
-function getResetToken() {
-  return new URLSearchParams(window.location.search).get('reset')
+function getUrlParam(key: string) {
+  return new URLSearchParams(window.location.search).get(key)
 }
 
 export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('acaos_token'))
-  const [resetToken] = useState<string | null>(getResetToken)
+  const [resetToken] = useState<string | null>(() => getUrlParam('reset'))
+  const [inviteToken] = useState<string | null>(() => getUrlParam('invite'))
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
@@ -140,11 +141,26 @@ export function App() {
         <AuthScreen
           onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }}
           resetToken={resetToken}
+          inviteToken={inviteToken}
         />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     )
   }
+
+  // Accept a pending invite once we know who the user is
+  useEffect(() => {
+    if (!inviteToken || !token || !user) return
+    fetch(`${API}/api/auth/invite/${inviteToken}/accept`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    }).then(r => r.json()).then(d => {
+      if (d.workspaceId) {
+        window.history.replaceState({}, '', window.location.pathname)
+        window.location.reload()
+      }
+    }).catch(() => {})
+  }, [inviteToken, token, user?.id])
 
   const VIEW_TITLE: Record<View, string> = {
     dashboard: 'Dashboard',
