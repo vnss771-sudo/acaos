@@ -46,7 +46,10 @@ app.use(generalRateLimit)
 app.get('/api/health', async (_req, res) => {
   let dbOk = false
   try {
-    await prisma.$queryRaw`SELECT 1`
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+    ])
     dbOk = true
   } catch { /* leave false */ }
 
