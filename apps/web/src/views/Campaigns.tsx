@@ -3,6 +3,7 @@ import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { MissionBuilder } from '../components/MissionBuilder.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -50,6 +51,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
   const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
   const [approvalPending, setApprovalPending] = useState<{ id: string; name: string; eligible: number } | null>(null)
+  const [showMissionBuilder, setShowMissionBuilder] = useState(false)
 
   const loadStats = useCallback(async (id: string) => {
     try {
@@ -201,10 +203,27 @@ export function Campaigns({ api, workspace, toast }: Props) {
         </div>
       )}
 
+      {/* Mission builder modal */}
+      {showMissionBuilder && workspace && (
+        <MissionBuilder
+          workspace={workspace}
+          api={api}
+          toast={toast}
+          onCreated={(id, name) => {
+            setShowMissionBuilder(false)
+            setCampaigns(prev => [...prev, { id, name, goalType: 'BOOK_CALL', description: null, createdAt: new Date().toISOString() }])
+            loadStats(id)
+          }}
+          onClose={() => setShowMissionBuilder(false)}
+        />
+      )}
+
       {/* Header */}
       <div style={{ ...s.flexBetween }}>
-        <div />
-        <button style={s.btn} onClick={startAdd}>+ New Campaign</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn} onClick={() => setShowMissionBuilder(true)}>+ New Mission</button>
+          <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} onClick={startAdd} title="Advanced: create campaign manually">Advanced</button>
+        </div>
       </div>
 
       {/* Form */}

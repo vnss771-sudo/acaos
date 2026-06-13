@@ -16,6 +16,8 @@ import { calibrate } from '../../api/src/lib/learningLoop.js'
 import { generateOutreach } from '../../api/src/services/openai.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '../../api/src/services/mail.js'
 import { checkAndIncrementAiUsage } from '../../api/src/lib/limits.js'
+import { bulkCheckSuppression } from '../../api/src/lib/suppressions.js'
+import { randomBytes } from 'crypto'
 
 type Progress = (n: number) => unknown
 
@@ -195,6 +197,14 @@ export async function sendCampaignBatch(
     }
   })
 
+  // Filter suppressed addresses before doing any AI work
+  const emailList = leads.map(l => l.email!).filter(Boolean)
+  const suppressedSet = emailList.length > 0
+    ? await bulkCheckSuppression(workspaceId, emailList)
+    : new Set<string>()
+
+  const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+
   await progress?.(10)
 
   let sent = 0
@@ -207,6 +217,9 @@ export async function sendCampaignBatch(
 
     // Progress: 10% → 90% across the lead batch
     await progress?.(10 + Math.floor((i / total) * 80))
+
+    // Skip suppressed addresses (unsubscribed or bounced)
+    if (suppressedSet.has(lead.email!.toLowerCase().trim())) { skipped++; continue }
 
     // Get or generate outreach copy
     let subject: string
@@ -255,13 +268,15 @@ export async function sendCampaignBatch(
       }
     }
 
-    // Send — HTML-escape the AI-generated body before interpolation so that
-    // prompt-injection artifacts or special chars in CRM data can't inject
-    // arbitrary HTML into the email.
     const escHtml = (s: string) =>
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     try {
-      const info = await sendMail(lead.email!, subject, `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>`, smtpCfg)
+      const unsubscribeToken = randomBytes(24).toString('hex')
+      const unsubscribeUrl = `${appUrl}/api/unsubscribe/${unsubscribeToken}`
+      const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.</p>`
+      const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
+
+      const info = await sendMail(lead.email!, subject, htmlBody, smtpCfg)
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([
@@ -274,6 +289,7 @@ export async function sendCampaignBatch(
             subject,
             body,
             messageId: msgId,
+            unsubscribeToken,
             status: 'SENT',
           }
         }),

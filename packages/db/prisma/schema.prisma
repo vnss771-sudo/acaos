@@ -30,6 +30,7 @@ model Workspace {
   stripeSubscriptionId String?              @unique
   subscriptionStatus   String?
   ingestApiKey         String?              @unique
+  onboardingCompleted  Boolean              @default(false)
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   memberships          Membership[]
@@ -46,6 +47,7 @@ model Workspace {
   outreachSent         OutreachSent[]
   emailConfig          WorkspaceEmailConfig?
   invites              WorkspaceInvite[]
+  suppressions         Suppression[]
 }
 
 model Membership {
@@ -127,21 +129,22 @@ model OutreachDraft {
 // messageId is the SMTP Message-ID header; mailbox sync matches inbound replies
 // against this column to update status to REPLIED and trigger AI analysis.
 model OutreachSent {
-  id          String    @id @default(cuid())
-  workspaceId String
-  campaignId  String?
-  leadId      String?
-  toEmail     String
-  subject     String
-  body        String
-  messageId   String?   @unique  // SMTP Message-ID for reply correlation
-  status      String    @default("SENT")  // SENT | BOUNCED | REPLIED
-  repliedAt   DateTime?
-  replyIntent String?
-  sentAt      DateTime  @default(now())
-  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign    Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  lead        Lead?      @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  id               String    @id @default(cuid())
+  workspaceId      String
+  campaignId       String?
+  leadId           String?
+  toEmail          String
+  subject          String
+  body             String
+  messageId        String?   @unique  // SMTP Message-ID for reply correlation
+  status           String    @default("SENT")  // SENT | BOUNCED | REPLIED
+  repliedAt        DateTime?
+  replyIntent      String?
+  unsubscribeToken String?   @unique
+  sentAt           DateTime  @default(now())
+  workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign         Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  lead             Lead?      @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([campaignId])
@@ -323,6 +326,18 @@ enum OutcomeStage {
   LOST
 }
 
+model Suppression {
+  id          String    @id @default(cuid())
+  workspaceId String
+  email       String
+  reason      String    @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | MANUAL
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+}
+
 model Prospect {
   id               String       @id @default(cuid())
   workspaceId      String
@@ -352,6 +367,7 @@ model Prospect {
   lastContactedAt  DateTime?
   aiSummary        String?
   sourceTag        String?
+  isExample        Boolean      @default(false)
   workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   signals          Signal[]
   recommendations  Recommendation[]
@@ -427,14 +443,20 @@ model ProspectOutcome {
 }
 
 model WorkspaceICP {
-  id               String    @id @default(cuid())
-  workspaceId      String    @unique
-  targetIndustries String[]
-  minEmployees     Int?
-  maxEmployees     Int?
-  targetGeos       String[]
-  mustHaveEmail    Boolean   @default(false)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id                  String    @id @default(cuid())
+  workspaceId         String    @unique
+  targetIndustries    String[]
+  minEmployees        Int?
+  maxEmployees        Int?
+  targetGeos          String[]
+  mustHaveEmail       Boolean   @default(false)
+  businessType        String?
+  outreachTone        String?   // professional | casual | direct
+  approvalMode        Boolean   @default(true)
+  dailySendLimit      Int       @default(50)
+  excludedIndustries  String[]
+  playbook            String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }

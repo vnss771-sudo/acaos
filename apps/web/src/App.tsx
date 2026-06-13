@@ -14,6 +14,7 @@ import { Settings } from './views/Settings.js'
 import { Intelligence } from './views/Intelligence.js'
 import { ProspectsView } from './views/Prospects.js'
 import { AdminView } from './views/Admin.js'
+import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { colors } from './styles.js'
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
@@ -253,6 +254,16 @@ export function App() {
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Onboarding wizard — shown once per workspace until dismissed */}
+      {activeWorkspace && !activeWorkspace.onboardingCompleted && (
+        <OnboardingWizard
+          workspace={activeWorkspace}
+          api={api}
+          toast={toast}
+          onComplete={() => handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })}
+        />
+      )}
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>

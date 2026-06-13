@@ -166,7 +166,7 @@ authRouter.get(
         where: { memberships: { some: { userId: authedUser.id } } },
         select: {
           id: true, name: true, slug: true, plan: true,
-          subscriptionStatus: true, createdAt: true,
+          subscriptionStatus: true, createdAt: true, onboardingCompleted: true,
           _count: { select: { leads: true, campaigns: true } }
         },
         orderBy: { createdAt: 'asc' }

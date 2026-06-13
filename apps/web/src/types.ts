@@ -13,6 +13,7 @@ export type Workspace = {
   subscriptionStatus?: string | null
   createdAt?: string
   ingestApiKey?: string | null
+  onboardingCompleted?: boolean
   _count?: { leads: number; campaigns: number }
 }
 
