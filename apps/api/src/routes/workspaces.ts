@@ -5,6 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { ensureWorkspaceSlug, userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { normalizeOptionalString } from '../lib/validation.js'
 import { createBillingPortalSession } from '../services/stripe.js'
+import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const workspaceRouter = Router()
@@ -150,10 +151,98 @@ workspaceRouter.get(
       orderBy: { createdAt: 'asc' }
     })
 
-    res.json({
-      members: members.map(m => ({
-        id: m.id, role: m.role, createdAt: m.createdAt, user: m.user
-      }))
+    res.json({ members })
+  })
+)
+
+workspaceRouter.post(
+  '/:id/members',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
     })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin to add members')
+
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+    const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+
+    if (!email) throw new ApiError(400, 'email required')
+
+    const invitee = await prisma.user.findUnique({ where: { email }, select: { id: true, email: true, name: true } })
+    if (!invitee) throw new ApiError(404, 'User not found — ask them to create an account first')
+
+    if (invitee.id === user.id) throw new ApiError(400, 'You are already a member')
+
+    const existing = await prisma.membership.findFirst({ where: { userId: invitee.id, workspaceId } })
+    if (existing) throw new ApiError(409, 'User is already a member of this workspace')
+
+    await prisma.membership.create({ data: { userId: invitee.id, workspaceId, role } })
+
+    res.status(201).json({ member: { ...invitee, role } })
+  })
+)
+
+workspaceRouter.delete(
+  '/:id/members/:userId',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+    const targetUserId = req.params.userId as string
+
+    if (targetUserId === user.id) throw new ApiError(400, 'Cannot remove yourself — transfer ownership first')
+
+    const myMembership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: 'owner' }
+    })
+    if (!myMembership) throw new ApiError(403, 'Only owners can remove members')
+
+    const targetMembership = await prisma.membership.findFirst({ where: { userId: targetUserId, workspaceId } })
+    if (!targetMembership) throw new ApiError(404, 'Member not found')
+
+    await prisma.membership.delete({ where: { id: targetMembership.id } })
+    res.json({ ok: true })
+  })
+)
+
+workspaceRouter.post(
+  '/:id/api-key/rotate',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+
+    const rawKey = generateApiKey()
+    const hashedKey = hashApiKey(rawKey)
+
+    await prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { ingestApiKey: hashedKey }
+    })
+
+    // Raw key shown ONCE — not stored anywhere
+    res.json({ apiKey: rawKey, warning: 'Store this key securely — it will not be shown again' })
+  })
+)
+
+workspaceRouter.delete(
+  '/:id/api-key',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
+    res.json({ ok: true })
   })
 )

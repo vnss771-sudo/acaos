@@ -1,8 +1,9 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { createCheckoutSession, constructWebhookEvent } from '../services/stripe.js'
+import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
 import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
+import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -55,11 +56,35 @@ billingRouter.get(
     })
     if (!workspace) throw new ApiError(404, 'Workspace not found')
 
+    const usage = await getMonthlyUsage(workspaceId)
     res.json({
       plan: workspace.plan,
       status: workspace.subscriptionStatus ?? 'none',
-      hasSubscription: Boolean(workspace.stripeSubscriptionId)
+      hasSubscription: Boolean(workspace.stripeSubscriptionId),
+      usage
     })
+  })
+)
+
+billingRouter.post(
+  '/portal',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.body?.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+    const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
+    if (!allowed) throw new ApiError(403, 'Access denied')
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { stripeCustomerId: true }
+    })
+    if (!workspace?.stripeCustomerId) throw new ApiError(404, 'No billing account found')
+
+    const session = await createBillingPortalSession(workspace.stripeCustomerId)
+    res.json({ url: session.url })
   })
 )
 

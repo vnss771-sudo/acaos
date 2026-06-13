@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import compression from 'compression'
 import { authRouter } from './routes/auth.js'
 import { billingRouter } from './routes/billing.js'
 import { aiRouter } from './routes/ai.js'
@@ -29,6 +30,7 @@ const app = express()
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
+app.use(compression())
 app.use(securityHeaders)
 app.use(requestContext)
 

@@ -27,6 +27,7 @@ function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: nu
     user: { findUnique: async (a: any) => ({ id: a?.where?.id, email: 'x@a.test', name: null }) },
     membership: { findFirst: async (a: any) => billingMember(a) },
     workspace: { findUnique: async () => ws },
+    usageRecord: { findMany: async () => [] },
   }
 }
 

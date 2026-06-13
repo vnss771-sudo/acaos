@@ -148,6 +148,38 @@ leadsRouter.post(
   })
 )
 
+// Export leads as CSV
+leadsRouter.get('/export', asyncHandler(async (req, res) => {
+  const user = (req as AuthedRequest).user
+  const workspaceId = String(req.query.workspaceId || '').trim()
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const member = await userBelongsToWorkspace(user.id, workspaceId)
+  if (!member) throw new ApiError(403, 'Access denied')
+
+  const leads = await prisma.lead.findMany({
+    where: { workspaceId },
+    select: {
+      id: true, businessName: true, contactName: true, email: true, phone: true,
+      website: true, city: true, category: true, score: true, stage: true,
+      sourceTag: true, notes: true, aiSummary: true, outreachAngle: true,
+      createdAt: true, updatedAt: true
+    },
+    orderBy: { createdAt: 'desc' }
+  })
+
+  const headers = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
+  const escCsv = (v: unknown) => {
+    const s = v == null ? '' : String(v)
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const rows = [headers.join(','), ...leads.map((l: Record<string, unknown>) => headers.map(h => escCsv(l[h])).join(','))]
+
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', `attachment; filename="leads-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
+  res.send(rows.join('\n'))
+}))
+
 // Get lead by id
 leadsRouter.get(
   '/:id',
