@@ -29,6 +29,8 @@ type AdminOverview = {
   }
 }
 
+type QueueStat = { name: string; active: number; waiting: number; completed: number; failed: number }
+
 type Props = { api: ApiHook; toast: ToastHook }
 
 function planColor(plan: string) {
@@ -58,12 +60,16 @@ function KpiTile({ label, value, color = colors.text }: { label: string; value: 
 export function AdminView({ api, toast }: Props) {
   const [data, setData] = useState<AdminOverview | null>(null)
   const [loading, setLoading] = useState(true)
+  const [queues, setQueues] = useState<QueueStat[]>([])
 
   useEffect(() => {
     api<AdminOverview>('/api/admin/overview')
       .then(setData)
       .catch(() => toast.error('Failed to load admin overview'))
       .finally(() => setLoading(false))
+    api<{ queues: QueueStat[] }>('/api/jobs/stats')
+      .then(d => setQueues(d.queues))
+      .catch(() => {})
   }, [])
 
   if (loading) return <Spinner />
@@ -149,6 +155,37 @@ export function AdminView({ api, toast }: Props) {
           </table>
         </div>
       </div>
+
+      {/* Queue health panel */}
+      {queues.length > 0 && (
+        <div style={{ ...s.card, marginTop: 24 }}>
+          <div style={{ ...s.sectionHeader, marginBottom: 16 }}>Worker Queue Health</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  {['Queue', 'Active', 'Waiting', 'Completed', 'Failed'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: colors.textFaint, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {queues.map((q, i) => (
+                  <tr key={q.name} style={{ borderBottom: `1px solid ${colors.border}`, background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                    <td style={{ padding: '8px 12px', color: colors.text, fontFamily: 'monospace', fontSize: 12 }}>{q.name}</td>
+                    <td style={{ padding: '8px 12px', color: q.active > 0 ? colors.amber : colors.textFaint, fontWeight: q.active > 0 ? 700 : 400 }}>{q.active}</td>
+                    <td style={{ padding: '8px 12px', color: q.waiting > 0 ? colors.blue : colors.textFaint }}>{q.waiting}</td>
+                    <td style={{ padding: '8px 12px', color: colors.green }}>{q.completed.toLocaleString()}</td>
+                    <td style={{ padding: '8px 12px', color: q.failed > 0 ? colors.red : colors.textFaint, fontWeight: q.failed > 0 ? 700 : 400 }}>{q.failed}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: 16, color: colors.textFaint, fontSize: 12 }}>
         Set <code style={{ color: colors.amber }}>ADMIN_EMAIL</code> / <code style={{ color: colors.amber }}>VITE_ADMIN_EMAIL</code> env vars to control access.

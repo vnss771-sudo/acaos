@@ -74,3 +74,18 @@ export async function enqueueSendCampaign(campaignId: string, workspaceId: strin
     backoff: { type: 'exponential', delay: 10_000 }
   })
 }
+
+const ALL_QUEUES = [
+  'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
+  'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations'
+]
+
+export async function getQueueStats() {
+  return Promise.all(
+    ALL_QUEUES.map(async name => {
+      const q = getQueue(name)
+      const counts = await q.getJobCounts('active', 'waiting', 'completed', 'failed')
+      return { name, ...counts }
+    })
+  )
+}
