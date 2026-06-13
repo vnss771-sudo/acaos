@@ -4,6 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage } from '../lib/signalEngine.js'
+import { OutcomeStage } from '@prisma/client'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { centsToDollars } from '../lib/money.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -27,8 +28,16 @@ async function requireWorkspace(req: import('express').Request): Promise<string>
 intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
   const workspaceId = await requireWorkspace(req)
 
+  // Auto-hide example prospects once any real prospect exists
+  const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+  const prospectsWhere = {
+    workspaceId,
+    outcomeStage: { notIn: ['WON', 'LOST'] as OutcomeStage[] },
+    ...(realCount > 0 ? { isExample: false } : {})
+  }
+
   const prospects = await prisma.prospect.findMany({
-    where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
+    where: prospectsWhere,
     include: {
       signals: { orderBy: { detectedAt: 'desc' }, take: 5 },
       recommendations: { orderBy: { priority: 'desc' }, take: 1 }
@@ -64,13 +73,15 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     signals: p.signals,
     signalCount: p.signals.length,
     topRecommendation: p.recommendations[0] ?? null,
+    isExample: p.isExample,
   })
 
   res.json({
     hot: hot.map(toSummary),
     warm: warm.map(toSummary),
     cold: cold.map(toSummary),
-    totals: { hot: hot.length, warm: warm.length, cold: cold.length, total: prospects.length }
+    totals: { hot: hot.length, warm: warm.length, cold: cold.length, total: prospects.length },
+    hasRealProspects: realCount > 0,
   })
 }))
 

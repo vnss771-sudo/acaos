@@ -13,7 +13,7 @@ let server: TestServer
 beforeEach(async () => {
   // Ensure mail/mailbox are not configured.
   for (const k of ['SMTP_HOST', 'SMTP_FROM', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASS']) delete process.env[k]
-  installPrisma(createFakePrisma({ user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null }) } }))
+  installPrisma(createFakePrisma({ user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null, emailVerified: true }) } }))
   server = await startTestServer('/api/mailbox', mailboxRouter)
 })
 afterEach(async () => { await server.close(); resetPrisma() })

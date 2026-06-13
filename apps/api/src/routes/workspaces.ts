@@ -11,6 +11,7 @@ import { isMailConfigured, sendMail } from '../services/mail.js'
 import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
+import { SignalType } from '@prisma/client'
 
 export const workspaceRouter = Router()
 workspaceRouter.use(requireAuth)
@@ -529,25 +530,65 @@ workspaceRouter.post(
       const existingCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
       if (existingCount === 0) {
         const seeds = SEED_COMPANIES[playbookId] ?? SEED_COMPANIES['industrial']
-        await prisma.prospect.createMany({
-          data: seeds.map(s => ({
-            workspaceId,
-            companyName: s.companyName,
-            industry: s.industry,
-            location: s.location,
-            employeeCount: s.employeeCount,
-            description: s.description,
-            contactName: s.contactName,
-            contactTitle: s.contactTitle,
-            isExample: true,
-            opportunityScore: Math.floor(Math.random() * 30) + 60,
-            intentScore: Math.floor(Math.random() * 25) + 50,
-            fitScore: Math.floor(Math.random() * 25) + 55,
-            timingScore: Math.floor(Math.random() * 30) + 50,
-            confidenceScore: Math.floor(Math.random() * 20) + 40,
-          })),
-          skipDuplicates: true
-        })
+
+        // Create each prospect individually so we can attach signals + recommendation
+        for (const s of seeds) {
+          const exampleSignals = EXAMPLE_SIGNALS[s.companyName] ?? EXAMPLE_SIGNALS['__default__']
+          const score = {
+            opportunityScore: Math.floor(Math.random() * 25) + 62,
+            intentScore:      Math.floor(Math.random() * 20) + 55,
+            fitScore:         Math.floor(Math.random() * 20) + 58,
+            timingScore:      Math.floor(Math.random() * 25) + 52,
+            confidenceScore:  Math.floor(Math.random() * 15) + 45,
+          }
+          // Check idempotency
+          const already = await prisma.prospect.findFirst({ where: { workspaceId, companyName: s.companyName } })
+          if (already) continue
+
+          const prospect = await prisma.prospect.create({
+            data: {
+              workspaceId,
+              companyName: s.companyName,
+              industry:    s.industry,
+              location:    s.location,
+              employeeCount: s.employeeCount,
+              description: s.description,
+              contactName: s.contactName,
+              contactTitle: s.contactTitle,
+              isExample: true,
+              buyingStage: 'EVALUATING',
+              ...score,
+            }
+          })
+
+          // Seed example signals so the evidence panel has content
+          const now = new Date()
+          await prisma.signal.createMany({
+            data: exampleSignals.map(({ daysAgo, ...sig }) => ({
+              workspaceId,
+              prospectId: prospect.id,
+              ...sig,
+              detectedAt: new Date(now.getTime() - daysAgo * 86_400_000),
+            }))
+          })
+
+          // Seed a recommendation so the hot accounts panel has an action
+          await prisma.recommendation.create({
+            data: {
+              workspaceId,
+              prospectId: prospect.id,
+              bestContact:  s.contactName,
+              bestTiming:   'Next 2 weeks',
+              bestChannel:  'Email',
+              messageAngle: 'Lead with recent growth evidence and how you reduce operational strain',
+              reasoning:    `${s.companyName} is showing ${exampleSignals.length} buying signal${exampleSignals.length !== 1 ? 's' : ''}. They match your ICP and are currently in evaluation mode.`,
+              actionText:   'Send introduction email referencing recent activity',
+              urgency:      'HIGH',
+              priority:     score.opportunityScore,
+              expiresAt:    new Date(Date.now() + 14 * 86_400_000),
+            }
+          })
+        }
       }
     }
 
@@ -584,5 +625,50 @@ const SEED_COMPANIES: Record<string, Array<{
     { companyName: 'Highbridge Advisory Pty Ltd', industry: 'Business Consulting', location: 'Brisbane CBD, QLD', employeeCount: 7, description: 'Strategic advisory for growth-stage SMEs and family businesses', contactName: 'Neil Crawford', contactTitle: 'Principal' },
     { companyName: 'Focal Accounting Solutions', industry: 'Accounting', location: 'Milton, QLD', employeeCount: 11, description: 'Cloud accounting, tax and CFO-as-a-service for SMEs', contactName: 'Priya Sharma', contactTitle: 'Managing Partner' },
     { companyName: 'Sentinel Legal Group', industry: 'Legal Services', location: 'Spring Hill, QLD', employeeCount: 9, description: 'Commercial law, contracts and business dispute resolution', contactName: 'David Kwan', contactTitle: 'Principal Solicitor' },
+  ],
+}
+
+type ExampleSignalRow = {
+  type: SignalType; strength: number; sourceReliability: number; industryRelevance: number;
+  title: string; description: string | null; source: string; daysAgo: number
+}
+
+// Fictional buying signals for each example prospect — seeds the evidence panel
+const EXAMPLE_SIGNALS: Record<string, ExampleSignalRow[]> = {
+  'Ironclad Engineering Pty Ltd': [
+    { type: 'HIRING', strength: 78, sourceReliability: 80, industryRelevance: 85, title: '6 open positions on Seek', description: 'Hiring boilermakers, riggers and a site supervisor', source: 'example', daysAgo: 3 },
+    { type: 'EXPANSION', strength: 72, sourceReliability: 70, industryRelevance: 80, title: 'Team grew 18% in 6 months', description: null, source: 'example', daysAgo: 14 },
+  ],
+  'Summit Plant & Equipment': [
+    { type: 'PROCUREMENT', strength: 80, sourceReliability: 75, industryRelevance: 90, title: 'Tendered on 2 civil contracts', description: 'Active bids on SEQ infrastructure projects', source: 'example', daysAgo: 5 },
+    { type: 'HIRING', strength: 65, sourceReliability: 80, industryRelevance: 75, title: '3 open positions', description: 'Seeking operators and a fleet coordinator', source: 'example', daysAgo: 9 },
+  ],
+  'Apex Fabrication Group': [
+    { type: 'FUNDING', strength: 85, sourceReliability: 90, industryRelevance: 80, title: 'Series A · $4.2M total funding', description: 'Last round 4 months ago', source: 'example', daysAgo: 120 },
+    { type: 'EXPANSION', strength: 75, sourceReliability: 75, industryRelevance: 85, title: 'Opened second facility in Rocklea', description: null, source: 'example', daysAgo: 21 },
+    { type: 'HIRING', strength: 70, sourceReliability: 80, industryRelevance: 78, title: '8 open positions', description: 'Major recruiting push across fabrication and QA roles', source: 'example', daysAgo: 2 },
+  ],
+  'Bridgeway Labour Solutions': [
+    { type: 'EXPANSION', strength: 70, sourceReliability: 72, industryRelevance: 80, title: 'New branch in Mackay', description: null, source: 'example', daysAgo: 30 },
+    { type: 'HIRING', strength: 68, sourceReliability: 80, industryRelevance: 75, title: '4 open positions', description: null, source: 'example', daysAgo: 7 },
+  ],
+  'Crestfield Workforce Group': [
+    { type: 'PROCUREMENT', strength: 82, sourceReliability: 78, industryRelevance: 88, title: 'Won 2 mining site contracts', description: 'Expanding workforce supply to Bowen Basin', source: 'example', daysAgo: 11 },
+  ],
+  'TerraMax Equipment Group': [
+    { type: 'HIRING', strength: 75, sourceReliability: 80, industryRelevance: 82, title: '5 open positions', description: 'Sales reps and service technicians', source: 'example', daysAgo: 4 },
+    { type: 'FUNDING', strength: 80, sourceReliability: 85, industryRelevance: 78, title: 'Seed · $1.8M raised', description: null, source: 'example', daysAgo: 90 },
+  ],
+  'Meridian Digital Studio': [
+    { type: 'HIRING', strength: 72, sourceReliability: 80, industryRelevance: 70, title: '3 open positions', description: 'Developer, designer and a new account manager', source: 'example', daysAgo: 6 },
+    { type: 'WEBSITE_CHANGE', strength: 60, sourceReliability: 65, industryRelevance: 65, title: 'Launched new service page', description: 'Added lead generation service offering', source: 'example', daysAgo: 18 },
+  ],
+  'Highbridge Advisory Pty Ltd': [
+    { type: 'EXPANSION', strength: 73, sourceReliability: 70, industryRelevance: 78, title: 'Added 3 new advisory partners', description: null, source: 'example', daysAgo: 25 },
+    { type: 'HIRING', strength: 67, sourceReliability: 80, industryRelevance: 72, title: '2 open positions', description: null, source: 'example', daysAgo: 12 },
+  ],
+  '__default__': [
+    { type: 'HIRING', strength: 70, sourceReliability: 75, industryRelevance: 75, title: '4 open positions detected', description: null, source: 'example', daysAgo: 5 },
+    { type: 'EXPANSION', strength: 68, sourceReliability: 70, industryRelevance: 72, title: 'Team headcount growing', description: null, source: 'example', daysAgo: 20 },
   ],
 }

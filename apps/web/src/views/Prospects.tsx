@@ -298,12 +298,31 @@ const BLANK: Partial<Prospect> & { companyName: string } = {
   expectedDealValue: undefined
 }
 
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let cur = '', inQuote = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuote) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++ }
+      else if (ch === '"') inQuote = false
+      else cur += ch
+    } else {
+      if (ch === '"') inQuote = true
+      else if (ch === ',') { fields.push(cur); cur = '' }
+      else cur += ch
+    }
+  }
+  fields.push(cur)
+  return fields
+}
+
 function parseCsv(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/)
   if (lines.length < 2) return []
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
+  const headers = parseCsvLine(lines[0]).map(h => h.trim())
   return lines.slice(1).map(line => {
-    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''))
+    const vals = parseCsvLine(line).map(v => v.trim())
     const row: Record<string, string> = {}
     headers.forEach((h, i) => { if (vals[i] !== undefined) row[h] = vals[i] })
     return row
@@ -534,6 +553,13 @@ export function ProspectsView({ api, workspace, toast }: Props) {
                   >
                     <td style={{ padding: '10px 12px 10px 0', color: colors.text, fontSize: 14, fontWeight: 600 }}>
                       {p.companyName}
+                      {p.isExample && (
+                        <span style={{
+                          marginLeft: 6, background: '#64748b22', color: '#94a3b8',
+                          fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 99, letterSpacing: '0.06em',
+                          verticalAlign: 'middle'
+                        }}>EXAMPLE</span>
+                      )}
                     </td>
                     <td style={{ padding: '10px 12px 10px 0', color: colors.textFaint, fontSize: 13 }}>
                       {p.industry || '–'}

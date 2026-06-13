@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
@@ -12,6 +12,7 @@ mailboxRouter.use(requireAuth)
 
 mailboxRouter.post(
   '/send-test',
+  requireVerifiedEmail,
   mailRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user

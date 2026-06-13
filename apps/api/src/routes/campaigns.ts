@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
@@ -178,6 +178,7 @@ campaignsRouter.get(
 // Returns a jobId for progress polling via GET /api/jobs/:queue/:id.
 campaignsRouter.post(
   '/:id/send',
+  requireVerifiedEmail,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const campaign = await prisma.campaign.findUnique({

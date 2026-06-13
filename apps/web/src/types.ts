@@ -202,6 +202,7 @@ export type Prospect = {
   lastContactedAt?: string | null
   aiSummary?: string | null
   signalCount?: number
+  isExample?: boolean
   latestSignal?: Signal | null
   topRecommendation?: Recommendation | null
   signals?: Signal[]

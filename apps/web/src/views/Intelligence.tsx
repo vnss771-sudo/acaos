@@ -90,6 +90,12 @@ function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
             <span style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{prospect.companyName}</span>
+            {prospect.isExample && (
+              <span style={{
+                background: '#64748b22', color: '#94a3b8',
+                fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99, letterSpacing: '0.06em'
+              }}>EXAMPLE</span>
+            )}
             <span style={{
               background: BUYING_STAGE_COLOR[prospect.buyingStage] + '33',
               color: BUYING_STAGE_COLOR[prospect.buyingStage],

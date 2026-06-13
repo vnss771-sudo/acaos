@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import {
@@ -23,6 +23,12 @@ import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
+
+function buildSignalFingerprint(source: string, type: string, title: string | null, date: Date): string {
+  const slug = (title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
+  const month = date.toISOString().slice(0, 7)
+  return `${source}:${type}:${slug}:${month}`
+}
 
 // Money is stored as integer cents; expose whole-unit amounts at the API edge.
 function withDollars<T extends Record<string, unknown>>(p: T): T {
@@ -74,6 +80,14 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     else if (tier === 'COLD') where.opportunityScore = { lt: 45 }
   }
 
+  // Auto-hide example prospects once any real prospect exists.
+  // Pass ?showExamples=true to override (e.g. from admin or onboarding preview).
+  const showExamples = req.query.showExamples === 'true'
+  if (!showExamples) {
+    const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+    if (realCount > 0) where.isExample = false
+  }
+
   const [prospects, total] = await Promise.all([
     prisma.prospect.findMany({
       where,
@@ -85,7 +99,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
         timingScore: true, confidenceScore: true,
         buyingStage: true, outcomeStage: true, expectedDealValue: true,
         winProbability: true, lastSignalAt: true, lastContactedAt: true,
-        sourceTag: true, createdAt: true, updatedAt: true,
+        sourceTag: true, isExample: true, createdAt: true, updatedAt: true,
         _count: { select: { signals: true } },
         recommendations: { orderBy: { priority: 'desc' }, take: 1 },
       },
@@ -99,6 +113,8 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const hasMore = prospects.length > limit
   if (hasMore) prospects.pop()
 
+  const hasRealProspects = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+
   res.json({
     prospects: prospects.map((p: (typeof prospects)[0]) => withDollars({
       ...p,
@@ -110,6 +126,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     limit,
     total,
     hasMore,
+    hasRealProspects: hasRealProspects > 0,
   })
 }))
 
@@ -190,7 +207,7 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
 }))
 
 // POST /api/prospects/discover — pull companies from Apollo using workspace ICP
-prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
+prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req, res) => {
   const workspaceId = req.body.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
@@ -287,36 +304,34 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
     })
 
     // Seed HIRING/FUNDING signals from source data — no extra API call needed.
+    const now = new Date()
     if (c.hiringCount && c.hiringCount > 0) {
-      await prisma.signal.create({
-        data: {
-          workspaceId,
-          prospectId: created.id,
-          type: 'HIRING',
+      const title = `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} detected`
+      const fp = buildSignalFingerprint(sourceName, 'HIRING', title, now)
+      await prisma.signal.upsert({
+        where: { prospectId_fingerprint: { prospectId: created.id, fingerprint: fp } },
+        create: {
+          workspaceId, prospectId: created.id, type: 'HIRING',
           strength: Math.min(95, 50 + c.hiringCount * 4),
-          sourceReliability: 80,
-          industryRelevance: 75,
-          title: `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} detected`,
-          source: sourceName,
-          detectedAt: new Date(),
-        }
-      }).catch(err => console.warn(`[discover] Signal create failed for ${created.id}: ${(err as Error).message}`))
+          sourceReliability: 80, industryRelevance: 75,
+          title, source: sourceName, fingerprint: fp, detectedAt: now,
+        },
+        update: { strength: Math.min(95, 50 + c.hiringCount * 4), detectedAt: now },
+      }).catch(err => console.warn(`[discover] HIRING signal upsert failed: ${(err as Error).message}`))
     }
     if (c.fundingStage && c.totalFunding && c.totalFunding > 0) {
       const amt = `$${(c.totalFunding / 1_000_000).toFixed(1)}M`
-      await prisma.signal.create({
-        data: {
-          workspaceId,
-          prospectId: created.id,
-          type: 'FUNDING',
-          strength: 85,
-          sourceReliability: 90,
-          industryRelevance: 80,
-          title: `${c.fundingStage} · ${amt} total funding`,
-          source: sourceName,
-          detectedAt: new Date(),
-        }
-      }).catch(err => console.warn(`[discover] Signal create failed for ${created.id}: ${(err as Error).message}`))
+      const title = `${c.fundingStage} · ${amt} total funding`
+      const fp = buildSignalFingerprint(sourceName, 'FUNDING', title, now)
+      await prisma.signal.upsert({
+        where: { prospectId_fingerprint: { prospectId: created.id, fingerprint: fp } },
+        create: {
+          workspaceId, prospectId: created.id, type: 'FUNDING',
+          strength: 85, sourceReliability: 90, industryRelevance: 80,
+          title, source: sourceName, fingerprint: fp, detectedAt: now,
+        },
+        update: { detectedAt: now },
+      }).catch(err => console.warn(`[discover] FUNDING signal upsert failed: ${(err as Error).message}`))
     }
 
     if (dk) existingDomains.add(dk)
@@ -332,7 +347,7 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
 }))
 
 // POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
-prospectsRouter.post('/import', asyncHandler(async (req, res) => {
+prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, res) => {
   const workspaceId = req.body.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
   const rows: Record<string, unknown>[] = req.body.rows
@@ -609,12 +624,16 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
+  if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot be enriched — add real prospects first')
+
   const result = await enrichProspect(prospect)
 
   const created: string[] = []
   for (const sig of result.signals) {
-    const s = await prisma.signal.create({
-      data: {
+    const fp = buildSignalFingerprint(sig.source, sig.type, sig.title, sig.detectedAt)
+    const s = await prisma.signal.upsert({
+      where: { prospectId_fingerprint: { prospectId: prospect.id, fingerprint: fp } },
+      create: {
         workspaceId:       prospect.workspaceId,
         prospectId:        prospect.id,
         type:              sig.type as import('@prisma/client').SignalType,
@@ -624,8 +643,10 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
         title:             sig.title,
         description:       sig.description,
         source:            sig.source,
+        fingerprint:       fp,
         detectedAt:        sig.detectedAt,
-      }
+      },
+      update: { strength: sig.strength, detectedAt: sig.detectedAt },
     })
     created.push(s.id)
   }

@@ -401,12 +401,14 @@ model Signal {
   description       String?
   sourceUrl         String?
   source            String?
+  fingerprint       String?    // dedup key: source:type:title-slug:YYYY-MM
   rawData           Json?
   detectedAt        DateTime   @default(now())
   workspace         Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect          Prospect   @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   createdAt         DateTime   @default(now())
 
+  @@unique([prospectId, fingerprint])
   @@index([workspaceId])
   @@index([prospectId])
   @@index([type])
