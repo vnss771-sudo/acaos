@@ -1,0 +1,52 @@
+ACAOS Project Continuation Prompt
+===================================
+
+I am building ACAOS — an AI-powered B2B sales platform with lead research, outreach automation, email integration, and pipeline management. It is a monorepo with the following structure:
+- apps/api — Express API (Node.js/TypeScript)
+- apps/worker — BullMQ background worker
+- apps/web — Vite/React frontend
+- packages/db — Prisma schema and database client
+
+DEPLOYMENT: Railway (project name: ACAOS, production environment)
+- API service: acaosapi-production.up.railway.app (port 8080)
+- Postgres and Redis are Railway internal services
+
+SUBSCRIPTION TIERS: Free, Starter ($99 USD/mo), Growth ($249 USD/mo) via Stripe
+
+All environment variables have been set in Railway including Stripe, OpenAI (gpt-4o-mini), Resend SMTP, and internal Postgres/Redis URLs.
+
+COMPLETED SO FAR:
+- All Railway env vars added (API + Worker services)
+- Stripe products, prices, webhook, and secret key configured
+- OpenAI API key set
+- Resend email configured (SMTP via smtp.resend.com, domain acaos.app pending DNS verification)
+- Prisma migration attempted — failed because schema path needed to be specified
+
+NEXT IMMEDIATE TASK:
+Run the database migration in Railway Console on the API service:
+
+  npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+
+Then verify the deployment is healthy by hitting:
+
+  https://acaosapi-production.up.railway.app/api/health
+
+PENDING ITEMS:
+- DNS records for acaos.app still need to be added to Squarespace (domain registered there) so Resend email can be verified
+- Web frontend URL needs to be confirmed and WEB_URL env var updated accordingly
+- Google Workspace setup for ben@acaos.app blocked by Google — try again in 24 hours or use Resend for all email
+
+STRIPE DETAILS:
+- Webhook URL: https://acaosapi-production.up.railway.app/api/billing/webhook
+- Starter price ID: price_1Thdw0ECPnZCoCvXVcpt6XyA
+- Growth price ID: price_1The27ECPnZCoCvXa6zkYc5o
+
+GITHUB REPO: vnss771-sudo/acaos
+DEVELOPMENT BRANCH: claude/subscriptions-needed-k9mcds
+
+BRAND:
+- Product name: ACAOS
+- Domain: acaos.app (registered on Squarespace, DNS pending)
+- Email: ben@acaos.app
+- Logo: Professional blue/teal triangle mark with sub-brands (Inbox Assistant, FieldOps, Sentinel)
+- Pricing: Starter $99 USD/mo, Growth $249 USD/mo
