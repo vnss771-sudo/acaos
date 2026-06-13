@@ -15,6 +15,7 @@ import {
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
+import { listSources, getSource } from '../lib/prospectSources.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -111,6 +112,11 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   })
 }))
 
+// GET /api/prospects/sources — which discovery integrations are wired up
+prospectsRouter.get('/sources', asyncHandler(async (_req, res) => {
+  res.json({ sources: listSources() })
+}))
+
 // GET /api/prospects/export?workspaceId=&format=csv
 prospectsRouter.get('/export', asyncHandler(async (req, res) => {
   const user = (req as AuthedRequest).user
@@ -180,6 +186,137 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prediction = predictBuyingIntent(rawSignals, prospect.buyingStage, prospect.opportunityScore)
 
   res.json(withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }))
+}))
+
+// POST /api/prospects/discover — pull companies from Apollo using workspace ICP
+prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
+  const workspaceId = req.body.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const source = getSource('apollo')
+  if (!source || !source.isConfigured) {
+    throw new ApiError(503, 'Apollo discovery is not configured — add APOLLO_API_KEY to your environment')
+  }
+
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+  const limit = Math.min(Number(req.body.limit ?? 25), 50)
+
+  const candidates = await source.search({
+    industries: req.body.industries ?? icp?.targetIndustries ?? [],
+    locations:  req.body.locations  ?? icp?.targetGeos       ?? [],
+    keywords:   req.body.keywords   ?? [],
+    minEmployees: icp?.minEmployees  ?? req.body.minEmployees,
+    maxEmployees: icp?.maxEmployees  ?? req.body.maxEmployees,
+    limit,
+  })
+
+  if (candidates.length === 0) {
+    return res.json({ discovered: 0, skipped: 0, total: 0 })
+  }
+
+  // Deduplicate against existing prospects (domain preferred, name fallback)
+  const [existingDomainRows, existingNameRows] = await Promise.all([
+    prisma.prospect.findMany({ where: { workspaceId, domain: { not: null } }, select: { domain: true } }),
+    prisma.prospect.findMany({ where: { workspaceId }, select: { companyName: true } }),
+  ])
+  const existingDomains = new Set(existingDomainRows.map(p => p.domain!.toLowerCase()))
+  const existingNames   = new Set(existingNameRows.map(p => p.companyName.toLowerCase()))
+
+  const icpCfg: ICPConfig | undefined = icp ? {
+    targetIndustries: icp.targetIndustries,
+    minEmployees: icp.minEmployees ?? undefined,
+    maxEmployees: icp.maxEmployees ?? undefined,
+    targetGeos:   icp.targetGeos,
+    mustHaveEmail: icp.mustHaveEmail,
+  } : undefined
+
+  let discovered = 0
+  let skipped    = 0
+
+  for (const c of candidates) {
+    if (!c.companyName) { skipped++; continue }
+    const dk = c.domain?.toLowerCase()
+    const nk = c.companyName.toLowerCase()
+    if ((dk && existingDomains.has(dk)) || existingNames.has(nk)) { skipped++; continue }
+
+    const meta = {
+      industry:      c.industry      ?? null,
+      employeeCount: c.employeeCount ?? null,
+      contactEmail:  c.contactEmail  ?? null,
+      contactName:   c.contactName   ?? null,
+      domain:        c.domain        ?? null,
+      location:      c.location      ?? null,
+    }
+    const scores         = calculateOpportunityScores([], meta, icpCfg)
+    const buyingStage    = detectBuyingStage([], scores.opportunityScore)
+    const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+    const created = await prisma.prospect.create({
+      data: {
+        workspaceId,
+        companyName:  c.companyName,
+        domain:       meta.domain,
+        industry:     meta.industry,
+        employeeCount: meta.employeeCount,
+        location:     meta.location,
+        description:  c.description  ?? null,
+        contactName:  meta.contactName,
+        contactEmail: meta.contactEmail,
+        contactTitle: c.contactTitle  ?? null,
+        sourceTag:    'apollo',
+        ...scores,
+        buyingStage,
+        winProbability,
+      }
+    })
+
+    // Seed HIRING/FUNDING signals directly from Apollo's company search data —
+    // no extra API call needed, Apollo includes these in the company response.
+    if (c.hiringCount && c.hiringCount > 0) {
+      await prisma.signal.create({
+        data: {
+          workspaceId,
+          prospectId: created.id,
+          type: 'HIRING',
+          strength: Math.min(95, 50 + c.hiringCount * 4),
+          sourceReliability: 80,
+          industryRelevance: 75,
+          title: `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} on Apollo`,
+          source: 'apollo',
+          detectedAt: new Date(),
+        }
+      }).catch(() => {})
+    }
+    if (c.fundingStage && c.totalFunding && c.totalFunding > 0) {
+      const amt = `$${(c.totalFunding / 1_000_000).toFixed(1)}M`
+      await prisma.signal.create({
+        data: {
+          workspaceId,
+          prospectId: created.id,
+          type: 'FUNDING',
+          strength: 85,
+          sourceReliability: 90,
+          industryRelevance: 80,
+          title: `${c.fundingStage} · ${amt} total funding`,
+          source: 'apollo',
+          detectedAt: new Date(),
+        }
+      }).catch(() => {})
+    }
+
+    if (dk) existingDomains.add(dk)
+    existingNames.add(nk)
+    discovered++
+  }
+
+  if (discovered > 0) {
+    enqueueScoreProspects(workspaceId).catch(() => {})
+  }
+
+  res.json({ discovered, skipped, total: candidates.length })
 }))
 
 // POST /api/prospects/import — bulk import from CSV rows (parsed on the client)

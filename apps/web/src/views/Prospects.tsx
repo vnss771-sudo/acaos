@@ -139,6 +139,18 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
+  const handleEnrich = async () => {
+    try {
+      const result = await api<{ signalsCreated: number }>(`/api/prospects/${prospect.id}/enrich`, { method: 'POST' })
+      const updated = await api<Prospect>(`/api/prospects/${prospect.id}`)
+      setDetail(updated)
+      onRefresh()
+      toast.success(result.signalsCreated > 0
+        ? `Apollo enriched — ${result.signalsCreated} new signal${result.signalsCreated !== 1 ? 's' : ''} added`
+        : 'Apollo enriched — no new signals found')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
   const p = detail ?? prospect
   const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
 
@@ -266,7 +278,11 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
+              <button style={{ ...s.btnSm, background: '#1d4ed8', color: '#fff' }} onClick={handleEnrich} title="Pull signals from Apollo.io">
+                ⚡ Enrich with Apollo
+              </button>
               <button style={s.btnGhost} onClick={onClose}>Close</button>
             </div>
           </>
@@ -303,6 +319,14 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
   const [importing, setImporting] = useState(false)
+  const [discovering, setDiscovering] = useState(false)
+  const [apolloReady, setApolloReady] = useState(false)
+
+  useEffect(() => {
+    api<{ sources: { name: string; isConfigured: boolean }[] }>('/api/prospects/sources')
+      .then(d => setApolloReady(d.sources.some(s => s.name === 'apollo' && s.isConfigured)))
+      .catch(() => {})
+  }, [])
 
   const load = () => {
     if (!workspace) return
@@ -331,6 +355,27 @@ export function ProspectsView({ api, workspace, toast }: Props) {
       load()
     } catch (e: unknown) { toast.error((e as Error).message) }
     finally { setSaving(false) }
+  }
+
+  const handleDiscover = async () => {
+    if (!workspace || discovering) return
+    setDiscovering(true)
+    try {
+      const res = await api<{ discovered: number; skipped: number; total: number }>(
+        '/api/prospects/discover',
+        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id }) }
+      )
+      if (res.discovered === 0 && res.total === 0) {
+        toast.error('No results — try broadening your ICP settings')
+      } else {
+        toast.success(
+          `Found ${res.discovered} new prospect${res.discovered !== 1 ? 's' : ''}` +
+          (res.skipped ? ` · ${res.skipped} already tracked` : '')
+        )
+        if (res.discovered > 0) load()
+      }
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setDiscovering(false) }
   }
 
   const handleImportCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -393,6 +438,20 @@ export function ProspectsView({ api, workspace, toast }: Props) {
               onChange={handleImportCsv} disabled={importing}
             />
           </label>
+          {apolloReady && (
+            <button
+              style={{
+                ...s.btn,
+                background: discovering ? '#1e3a5f' : '#1d4ed8',
+                opacity: discovering ? 0.8 : 1,
+              }}
+              onClick={handleDiscover}
+              disabled={discovering}
+              title="Search Apollo.io for companies matching your ICP"
+            >
+              {discovering ? '⟳ Searching Apollo…' : '⚡ Discover with Apollo'}
+            </button>
+          )}
           <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
         </div>
       </div>
