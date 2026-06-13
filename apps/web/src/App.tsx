@@ -17,6 +17,31 @@ import { colors } from './styles.js'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error?: Error }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '40px', textAlign: 'center', color: '#ef4444' }}>
+          <div style={{ fontSize: 32, marginBottom: 16 }}>⚠</div>
+          <div style={{ fontSize: 18, marginBottom: 8 }}>Something went wrong</div>
+          <div style={{ fontSize: 13, color: '#64748b', marginBottom: 24 }}>{this.state.error?.message}</div>
+          <button onClick={() => window.location.reload()} style={{ padding: '8px 20px', borderRadius: 6, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer' }}>
+            Reload
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('acaos_token'))
   const [user, setUser] = useState<User | null>(null)
@@ -168,21 +193,23 @@ export function App() {
 
         {/* Main content */}
         <main style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
-          {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
-          {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
-          {view === 'prospects' && <ProspectsView {...commonProps} />}
-          {view === 'campaigns' && <Campaigns {...commonProps} />}
-          {view === 'leads' && <Leads {...commonProps} />}
-          {view === 'ai' && <AiTools {...commonProps} />}
-          {view === 'billing' && <Billing {...commonProps} />}
-          {view === 'settings' && (
-            <Settings
-              {...commonProps}
-              user={user}
-              onUserUpdate={setUser}
-              onWorkspaceUpdate={handleWorkspaceUpdate}
-            />
-          )}
+          <ErrorBoundary>
+            {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
+            {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
+            {view === 'prospects' && <ProspectsView {...commonProps} />}
+            {view === 'campaigns' && <Campaigns {...commonProps} />}
+            {view === 'leads' && <Leads {...commonProps} />}
+            {view === 'ai' && <AiTools {...commonProps} />}
+            {view === 'billing' && <Billing {...commonProps} />}
+            {view === 'settings' && (
+              <Settings
+                {...commonProps}
+                user={user}
+                onUserUpdate={setUser}
+                onWorkspaceUpdate={handleWorkspaceUpdate}
+              />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
 

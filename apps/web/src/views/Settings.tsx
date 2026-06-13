@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import type { User, Workspace } from '../types.js'
+import React, { useState, useEffect } from 'react'
+import type { User, Workspace, WorkspaceMember } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -21,6 +21,32 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
   const [savingWs, setSavingWs] = useState(false)
+
+  // Team
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [memberForm, setMemberForm] = useState({ email: '', role: 'member' })
+  const [addingMember, setAddingMember] = useState(false)
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null)
+
+  // API Keys
+  const [keyWorking, setKeyWorking] = useState(false)
+  const [newKeyModal, setNewKeyModal] = useState<string | null>(null)
+  const [keyCopied, setKeyCopied] = useState(false)
+  const [hasKey, setHasKey] = useState(!!workspace?.ingestApiKey)
+
+  useEffect(() => {
+    setHasKey(!!workspace?.ingestApiKey)
+  }, [workspace?.ingestApiKey])
+
+  useEffect(() => {
+    if (!workspace) return
+    setMembersLoading(true)
+    api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
+      .then(d => setMembers(d.members || []))
+      .catch(() => {})
+      .finally(() => setMembersLoading(false))
+  }, [workspace?.id])
 
   async function saveProfile() {
     setSavingProfile(true)
@@ -70,8 +96,95 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     finally { setSavingWs(false) }
   }
 
+  async function addMember() {
+    if (!workspace || !memberForm.email.trim()) return
+    setAddingMember(true)
+    try {
+      const d = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ email: memberForm.email.trim(), role: memberForm.role })
+      })
+      setMembers(d.members || [])
+      setMemberForm({ email: '', role: 'member' })
+      toast.success('Member added')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to add member') }
+    finally { setAddingMember(false) }
+  }
+
+  async function removeMember(userId: string) {
+    if (!workspace || !confirm('Remove this member?')) return
+    setRemovingMemberId(userId)
+    try {
+      const d = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members/${userId}`, {
+        method: 'DELETE'
+      })
+      setMembers(d.members || [])
+      toast.success('Member removed')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
+    finally { setRemovingMemberId(null) }
+  }
+
+  async function generateApiKey() {
+    if (!workspace) return
+    setKeyWorking(true)
+    try {
+      const d = await api<{ key: string }>(`/api/workspaces/${workspace.id}/api-key/rotate`, { method: 'POST' })
+      setNewKeyModal(d.key)
+      setHasKey(true)
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to generate key') }
+    finally { setKeyWorking(false) }
+  }
+
+  async function revokeApiKey() {
+    if (!workspace || !confirm('Revoke this API key? All integrations using it will stop working.')) return
+    setKeyWorking(true)
+    try {
+      await api(`/api/workspaces/${workspace.id}/api-key`, { method: 'DELETE' })
+      setHasKey(false)
+      toast.success('API key revoked')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to revoke key') }
+    finally { setKeyWorking(false) }
+  }
+
+  function copyKey(key: string) {
+    navigator.clipboard.writeText(key).then(() => {
+      setKeyCopied(true)
+      setTimeout(() => setKeyCopied(false), 2000)
+    })
+  }
+
+  const myMembership = members.find(m => m.user.id === user.id)
+  const isOwnerOrAdmin = myMembership?.role === 'owner' || myMembership?.role === 'admin'
+
   return (
     <div style={s.stack}>
+      {/* API Key modal */}
+      {newKeyModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
+        }}>
+          <div style={{ ...s.card, maxWidth: 480, width: '90%' }}>
+            <div style={{ color: colors.amber, fontWeight: 700, marginBottom: 8 }}>⚠ Save this key — it will not be shown again</div>
+            <div style={{
+              background: '#0b1220', border: `1px solid ${colors.border}`,
+              borderRadius: 6, padding: '10px 14px', fontFamily: 'monospace',
+              fontSize: 13, color: colors.text, wordBreak: 'break-all', marginBottom: 12
+            }}>
+              {newKeyModal}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button style={s.btn} onClick={() => copyKey(newKeyModal)}>
+                {keyCopied ? '✓ Copied' : 'Copy Key'}
+              </button>
+              <button style={s.btnGhost} onClick={() => { setNewKeyModal(null); setKeyCopied(false) }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Profile */}
       <div style={s.card}>
         <div style={s.sectionHeader}>Profile</div>
@@ -141,6 +254,116 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           <button style={s.btn} disabled={savingWs} onClick={saveWorkspace}>
             {savingWs ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Workspace'}
           </button>
+        </div>
+      )}
+
+      {/* Team Members */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Team</div>
+          {membersLoading ? (
+            <div style={{ padding: 16, textAlign: 'center' }}><Spinner /></div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+                {members.map(m => (
+                  <div key={m.id} style={{
+                    ...s.cardInner,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                  }}>
+                    <div>
+                      <div style={{ color: colors.text, fontSize: 14, fontWeight: 500 }}>
+                        {m.user.name || m.user.email}
+                      </div>
+                      {m.user.name && (
+                        <div style={{ color: colors.textFaint, fontSize: 12 }}>{m.user.email}</div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{
+                        background: m.role === 'owner' ? colors.purple + '22' : colors.blue + '22',
+                        color: m.role === 'owner' ? colors.purple : colors.blue,
+                        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+                        textTransform: 'capitalize'
+                      }}>{m.role}</span>
+                      {isOwnerOrAdmin && m.role !== 'owner' && (
+                        <button
+                          style={s.btnDanger}
+                          disabled={removingMemberId === m.user.id}
+                          onClick={() => removeMember(m.user.id)}
+                        >
+                          {removingMemberId === m.user.id ? <Spinner size={12} /> : '✕'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {members.length === 0 && (
+                  <div style={{ color: colors.textFaint, fontSize: 13 }}>No members yet.</div>
+                )}
+              </div>
+
+              {isOwnerOrAdmin && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div>
+                    <label style={s.label}>Email</label>
+                    <input
+                      style={{ ...s.input, width: 220 }}
+                      placeholder="colleague@company.com"
+                      value={memberForm.email}
+                      onChange={e => setMemberForm(f => ({ ...f, email: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={s.label}>Role</label>
+                    <select
+                      style={{ ...s.input, width: 120 }}
+                      value={memberForm.role}
+                      onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
+                    >
+                      <option value="member">Member</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                  <button
+                    style={s.btn}
+                    disabled={addingMember || !memberForm.email.trim()}
+                    onClick={addMember}
+                  >
+                    {addingMember ? <><Spinner size={14} color="#fff" /> Adding…</> : 'Add Member'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* API Keys */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>API Keys</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: colors.textMuted, fontSize: 13 }}>Ingest API Key</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: hasKey ? colors.green : colors.textFaint, display: 'inline-block' }} />
+                <span style={{ color: hasKey ? colors.green : colors.textFaint, fontSize: 13 }}>
+                  {hasKey ? 'Key configured' : 'No key'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={s.btn} disabled={keyWorking} onClick={generateApiKey}>
+              {keyWorking ? <><Spinner size={14} color="#fff" /> Working…</> : 'Generate New Key'}
+            </button>
+            {hasKey && (
+              <button style={{ ...s.btnGhost, color: colors.red }} disabled={keyWorking} onClick={revokeApiKey}>
+                Revoke Key
+              </button>
+            )}
+          </div>
         </div>
       )}
 

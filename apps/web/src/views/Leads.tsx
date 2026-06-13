@@ -538,6 +538,19 @@ export function Leads({ api, workspace, toast }: Props) {
             {importing ? <><Spinner size={12} /> Importing…</> : '↑ Import CSV'}
           </button>
           <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importCsv} />
+          {workspace && (
+            <button style={s.btnSm} onClick={() => {
+              const url = `${API_BASE}/api/leads/export?workspaceId=${workspace.id}`
+              const link = document.createElement('a')
+              link.href = url
+              link.setAttribute('download', `leads-${new Date().toISOString().slice(0, 10)}.csv`)
+              document.body.appendChild(link)
+              link.click()
+              document.body.removeChild(link)
+            }}>
+              ↓ Export CSV
+            </button>
+          )}
           <button style={s.btn} onClick={() => setAdding(v => !v)}>+ Add Lead</button>
         </div>
       </div>

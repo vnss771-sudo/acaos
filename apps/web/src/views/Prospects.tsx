@@ -12,6 +12,8 @@ import type { ToastHook } from '../hooks/useToast.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+
 const SIGNAL_TYPES: SignalType[] = [
   'HIRING', 'FUNDING', 'EXPANSION', 'TECH_ADOPTION', 'LEADERSHIP_CHANGE',
   'NEWS_MENTION', 'PROCUREMENT', 'BUSINESS_REGISTRATION', 'WEBSITE_CHANGE'
@@ -331,7 +333,20 @@ export function ProspectsView({ api, workspace, toast }: Props) {
             style={{ ...s.input, width: 240 }}
           />
         </div>
-        <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btnSm} onClick={() => {
+            const url = `${API_BASE}/api/prospects/export?workspaceId=${workspace.id}`
+            const link = document.createElement('a')
+            link.href = url
+            link.setAttribute('download', `prospects-${new Date().toISOString().slice(0, 10)}.csv`)
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+          }}>
+            ↓ Export CSV
+          </button>
+          <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
+        </div>
       </div>
 
       {/* Add form */}

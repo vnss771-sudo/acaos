@@ -11,7 +11,14 @@ export type Workspace = {
   plan: string
   subscriptionStatus?: string | null
   createdAt?: string
+  ingestApiKey?: string | null
   _count?: { leads: number; campaigns: number }
+}
+
+export type WorkspaceMember = {
+  id: string
+  role: string
+  user: { id: string; email: string; name?: string | null }
 }
 
 export type Campaign = {

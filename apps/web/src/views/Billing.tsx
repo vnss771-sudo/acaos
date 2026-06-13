@@ -8,10 +8,19 @@ import type { ToastHook } from '../hooks/useToast.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
 
+type UsageStats = {
+  month: string
+  totals: Record<string, number>
+  total: number
+  limit: number
+  plan: string
+}
+
 type BillingStatus = {
   plan: string
   status: string
   hasSubscription: boolean
+  usage?: UsageStats
 }
 
 const PLAN_FEATURES: Record<string, string[]> = {
@@ -84,7 +93,10 @@ export function Billing({ api, workspace, toast }: Props) {
     if (!workspace) return
     setPortalLoading(true)
     try {
-      const d = await api<{ url: string }>(`/api/workspaces/${workspace.id}/billing-portal`, { method: 'POST' })
+      const d = await api<{ url: string }>('/api/billing/portal', {
+        method: 'POST',
+        body: JSON.stringify({ workspaceId: workspace.id })
+      })
       window.location.href = d.url
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not open billing portal') }
     finally { setPortalLoading(false) }
@@ -116,14 +128,48 @@ export function Billing({ api, workspace, toast }: Props) {
               )}
             </div>
 
-            {isActive && billingStatus?.hasSubscription && (
-              <button
-                style={{ ...s.btnGhost, marginLeft: 'auto' }}
-                onClick={openPortal}
-                disabled={portalLoading}
-              >
-                {portalLoading ? <><Spinner size={14} /> Loading…</> : 'Manage Subscription →'}
-              </button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              {!isActive && currentPlan === 'free' && (
+                <button
+                  style={{ ...s.btn, background: colors.blue }}
+                  disabled={!!checkoutLoading}
+                  onClick={() => startCheckout('starter')}
+                >
+                  {checkoutLoading === 'starter' ? <><Spinner size={14} color="#fff" /> Loading…</> : 'Upgrade Plan →'}
+                </button>
+              )}
+              {billingStatus?.hasSubscription && (
+                <button
+                  style={s.btnGhost}
+                  onClick={openPortal}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? <><Spinner size={14} /> Loading…</> : 'Manage Subscription →'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {billingStatus?.usage && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ color: colors.textMuted, fontSize: 13 }}>AI calls used this month</span>
+              <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>
+                {billingStatus.usage.total}
+                {billingStatus.usage.limit > 0 ? ` / ${billingStatus.usage.limit}` : ' / ∞'}
+              </span>
+            </div>
+            {billingStatus.usage.limit > 0 && (
+              <div style={{ background: '#1e2d40', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+                <div style={{
+                  width: `${Math.min(100, (billingStatus.usage.total / billingStatus.usage.limit) * 100)}%`,
+                  height: '100%',
+                  background: billingStatus.usage.total / billingStatus.usage.limit > 0.85 ? colors.red : colors.blue,
+                  borderRadius: 4,
+                  transition: 'width 0.4s'
+                }} />
+              </div>
             )}
           </div>
         )}
