@@ -9,31 +9,54 @@ function getRequiredEnv(key: string) {
   return value
 }
 
-export function isMailConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM)
+export type SmtpConfig = {
+  smtpHost?: string | null
+  smtpPort?: number | null
+  smtpSecure?: boolean | null
+  smtpUser?: string | null
+  smtpPass?: string | null
+  smtpFrom?: string | null
 }
 
-export function isMailboxConfigured() {
-  return Boolean(process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS)
+export type ImapConfig = {
+  imapHost?: string | null
+  imapPort?: number | null
+  imapSecure?: boolean | null
+  imapUser?: string | null
+  imapPass?: string | null
 }
 
-export function buildTransport() {
+export function isMailConfigured(cfg?: SmtpConfig | null) {
+  return Boolean((cfg?.smtpHost || process.env.SMTP_HOST) && (cfg?.smtpFrom || process.env.SMTP_FROM))
+}
+
+export function isMailboxConfigured(cfg?: ImapConfig | null) {
+  return Boolean(
+    (cfg?.imapHost || process.env.IMAP_HOST) &&
+    (cfg?.imapUser || process.env.IMAP_USER) &&
+    (cfg?.imapPass || process.env.IMAP_PASS)
+  )
+}
+
+export function buildTransport(cfg?: SmtpConfig | null) {
+  const host = cfg?.smtpHost || getRequiredEnv('SMTP_HOST')
+  const port = cfg?.smtpPort ?? Number(process.env.SMTP_PORT || 587)
+  const secure = cfg?.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465)
+  const user = cfg?.smtpUser || process.env.SMTP_USER
+  const pass = cfg?.smtpPass || process.env.SMTP_PASS
   return nodemailer.createTransport({
-    host: getRequiredEnv('SMTP_HOST'),
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT || 587) === 465,
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
-    // Bound every phase of the SMTP handshake so a stalled server can't hang the
-    // caller (or a worker slot) indefinitely.
+    host, port, secure,
+    auth: user ? { user, pass } : undefined,
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
   })
 }
 
-export async function sendMail(to: string, subject: string, html: string) {
-  const transporter = buildTransport()
-  return transporter.sendMail({ from: getRequiredEnv('SMTP_FROM'), to, subject, html })
+export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null) {
+  const transporter = buildTransport(cfg)
+  const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
+  return transporter.sendMail({ from, to, subject, html })
 }
 
 // Strips quoted text and signatures to get the fresh reply content
@@ -106,7 +129,7 @@ export async function recordProcessedReply(params: {
   return { advanced: advance }
 }
 
-export async function syncMailboxOnce(): Promise<{
+export async function syncMailboxOnce(cfg?: ImapConfig | null): Promise<{
   inspected: number
   matched: number
   queued: number
@@ -120,13 +143,16 @@ export async function syncMailboxOnce(): Promise<{
     throw new ApiError(503, 'IMAP support is not installed in this environment')
   }
 
+  const host = cfg?.imapHost || getRequiredEnv('IMAP_HOST')
+  const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
+  const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
+  const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')
+  const pass = cfg?.imapPass || getRequiredEnv('IMAP_PASS')
+
   const client = new ImapFlow({
-    host: getRequiredEnv('IMAP_HOST'),
-    port: Number(process.env.IMAP_PORT || 993),
-    secure: String(process.env.IMAP_SECURE || 'true') === 'true',
-    auth: { user: getRequiredEnv('IMAP_USER'), pass: getRequiredEnv('IMAP_PASS') },
+    host, port, secure,
+    auth: { user, pass },
     logger: false,
-    // Don't let a stalled IMAP socket pin a worker slot forever.
     socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 30_000),
     greetingTimeout: 10_000,
   })

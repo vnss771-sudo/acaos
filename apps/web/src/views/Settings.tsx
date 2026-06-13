@@ -13,6 +13,22 @@ type IcpConfig = {
   mustHaveEmail: boolean
 }
 
+type EmailConfigState = {
+  smtpHost: string
+  smtpPort: string
+  smtpSecure: boolean
+  smtpUser: string
+  smtpPass: string
+  smtpFrom: string
+  imapHost: string
+  imapPort: string
+  imapSecure: boolean
+  imapUser: string
+  imapPass: string
+  smtpPassSet: boolean
+  imapPassSet: boolean
+}
+
 type Props = {
   api: ApiHook
   user: User
@@ -42,6 +58,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [icpForm, setIcpForm] = useState({ targetIndustries: '', targetGeos: '', minEmployees: '', maxEmployees: '', mustHaveEmail: false })
   const [savingIcp, setSavingIcp] = useState(false)
 
+  // Email config
+  const emptyEmail: EmailConfigState = { smtpHost: '', smtpPort: '587', smtpSecure: false, smtpUser: '', smtpPass: '', smtpFrom: '', imapHost: '', imapPort: '993', imapSecure: true, imapUser: '', imapPass: '', smtpPassSet: false, imapPassSet: false }
+  const [emailForm, setEmailForm] = useState<EmailConfigState>(emptyEmail)
+  const [savingEmail, setSavingEmail] = useState(false)
+
   // API Keys
   const [keyWorking, setKeyWorking] = useState(false)
   const [newKeyModal, setNewKeyModal] = useState<string | null>(null)
@@ -69,6 +90,27 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             minEmployees: d.icp.minEmployees != null ? String(d.icp.minEmployees) : '',
             maxEmployees: d.icp.maxEmployees != null ? String(d.icp.maxEmployees) : '',
             mustHaveEmail: d.icp.mustHaveEmail,
+          })
+        }
+      })
+      .catch(() => {})
+    api<{ config: Record<string, unknown> | null }>(`/api/workspaces/${workspace.id}/email-config`)
+      .then(d => {
+        if (d.config) {
+          setEmailForm({
+            smtpHost: String(d.config.smtpHost ?? ''),
+            smtpPort: String(d.config.smtpPort ?? '587'),
+            smtpSecure: Boolean(d.config.smtpSecure),
+            smtpUser: String(d.config.smtpUser ?? ''),
+            smtpPass: '', // never returned
+            smtpFrom: String(d.config.smtpFrom ?? ''),
+            imapHost: String(d.config.imapHost ?? ''),
+            imapPort: String(d.config.imapPort ?? '993'),
+            imapSecure: Boolean(d.config.imapSecure ?? true),
+            imapUser: String(d.config.imapUser ?? ''),
+            imapPass: '', // never returned
+            smtpPassSet: Boolean(d.config.smtpPassSet),
+            imapPassSet: Boolean(d.config.imapPassSet),
           })
         }
       })
@@ -151,6 +193,32 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     finally { setRemovingMemberId(null) }
   }
 
+  async function saveEmailConfig() {
+    if (!workspace) return
+    setSavingEmail(true)
+    try {
+      await api(`/api/workspaces/${workspace.id}/email-config`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          smtpHost: emailForm.smtpHost || null,
+          smtpPort: emailForm.smtpPort ? parseInt(emailForm.smtpPort, 10) : null,
+          smtpSecure: emailForm.smtpSecure,
+          smtpUser: emailForm.smtpUser || null,
+          smtpPass: emailForm.smtpPass || null, // null = keep existing
+          smtpFrom: emailForm.smtpFrom || null,
+          imapHost: emailForm.imapHost || null,
+          imapPort: emailForm.imapPort ? parseInt(emailForm.imapPort, 10) : null,
+          imapSecure: emailForm.imapSecure,
+          imapUser: emailForm.imapUser || null,
+          imapPass: emailForm.imapPass || null, // null = keep existing
+        })
+      })
+      toast.success('Email config saved')
+      setEmailForm(f => ({ ...f, smtpPass: '', imapPass: '', smtpPassSet: !!f.smtpHost, imapPassSet: !!f.imapHost }))
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to save email config') }
+    finally { setSavingEmail(false) }
+  }
+
   async function saveIcp() {
     if (!workspace) return
     setSavingIcp(true)
@@ -175,8 +243,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace) return
     setKeyWorking(true)
     try {
-      const d = await api<{ key: string }>(`/api/workspaces/${workspace.id}/api-key/rotate`, { method: 'POST' })
-      setNewKeyModal(d.key)
+      const d = await api<{ apiKey: string }>(`/api/workspaces/${workspace.id}/api-key/rotate`, { method: 'POST' })
+      setNewKeyModal(d.apiKey)
       setHasKey(true)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to generate key') }
     finally { setKeyWorking(false) }
@@ -452,6 +520,94 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           <button style={s.btn} disabled={savingIcp} onClick={saveIcp}>
             {savingIcp ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save ICP'}
           </button>
+        </div>
+      )}
+
+      {/* Email Configuration */}
+      {workspace && isOwnerOrAdmin && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Email Configuration</div>
+          <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
+            Per-workspace SMTP/IMAP settings. Leave blank to use the server defaults.
+          </div>
+          <div style={{ display: 'grid', gap: 16 }}>
+            <div>
+              <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>SMTP (outbound)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[
+                  { label: 'Host', field: 'smtpHost', placeholder: 'smtp.gmail.com' },
+                  { label: 'Port', field: 'smtpPort', placeholder: '587' },
+                  { label: 'Username', field: 'smtpUser', placeholder: 'you@gmail.com' },
+                  { label: emailForm.smtpPassSet ? 'Password (leave blank to keep)' : 'Password', field: 'smtpPass', placeholder: '••••••••' },
+                  { label: 'From Address', field: 'smtpFrom', placeholder: 'You <you@company.com>' },
+                ].map(({ label, field, placeholder }) => (
+                  <div key={field} style={field === 'smtpFrom' ? { gridColumn: '1/-1' } : {}}>
+                    <label style={s.label}>{label}</label>
+                    <input
+                      style={s.input}
+                      type={field === 'smtpPass' ? 'password' : 'text'}
+                      placeholder={placeholder}
+                      value={(emailForm as Record<string, unknown>)[field] as string}
+                      onChange={e => setEmailForm(f => ({ ...f, [field]: e.target.value }))}
+                      autoComplete={field === 'smtpPass' ? 'new-password' : 'off'}
+                    />
+                  </div>
+                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, gridColumn: '1/-1' }}>
+                  <input
+                    type="checkbox"
+                    id="smtpSecure"
+                    checked={emailForm.smtpSecure}
+                    onChange={e => setEmailForm(f => ({ ...f, smtpSecure: e.target.checked }))}
+                    style={{ accentColor: colors.blue, width: 16, height: 16 }}
+                  />
+                  <label htmlFor="smtpSecure" style={{ ...s.label, marginBottom: 0, cursor: 'pointer' }}>
+                    Use SSL/TLS (port 465)
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>IMAP (inbound reply tracking)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[
+                  { label: 'Host', field: 'imapHost', placeholder: 'imap.gmail.com' },
+                  { label: 'Port', field: 'imapPort', placeholder: '993' },
+                  { label: 'Username', field: 'imapUser', placeholder: 'you@gmail.com' },
+                  { label: emailForm.imapPassSet ? 'Password (leave blank to keep)' : 'Password', field: 'imapPass', placeholder: '••••••••' },
+                ].map(({ label, field, placeholder }) => (
+                  <div key={field}>
+                    <label style={s.label}>{label}</label>
+                    <input
+                      style={s.input}
+                      type={field === 'imapPass' ? 'password' : 'text'}
+                      placeholder={placeholder}
+                      value={(emailForm as Record<string, unknown>)[field] as string}
+                      onChange={e => setEmailForm(f => ({ ...f, [field]: e.target.value }))}
+                      autoComplete={field === 'imapPass' ? 'new-password' : 'off'}
+                    />
+                  </div>
+                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, gridColumn: '1/-1' }}>
+                  <input
+                    type="checkbox"
+                    id="imapSecure"
+                    checked={emailForm.imapSecure}
+                    onChange={e => setEmailForm(f => ({ ...f, imapSecure: e.target.checked }))}
+                    style={{ accentColor: colors.blue, width: 16, height: 16 }}
+                  />
+                  <label htmlFor="imapSecure" style={{ ...s.label, marginBottom: 0, cursor: 'pointer' }}>
+                    Use SSL/TLS (port 993)
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <button style={s.btn} disabled={savingEmail} onClick={saveEmailConfig}>
+              {savingEmail ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Email Config'}
+            </button>
+          </div>
         </div>
       )}
 

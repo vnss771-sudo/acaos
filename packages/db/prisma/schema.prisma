@@ -20,16 +20,16 @@ model User {
 }
 
 model Workspace {
-  id                   String          @id @default(cuid())
+  id                   String               @id @default(cuid())
   name                 String
-  slug                 String          @unique
-  plan                 String          @default("free")
-  stripeCustomerId     String?         @unique
-  stripeSubscriptionId String?         @unique
+  slug                 String               @unique
+  plan                 String               @default("free")
+  stripeCustomerId     String?              @unique
+  stripeSubscriptionId String?              @unique
   subscriptionStatus   String?
-  ingestApiKey         String?         @unique
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  ingestApiKey         String?              @unique
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
   memberships          Membership[]
   leads                Lead[]
   campaigns            Campaign[]
@@ -42,6 +42,7 @@ model Workspace {
   prospectOutcomes     ProspectOutcome[]
   workspaceICP         WorkspaceICP?
   outreachSent         OutreachSent[]
+  emailConfig          WorkspaceEmailConfig?
 }
 
 model Membership {
@@ -221,6 +222,26 @@ model ProcessedEmail {
 
 // Idempotency log for Stripe webhook events. Stripe delivers at-least-once and
 // out of order; we record each processed event id so re-deliveries are ignored.
+// Per-workspace SMTP/IMAP credentials — falls back to env vars when absent
+model WorkspaceEmailConfig {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique
+  smtpHost    String?
+  smtpPort    Int?
+  smtpSecure  Boolean   @default(false)
+  smtpUser    String?
+  smtpPass    String?
+  smtpFrom    String?
+  imapHost    String?
+  imapPort    Int?
+  imapSecure  Boolean   @default(true)
+  imapUser    String?
+  imapPass    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
 // Time-limited one-use token for password reset
 model PasswordResetToken {
   id        String    @id @default(cuid())

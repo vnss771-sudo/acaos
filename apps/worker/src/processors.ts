@@ -14,7 +14,7 @@ import {
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
 import { generateOutreach } from '../../api/src/services/openai.js'
-import { sendMail, isMailConfigured } from '../../api/src/services/mail.js'
+import { sendMail, isMailConfigured, type SmtpConfig } from '../../api/src/services/mail.js'
 import { checkAndIncrementAiUsage } from '../../api/src/lib/limits.js'
 
 type Progress = (n: number) => unknown
@@ -174,7 +174,10 @@ export async function sendCampaignBatch(
   leadIds: string[] | undefined,
   progress?: Progress
 ): Promise<SendCampaignResult> {
-  if (!isMailConfigured()) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
+  // Load workspace-specific SMTP config (falls back to env vars in sendMail)
+  const wsCfgRecord = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+  const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
+  if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
 
   await progress?.(5)
 
@@ -258,7 +261,7 @@ export async function sendCampaignBatch(
     const escHtml = (s: string) =>
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     try {
-      const info = await sendMail(lead.email!, subject, `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>`)
+      const info = await sendMail(lead.email!, subject, `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>`, smtpCfg)
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([
