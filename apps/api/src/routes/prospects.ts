@@ -224,10 +224,16 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
     return res.json({ discovered: 0, skipped: 0, total: 0 })
   }
 
-  // Deduplicate against existing prospects (domain preferred, name fallback)
+  // Deduplicate against existing prospects using targeted IN queries — only
+  // check domains/names that appear in this candidate batch, not the full table.
+  const candidateDomains = candidates.map(c => c.domain?.toLowerCase()).filter(Boolean) as string[]
+  const candidateNames   = candidates.map(c => c.companyName.toLowerCase()).filter(Boolean)
+
   const [existingDomainRows, existingNameRows] = await Promise.all([
-    prisma.prospect.findMany({ where: { workspaceId, domain: { not: null } }, select: { domain: true } }),
-    prisma.prospect.findMany({ where: { workspaceId }, select: { companyName: true } }),
+    candidateDomains.length > 0
+      ? prisma.prospect.findMany({ where: { workspaceId, domain: { in: candidateDomains } }, select: { domain: true } })
+      : [],
+    prisma.prospect.findMany({ where: { workspaceId, companyName: { in: candidateNames } }, select: { companyName: true } }),
   ])
   const existingDomains = new Set(existingDomainRows.map(p => p.domain!.toLowerCase()))
   const existingNames   = new Set(existingNameRows.map(p => p.companyName.toLowerCase()))
@@ -280,8 +286,7 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
       }
     })
 
-    // Seed HIRING/FUNDING signals directly from Apollo's company search data —
-    // no extra API call needed, Apollo includes these in the company response.
+    // Seed HIRING/FUNDING signals from source data — no extra API call needed.
     if (c.hiringCount && c.hiringCount > 0) {
       await prisma.signal.create({
         data: {
@@ -291,11 +296,11 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
           strength: Math.min(95, 50 + c.hiringCount * 4),
           sourceReliability: 80,
           industryRelevance: 75,
-          title: `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} on Apollo`,
-          source: 'apollo',
+          title: `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} detected`,
+          source: sourceName,
           detectedAt: new Date(),
         }
-      }).catch(() => {})
+      }).catch(err => console.warn(`[discover] Signal create failed for ${created.id}: ${(err as Error).message}`))
     }
     if (c.fundingStage && c.totalFunding && c.totalFunding > 0) {
       const amt = `$${(c.totalFunding / 1_000_000).toFixed(1)}M`
@@ -308,10 +313,10 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
           sourceReliability: 90,
           industryRelevance: 80,
           title: `${c.fundingStage} · ${amt} total funding`,
-          source: 'apollo',
+          source: sourceName,
           detectedAt: new Date(),
         }
-      }).catch(() => {})
+      }).catch(err => console.warn(`[discover] Signal create failed for ${created.id}: ${(err as Error).message}`))
     }
 
     if (dk) existingDomains.add(dk)

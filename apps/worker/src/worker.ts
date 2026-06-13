@@ -271,7 +271,12 @@ const mailboxWorker = new Worker(
     const cfg = workspaceId
       ? await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
       : null
-    const result = await syncMailboxOnce(cfg as any ?? null, workspaceId)
+    if (!isMailboxConfigured(cfg ?? undefined)) {
+      log('sync-mailbox', `No IMAP config for workspaceId=${workspaceId}, skipping`)
+      await job.updateProgress(100)
+      return { inspected: 0, matched: 0, queued: 0 }
+    }
+    const result = await syncMailboxOnce(cfg as any, workspaceId)
     await job.updateProgress(100)
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
@@ -393,16 +398,13 @@ for (const [name, worker] of [
 }
 
 // ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
+// upsertJobScheduler is idempotent — safe to call on every worker restart.
 {
   const syncQueue = new Queue('sync-mailbox', { connection })
-  syncQueue.add(
+  syncQueue.upsertJobScheduler(
     'auto-imap-sync',
-    { autoSync: true },
-    {
-      repeat:   { every: 10 * 60 * 1000 },
-      jobId:    'auto-imap-sync',
-      attempts: 1,
-    }
+    { every: 10 * 60 * 1000 },
+    { name: 'auto-imap-sync', data: { autoSync: true }, opts: { attempts: 1, removeOnComplete: { count: 5 } } }
   ).catch(err => console.warn('[worker] Failed to schedule IMAP auto-sync:', err.message))
 }
 

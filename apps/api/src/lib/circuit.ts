@@ -56,6 +56,7 @@ export class CircuitBreaker {
 }
 
 // Singleton breakers — shared across requests in the same process
-export const openAiBreaker = new CircuitBreaker('openai', 5, 30_000)
-export const apolloBreaker  = new CircuitBreaker('apollo',  5, 60_000)
-export const stripeBreaker  = new CircuitBreaker('stripe',  5, 30_000)
+export const openAiBreaker      = new CircuitBreaker('openai',         5, 30_000)
+export const apolloBreaker      = new CircuitBreaker('apollo-enrich',  5, 60_000)
+export const apolloSearchBreaker = new CircuitBreaker('apollo-search', 5, 60_000)
+export const stripeBreaker      = new CircuitBreaker('stripe',         5, 30_000)

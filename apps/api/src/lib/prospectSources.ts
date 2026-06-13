@@ -3,7 +3,7 @@
  * without touching the scoring engine, mission builder, or dashboard.
  */
 
-import { apolloBreaker } from './circuit.js'
+import { apolloSearchBreaker } from './circuit.js'
 
 export type ProspectSearchInput = {
   industries?: string[]
@@ -111,7 +111,7 @@ class ApolloSource implements ProspectSourceProvider {
       body.organization_num_employees_ranges = [`${min},${max}`]
     }
 
-    return apolloBreaker.call(async () => {
+    return apolloSearchBreaker.call(async () => {
       const res = await fetch('https://api.apollo.io/v1/mixed_companies/search', {
         method: 'POST',
         headers: {

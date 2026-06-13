@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express'
 import { verboseErrors } from './config.js'
 import { logger } from './logger.js'
+import { CircuitOpenError } from './circuit.js'
 
 export class ApiError extends Error {
   statusCode: number
@@ -36,6 +37,11 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
 
   if (error instanceof ApiError) {
     return res.status(error.statusCode).json({ error: error.message })
+  }
+
+  if (error instanceof CircuitOpenError) {
+    res.set('Retry-After', String(Math.ceil(error.retryAfterMs / 1000)))
+    return res.status(503).json({ error: error.message })
   }
 
   // Log the full error (with request id for correlation); never leak it to the

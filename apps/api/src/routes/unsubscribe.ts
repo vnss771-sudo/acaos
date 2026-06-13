@@ -1,7 +1,10 @@
 import { Router } from 'express'
+import { requireAuth } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { suppress } from '../lib/suppressions.js'
+import { userHasWorkspaceAccess } from '../lib/workspaces.js'
+import type { AuthedRequest } from '../types/auth.js'
 
 export const unsubscribeRouter = Router()
 
@@ -21,8 +24,6 @@ unsubscribeRouter.get(
 
     await suppress(record.workspaceId, record.toEmail, 'UNSUBSCRIBED')
 
-    // Return a simple confirmation — the frontend can render this or the API
-    // consumer can redirect to a landing page.
     res.json({
       ok: true,
       message: `${record.toEmail} has been unsubscribed and will not receive further outreach from this workspace.`
@@ -30,12 +31,17 @@ unsubscribeRouter.get(
   })
 )
 
-// Expose suppression list management for authenticated owners
+// Authenticated owners only — suppression list management
 unsubscribeRouter.get(
   '/',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+    const userId = (req as AuthedRequest).user.id
+    if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
     const suppressions = await prisma.suppression.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' }

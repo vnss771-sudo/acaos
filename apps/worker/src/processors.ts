@@ -203,7 +203,7 @@ export async function sendCampaignBatch(
     ? await bulkCheckSuppression(workspaceId, emailList)
     : new Set<string>()
 
-  const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+  const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
 
   await progress?.(10)
 
@@ -272,7 +272,8 @@ export async function sendCampaignBatch(
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     try {
       const unsubscribeToken = randomBytes(24).toString('hex')
-      const unsubscribeUrl = `${appUrl}/api/unsubscribe/${unsubscribeToken}`
+      const safeAppUrl = escHtml(appUrl)
+      const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
       const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.</p>`
       const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
 
