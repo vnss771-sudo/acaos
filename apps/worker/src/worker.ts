@@ -14,7 +14,7 @@ import {
   toRawSignal,
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -318,6 +318,23 @@ const recommendWorker = new Worker(
   { connection, concurrency: 3 }
 )
 
+// ── send-campaign ─────────────────────────────────────────────────────────────
+const sendCampaignWorker = new Worker(
+  'send-campaign',
+  async (job) => {
+    const { campaignId, workspaceId, leadIds } = job.data as {
+      campaignId: string
+      workspaceId: string
+      leadIds?: string[]
+    }
+    log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
+    const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
+    log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`)
+    return result
+  },
+  { connection, concurrency: 2 }
+)
+
 // ── calibrate-scoring ─────────────────────────────────────────────────────────
 const calibrateWorker = new Worker(
   'calibrate-scoring',
@@ -344,6 +361,7 @@ for (const [name, worker] of [
   ['score-prospects',         scoreProspectsWorker],
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
+  ['send-campaign',           sendCampaignWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -368,6 +386,7 @@ async function shutdown(signal: string) {
     scoreProspectsWorker.close(),
     recommendWorker.close(),
     calibrateWorker.close(),
+    sendCampaignWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -377,4 +396,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 7 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring)')
+console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')

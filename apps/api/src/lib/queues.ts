@@ -64,3 +64,10 @@ export async function enqueueGenerateRecommendations(prospectId: string, workspa
 export async function enqueueCalibrate(workspaceId: string) {
   return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, defaultJobOpts)
 }
+
+export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
+  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds }, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 10_000 }
+  })
+}

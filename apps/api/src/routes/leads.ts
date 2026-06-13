@@ -157,27 +157,46 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
   const member = await userBelongsToWorkspace(user.id, workspaceId)
   if (!member) throw new ApiError(403, 'Access denied')
 
-  const leads = await prisma.lead.findMany({
-    where: { workspaceId },
-    select: {
-      id: true, businessName: true, contactName: true, email: true, phone: true,
-      website: true, city: true, category: true, score: true, stage: true,
-      sourceTag: true, notes: true, aiSummary: true, outreachAngle: true,
-      createdAt: true, updatedAt: true
-    },
-    orderBy: { createdAt: 'desc' }
-  })
-
-  const headers = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
+  const HEADERS = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
   const escCsv = (v: unknown) => {
     const s = v == null ? '' : String(v)
     return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const rows = [headers.join(','), ...leads.map((l: Record<string, unknown>) => headers.map(h => escCsv(l[h])).join(','))]
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="leads-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
-  res.send(rows.join('\n'))
+  res.write(HEADERS.join(',') + '\n')
+
+  // Cursor-based pagination prevents OOM on large workspaces
+  const PAGE = 500
+  let cursor: string | undefined
+  let totalWritten = 0
+  const MAX = 50_000
+
+  while (totalWritten < MAX) {
+    const batch = await prisma.lead.findMany({
+      where: { workspaceId },
+      select: {
+        id: true, businessName: true, contactName: true, email: true, phone: true,
+        website: true, city: true, category: true, score: true, stage: true,
+        sourceTag: true, notes: true, aiSummary: true, outreachAngle: true,
+        createdAt: true, updatedAt: true
+      },
+      orderBy: { createdAt: 'desc' },
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {})
+    })
+
+    if (batch.length === 0) break
+    for (const l of batch) {
+      res.write(HEADERS.map(h => escCsv((l as Record<string, unknown>)[h])).join(',') + '\n')
+    }
+    totalWritten += batch.length
+    cursor = batch[batch.length - 1].id
+    if (batch.length < PAGE) break
+  }
+
+  res.end()
 }))
 
 // Get lead by id

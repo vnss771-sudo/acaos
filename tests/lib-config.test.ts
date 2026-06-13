@@ -61,7 +61,8 @@ test('validateConfig fails fast in production when required vars are missing', (
   assert.throws(() => validateConfig(), (e: Error) => {
     assert.match(e.message, /DATABASE_URL is required/)
     assert.match(e.message, /JWT_SECRET is required/)
-    assert.match(e.message, /ALLOWED_ORIGINS/)
+    // ALLOWED_ORIGINS is now a warning (not fatal) so it must not appear here
+    assert.doesNotMatch(e.message, /ALLOWED_ORIGINS/)
     return true
   })
 })

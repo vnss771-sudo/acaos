@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
+import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const ingestRouter = Router()
@@ -25,10 +26,16 @@ async function requireIngestKey(
     res.status(401).json({ error: 'Missing x-api-key header' })
     return
   }
-  const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: hashApiKey(key) } })
+  const hash = hashApiKey(key)
+  let workspace = getCachedWorkspace(hash)
   if (!workspace) {
-    res.status(401).json({ error: 'Invalid API key' })
-    return
+    const row = await prisma.workspace.findUnique({
+      where: { ingestApiKey: hash },
+      select: { id: true, plan: true }
+    })
+    if (!row) { res.status(401).json({ error: 'Invalid API key' }); return }
+    setCachedWorkspace(hash, row)
+    workspace = row
   }
   // Attach workspace so the route handler doesn't re-fetch it
   ;(req as import('express').Request & { ingestWorkspace: typeof workspace }).ingestWorkspace = workspace
@@ -155,7 +162,10 @@ keyRouter.post(
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
-    // Show the raw key to the caller once; persist only its hash.
+    // Evict old hash from cache before rotation so the stale key can't be replayed.
+    const existing = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ingestApiKey: true } })
+    if (existing?.ingestApiKey) evictCachedWorkspace(existing.ingestApiKey)
+
     const rawKey = generateApiKey()
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: hashApiKey(rawKey) } })
 

@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
+import { openAiBreaker } from '../lib/circuit.js'
 
 function getOpenAiClient() {
   if (!hasEnv(['OPENAI_API_KEY'])) throw new ApiError(503, 'OpenAI is not configured')
@@ -18,17 +19,19 @@ function model() {
 }
 
 async function chat(system: string, user: string): Promise<string> {
-  const client = getOpenAiClient()
-  const completion = await client.chat.completions.create({
-    model: model(),
-    response_format: { type: 'json_object' },
-    temperature: 0.4,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user }
-    ]
+  return openAiBreaker.call(async () => {
+    const client = getOpenAiClient()
+    const completion = await client.chat.completions.create({
+      model: model(),
+      response_format: { type: 'json_object' },
+      temperature: 0.4,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user }
+      ]
+    })
+    return completion.choices[0]?.message?.content ?? '{}'
   })
-  return completion.choices[0]?.message?.content ?? '{}'
 }
 
 export async function generateLeadResearch(input: {

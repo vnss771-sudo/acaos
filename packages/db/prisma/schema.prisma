@@ -40,6 +40,7 @@ model Workspace {
   recommendations      Recommendation[]
   prospectOutcomes     ProspectOutcome[]
   workspaceICP         WorkspaceICP?
+  outreachSent         OutreachSent[]
 }
 
 model Membership {
@@ -57,15 +58,16 @@ model Membership {
 }
 
 model Campaign {
-  id          String    @id @default(cuid())
-  workspaceId String
-  name        String
-  goalType    String
-  description String?
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  leads       Lead[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String         @id @default(cuid())
+  workspaceId  String
+  name         String
+  goalType     String
+  description  String?
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  leads        Lead[]
+  outreachSent OutreachSent[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   @@index([workspaceId])
 }
@@ -91,6 +93,7 @@ model Lead {
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign       Campaign?       @relation(fields: [campaignId], references: [id])
   outreachDrafts OutreachDraft[]
+  outreachSent   OutreachSent[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -114,6 +117,35 @@ model OutreachDraft {
   @@index([leadId])
   @@index([workspaceId])
 }
+
+// Tracks every email sent via a campaign — provides closed-loop reply correlation.
+// messageId is the SMTP Message-ID header; mailbox sync matches inbound replies
+// against this column to update status to REPLIED and trigger AI analysis.
+model OutreachSent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  campaignId  String?
+  leadId      String?
+  toEmail     String
+  subject     String
+  body        String
+  messageId   String?   @unique  // SMTP Message-ID for reply correlation
+  status      String    @default("SENT")  // SENT | BOUNCED | REPLIED
+  repliedAt   DateTime?
+  replyIntent String?
+  sentAt      DateTime  @default(now())
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  lead        Lead?      @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([campaignId])
+  @@index([leadId])
+  @@index([toEmail])
+}
+
+
+
 
 // Persisted ScorerV2 model — one per workspace, survives deploys
 model ScoringModel {
