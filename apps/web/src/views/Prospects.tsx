@@ -282,6 +282,18 @@ const BLANK: Partial<Prospect> & { companyName: string } = {
   expectedDealValue: undefined
 }
 
+function parseCsv(text: string): Record<string, string>[] {
+  const lines = text.trim().split(/\r?\n/)
+  if (lines.length < 2) return []
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
+  return lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''))
+    const row: Record<string, string> = {}
+    headers.forEach((h, i) => { if (vals[i] !== undefined) row[h] = vals[i] })
+    return row
+  }).filter(row => Object.values(row).some(v => v !== ''))
+}
+
 export function ProspectsView({ api, workspace, toast }: Props) {
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(false)
@@ -290,6 +302,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
+  const [importing, setImporting] = useState(false)
 
   const load = () => {
     if (!workspace) return
@@ -320,6 +333,29 @@ export function ProspectsView({ api, workspace, toast }: Props) {
     finally { setSaving(false) }
   }
 
+  const handleImportCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !workspace) return
+    setImporting(true)
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target?.result as string
+        const rows = parseCsv(text)
+        if (rows.length === 0) { toast.error('No valid rows found in CSV'); return }
+        const res = await api<{ imported: number; skipped: number; failed: number; errors: string[] }>(
+          '/api/prospects/import',
+          { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, rows }) }
+        )
+        toast.success(`Imported ${res.imported} prospect${res.imported !== 1 ? 's' : ''}${res.skipped ? `, ${res.skipped} skipped` : ''}${res.failed ? `, ${res.failed} failed` : ''}`)
+        load()
+      } catch (err: unknown) { toast.error((err as Error).message) }
+      finally { setImporting(false) }
+    }
+    reader.readAsText(file)
+  }
+
   if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="◎" /></div>
 
   return (
@@ -333,7 +369,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
             style={{ ...s.input, width: 240 }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button style={s.btnSm} onClick={() => {
             const url = `${API_BASE}/api/prospects/export?workspaceId=${workspace.id}`
             const link = document.createElement('a')
@@ -345,6 +381,18 @@ export function ProspectsView({ api, workspace, toast }: Props) {
           }}>
             ↓ Export CSV
           </button>
+          <label style={{
+            ...s.btnSm,
+            cursor: importing ? 'wait' : 'pointer',
+            opacity: importing ? 0.6 : 1,
+            display: 'inline-flex', alignItems: 'center'
+          }}>
+            {importing ? 'Importing…' : '↑ Import CSV'}
+            <input
+              type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+              onChange={handleImportCsv} disabled={importing}
+            />
+          </label>
           <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
         </div>
       </div>

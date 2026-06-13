@@ -182,6 +182,72 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   res.json(withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }))
 }))
 
+// POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
+prospectsRouter.post('/import', asyncHandler(async (req, res) => {
+  const workspaceId = req.body.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const rows: Record<string, unknown>[] = req.body.rows
+  if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
+  if (rows.length > 1000) throw new ApiError(400, 'Maximum 1000 rows per import')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const icp = await getICP(workspaceId)
+
+  let imported = 0
+  let skipped = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
+    if (!companyName) { skipped++; continue }
+    try {
+      const meta = {
+        industry:      row.industry      ? String(row.industry)      : null,
+        employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
+        contactEmail:  row.contactEmail  ? String(row.contactEmail)  : null,
+        contactName:   row.contactName   ? String(row.contactName)   : null,
+        domain:        row.domain        ? String(row.domain)        : null,
+        location:      row.location      ? String(row.location)      : null,
+      }
+      const scores        = calculateOpportunityScores([], meta, icp)
+      const buyingStage   = detectBuyingStage([], scores.opportunityScore)
+      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+      await prisma.prospect.create({
+        data: {
+          workspaceId,
+          companyName,
+          domain:        meta.domain,
+          industry:      meta.industry,
+          employeeCount: meta.employeeCount,
+          location:      meta.location,
+          contactName:   meta.contactName,
+          contactEmail:  meta.contactEmail,
+          contactPhone:  row.contactPhone  ? String(row.contactPhone)  : null,
+          contactTitle:  row.contactTitle  ? String(row.contactTitle)  : null,
+          linkedinUrl:   row.linkedinUrl   ? String(row.linkedinUrl)   : null,
+          description:   row.description   ? String(row.description)   : null,
+          notes:         row.notes         ? String(row.notes)         : null,
+          sourceTag:     row.sourceTag     ? String(row.sourceTag)     : 'csv_import',
+          estimatedRevenue: row.estimatedRevenue ? dollarsToCents(Number(row.estimatedRevenue)) : null,
+          expectedDealValue: row.expectedDealValue ? dollarsToCents(Number(row.expectedDealValue)) : null,
+          ...scores,
+          buyingStage,
+          winProbability,
+        }
+      })
+      imported++
+    } catch (err) {
+      errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
+    }
+  }
+
+  res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20) })
+}))
+
 // POST /api/prospects
 prospectsRouter.post('/', asyncHandler(async (req, res) => {
   const workspaceId = req.body.workspaceId as string

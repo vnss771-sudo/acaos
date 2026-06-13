@@ -61,6 +61,7 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     winProbability: p.winProbability,
     lastSignalAt: p.lastSignalAt,
     latestSignal: p.signals[0] ?? null,
+    signals: p.signals,
     signalCount: p.signals.length,
     topRecommendation: p.recommendations[0] ?? null,
   })

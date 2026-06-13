@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import type { Workspace, OpportunitiesData, ForecastData, Prospect, View } from '../types.js'
+import type { Workspace, OpportunitiesData, ForecastData, Prospect, Signal, View } from '../types.js'
 import { BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS, TIER_COLOR } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
@@ -42,12 +42,39 @@ function ScoreDimension({ label, value }: { label: string; value: number }) {
   )
 }
 
+type ConfidenceTier = { label: string; color: string }
+function getConfidenceTier(score: number): ConfidenceTier {
+  if (score >= 75) return { label: 'Confirmed', color: '#22c55e' }
+  if (score >= 50) return { label: 'Likely',    color: '#3b82f6' }
+  if (score >= 30) return { label: 'Weak',       color: '#f59e0b' }
+  return                  { label: 'Needs Review', color: '#64748b' }
+}
+
+function buildWhyNow(signals: Signal[] | undefined, latestSignal: Signal | null | undefined): string | null {
+  const sigs = signals ?? (latestSignal ? [latestSignal] : [])
+  if (sigs.length === 0) return null
+  const uniqueTypes = [...new Set(sigs.map(s => s.type))]
+  const typeLabels: Record<string, string> = {
+    HIRING: 'Hiring spike', FUNDING: 'Funding event', EXPANSION: 'Expansion detected',
+    TECH_ADOPTION: 'Tech adoption', LEADERSHIP_CHANGE: 'Leadership change',
+    NEWS_MENTION: 'In the news', PROCUREMENT: 'Procurement signal', BUSINESS_REGISTRATION: 'New registration',
+    WEBSITE_CHANGE: 'Website update'
+  }
+  const parts = uniqueTypes.slice(0, 2).map(t => typeLabels[t] ?? t.replace(/_/g, ' '))
+  const newest = sigs.reduce((a, b) => new Date(a.detectedAt) > new Date(b.detectedAt) ? a : b)
+  const ageInDays = Math.round((Date.now() - new Date(newest.detectedAt).getTime()) / 86_400_000)
+  const ageStr = ageInDays === 0 ? 'today' : `${ageInDays}d ago`
+  return `${parts.join(' · ')} · ${sigs.length} signal${sigs.length !== 1 ? 's' : ''} · ${ageStr}`
+}
+
 function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: (id: string, stage: string) => void }) {
   const [expanded, setExpanded] = useState(false)
   const rec = prospect.topRecommendation
   const sig = prospect.latestSignal
 
   const signalAge = sig ? Math.round((Date.now() - new Date(sig.detectedAt).getTime()) / 86_400_000) : null
+  const confidence = getConfidenceTier(prospect.confidenceScore)
+  const whyNow = buildWhyNow(prospect.signals, prospect.latestSignal)
 
   return (
     <div style={{
@@ -68,14 +95,29 @@ function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: 
               color: BUYING_STAGE_COLOR[prospect.buyingStage],
               fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99, letterSpacing: '0.04em'
             }}>{BUYING_STAGE_LABELS[prospect.buyingStage]}</span>
+            <span style={{
+              background: confidence.color + '22',
+              color: confidence.color,
+              fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99
+            }}>{confidence.label}</span>
           </div>
 
           <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 6 }}>
             {[prospect.industry, prospect.location].filter(Boolean).join(' · ')}
           </div>
 
+          {/* Why Now evidence */}
+          {whyNow && (
+            <div style={{
+              color: colors.amber, fontSize: 11, fontWeight: 600,
+              marginBottom: 5, letterSpacing: '0.01em'
+            }}>
+              ⚡ {whyNow}
+            </div>
+          )}
+
           {/* Latest signal */}
-          {sig && (
+          {!whyNow && sig && (
             <div style={{
               background: '#0f172a', borderRadius: 6, padding: '6px 10px',
               display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6
