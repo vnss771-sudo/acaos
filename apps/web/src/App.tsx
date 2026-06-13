@@ -232,6 +232,28 @@ export function App() {
           )}
         </header>
 
+        {/* Past-due payment warning banner */}
+        {activeWorkspace?.subscriptionStatus === 'past_due' && (
+          <div style={{
+            background: '#7c2d12', borderBottom: '1px solid #b45309',
+            padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0
+          }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <span style={{ fontSize: 13, color: '#fde68a', flex: 1 }}>
+              Your last payment failed. AI features are limited until billing is updated.
+            </span>
+            <button
+              onClick={() => setView('billing')}
+              style={{
+                background: '#b45309', color: '#fff', border: 'none', borderRadius: 6,
+                padding: '5px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer'
+              }}
+            >
+              Update billing
+            </button>
+          </div>
+        )}
+
         {/* Main content */}
         <main style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
           <ErrorBoundary>

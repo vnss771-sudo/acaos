@@ -16,10 +16,11 @@ const member = (uid: string, wid: string) => (uid === USER && wid === OWNED ? { 
 
 function spec() {
   return {
-    user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null }) },
+    user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => member(a?.where?.userId, a?.where?.workspaceId) },
     workspace: { findUnique: async () => ({ plan: 'free', subscriptionStatus: null }) },
     usageRecord: { findMany: async () => [], upsert: async () => ({ id: 'u' }) },
+    workspaceICP: { findUnique: async () => null },
   }
 }
 

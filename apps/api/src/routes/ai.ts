@@ -4,7 +4,8 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
-import { generateLeadResearch, generateOutreach, analyzeReply } from '../services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
+import { prisma } from '../lib/prisma.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 const MAX_NAME = 200
@@ -21,10 +22,16 @@ aiRouter.post(
     const user = (req as AuthedRequest).user
     const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : null
 
+    let icp: IcpContext | undefined
     if (workspaceId) {
       const member = await userBelongsToWorkspace(user.id, workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
       await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
+      const icpRow = await prisma.workspaceICP.findUnique({
+        where: { workspaceId },
+        select: { targetIndustries: true, businessType: true, outreachTone: true }
+      })
+      if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
     }
 
     const businessName = String(req.body?.businessName || '').trim()
@@ -39,7 +46,8 @@ aiRouter.post(
       website: typeof req.body?.website === 'string' ? req.body.website.trim() : undefined,
       category: typeof req.body?.category === 'string' ? req.body.category.trim() : undefined,
       city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
-      notes
+      notes,
+      icp
     })
 
     res.json({ result: data })
@@ -52,10 +60,16 @@ aiRouter.post(
     const user = (req as AuthedRequest).user
     const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : null
 
+    let icp: IcpContext | undefined
     if (workspaceId) {
       const member = await userBelongsToWorkspace(user.id, workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
       await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
+      const icpRow = await prisma.workspaceICP.findUnique({
+        where: { workspaceId },
+        select: { targetIndustries: true, businessType: true, outreachTone: true }
+      })
+      if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
     }
 
     const businessName = String(req.body?.businessName || '').trim()
@@ -67,7 +81,8 @@ aiRouter.post(
       city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
       contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() : undefined,
       aiSummary: typeof req.body?.aiSummary === 'string' ? req.body.aiSummary.trim() : undefined,
-      outreachAngle: typeof req.body?.outreachAngle === 'string' ? req.body.outreachAngle.trim() : undefined
+      outreachAngle: typeof req.body?.outreachAngle === 'string' ? req.body.outreachAngle.trim() : undefined,
+      icp
     })
 
     res.json({ result: data })
