@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { Worker } from 'bullmq'
+import { Worker, Queue } from 'bullmq'
 import { connection } from './lib/queue.js'
 import { startHealthServer } from './health.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
@@ -395,5 +395,16 @@ async function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
+
+// ── Automatic IMAP sync every 10 min (when configured) ───────────────────────
+if (process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS) {
+  const mailboxQueue = new Queue('sync-mailbox', { connection })
+  mailboxQueue.upsertJobScheduler(
+    'mailbox-auto-sync',
+    { every: 10 * 60 * 1000 },
+    { name: 'auto-sync', data: {}, opts: { removeOnComplete: { count: 5 } } }
+  ).then(() => console.log('[worker] Mailbox auto-sync scheduled (every 10 min)'))
+    .catch((err: Error) => console.error('[worker] Failed to schedule mailbox sync:', err.message))
+}
 
 console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')

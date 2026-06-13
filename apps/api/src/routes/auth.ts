@@ -13,6 +13,7 @@ import { authRateLimit } from '../middleware/rateLimit.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { buildWorkspaceName, isValidEmail, normalizeEmail, validatePassword } from '../lib/validation.js'
 import { resolveUniqueWorkspaceSlug } from '../lib/workspaces.js'
+import { isMailConfigured, sendMail } from '../services/mail.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const authRouter = Router()
@@ -162,6 +163,75 @@ authRouter.get(
       orderBy: { createdAt: 'asc' }
     })
     res.json({ user, workspaces })
+  })
+)
+
+authRouter.post(
+  '/forgot-password',
+  authRateLimit,
+  asyncHandler(async (req, res) => {
+    const email = normalizeEmail(String(req.body?.email || ''))
+    if (!isValidEmail(email)) throw new ApiError(400, 'Valid email required')
+
+    const user = await prisma.user.findUnique({ where: { email } })
+    // Always 200 — prevents email enumeration
+    if (!user?.passwordHash) return res.json({ ok: true })
+
+    const rawToken = generateRefreshToken()
+    const tokenHash = hashRefreshToken(rawToken)
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+
+    await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash, expiresAt } })
+
+    const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+    const resetUrl = `${appUrl}?reset=${rawToken}`
+
+    if (isMailConfigured()) {
+      await sendMail(email, 'Reset your ACAOS password',
+        `<p>Click the link below to reset your password. This link expires in 1 hour.</p>` +
+        `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+        `<p>If you didn't request this, you can safely ignore this email.</p>`
+      )
+    } else {
+      console.log(`[auth] Reset URL (SMTP not configured): ${resetUrl}`)
+    }
+
+    res.json({ ok: true })
+  })
+)
+
+authRouter.post(
+  '/reset-password',
+  authRateLimit,
+  asyncHandler(async (req, res) => {
+    const rawToken = String(req.body?.token || '').trim()
+    const newPassword = String(req.body?.password || '')
+
+    if (!rawToken) throw new ApiError(400, 'Token required')
+
+    const passwordError = validatePassword(newPassword)
+    if (passwordError) throw new ApiError(400, passwordError)
+
+    const tokenHash = hashRefreshToken(rawToken)
+    const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } })
+
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      throw new ApiError(400, 'Reset link is invalid or has expired')
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10)
+
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+      prisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
+      // Invalidate all active sessions for security
+      prisma.refreshToken.updateMany({
+        where: { userId: record.userId, revokedAt: null },
+        data: { revokedAt: new Date() }
+      }),
+    ])
+
+    res.json({ ok: true })
   })
 )
 

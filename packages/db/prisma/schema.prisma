@@ -8,14 +8,15 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  email         String         @unique
-  name          String?
-  passwordHash  String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  memberships   Membership[]
-  refreshTokens RefreshToken[]
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  name                String?
+  passwordHash        String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  memberships         Membership[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 model Workspace {
@@ -220,6 +221,19 @@ model ProcessedEmail {
 
 // Idempotency log for Stripe webhook events. Stripe delivers at-least-once and
 // out of order; we record each processed event id so re-deliveries are ignored.
+// Time-limited one-use token for password reset
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
 model ProcessedStripeEvent {
   id          String   @id // Stripe event id (evt_...)
   type        String

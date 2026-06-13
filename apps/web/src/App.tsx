@@ -42,8 +42,13 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
+function getResetToken() {
+  return new URLSearchParams(window.location.search).get('reset')
+}
+
 export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('acaos_token'))
+  const [resetToken] = useState<string | null>(getResetToken)
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
@@ -132,7 +137,10 @@ export function App() {
   if (!token || !user) {
     return (
       <>
-        <AuthScreen onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }} />
+        <AuthScreen
+          onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }}
+          resetToken={resetToken}
+        />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     )

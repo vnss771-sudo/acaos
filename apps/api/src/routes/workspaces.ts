@@ -227,7 +227,66 @@ workspaceRouter.post(
     })
 
     // Raw key shown ONCE — not stored anywhere
-    res.json({ apiKey: rawKey, warning: 'Store this key securely — it will not be shown again' })
+    res.json({ key: rawKey, warning: 'Store this key securely — it will not be shown again' })
+  })
+)
+
+workspaceRouter.get(
+  '/:id/icp',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const membership = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId },
+      select: { role: true }
+    })
+    if (!membership) throw new ApiError(403, 'Access denied')
+
+    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+    res.json({ icp: icp ?? null })
+  })
+)
+
+workspaceRouter.put(
+  '/:id/icp',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = req.params.id as string
+
+    const canManage = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!canManage) throw new ApiError(403, 'Must be owner or admin to update ICP')
+
+    const body = req.body ?? {}
+    const targetIndustries = Array.isArray(body.targetIndustries) ? body.targetIndustries.filter((s: unknown) => typeof s === 'string') : undefined
+    const targetGeos = Array.isArray(body.targetGeos) ? body.targetGeos.filter((s: unknown) => typeof s === 'string') : undefined
+    const minEmployees = typeof body.minEmployees === 'number' ? body.minEmployees : null
+    const maxEmployees = typeof body.maxEmployees === 'number' ? body.maxEmployees : null
+    const mustHaveEmail = typeof body.mustHaveEmail === 'boolean' ? body.mustHaveEmail : undefined
+
+    const data: Record<string, unknown> = {}
+    if (targetIndustries !== undefined) data.targetIndustries = targetIndustries
+    if (targetGeos !== undefined) data.targetGeos = targetGeos
+    if (minEmployees !== undefined) data.minEmployees = minEmployees
+    if (maxEmployees !== undefined) data.maxEmployees = maxEmployees
+    if (mustHaveEmail !== undefined) data.mustHaveEmail = mustHaveEmail
+
+    const icp = await prisma.workspaceICP.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        targetIndustries: (data.targetIndustries as string[]) ?? [],
+        targetGeos: (data.targetGeos as string[]) ?? [],
+        minEmployees: (data.minEmployees as number | null) ?? null,
+        maxEmployees: (data.maxEmployees as number | null) ?? null,
+        mustHaveEmail: (data.mustHaveEmail as boolean) ?? false,
+      },
+      update: data,
+    })
+
+    res.json({ icp })
   })
 )
 

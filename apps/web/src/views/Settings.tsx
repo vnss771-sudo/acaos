@@ -5,6 +5,14 @@ import { Spinner } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
+type IcpConfig = {
+  targetIndustries: string[]
+  targetGeos: string[]
+  minEmployees: number | null
+  maxEmployees: number | null
+  mustHaveEmail: boolean
+}
+
 type Props = {
   api: ApiHook
   user: User
@@ -29,6 +37,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [addingMember, setAddingMember] = useState(false)
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null)
 
+  // ICP
+  const [icp, setIcp] = useState<IcpConfig | null>(null)
+  const [icpForm, setIcpForm] = useState({ targetIndustries: '', targetGeos: '', minEmployees: '', maxEmployees: '', mustHaveEmail: false })
+  const [savingIcp, setSavingIcp] = useState(false)
+
   // API Keys
   const [keyWorking, setKeyWorking] = useState(false)
   const [newKeyModal, setNewKeyModal] = useState<string | null>(null)
@@ -46,6 +59,20 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .then(d => setMembers(d.members || []))
       .catch(() => {})
       .finally(() => setMembersLoading(false))
+    api<{ icp: IcpConfig | null }>(`/api/workspaces/${workspace.id}/icp`)
+      .then(d => {
+        if (d.icp) {
+          setIcp(d.icp)
+          setIcpForm({
+            targetIndustries: d.icp.targetIndustries.join(', '),
+            targetGeos: d.icp.targetGeos.join(', '),
+            minEmployees: d.icp.minEmployees != null ? String(d.icp.minEmployees) : '',
+            maxEmployees: d.icp.maxEmployees != null ? String(d.icp.maxEmployees) : '',
+            mustHaveEmail: d.icp.mustHaveEmail,
+          })
+        }
+      })
+      .catch(() => {})
   }, [workspace?.id])
 
   async function saveProfile() {
@@ -122,6 +149,26 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       toast.success('Member removed')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
     finally { setRemovingMemberId(null) }
+  }
+
+  async function saveIcp() {
+    if (!workspace) return
+    setSavingIcp(true)
+    try {
+      const d = await api<{ icp: IcpConfig }>(`/api/workspaces/${workspace.id}/icp`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          targetIndustries: icpForm.targetIndustries.split(',').map(s => s.trim()).filter(Boolean),
+          targetGeos: icpForm.targetGeos.split(',').map(s => s.trim()).filter(Boolean),
+          minEmployees: icpForm.minEmployees ? parseInt(icpForm.minEmployees, 10) : null,
+          maxEmployees: icpForm.maxEmployees ? parseInt(icpForm.maxEmployees, 10) : null,
+          mustHaveEmail: icpForm.mustHaveEmail,
+        })
+      })
+      setIcp(d.icp)
+      toast.success('ICP settings saved')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to save ICP') }
+    finally { setSavingIcp(false) }
   }
 
   async function generateApiKey() {
@@ -336,6 +383,75 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* Ideal Customer Profile */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Ideal Customer Profile (ICP)</div>
+          <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
+            Defines the types of prospects ACAOS targets when scoring and filtering leads.
+          </div>
+          <div style={{ display: 'grid', gap: 12, maxWidth: 500, marginBottom: 16 }}>
+            <div>
+              <label style={s.label}>Target Industries (comma-separated)</label>
+              <input
+                style={s.input}
+                placeholder="e.g. HVAC, Electrical, Plumbing"
+                value={icpForm.targetIndustries}
+                onChange={e => setIcpForm(f => ({ ...f, targetIndustries: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label style={s.label}>Target Geographies (comma-separated)</label>
+              <input
+                style={s.input}
+                placeholder="e.g. Brisbane, Sydney, Melbourne"
+                value={icpForm.targetGeos}
+                onChange={e => setIcpForm(f => ({ ...f, targetGeos: e.target.value }))}
+              />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={s.label}>Min Employees</label>
+                <input
+                  style={s.input}
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 5"
+                  value={icpForm.minEmployees}
+                  onChange={e => setIcpForm(f => ({ ...f, minEmployees: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label style={s.label}>Max Employees</label>
+                <input
+                  style={s.input}
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 200"
+                  value={icpForm.maxEmployees}
+                  onChange={e => setIcpForm(f => ({ ...f, maxEmployees: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <input
+                type="checkbox"
+                id="mustHaveEmail"
+                checked={icpForm.mustHaveEmail}
+                onChange={e => setIcpForm(f => ({ ...f, mustHaveEmail: e.target.checked }))}
+                style={{ accentColor: colors.blue, width: 16, height: 16 }}
+              />
+              <label htmlFor="mustHaveEmail" style={{ ...s.label, marginBottom: 0, cursor: 'pointer' }}>
+                Only score prospects that have an email address
+              </label>
+            </div>
+          </div>
+          <button style={s.btn} disabled={savingIcp} onClick={saveIcp}>
+            {savingIcp ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save ICP'}
+          </button>
         </div>
       )}
 
