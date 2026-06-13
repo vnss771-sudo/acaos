@@ -52,7 +52,9 @@ export function validateConfig(): void {
       if (!process.env[key]?.trim()) problems.push(`${key} is required in production`)
     }
     if (getAllowedOrigins().length === 0) {
-      problems.push('ALLOWED_ORIGINS (or WEB_URL) must list at least one allowed origin in production')
+      // Warn but don't crash — CORS middleware will reject cross-origin requests
+      // regardless. This allows the API to start before the web frontend URL is known.
+      console.warn('[config] ALLOWED_ORIGINS and WEB_URL are not set — all cross-origin requests will be rejected')
     }
   } else if (process.env.NODE_ENV === undefined) {
     console.warn('[config] NODE_ENV is not set — defaulting to non-production behavior. Set NODE_ENV=production for deployments.')
