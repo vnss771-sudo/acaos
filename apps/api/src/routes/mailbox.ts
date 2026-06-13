@@ -32,10 +32,12 @@ mailboxRouter.post(
       throw new ApiError(400, 'Valid recipient email required')
     }
 
-    // Verify workspace access when workspaceId provided
+    // Require owner or admin — test-send uses real SMTP credits
     if (workspaceId) {
-      const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })
-      if (!member) throw new ApiError(403, 'Access denied')
+      const member = await prisma.membership.findFirst({
+        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+      })
+      if (!member) throw new ApiError(403, 'Must be owner or admin to send test emails')
     }
 
     const result = await sendMail(to, subject || 'Test', html || '<p>Hello</p>', emailCfg)
@@ -63,7 +65,7 @@ mailboxRouter.post(
       if (!member) throw new ApiError(403, 'Access denied')
     }
 
-    const result = await syncMailboxOnce(emailCfg)
+    const result = await syncMailboxOnce(emailCfg, workspaceId || undefined)
     res.json(result)
   })
 )

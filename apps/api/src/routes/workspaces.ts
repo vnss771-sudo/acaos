@@ -8,6 +8,7 @@ import { createBillingPortalSession } from '../services/stripe.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { generateRefreshToken, hashRefreshToken } from '../lib/jwt.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
+import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -184,7 +185,7 @@ workspaceRouter.post(
 
     await prisma.membership.create({ data: { userId: invitee.id, workspaceId, role } })
 
-    res.status(201).json({ member: { ...invitee, role } })
+    res.status(201).json({ member: { email: invitee.email, name: invitee.name, role } })
   })
 )
 
@@ -376,21 +377,24 @@ workspaceRouter.put(
     const num = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null)
     const bool = (v: unknown, def: boolean) => (typeof v === 'boolean' ? v : def)
 
+    const rawSmtpPass = str(b.smtpPass)
+    const rawImapPass = str(b.imapPass)
+
     const data = {
       smtpHost:   str(b.smtpHost),
       smtpPort:   num(b.smtpPort),
       smtpSecure: bool(b.smtpSecure, false),
       smtpUser:   str(b.smtpUser),
-      smtpPass:   str(b.smtpPass),
+      smtpPass:   rawSmtpPass ? encryptSecret(rawSmtpPass) : null,
       smtpFrom:   str(b.smtpFrom),
       imapHost:   str(b.imapHost),
       imapPort:   num(b.imapPort),
       imapSecure: bool(b.imapSecure, true),
       imapUser:   str(b.imapUser),
-      imapPass:   str(b.imapPass),
+      imapPass:   rawImapPass ? encryptSecret(rawImapPass) : null,
     }
 
-    // If password fields omitted (null), keep existing values
+    // If password fields omitted (null), preserve existing encrypted values
     const existing = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
     if (data.smtpPass === null && existing?.smtpPass) data.smtpPass = existing.smtpPass
     if (data.imapPass === null && existing?.imapPass) data.imapPass = existing.imapPass

@@ -16,7 +16,7 @@ import type { AuthedRequest } from '../types/auth.js'
 
 export const jobsRouter = Router()
 
-const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox']
+const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox', 'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations']
 const MAX_REPLY_BODY = 10_000
 
 // Server-Sent Events stream for real-time job progress. Registered BEFORE

@@ -128,28 +128,7 @@ export function App() {
     localStorage.setItem('acaos_workspace', id)
   }
 
-  if (booting) {
-    return (
-      <div style={{ minHeight: '100vh', background: colors.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ color: colors.textFaint, fontSize: 14 }}>Loading…</div>
-      </div>
-    )
-  }
-
-  if (!token || !user) {
-    return (
-      <>
-        <AuthScreen
-          onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }}
-          resetToken={resetToken}
-          inviteToken={inviteToken}
-        />
-        <ToastContainer toasts={toasts} onRemove={removeToast} />
-      </>
-    )
-  }
-
-  // Verify email address when ?verify=TOKEN is present
+  // Verify email address when ?verify=TOKEN is present (runs once on mount)
   useEffect(() => {
     if (!verifyToken) return
     fetch(`${API}/api/auth/verify-email/${verifyToken}`)
@@ -170,6 +149,27 @@ export function App() {
       }
     }).catch(() => {})
   }, [inviteToken, token, user?.id])
+
+  if (booting) {
+    return (
+      <div style={{ minHeight: '100vh', background: colors.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: colors.textFaint, fontSize: 14 }}>Loading…</div>
+      </div>
+    )
+  }
+
+  if (!token || !user) {
+    return (
+      <>
+        <AuthScreen
+          onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }}
+          resetToken={resetToken}
+          inviteToken={inviteToken}
+        />
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
+    )
+  }
 
   const VIEW_TITLE: Record<View, string> = {
     dashboard: 'Dashboard',

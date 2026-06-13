@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer'
 import { ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
+import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
 
 function getRequiredEnv(key: string) {
   const value = process.env[key]?.trim()
@@ -38,12 +39,17 @@ export function isMailboxConfigured(cfg?: ImapConfig | null) {
   )
 }
 
+function maybeDecrypt(s: string | null | undefined): string | undefined {
+  if (!s) return undefined
+  return isEncrypted(s) ? decryptSecret(s) : s
+}
+
 export function buildTransport(cfg?: SmtpConfig | null) {
   const host = cfg?.smtpHost || getRequiredEnv('SMTP_HOST')
   const port = cfg?.smtpPort ?? Number(process.env.SMTP_PORT || 587)
   const secure = cfg?.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465)
   const user = cfg?.smtpUser || process.env.SMTP_USER
-  const pass = cfg?.smtpPass || process.env.SMTP_PASS
+  const pass = maybeDecrypt(cfg?.smtpPass) || process.env.SMTP_PASS
   return nodemailer.createTransport({
     host, port, secure,
     auth: user ? { user, pass } : undefined,
@@ -129,7 +135,7 @@ export async function recordProcessedReply(params: {
   return { advanced: advance }
 }
 
-export async function syncMailboxOnce(cfg?: ImapConfig | null): Promise<{
+export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: string): Promise<{
   inspected: number
   matched: number
   queued: number
@@ -147,7 +153,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null): Promise<{
   const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
   const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
   const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')
-  const pass = cfg?.imapPass || getRequiredEnv('IMAP_PASS')
+  const pass = maybeDecrypt(cfg?.imapPass) || getRequiredEnv('IMAP_PASS')
 
   const client = new ImapFlow({
     host, port, secure,
@@ -209,10 +215,11 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null): Promise<{
       return { inspected, matched: 0, queued: 0, skipped: 0 }
     }
 
-    // Find leads matching any of the sender addresses
+    // Find leads matching any of the sender addresses, scoped to the workspace
+    // when known so replies can never bleed across tenant boundaries.
     const addresses = [...new Set(toProcess.map(m => m.fromAddress))]
     const matchedLeads = await prisma.lead.findMany({
-      where: { email: { in: addresses } },
+      where: { email: { in: addresses }, ...(workspaceId ? { workspaceId } : {}) },
       select: { id: true, email: true, workspaceId: true, stage: true, score: true }
     })
     const emailToLead = new Map(matchedLeads.map(l => [l.email!.toLowerCase(), l]))

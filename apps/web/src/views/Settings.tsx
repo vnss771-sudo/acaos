@@ -175,11 +175,12 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !memberForm.email.trim()) return
     setAddingMember(true)
     try {
-      const d = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`, {
+      await api(`/api/workspaces/${workspace.id}/members`, {
         method: 'POST',
         body: JSON.stringify({ email: memberForm.email.trim(), role: memberForm.role })
       })
-      setMembers(d.members || [])
+      const refreshed = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
+      setMembers(refreshed.members || [])
       setMemberForm({ email: '', role: 'member' })
       toast.success('Member added')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to add member') }
@@ -190,10 +191,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !confirm('Remove this member?')) return
     setRemovingMemberId(userId)
     try {
-      const d = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members/${userId}`, {
-        method: 'DELETE'
-      })
-      setMembers(d.members || [])
+      await api(`/api/workspaces/${workspace.id}/members/${userId}`, { method: 'DELETE' })
+      setMembers(prev => prev.filter(m => m.user.id !== userId))
       toast.success('Member removed')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
     finally { setRemovingMemberId(null) }
