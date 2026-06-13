@@ -16,6 +16,7 @@ import { outcomesRouter } from './routes/outcomes.js'
 import { prospectsRouter } from './routes/prospects.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
+import { adminRouter } from './routes/admin.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
@@ -89,6 +90,7 @@ app.use('/api/outcomes', outcomesRouter)
 app.use('/api/prospects', prospectsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
+app.use('/api/admin', adminRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

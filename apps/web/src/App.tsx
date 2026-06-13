@@ -13,7 +13,10 @@ import { Billing } from './views/Billing.js'
 import { Settings } from './views/Settings.js'
 import { Intelligence } from './views/Intelligence.js'
 import { ProspectsView } from './views/Prospects.js'
+import { AdminView } from './views/Admin.js'
 import { colors } from './styles.js'
+
+const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -171,15 +174,18 @@ export function App() {
     )
   }
 
+  const isAdmin = Boolean(ADMIN_EMAIL && user.email.toLowerCase() === ADMIN_EMAIL)
+
   const VIEW_TITLE: Record<View, string> = {
-    dashboard: 'Dashboard',
+    dashboard: 'Acquisition Radar',
     intelligence: 'Acquisition Intelligence',
     prospects: 'Prospects',
     campaigns: 'Campaigns',
     leads: 'Leads',
     ai: 'AI Tools',
     billing: 'Billing',
-    settings: 'Settings'
+    settings: 'Settings',
+    admin: 'Admin Panel'
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
@@ -196,6 +202,7 @@ export function App() {
         email={user.email}
         workspace={activeWorkspace}
         onLogout={logout}
+        isAdmin={isAdmin}
       />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
@@ -242,6 +249,7 @@ export function App() {
                 onWorkspaceUpdate={handleWorkspaceUpdate}
               />
             )}
+            {view === 'admin' && isAdmin && <AdminView api={api} toast={toast} />}
           </ErrorBoundary>
         </main>
       </div>

@@ -49,6 +49,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
   const [expanded, setExpanded]     = useState<string | null>(null)
   const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
+  const [approvalPending, setApprovalPending] = useState<{ id: string; name: string; eligible: number } | null>(null)
 
   const loadStats = useCallback(async (id: string) => {
     try {
@@ -111,16 +112,21 @@ export function Campaigns({ api, workspace, toast }: Props) {
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
   }
 
-  async function launchCampaign(id: string, emailCount: number) {
-    if (!confirm(`Send outreach to ${emailCount} leads with email addresses? Each lead will receive a personalised AI-generated email.`)) return
+  function requestLaunch(id: string, name: string, eligible: number) {
+    setApprovalPending({ id, name, eligible })
+  }
+
+  async function confirmLaunch() {
+    if (!approvalPending) return
+    const { id } = approvalPending
+    setApprovalPending(null)
     setLaunching(prev => ({ ...prev, [id]: true }))
     try {
       const d = await api<{ jobId: string; eligible: number; message: string }>(
         `/api/campaigns/${id}/send`,
         { method: 'POST', body: JSON.stringify({}) }
       )
-      toast.success(`Launched — sending to ${d.eligible} leads (job ${d.jobId})`)
-      // Refresh stats after a short delay to pick up new SENT records
+      toast.success(`Approved — sending to ${d.eligible} leads (job ${d.jobId})`)
       setTimeout(() => loadStats(id), 3000)
       setTimeout(() => loadStats(id), 10_000)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Launch failed') }
@@ -154,6 +160,47 @@ export function Campaigns({ api, workspace, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {/* Approval modal */}
+      {approvalPending && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 100,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }} onClick={() => setApprovalPending(null)}>
+          <div style={{
+            background: colors.bgCard, border: `1px solid ${colors.border}`,
+            borderRadius: 12, padding: 28, width: 420, maxWidth: '90vw'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
+              Approve Outreach Mission
+            </div>
+            <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 20 }}>
+              Campaign: <strong style={{ color: colors.text }}>{approvalPending.name}</strong>
+            </div>
+            <div style={{
+              background: '#f59e0b18', border: '1px solid #f59e0b44',
+              borderRadius: 8, padding: '12px 16px', marginBottom: 20
+            }}>
+              <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: 20 }}>{approvalPending.eligible}</div>
+              <div style={{ color: colors.textFaint, fontSize: 13 }}>
+                leads will each receive a personalised AI-generated email.
+              </div>
+            </div>
+            <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 24 }}>
+              Outreach will be sent from your configured SMTP. Review your lead list and email config before approving.
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button style={s.btnSecondary} onClick={() => setApprovalPending(null)}>Cancel</button>
+              <button
+                style={{ ...s.btn, background: '#16a34a' }}
+                onClick={confirmLaunch}
+              >
+                Approve & Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ ...s.flexBetween }}>
         <div />
@@ -248,7 +295,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
                       cursor: isLaunching || !st?.eligible ? 'not-allowed' : 'pointer',
                     }}
                     disabled={isLaunching || !st?.eligible}
-                    onClick={() => st && launchCampaign(c.id, st.eligible)}
+                    onClick={() => st && requestLaunch(c.id, c.name, st.eligible)}
                   >
                     {isLaunching ? '⏳ Sending…' : '🚀 Launch Campaign'}
                   </button>

@@ -22,9 +22,10 @@ type SidebarProps = {
   email: string
   workspace: Workspace | null
   onLogout: () => void
+  isAdmin?: boolean
 }
 
-export function Sidebar({ view, setView, email, workspace, onLogout }: SidebarProps) {
+export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: SidebarProps) {
   const plan = workspace?.plan ?? 'free'
   const isPro = plan !== 'free'
 
@@ -72,6 +73,25 @@ export function Sidebar({ view, setView, email, workspace, onLogout }: SidebarPr
             </button>
           )
         })}
+        {isAdmin && (
+          <button
+            onClick={() => setView('admin')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 20px', width: '100%',
+              background: view === 'admin' ? '#1e293b' : 'transparent',
+              border: 'none', cursor: 'pointer',
+              color: view === 'admin' ? '#f1f5f9' : '#f59e0b',
+              fontSize: 14, fontWeight: view === 'admin' ? 600 : 400,
+              borderLeft: `2px solid ${view === 'admin' ? '#f59e0b' : 'transparent'}`,
+              textAlign: 'left', transition: 'all 0.1s',
+              borderTop: `1px solid ${colors.border}`, marginTop: 8
+            }}
+          >
+            <span style={{ fontSize: 13 }}>⚙</span>
+            Admin
+          </button>
+        )}
       </nav>
 
       {/* Plan badge */}

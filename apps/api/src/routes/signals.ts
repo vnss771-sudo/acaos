@@ -28,10 +28,13 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
   if (req.query.prospectId) where.prospectId = req.query.prospectId
   if (req.query.type) where.type = req.query.type
 
+  const limit = Math.min(Number(req.query.limit ?? 100), 200)
+
   const signals = await prisma.signal.findMany({
     where,
     orderBy: { detectedAt: 'desc' },
-    take: 100
+    take: limit,
+    include: { prospect: { select: { id: true, companyName: true } } }
   })
 
   res.json({ signals })

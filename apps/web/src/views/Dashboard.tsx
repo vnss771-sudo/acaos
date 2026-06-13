@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import type { Workspace, StatsData, View, ScoringModel } from '../types.js'
-import { STAGE_COLOR, TIER_COLOR } from '../types.js'
+import type { Workspace, StatsData, View, ScoringModel, Signal, Prospect } from '../types.js'
+import { STAGE_COLOR, TIER_COLOR, SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -190,16 +190,127 @@ function TierDistribution({ dist }: { dist: { HOT: number; WARM: number; COLD: n
   )
 }
 
+type RecentSignal = Signal & { prospect?: { id: string; companyName: string } }
+
+function HotAccountsSection({ hotProspects, setView }: { hotProspects: Prospect[]; setView: (v: View) => void }) {
+  if (hotProspects.length === 0) return null
+  return (
+    <div style={s.card}>
+      <div style={{ ...s.flexBetween, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={s.sectionHeader}>Hot Accounts Today</div>
+          <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 700, background: '#ef444418', padding: '2px 8px', borderRadius: 12 }}>
+            {hotProspects.length} HOT
+          </span>
+        </div>
+        <button style={s.btnSm} onClick={() => setView('intelligence')}>Full radar →</button>
+      </div>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {hotProspects.slice(0, 5).map(p => (
+          <div key={p.id} style={{
+            padding: '12px 14px', background: '#ef444408', borderRadius: 8,
+            border: '1px solid #ef444430', display: 'flex', gap: 14, alignItems: 'flex-start'
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              background: '#ef444422', border: '2px solid #ef4444',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 15, fontWeight: 800, color: '#ef4444'
+            }}>
+              {p.opportunityScore}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: colors.text, fontWeight: 600, fontSize: 14 }}>{p.companyName}</div>
+              <div style={{ color: colors.textFaint, fontSize: 12 }}>
+                {p.industry || 'Unknown industry'}{p.location ? ` · ${p.location}` : ''}
+              </div>
+              {p.latestSignal && (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>{SIGNAL_TYPE_ICONS[p.latestSignal.type]}</span>
+                  <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 500 }}>
+                    {SIGNAL_TYPE_LABELS[p.latestSignal.type]}
+                  </span>
+                  {p.latestSignal.title && (
+                    <span style={{ color: colors.textFaint, fontSize: 12 }}>— {p.latestSignal.title}</span>
+                  )}
+                </div>
+              )}
+              {p.topRecommendation?.actionText && (
+                <div style={{ marginTop: 4, color: colors.amber, fontSize: 12 }}>
+                  Recommended: {p.topRecommendation.actionText}
+                </div>
+              )}
+            </div>
+            {p.winProbability != null && (
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ color: colors.green, fontWeight: 700, fontSize: 16 }}>{Math.round(p.winProbability * 100)}%</div>
+                <div style={{ color: colors.textFaint, fontSize: 11 }}>win prob</div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SignalFeedSection({ signals }: { signals: RecentSignal[] }) {
+  if (signals.length === 0) return null
+  return (
+    <div style={s.card}>
+      <div style={{ ...s.sectionHeader, marginBottom: 12 }}>Signal Feed</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {signals.map(sig => {
+          const age = Math.floor((Date.now() - new Date(sig.detectedAt).getTime()) / (1000 * 60 * 60))
+          const ageLabel = age < 1 ? 'just now' : age < 24 ? `${age}h ago` : `${Math.floor(age / 24)}d ago`
+          const strengthColor = sig.strength >= 70 ? colors.green : sig.strength >= 40 ? colors.amber : colors.textFaint
+          return (
+            <div key={sig.id} style={{
+              display: 'flex', gap: 10, alignItems: 'flex-start',
+              padding: '8px 0', borderBottom: `1px solid ${colors.border}`
+            }}>
+              <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{SIGNAL_TYPE_ICONS[sig.type]}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ color: colors.text, fontSize: 13, fontWeight: 500 }}>
+                    {sig.prospect?.companyName ?? 'Unknown'}
+                  </span>
+                  <span style={{ color: colors.textFaint, fontSize: 12 }}>{SIGNAL_TYPE_LABELS[sig.type]}</span>
+                </div>
+                {sig.title && <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 2 }}>{sig.title}</div>}
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ color: strengthColor, fontWeight: 700, fontSize: 13 }}>{sig.strength}</div>
+                <div style={{ color: colors.textFaint, fontSize: 11 }}>{ageLabel}</div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function Dashboard({ api, workspace, setView, toast }: Props) {
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [hotProspects, setHotProspects] = useState<Prospect[]>([])
+  const [recentSignals, setRecentSignals] = useState<RecentSignal[]>([])
 
   useEffect(() => {
     if (!workspace) return
     setLoading(true)
-    api<StatsData>(`/api/stats?workspaceId=${workspace.id}`)
-      .then(setStats)
-      .catch(e => toast.error(e.message))
+    Promise.all([
+      api<StatsData>(`/api/stats?workspaceId=${workspace.id}`),
+      api<{ hot: Prospect[]; warm: Prospect[]; cold: Prospect[] }>(`/api/intelligence/opportunities?workspaceId=${workspace.id}`)
+        .catch(() => ({ hot: [], warm: [], cold: [] })),
+      api<{ signals: RecentSignal[] }>(`/api/signals?workspaceId=${workspace.id}&limit=10`)
+        .catch(() => ({ signals: [] }))
+    ]).then(([statsData, opps, sigData]) => {
+      setStats(statsData)
+      setHotProspects(opps.hot ?? [])
+      setRecentSignals(sigData.signals ?? [])
+    }).catch(e => toast.error(e.message))
       .finally(() => setLoading(false))
   }, [workspace?.id])
 
@@ -216,6 +327,14 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {/* Hot accounts + signal feed — only shown when data exists */}
+      {!loading && (hotProspects.length > 0 || recentSignals.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: recentSignals.length > 0 ? '1.4fr 1fr' : '1fr', gap: 16 }}>
+          <HotAccountsSection hotProspects={hotProspects} setView={setView} />
+          {recentSignals.length > 0 && <SignalFeedSection signals={recentSignals} />}
+        </div>
+      )}
+
       {/* KPI row */}
       <div style={s.grid4}>
         <StatCard label="Total Leads" value={loading ? '…' : (stats?.totalLeads ?? 0)} color={colors.blueLight} />
