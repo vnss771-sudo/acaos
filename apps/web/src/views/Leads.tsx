@@ -92,12 +92,19 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
     finally { setSaving(false) }
   }
 
-  function streamJob(queue: string, jobId: string, type: string, onDone: () => void) {
-    const token = localStorage.getItem('acaos_token')
-    if (!token) return
+  async function streamJob(queue: string, jobId: string, type: string, onDone: () => void) {
+    // Exchange the session for a short-lived, single-use SSE ticket instead of
+    // putting a long-lived JWT in the EventSource URL.
+    let ticket: string
+    try {
+      const r = await api<{ ticket: string }>('/api/jobs/events/ticket', { method: 'POST' })
+      ticket = r.ticket
+    } catch {
+      return
+    }
 
     const es = new EventSource(
-      `${API_BASE}/api/jobs/events/${queue}/${jobId}?token=${encodeURIComponent(token)}`
+      `${API_BASE}/api/jobs/events/${queue}/${jobId}?ticket=${encodeURIComponent(ticket)}`
     )
 
     setActiveJobs(j => ({ ...j, [type]: { state: 'waiting', progress: 0 } }))

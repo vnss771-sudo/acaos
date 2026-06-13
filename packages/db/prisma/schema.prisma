@@ -135,7 +135,9 @@ model ScoringOutcome {
   id               String       @id @default(cuid())
   workspaceId      String
   leadId           String?
-  prospectId       String
+  // Nullable: reply outcomes sourced from a Lead (via the worker) have no
+  // Prospect. Previously a Lead id was written here, corrupting the data.
+  prospectId       String?
   score            Float
   replied          Boolean
   replyIntent      String?
@@ -184,6 +186,14 @@ model ProcessedEmail {
   processedAt DateTime @default(now())
 }
 
+// Idempotency log for Stripe webhook events. Stripe delivers at-least-once and
+// out of order; we record each processed event id so re-deliveries are ignored.
+model ProcessedStripeEvent {
+  id          String   @id // Stripe event id (evt_...)
+  type        String
+  processedAt DateTime @default(now())
+}
+
 enum SignalType {
   HIRING
   FUNDING
@@ -221,7 +231,7 @@ model Prospect {
   domain           String?
   industry         String?
   employeeCount    Int?
-  estimatedRevenue Float?
+  estimatedRevenue Int?    // cents
   location         String?
   description      String?
   notes            String?
@@ -237,7 +247,7 @@ model Prospect {
   confidenceScore  Int          @default(0)
   buyingStage      BuyingStage  @default(RESEARCHING)
   outcomeStage     OutcomeStage @default(DISCOVERED)
-  expectedDealValue Float?
+  expectedDealValue Int?   // cents
   winProbability   Float?
   lastSignalAt     DateTime?
   lastContactedAt  DateTime?
@@ -308,7 +318,7 @@ model ProspectOutcome {
   prospectId  String
   stage       OutcomeStage
   notes       String?
-  dealValue   Float?
+  dealValue   Int?      // cents
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect    Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   recordedAt  DateTime     @default(now())

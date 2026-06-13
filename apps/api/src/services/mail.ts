@@ -22,7 +22,12 @@ export function buildTransport() {
     host: getRequiredEnv('SMTP_HOST'),
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT || 587) === 465,
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+    // Bound every phase of the SMTP handshake so a stalled server can't hang the
+    // caller (or a worker slot) indefinitely.
+    connectionTimeout: 15_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   })
 }
 
@@ -61,6 +66,38 @@ function extractPlainText(source: Buffer): string {
   return raw.trim()
 }
 
+/**
+ * Atomically record a processed inbound email and, when it maps to a non-
+ * terminal lead, advance that lead to REPLIED. Extracted from syncMailboxOnce so
+ * the integrity-critical persistence is testable without an IMAP server.
+ * Idempotent on `uid` (re-running is a no-op for the processed row).
+ */
+export async function recordProcessedReply(params: {
+  uid: number
+  messageId: string | null
+  fromAddress: string
+  lead: { id: string; stage: string } | null
+}): Promise<{ advanced: boolean }> {
+  const { uid, messageId, fromAddress, lead } = params
+  const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
+
+  await prisma.$transaction(async (tx) => {
+    await tx.processedEmail.upsert({
+      where: { uid },
+      create: { uid, messageId: messageId ?? undefined, fromAddress },
+      update: {},
+    })
+    if (advance) {
+      await tx.lead.update({
+        where: { id: lead!.id },
+        data: { stage: 'REPLIED', lastContactedAt: new Date() },
+      })
+    }
+  })
+
+  return { advanced: advance }
+}
+
 export async function syncMailboxOnce(): Promise<{
   inspected: number
   matched: number
@@ -80,15 +117,23 @@ export async function syncMailboxOnce(): Promise<{
     port: Number(process.env.IMAP_PORT || 993),
     secure: String(process.env.IMAP_SECURE || 'true') === 'true',
     auth: { user: getRequiredEnv('IMAP_USER'), pass: getRequiredEnv('IMAP_PASS') },
-    logger: false
+    logger: false,
+    // Don't let a stalled IMAP socket pin a worker slot forever.
+    socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 30_000),
+    greetingTimeout: 10_000,
   })
 
   try {
     await client.connect()
     await client.mailboxOpen('INBOX')
 
-    // Load already-processed UIDs to skip them
-    const existing = await prisma.processedEmail.findMany({ select: { uid: true, messageId: true } })
+    // Load already-processed records within the fetch window only — not the
+    // whole (unbounded, ever-growing) table.
+    const windowStart = Math.max(1, (client.mailbox?.exists ?? 200) - 199)
+    const existing = await prisma.processedEmail.findMany({
+      where: { uid: { gte: windowStart } },
+      select: { uid: true, messageId: true }
+    })
     const seenUids = new Set(existing.map(e => e.uid))
     const seenMsgIds = new Set(existing.map(e => e.messageId).filter(Boolean))
 
@@ -140,45 +185,35 @@ export async function syncMailboxOnce(): Promise<{
 
     let matched = 0
     let queued = 0
-    const processedRows: { uid: number; messageId: string | null; fromAddress: string }[] = []
+    const processedUids: number[] = []
 
     for (const msg of toProcess) {
-      processedRows.push({ uid: msg.uid, messageId: msg.messageId, fromAddress: msg.fromAddress })
+      const lead = emailToLead.get(msg.fromAddress) ?? null
+      if (lead) matched++
 
-      const lead = emailToLead.get(msg.fromAddress)
-      if (!lead) continue
-
-      matched++
-
-      // Don't re-process if already past the reply stage
-      if (['BOOKED', 'CLOSED', 'DEAD'].includes(lead.stage)) continue
-
-      // Advance lead stage and record contact
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { stage: 'REPLIED', lastContactedAt: new Date() }
+      // Record the processed email and advance the lead in one transaction, so a
+      // crash can never leave a lead advanced without its processed-row (which
+      // would reprocess the same email and double-spend AI on the next sync).
+      const { advanced } = await recordProcessedReply({
+        uid: msg.uid,
+        messageId: msg.messageId,
+        fromAddress: msg.fromAddress,
+        lead,
       })
+      processedUids.push(msg.uid)
 
-      // Enqueue AI reply classification — worker will record a ScoringOutcome
-      await enqueueAnalyzeReply(msg.body, lead.id)
-      queued++
+      if (advanced) {
+        // Enqueue only after the DB commit so a failed enqueue doesn't strand a
+        // lead in REPLIED with no processed-row.
+        await enqueueAnalyzeReply(msg.body, lead!.id)
+        queued++
+      }
     }
 
-    // Persist processed email records atomically
-    if (processedRows.length > 0) {
-      await prisma.processedEmail.createMany({
-        data: processedRows.map(r => ({
-          uid: r.uid,
-          messageId: r.messageId ?? undefined,
-          fromAddress: r.fromAddress
-        })),
-        skipDuplicates: true
-      })
-
-      // Mark processed messages as SEEN in IMAP
-      const uids = processedRows.map(r => r.uid)
+    // Mark processed messages as SEEN in IMAP (non-fatal — already persisted).
+    if (processedUids.length > 0) {
       try {
-        await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true })
+        await client.messageFlagsAdd(processedUids, ['\\Seen'], { uid: true })
       } catch {
         // Non-fatal — we already stored the UIDs
       }

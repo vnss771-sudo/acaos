@@ -1,0 +1,96 @@
+// Database-backed integration tests for /api/auth.
+//
+// Exercises the real signup transaction (user + workspace + membership), the
+// unique email/slug constraints, and refresh-token rotation against actual
+// rows — the parts most likely to diverge from a fake.
+
+import { test, before, beforeEach, after } from 'node:test'
+import assert from 'node:assert/strict'
+import { authRouter } from '../apps/api/src/routes/auth.ts'
+import { prisma, resetDb, disconnect, startTestServer, type TestServer } from './helpers/db.ts'
+
+let server: TestServer
+// The auth routes are rate-limited per client IP. Give each test a distinct
+// forwarded IP so one test's request volume can't trip the limit for the next.
+let testIp: string
+let ipCounter = 0
+
+before(async () => {
+  server = await startTestServer('/api/auth', authRouter)
+})
+after(async () => {
+  await server.close()
+  await disconnect()
+})
+beforeEach(async () => {
+  await resetDb()
+  ipCounter += 1
+  testIp = `10.0.${Math.floor(ipCounter / 256)}.${ipCounter % 256}`
+})
+
+const post = (path: string, body: unknown) =>
+  server.request(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': testIp },
+    body: JSON.stringify(body),
+  })
+
+test('signup persists user, workspace, owner membership, and a refresh token', async () => {
+  const res = await post('/api/auth/signup', { email: 'Founder@Acme.test', password: 'sup3rsecret', name: 'Fred' })
+  assert.equal(res.status, 201)
+
+  const user = await prisma.user.findUnique({
+    where: { email: 'founder@acme.test' },
+    include: { memberships: { include: { workspace: true } }, refreshTokens: true },
+  })
+  assert.ok(user, 'user row created')
+  assert.equal(user!.memberships.length, 1)
+  assert.equal(user!.memberships[0].role, 'owner')
+  assert.ok(user!.memberships[0].workspace.slug, 'workspace has a slug')
+  assert.equal(user!.refreshTokens.length, 1)
+  // The refresh token is stored hashed, never in plaintext.
+  assert.notEqual(user!.refreshTokens[0].tokenHash, res.body.refreshToken)
+})
+
+test('signup is rejected for a duplicate email (unique constraint upheld)', async () => {
+  await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret' })
+  const res = await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret' })
+  assert.equal(res.status, 409)
+  assert.equal(await prisma.user.count(), 1)
+})
+
+test('two signups produce distinct, unique workspace slugs', async () => {
+  await post('/api/auth/signup', { email: 'a@acme.test', password: 'sup3rsecret', name: 'Acme' })
+  await post('/api/auth/signup', { email: 'b@acme.test', password: 'sup3rsecret', name: 'Acme' })
+  const slugs = await prisma.workspace.findMany({ select: { slug: true } })
+  assert.equal(slugs.length, 2)
+  assert.notEqual(slugs[0].slug, slugs[1].slug)
+})
+
+test('login then refresh rotates the token: old revoked, new usable', async () => {
+  await post('/api/auth/signup', { email: 'rot@acme.test', password: 'sup3rsecret' })
+  const login = await post('/api/auth/login', { email: 'rot@acme.test', password: 'sup3rsecret' })
+  assert.equal(login.status, 200)
+
+  const first = login.body.refreshToken
+  const refresh = await post('/api/auth/refresh', { refreshToken: first })
+  assert.equal(refresh.status, 200)
+  assert.notEqual(refresh.body.refreshToken, first)
+
+  // Old token now revoked in the DB; reusing it fails.
+  const reuseOld = await post('/api/auth/refresh', { refreshToken: first })
+  assert.equal(reuseOld.status, 401)
+
+  // New token works.
+  const useNew = await post('/api/auth/refresh', { refreshToken: refresh.body.refreshToken })
+  assert.equal(useNew.status, 200)
+
+  const revokedCount = await prisma.refreshToken.count({ where: { revokedAt: { not: null } } })
+  assert.ok(revokedCount >= 2)
+})
+
+test('login rejects a wrong password against the stored bcrypt hash', async () => {
+  await post('/api/auth/signup', { email: 'pw@acme.test', password: 'correct-horse' })
+  const res = await post('/api/auth/login', { email: 'pw@acme.test', password: 'wrong-horse' })
+  assert.equal(res.status, 401)
+})

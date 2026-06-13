@@ -25,11 +25,12 @@ export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
   }, 5 * 60 * 1000)
   if (interval.unref) interval.unref()
 
-  const defaultKey = (req: Request) => {
-    const forwarded = req.headers['x-forwarded-for']
-    const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0]?.trim()
-    return ip || req.socket.remoteAddress || 'unknown'
-  }
+  // Use the framework-resolved client IP. Express derives `req.ip` from the
+  // `trust proxy` setting, so it honors X-Forwarded-For only from trusted hops
+  // and ignores spoofed entries. Reading the raw header here (as before) let an
+  // attacker rotate X-Forwarded-For to mint an unlimited number of buckets and
+  // bypass the limit entirely.
+  const defaultKey = (req: Request) => req.ip || req.socket?.remoteAddress || 'unknown'
 
   const keyFn = opts.keyFn ?? defaultKey
 

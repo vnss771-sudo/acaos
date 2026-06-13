@@ -6,7 +6,11 @@ function getStripe() {
   if (!hasEnv(['STRIPE_SECRET_KEY', 'WEB_URL'])) {
     throw new ApiError(503, 'Stripe is not configured')
   }
-  return new Stripe(process.env.STRIPE_SECRET_KEY as string, { apiVersion: '2024-06-20' })
+  return new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+    apiVersion: '2024-06-20',
+    timeout: Number(process.env.STRIPE_TIMEOUT_MS || 20_000),
+    maxNetworkRetries: 2,
+  })
 }
 
 export async function createCheckoutSession(

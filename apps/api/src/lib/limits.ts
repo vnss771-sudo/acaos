@@ -43,23 +43,32 @@ async function getMonthlyAiCount(workspaceId: string): Promise<number> {
 export async function checkAndIncrementAiUsage(workspaceId: string, action: UsageAction): Promise<void> {
   const plan = await getWorkspacePlan(workspaceId)
   const { aiCallsPerMonth } = PLAN_LIMITS[plan]
-
-  if (isFinite(aiCallsPerMonth)) {
-    const used = await getMonthlyAiCount(workspaceId)
-    if (used >= aiCallsPerMonth) {
-      throw new ApiError(
-        429,
-        `Monthly AI limit reached (${aiCallsPerMonth} calls/month on ${plan} plan). ` +
-        `Upgrade to unlock more.`
-      )
-    }
-  }
-
   const month = currentMonth()
-  await prisma.usageRecord.upsert({
-    where: { workspaceId_month_action: { workspaceId, month, action } },
-    create: { workspaceId, month, action, count: 1 },
-    update: { count: { increment: 1 } }
+
+  // Serialize the read-then-increment per workspace with a transaction-scoped
+  // advisory lock, so concurrent requests can't both pass the check and exceed
+  // the limit (the previous plain read-then-upsert had a check-then-increment
+  // race). The lock is released automatically when the transaction ends.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`
+
+    if (isFinite(aiCallsPerMonth)) {
+      const records = await tx.usageRecord.findMany({ where: { workspaceId, month } })
+      const used = records.reduce((s, r) => s + r.count, 0)
+      if (used >= aiCallsPerMonth) {
+        throw new ApiError(
+          429,
+          `Monthly AI limit reached (${aiCallsPerMonth} calls/month on ${plan} plan). ` +
+          `Upgrade to unlock more.`
+        )
+      }
+    }
+
+    await tx.usageRecord.upsert({
+      where: { workspaceId_month_action: { workspaceId, month, action } },
+      create: { workspaceId, month, action, count: 1 },
+      update: { count: { increment: 1 } }
+    })
   })
 }
 

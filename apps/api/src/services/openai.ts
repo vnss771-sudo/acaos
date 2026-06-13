@@ -4,7 +4,13 @@ import { hasEnv } from '../lib/env.js'
 
 function getOpenAiClient() {
   if (!hasEnv(['OPENAI_API_KEY'])) throw new ApiError(503, 'OpenAI is not configured')
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  // Bounded timeout + retries so a hung provider socket can't pin a worker slot
+  // or HTTP request indefinitely.
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    timeout: Number(process.env.OPENAI_TIMEOUT_MS || 30_000),
+    maxRetries: 2,
+  })
 }
 
 function model() {

@@ -14,10 +14,20 @@ import {
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
+import { enrichProspect } from '../services/apollo.js'
+import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
+
+// Money is stored as integer cents; expose whole-unit amounts at the API edge.
+function withDollars<T extends Record<string, unknown>>(p: T): T {
+  const out: Record<string, unknown> = { ...p }
+  if ('expectedDealValue' in out) out.expectedDealValue = centsToDollars(out.expectedDealValue as number | null)
+  if ('estimatedRevenue' in out) out.estimatedRevenue = centsToDollars(out.estimatedRevenue as number | null)
+  return out as T
+}
 
 // Single canonical ICP loader — returns shaped ICPConfig or undefined
 async function getICP(workspaceId: string): Promise<ICPConfig | undefined> {
@@ -87,7 +97,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   if (hasMore) prospects.pop()
 
   res.json({
-    prospects: prospects.map((p: (typeof prospects)[0]) => ({
+    prospects: prospects.map((p: (typeof prospects)[0]) => withDollars({
       ...p,
       signalCount:       p._count.signals,
       tier:              getOpportunityTier(p.opportunityScore),
@@ -103,7 +113,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
 // GET /api/prospects/:id
 prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: {
       signals:         { orderBy: { detectedAt: 'desc' } },
       recommendations: { orderBy: { priority: 'desc' } },
@@ -118,7 +128,7 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const rawSignals = prospect.signals.map(toRawSignal)
   const prediction = predictBuyingIntent(rawSignals, prospect.buyingStage, prospect.opportunityScore)
 
-  res.json({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction })
+  res.json(withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }))
 }))
 
 // POST /api/prospects
@@ -151,7 +161,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
       domain:            meta.domain,
       industry:          meta.industry,
       employeeCount:     meta.employeeCount,
-      estimatedRevenue:  req.body.estimatedRevenue  ? Number(req.body.estimatedRevenue)  : null,
+      estimatedRevenue:  req.body.estimatedRevenue  ? dollarsToCents(Number(req.body.estimatedRevenue))  : null,
       location:          meta.location,
       description:       req.body.description   ?? null,
       notes:             req.body.notes          ?? null,
@@ -161,7 +171,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
       contactPhone:      req.body.contactPhone   ?? null,
       contactTitle:      req.body.contactTitle   ?? null,
       linkedinUrl:       req.body.linkedinUrl    ?? null,
-      expectedDealValue: req.body.expectedDealValue ? Number(req.body.expectedDealValue) : null,
+      expectedDealValue: req.body.expectedDealValue ? dollarsToCents(Number(req.body.expectedDealValue)) : null,
       sourceTag:         req.body.sourceTag      ?? null,
       ...scores,
       buyingStage,
@@ -169,12 +179,12 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
     },
   })
 
-  res.status(201).json({ ...created, tier: getOpportunityTier(created.opportunityScore) })
+  res.status(201).json(withDollars({ ...created, tier: getOpportunityTier(created.opportunityScore) }))
 }))
 
 // PATCH /api/prospects/:id
 prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -187,32 +197,37 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
     'linkedinUrl', 'outcomeStage', 'buyingStage', 'expectedDealValue', 'sourceTag',
   ]
 
+  const moneyFields = new Set(['expectedDealValue', 'estimatedRevenue'])
   const data: Record<string, unknown> = {}
   for (const key of allowed) {
-    if (req.body[key] !== undefined) data[key] = req.body[key]
+    if (req.body[key] === undefined) continue
+    // Money arrives as whole units and is stored as integer cents.
+    data[key] = moneyFields.has(key) && req.body[key] != null
+      ? dollarsToCents(Number(req.body[key]))
+      : req.body[key]
   }
   if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
 
-  const updated = await prisma.prospect.update({ where: { id: req.params.id }, data })
-  res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
+  const updated = await prisma.prospect.update({ where: { id: req.params.id as string }, data })
+  res.json(withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }))
 }))
 
 // DELETE /api/prospects/:id
 prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  await prisma.prospect.delete({ where: { id: req.params.id } })
+  await prisma.prospect.delete({ where: { id: req.params.id as string } })
   res.json({ ok: true })
 }))
 
 // POST /api/prospects/:id/rescore
 prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: { signals: true },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
@@ -234,15 +249,15 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
   const updated = await prisma.prospect.update({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     data: { ...scores, buyingStage, winProbability },
   })
-  res.json({ ...updated, tier: getOpportunityTier(updated.opportunityScore) })
+  res.json(withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }))
 }))
 
 // POST /api/prospects/:id/outcome
 prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -257,7 +272,7 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
         prospectId:  prospect.id,
         stage:       req.body.stage,
         notes:       req.body.notes     ?? null,
-        dealValue:   req.body.dealValue ? Number(req.body.dealValue) : null,
+        dealValue:   req.body.dealValue ? dollarsToCents(Number(req.body.dealValue)) : null,
       },
     }),
     prisma.prospect.update({
@@ -276,13 +291,16 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
     enqueueCalibrate(prospect.workspaceId).catch(() => {})
   }
 
-  res.json({ outcome, prospect: { ...updated, tier: getOpportunityTier(updated.opportunityScore) } })
+  res.json({
+    outcome: { ...outcome, dealValue: centsToDollars(outcome.dealValue) },
+    prospect: withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }),
+  })
 }))
 
 // POST /api/prospects/:id/recommend
 prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: { signals: true },
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
@@ -319,13 +337,12 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
 
 // POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore
 prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } })
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const { enrichProspect } = await import('../services/apollo.js')
   const result = await enrichProspect(prospect)
 
   const created: string[] = []
@@ -381,7 +398,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   })
 
   res.json({
-    prospect:       { ...updated, tier: getOpportunityTier(updated.opportunityScore) },
+    prospect:       withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }),
     signalsCreated: created.length,
     signalIds:      created
   })

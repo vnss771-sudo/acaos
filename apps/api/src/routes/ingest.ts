@@ -1,8 +1,9 @@
 import { Router } from 'express'
-import { randomBytes } from 'node:crypto'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
+import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -24,7 +25,7 @@ async function requireIngestKey(
     res.status(401).json({ error: 'Missing x-api-key header' })
     return
   }
-  const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: key } })
+  const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: hashApiKey(key) } })
   if (!workspace) {
     res.status(401).json({ error: 'Invalid API key' })
     return
@@ -107,19 +108,26 @@ ingestRouter.post(
     // Insert new leads one-by-one so we get their IDs for queue jobs
     const created = await prisma.$transaction(rows.map((data) => prisma.lead.create({ data })))
 
-    // Enqueue AI research for each new lead if requested
+    // Enqueue AI research for each new lead if requested — subject to the same
+    // monthly AI plan limit as the dashboard, so the ingest key cannot drive
+    // uncapped OpenAI spend. Processed sequentially so we stop at the cap.
     let queued = 0
     if (autoResearch) {
-      await Promise.all(
-        created.map(async (lead) => {
-          try {
-            await enqueueResearchLead(lead.id, workspace.id)
-            queued++
-          } catch {
-            // Queue failures are non-fatal — leads are already saved
-          }
-        })
-      )
+      for (const lead of created) {
+        try {
+          await checkAndIncrementAiUsage(workspace.id, 'AI_RESEARCH')
+        } catch {
+          // Monthly AI limit reached — stop auto-researching further leads.
+          // The leads themselves are already saved.
+          break
+        }
+        try {
+          await enqueueResearchLead(lead.id, workspace.id)
+          queued++
+        } catch {
+          // Queue failures are non-fatal — leads are already saved.
+        }
+      }
     }
 
     res.status(201).json({
@@ -147,10 +155,11 @@ keyRouter.post(
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
 
-    const ingestApiKey = randomBytes(32).toString('hex')
-    await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey } })
+    // Show the raw key to the caller once; persist only its hash.
+    const rawKey = generateApiKey()
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: hashApiKey(rawKey) } })
 
-    res.json({ ingestApiKey })
+    res.json({ ingestApiKey: rawKey })
   })
 )
 

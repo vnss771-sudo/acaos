@@ -16,24 +16,28 @@ import { prospectsRouter } from './routes/prospects.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
+import { securityHeaders } from './middleware/securityHeaders.js'
+import { requestContext } from './middleware/requestContext.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
+import { isProduction, isOriginAllowed, validateConfig } from './lib/config.js'
+
+// Fail fast on a misconfigured deploy rather than surfacing it as a runtime 503.
+validateConfig()
 
 const app = express()
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
-
-function isAllowedOrigin(origin: string | undefined): boolean {
-  if (!origin) return false
-  if (process.env.WEB_URL && origin === process.env.WEB_URL) return true
-  if (origin.endsWith('.railway.app')) return true
-  if (origin.endsWith('.vercel.app')) return true
-  return false
-}
+app.use(securityHeaders)
+app.use(requestContext)
 
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? isAllowedOrigin : true,
+  // In production, allow only explicitly configured origins. In dev, reflect
+  // the request origin for convenience.
+  origin: isProduction()
+    ? (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin))
+    : true,
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -43,6 +47,12 @@ app.use('/api/billing/webhook', express.raw({ type: 'application/json', limit: '
 app.use(express.json({ limit: '1mb' }))
 app.use(generalRateLimit)
 
+// Liveness: cheap, never touches the database — safe for frequent probes.
+app.get('/api/live', (_req, res) => {
+  res.json({ ok: true, service: 'acaos-api', timestamp: new Date().toISOString() })
+})
+
+// Readiness / health: verifies the database is reachable.
 app.get('/api/health', async (_req, res) => {
   let dbOk = false
   try {
@@ -101,3 +111,13 @@ async function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
+
+// Never let an escaped promise rejection silently terminate the process
+// (Node aborts on unhandled rejections). Log it; a crashed request is handled
+// by the error middleware, so this is a last-resort safety net.
+process.on('unhandledRejection', (reason) => {
+  console.error('[api] Unhandled promise rejection:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[api] Uncaught exception:', err)
+})
