@@ -24,7 +24,7 @@ import type { AuthedRequest } from '../types/auth.js'
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
 
-function buildSignalFingerprint(source: string, type: string, title: string | null, date: Date): string {
+export function buildSignalFingerprint(source: string, type: string, title: string | null, date: Date): string {
   const slug = (title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
   const month = date.toISOString().slice(0, 7)
   return `${source}:${type}:${slug}:${month}`

@@ -48,25 +48,23 @@ mailboxRouter.post(
 
 mailboxRouter.post(
   '/sync',
+  requireVerifiedEmail,
   syncRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const workspaceId = String(req.body?.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    const emailCfg = workspaceId
-      ? await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
-      : null
+    const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const emailCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
 
     if (!isMailboxConfigured(emailCfg)) {
       throw new ApiError(503, 'IMAP is not configured')
     }
 
-    if (workspaceId) {
-      const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })
-      if (!member) throw new ApiError(403, 'Access denied')
-    }
-
-    const result = await syncMailboxOnce(emailCfg, workspaceId || undefined)
+    const result = await syncMailboxOnce(emailCfg, workspaceId)
     res.json(result)
   })
 )

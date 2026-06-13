@@ -8,9 +8,11 @@ const TAG_LEN = 16
 function getKey(): Buffer {
   const raw = process.env.EMAIL_ENCRYPTION_KEY || ''
   if (!raw) {
-    // In dev without a key, return a fixed zeroed key so the app still boots.
-    // Credentials stored this way are only as safe as the DB — operators MUST
-    // set EMAIL_ENCRYPTION_KEY in production.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('EMAIL_ENCRYPTION_KEY is required in production')
+    }
+    // Dev-only fallback: zeroed key so the app boots without configuration.
+    // Credentials stored this way are NOT safe — always set EMAIL_ENCRYPTION_KEY.
     return Buffer.alloc(KEY_LEN)
   }
   const buf = Buffer.from(raw, 'hex')

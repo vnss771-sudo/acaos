@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { requireAuth } from '../middleware/auth.js'
+import { getQueueStats } from '../lib/queues.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const adminRouter = Router()
@@ -69,5 +70,13 @@ adminRouter.get(
     }
 
     res.json({ workspaces: summary, totals })
+  })
+)
+
+adminRouter.get(
+  '/queue-stats',
+  asyncHandler(async (_req, res) => {
+    const stats = await getQueueStats()
+    res.json({ queues: stats })
   })
 )

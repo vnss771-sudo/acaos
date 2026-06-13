@@ -67,7 +67,7 @@ export function AdminView({ api, toast }: Props) {
       .then(setData)
       .catch(() => toast.error('Failed to load admin overview'))
       .finally(() => setLoading(false))
-    api<{ queues: QueueStat[] }>('/api/jobs/stats')
+    api<{ queues: QueueStat[] }>('/api/admin/queue-stats')
       .then(d => setQueues(d.queues))
       .catch(() => {})
   }, [])

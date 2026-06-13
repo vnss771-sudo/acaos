@@ -9,8 +9,7 @@ import {
   enqueueResearchLead,
   enqueueGenerateOutreach,
   enqueueAnalyzeReply,
-  getJobById,
-  getQueueStats
+  getJobById
 } from '../lib/queues.js'
 import { issueSseTicket, consumeSseTicket } from '../lib/sseTickets.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -242,12 +241,3 @@ jobsRouter.get(
   })
 )
 
-// GET /api/jobs/stats — queue health snapshot (admin endpoint)
-// Returns active/waiting/completed/failed counts per queue.
-jobsRouter.get(
-  '/stats',
-  asyncHandler(async (_req, res) => {
-    const stats = await getQueueStats()
-    res.json({ queues: stats })
-  })
-)
