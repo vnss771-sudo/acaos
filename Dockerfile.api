@@ -12,7 +12,9 @@ COPY apps/api ./apps/api
 
 RUN npm run prisma:generate
 
-EXPOSE 4000
+# Railway injects PORT at runtime; the server binds to process.env.PORT.
+# This is documentation only — kept in sync with the production port.
+EXPOSE 8080
 ENV NODE_ENV=production
 
 CMD ["npm", "--workspace", "@acaos/api", "run", "start"]
