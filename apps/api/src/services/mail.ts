@@ -105,15 +105,16 @@ export async function recordProcessedReply(params: {
   uid: number
   messageId: string | null
   fromAddress: string
+  workspaceId: string
   lead: { id: string; stage: string } | null
 }): Promise<{ advanced: boolean }> {
-  const { uid, messageId, fromAddress, lead } = params
+  const { uid, messageId, fromAddress, workspaceId, lead } = params
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
   await prisma.$transaction(async (tx) => {
     await tx.processedEmail.upsert({
-      where: { uid },
-      create: { uid, messageId: messageId ?? undefined, fromAddress },
+      where: { workspaceId_uid: { workspaceId, uid } },
+      create: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
       update: {},
     })
     if (advance) {
@@ -167,11 +168,12 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     await client.connect()
     await client.mailboxOpen('INBOX')
 
-    // Load already-processed records within the fetch window only — not the
-    // whole (unbounded, ever-growing) table.
+    // Load already-processed records within the fetch window, scoped to this
+    // workspace — IMAP UIDs are only unique per-mailbox, not globally.
     const windowStart = Math.max(1, (client.mailbox?.exists ?? 200) - 199)
+    const wsScope = workspaceId ?? 'legacy-unknown'
     const existing = await prisma.processedEmail.findMany({
-      where: { uid: { gte: windowStart } },
+      where: { workspaceId: wsScope, uid: { gte: windowStart } },
       select: { uid: true, messageId: true }
     })
     const seenUids = new Set(existing.map(e => e.uid))
@@ -239,6 +241,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
         uid: msg.uid,
         messageId: msg.messageId,
         fromAddress: msg.fromAddress,
+        workspaceId: wsScope,
         lead,
       })
       processedUids.push(msg.uid)

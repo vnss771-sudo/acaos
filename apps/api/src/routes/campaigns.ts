@@ -205,6 +205,31 @@ campaignsRouter.post(
     const eligible = await prisma.lead.count({ where })
     if (eligible === 0) throw new ApiError(400, 'No eligible leads with email addresses in this campaign')
 
+    // Enforce daily send limit and approval mode from workspace ICP
+    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: campaign.workspaceId } })
+
+    if (icp?.approvalMode) {
+      // Approval mode: require explicit opt-in flag in the request body.
+      // The frontend sends { approved: true } after the user confirms the modal.
+      if (!req.body?.approved) {
+        throw new ApiError(403, 'Approval required — send { approved: true } to confirm dispatch')
+      }
+    }
+
+    let cappedEligible = eligible
+    if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
+      const startOfToday = new Date()
+      startOfToday.setHours(0, 0, 0, 0)
+      const sentToday = await prisma.outreachSent.count({
+        where: { workspaceId: campaign.workspaceId, sentAt: { gte: startOfToday } }
+      })
+      const remaining = Math.max(0, icp.dailySendLimit - sentToday)
+      if (remaining === 0) {
+        throw new ApiError(429, `Daily send limit of ${icp.dailySendLimit} reached for today`)
+      }
+      cappedEligible = Math.min(eligible, remaining)
+    }
+
     const job = await enqueueSendCampaign(
       campaign.id,
       campaign.workspaceId,
@@ -214,8 +239,9 @@ campaignsRouter.post(
     res.status(202).json({
       jobId: job.id,
       queue: 'send-campaign',
-      eligible,
-      message: `Sending to ${eligible} leads — poll /api/jobs/send-campaign/${job.id} for status`
+      eligible: cappedEligible,
+      dailyCapApplied: cappedEligible < eligible,
+      message: `Sending to ${cappedEligible} lead${cappedEligible !== 1 ? 's' : ''} — poll /api/jobs/send-campaign/${job.id} for status`
     })
   })
 )

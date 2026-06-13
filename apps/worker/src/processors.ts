@@ -197,6 +197,22 @@ export async function sendCampaignBatch(
     }
   })
 
+  // Enforce daily send limit inside the worker (double-enforced; route checks too)
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+  let dailyRemaining = Infinity
+  if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const sentToday = await prisma.outreachSent.count({
+      where: { workspaceId, sentAt: { gte: startOfToday } }
+    })
+    dailyRemaining = Math.max(0, icp.dailySendLimit - sentToday)
+    if (dailyRemaining === 0) {
+      console.log(`[send-campaign] Daily limit of ${icp.dailySendLimit} reached for workspace ${workspaceId}`)
+      return { campaignId, sent: 0, skipped: leads.length, failed: 0 }
+    }
+  }
+
   // Filter suppressed addresses before doing any AI work
   const emailList = leads.map(l => l.email!).filter(Boolean)
   const suppressedSet = emailList.length > 0
@@ -220,6 +236,9 @@ export async function sendCampaignBatch(
 
     // Skip suppressed addresses (unsubscribed or bounced)
     if (suppressedSet.has(lead.email!.toLowerCase().trim())) { skipped++; continue }
+
+    // Stop once daily cap is reached
+    if (sent >= dailyRemaining) { skipped++; continue }
 
     // Get or generate outreach copy
     let subject: string

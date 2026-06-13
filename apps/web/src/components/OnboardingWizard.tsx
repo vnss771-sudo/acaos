@@ -112,8 +112,10 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
     try {
       setSaving(true)
       await api(`/api/workspaces/${workspace.id}/icp`, {
-        method: 'PATCH',
+        method: 'PUT',
         body: JSON.stringify({
+          businessType: icpForm.businessType,
+          playbook: selectedPlaybook?.id ?? null,
           targetIndustries: icpForm.targetIndustries.split('\n').map(s => s.trim()).filter(Boolean),
           targetGeos: icpForm.targetGeos.split('\n').map(s => s.trim()).filter(Boolean),
           minEmployees: null,

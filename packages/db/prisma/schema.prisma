@@ -48,6 +48,7 @@ model Workspace {
   emailConfig          WorkspaceEmailConfig?
   invites              WorkspaceInvite[]
   suppressions         Suppression[]
+  processedEmails      ProcessedEmail[]
 }
 
 model Membership {
@@ -217,13 +218,20 @@ model UsageRecord {
   @@index([workspaceId])
 }
 
-// Deduplicate IMAP messages processed during mailbox sync
+// Deduplicate IMAP messages processed during mailbox sync.
+// UIDs are only unique within a single mailbox, so they must be scoped by workspace.
 model ProcessedEmail {
-  id          String   @id @default(cuid())
-  uid         Int      @unique
-  messageId   String?  @unique
+  id          String    @id @default(cuid())
+  workspaceId String
+  uid         Int
+  messageId   String?
   fromAddress String?
-  processedAt DateTime @default(now())
+  processedAt DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, uid])
+  @@unique([workspaceId, messageId])
+  @@index([workspaceId])
 }
 
 // Idempotency log for Stripe webhook events. Stripe delivers at-least-once and

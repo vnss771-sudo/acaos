@@ -21,8 +21,7 @@ adminRouter.use((req, _res, next) => {
 adminRouter.get(
   '/overview',
   asyncHandler(async (_req, res) => {
-    const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const currentMonth = new Date().toISOString().slice(0, 7) // YYYY-MM
 
     const [workspaces, aiUsage] = await Promise.all([
       prisma.workspace.findMany({
@@ -39,9 +38,9 @@ adminRouter.get(
         },
         orderBy: { createdAt: 'desc' }
       }),
-      prisma.aiUsage.groupBy({
+      prisma.usageRecord.groupBy({
         by: ['workspaceId'],
-        where: { month: { gte: monthStart } },
+        where: { month: currentMonth },
         _sum: { count: true }
       })
     ])

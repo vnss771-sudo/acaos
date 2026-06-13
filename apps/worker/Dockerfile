@@ -1,14 +1,16 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 
-# Copy workspace manifests
+# Worker imports from apps/api/src — both workspaces must be present.
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
+COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
 
-RUN npm ci --ignore-optional
+RUN npm ci
 
 COPY packages/db ./packages/db
+COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 
 RUN npm run prisma:generate
