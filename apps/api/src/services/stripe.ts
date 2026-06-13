@@ -3,7 +3,7 @@ import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
 
 function getStripe() {
-  if (!hasEnv(['STRIPE_SECRET_KEY', 'WEB_URL'])) {
+  if (!hasEnv(['STRIPE_SECRET_KEY'])) {
     throw new ApiError(503, 'Stripe is not configured')
   }
   return new Stripe(process.env.STRIPE_SECRET_KEY as string, {
@@ -23,12 +23,13 @@ export async function createCheckoutSession(
   const selectedPrice = priceId || process.env.STRIPE_PRICE_STARTER
   if (!selectedPrice) throw new ApiError(503, 'No Stripe price configured')
 
+  const webBase = process.env.WEB_URL || process.env.API_URL || 'https://acaos.app'
   const sessionParams: Stripe.Checkout.SessionCreateParams = {
     mode: 'subscription',
     client_reference_id: workspaceId,
     line_items: [{ price: selectedPrice, quantity: 1 }],
-    success_url: `${process.env.WEB_URL}/billing/success?workspaceId=${workspaceId}`,
-    cancel_url: `${process.env.WEB_URL}/billing/cancel?workspaceId=${workspaceId}`,
+    success_url: `${webBase}/billing/success?workspaceId=${workspaceId}`,
+    cancel_url: `${webBase}/billing/cancel?workspaceId=${workspaceId}`,
     metadata: { workspaceId, priceId: selectedPrice },
     allow_promotion_codes: true,
     billing_address_collection: 'auto'
@@ -45,9 +46,10 @@ export async function createCheckoutSession(
 
 export async function createBillingPortalSession(customerId: string) {
   const stripe = getStripe()
+  const webBase = process.env.WEB_URL || process.env.API_URL || 'https://acaos.app'
   return stripe.billingPortal.sessions.create({
     customer: customerId,
-    return_url: `${process.env.WEB_URL}/billing`
+    return_url: `${webBase}/billing`
   })
 }
 
