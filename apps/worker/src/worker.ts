@@ -244,14 +244,35 @@ const replyWorker = new Worker(
 const mailboxWorker = new Worker(
   'sync-mailbox',
   async (job) => {
-    const { workspaceId } = job.data as { workspaceId?: string }
+    const { workspaceId, autoSync } = job.data as { workspaceId?: string; autoSync?: boolean }
+    const { syncMailboxOnce, isMailboxConfigured } = await import('../../api/src/services/mail.js')
+
+    if (autoSync) {
+      log('sync-mailbox', 'Auto-scanning all workspace mailboxes')
+      const configs = await prisma.workspaceEmailConfig.findMany({
+        where: { imapHost: { not: null } }
+      })
+      let synced = 0
+      for (const cfg of configs) {
+        if (!isMailboxConfigured(cfg)) continue
+        try {
+          await syncMailboxOnce(cfg as any, cfg.workspaceId)
+          synced++
+        } catch (err) {
+          log('sync-mailbox', `Auto-sync failed for ${cfg.workspaceId}: ${(err as Error).message}`)
+        }
+      }
+      log('sync-mailbox', `Auto-sync complete: ${synced}/${configs.length} workspaces`)
+      return { autoSync: true, synced, total: configs.length }
+    }
+
     log('sync-mailbox', `Processing workspaceId=${workspaceId}`)
-
     await job.updateProgress(10)
-    const { syncMailboxOnce } = await import('../../api/src/services/mail.js')
-    const result = await syncMailboxOnce()
+    const cfg = workspaceId
+      ? await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+      : null
+    const result = await syncMailboxOnce(cfg as any ?? null, workspaceId)
     await job.updateProgress(100)
-
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
@@ -371,6 +392,20 @@ for (const [name, worker] of [
   })
 }
 
+// ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
+{
+  const syncQueue = new Queue('sync-mailbox', { connection })
+  syncQueue.add(
+    'auto-imap-sync',
+    { autoSync: true },
+    {
+      repeat:   { every: 10 * 60 * 1000 },
+      jobId:    'auto-imap-sync',
+      attempts: 1,
+    }
+  ).catch(err => console.warn('[worker] Failed to schedule IMAP auto-sync:', err.message))
+}
+
 // ── Liveness probe ──────────────────────────────────────────────────────────────
 const healthServer = startHealthServer(Number(process.env.WORKER_HEALTH_PORT || 9090))
 
@@ -395,16 +430,5 @@ async function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
-
-// ── Automatic IMAP sync every 10 min (when configured) ───────────────────────
-if (process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS) {
-  const mailboxQueue = new Queue('sync-mailbox', { connection })
-  mailboxQueue.upsertJobScheduler(
-    'mailbox-auto-sync',
-    { every: 10 * 60 * 1000 },
-    { name: 'auto-sync', data: {}, opts: { removeOnComplete: { count: 5 } } }
-  ).then(() => console.log('[worker] Mailbox auto-sync scheduled (every 10 min)'))
-    .catch((err: Error) => console.error('[worker] Failed to schedule mailbox sync:', err.message))
-}
 
 console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')

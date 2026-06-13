@@ -149,11 +149,78 @@ class HunterSource implements ProspectSourceProvider {
   }
 }
 
+class GooglePlacesSource implements ProspectSourceProvider {
+  readonly name = 'google_places'
+  readonly label = 'Google Places'
+
+  get isConfigured() { return Boolean(process.env.GOOGLE_PLACES_API_KEY) }
+
+  async search(input: ProspectSearchInput): Promise<ProspectCandidate[]> {
+    if (!this.isConfigured) return []
+
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY!
+    const limit  = Math.min(input.limit ?? 20, 20)
+
+    // Build a natural-language query: e.g. "electricians in Sydney Australia"
+    const industry = input.industries?.[0] ?? input.keywords?.[0] ?? ''
+    const location = input.locations?.[0]  ?? ''
+    const textQuery = [industry, location].filter(Boolean).join(' in ')
+    if (!textQuery) return []
+
+    try {
+      const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': [
+            'places.id', 'places.displayName', 'places.formattedAddress',
+            'places.websiteUri', 'places.businessStatus',
+            'places.nationalPhoneNumber', 'places.types',
+          ].join(','),
+        },
+        body: JSON.stringify({ textQuery, pageSize: limit }),
+      })
+
+      if (!res.ok) return []
+
+      const data = await res.json() as {
+        places?: Array<{
+          id?: string
+          displayName?: { text?: string }
+          formattedAddress?: string
+          websiteUri?: string
+          nationalPhoneNumber?: string
+          types?: string[]
+          businessStatus?: string
+        }>
+      }
+
+      return (data.places ?? [])
+        .filter(p => p.businessStatus !== 'CLOSED_PERMANENTLY' && p.displayName?.text)
+        .map(p => {
+          let domain: string | undefined
+          try { domain = new URL(p.websiteUri!).hostname.replace(/^www\./, '') } catch { /* no website */ }
+          return {
+            companyName: p.displayName!.text!,
+            domain,
+            location:    p.formattedAddress ?? undefined,
+            description: p.types?.slice(0, 3).map(t => t.replace(/_/g, ' ')).join(', ') ?? undefined,
+            sourceId:    p.id ?? undefined,
+          }
+        })
+    } catch {
+      return []
+    }
+  }
+}
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 const SOURCES: ProspectSourceProvider[] = [
   new CsvImportSource(),
   new ApolloSource(),
+  new GooglePlacesSource(),
   new HunterSource(),
 ]
 

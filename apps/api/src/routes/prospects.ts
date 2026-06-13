@@ -16,6 +16,7 @@ import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
 import { listSources, getSource } from '../lib/prospectSources.js'
+import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -196,9 +197,15 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const source = getSource('apollo')
-  if (!source || !source.isConfigured) {
-    throw new ApiError(503, 'Apollo discovery is not configured — add APOLLO_API_KEY to your environment')
+  const sourceName = String(req.body.source ?? 'apollo')
+  const source = getSource(sourceName)
+  if (!source) throw new ApiError(400, `Unknown source: ${sourceName}`)
+  if (!source.isConfigured) {
+    const available = listSources().filter(s => s.name !== 'csv' && s.isConfigured).map(s => s.label)
+    const hint = available.length > 0
+      ? `Available: ${available.join(', ')}`
+      : 'No discovery sources configured. Set APOLLO_API_KEY or GOOGLE_PLACES_API_KEY.'
+    throw new ApiError(503, `${source.label} is not configured. ${hint}`)
   }
 
   const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
@@ -266,7 +273,7 @@ prospectsRouter.post('/discover', asyncHandler(async (req, res) => {
         contactName:  meta.contactName,
         contactEmail: meta.contactEmail,
         contactTitle: c.contactTitle  ?? null,
-        sourceTag:    'apollo',
+        sourceTag:    sourceName,
         ...scores,
         buyingStage,
         winProbability,
@@ -639,6 +646,22 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   const latestSignalAt = allSignals.reduce<Date | null>((max, s) => {
     return !max || s.detectedAt > max ? s.detectedAt : max
   }, null)
+
+  // Hunter email finder — if prospect has domain but no contact email, try Hunter
+  if (prospect.domain && !prospect.contactEmail && !result.updates.contactEmail && isHunterConfigured()) {
+    try {
+      const contact = await findContactEmail(prospect.domain)
+      if (contact) {
+        result.updates.contactEmail = contact.email
+        if (contact.firstName && !prospect.contactName) {
+          result.updates.contactName = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+        }
+        if (contact.position && !prospect.contactTitle) {
+          result.updates.contactTitle = contact.position
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
 
   const updated = await prisma.prospect.update({
     where: { id: prospect.id },

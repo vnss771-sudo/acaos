@@ -320,11 +320,13 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [search, setSearch] = useState('')
   const [importing, setImporting] = useState(false)
   const [discovering, setDiscovering] = useState(false)
-  const [apolloReady, setApolloReady] = useState(false)
+  const [discoverSources, setDiscoverSources] = useState<{ name: string; label: string }[]>([])
 
   useEffect(() => {
-    api<{ sources: { name: string; isConfigured: boolean }[] }>('/api/prospects/sources')
-      .then(d => setApolloReady(d.sources.some(s => s.name === 'apollo' && s.isConfigured)))
+    api<{ sources: { name: string; label: string; isConfigured: boolean }[] }>('/api/prospects/sources')
+      .then(d => setDiscoverSources(
+        d.sources.filter(s => s.name !== 'csv' && s.isConfigured)
+      ))
       .catch(() => {})
   }, [])
 
@@ -357,13 +359,13 @@ export function ProspectsView({ api, workspace, toast }: Props) {
     finally { setSaving(false) }
   }
 
-  const handleDiscover = async () => {
+  const handleDiscover = async (sourceName = 'apollo') => {
     if (!workspace || discovering) return
     setDiscovering(true)
     try {
       const res = await api<{ discovered: number; skipped: number; total: number }>(
         '/api/prospects/discover',
-        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id }) }
+        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, source: sourceName }) }
       )
       if (res.discovered === 0 && res.total === 0) {
         toast.error('No results — try broadening your ICP settings')
@@ -438,20 +440,21 @@ export function ProspectsView({ api, workspace, toast }: Props) {
               onChange={handleImportCsv} disabled={importing}
             />
           </label>
-          {apolloReady && (
+          {discoverSources.map(src => (
             <button
+              key={src.name}
               style={{
                 ...s.btn,
                 background: discovering ? '#1e3a5f' : '#1d4ed8',
                 opacity: discovering ? 0.8 : 1,
               }}
-              onClick={handleDiscover}
+              onClick={() => handleDiscover(src.name)}
               disabled={discovering}
-              title="Search Apollo.io for companies matching your ICP"
+              title={`Search ${src.label} for companies matching your ICP`}
             >
-              {discovering ? '⟳ Searching Apollo…' : '⚡ Discover with Apollo'}
+              {discovering ? `⟳ Searching…` : `⚡ ${src.label}`}
             </button>
-          )}
+          ))}
           <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
         </div>
       </div>
