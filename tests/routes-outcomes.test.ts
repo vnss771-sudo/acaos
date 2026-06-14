@@ -83,6 +83,10 @@ let prisma: FakePrisma
 let server: TestServer
 
 async function boot(spec = baseSpec()) {
+  // Close any server from a prior boot() (some tests re-boot with a custom spec)
+  // so we never leak an open listener — a leaked TCPServerWrap keeps the event
+  // loop alive and forces the runner to rely on --test-force-exit.
+  if (server) await server.close()
   prisma = createFakePrisma(spec)
   installPrisma(prisma)
   server = await startTestServer('/api/outcomes', outcomesRouter)
