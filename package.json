@@ -11,13 +11,14 @@
     "dev:worker": "npm --workspace @acaos/worker run dev",
     "dev": "echo Run dev:web, dev:api and dev:worker in separate terminals",
     "prisma:generate": "npm --workspace @acaos/db run prisma:generate",
+    "prisma:push": "npm --workspace @acaos/db run prisma:push",
     "prisma:migrate": "npm --workspace @acaos/db run prisma:migrate",
     "build": "npm --workspace @acaos/web run build",
     "typecheck:api": "tsc --noEmit -p apps/api/tsconfig.json",
     "typecheck:web": "tsc --noEmit -p apps/web/tsconfig.json",
     "typecheck:worker": "tsc --noEmit -p apps/worker/tsconfig.json",
     "typecheck": "npm run typecheck:api && npm run typecheck:web && npm run typecheck:worker",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "npx tsx --test tests/**/*.test.ts",
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {
@@ -25,6 +26,7 @@
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.10.5",
+    "@types/nodemailer": "^8.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "tsx": "^4.20.6"

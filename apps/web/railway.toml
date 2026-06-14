@@ -2,6 +2,13 @@
 builder = "dockerfile"
 dockerfilePath = "Dockerfile.web"
 
+# Vite vars must reach the build stage. Set each as a Railway service
+# variable, then reference it here so Railway forwards it as a build arg.
+[build.args]
+VITE_API_BASE_URL = "${{VITE_API_BASE_URL}}"
+VITE_STRIPE_PRICE_STARTER = "${{VITE_STRIPE_PRICE_STARTER}}"
+VITE_STRIPE_PRICE_GROWTH = "${{VITE_STRIPE_PRICE_GROWTH}}"
+
 [deploy]
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

@@ -5,7 +5,7 @@ COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
 COPY apps/api/package.json ./apps/api/
 
-RUN npm ci --ignore-optional
+RUN npm ci
 
 COPY packages/db ./packages/db
 COPY apps/api ./apps/api
@@ -15,4 +15,7 @@ RUN npm run prisma:generate
 EXPOSE 4000
 ENV NODE_ENV=production
 
-CMD ["npm", "--workspace", "@acaos/api", "run", "start"]
+# Sync schema to Postgres, then start the API.
+# Uses db push (no migration history) — switch to "prisma:migrate" once you
+# have production data worth protecting and a committed migrations/ folder.
+CMD ["sh", "-c", "npm run prisma:push && npm --workspace @acaos/api run start"]

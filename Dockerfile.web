@@ -4,12 +4,26 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json ./apps/web/
 
-RUN npm ci --ignore-optional
+RUN npm ci
 
 COPY apps/web ./apps/web
 
+# Vite inlines these at build time, so they MUST be passed as build args.
+# In Railway, set them as service variables AND reference them under
+# [build.args] (see railway.toml) so they reach this stage.
 ARG VITE_API_BASE_URL
+ARG VITE_STRIPE_PRICE_STARTER
+ARG VITE_STRIPE_PRICE_GROWTH
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_STRIPE_PRICE_STARTER=$VITE_STRIPE_PRICE_STARTER
+ENV VITE_STRIPE_PRICE_GROWTH=$VITE_STRIPE_PRICE_GROWTH
+
+# Fail loudly at build time rather than shipping a frontend that silently
+# points at an empty API URL.
+RUN if [ -z "$VITE_API_BASE_URL" ]; then \
+      echo "ERROR: VITE_API_BASE_URL build arg is empty. Set it as a Railway service variable and reference it under [build.args] in apps/web/railway.toml." >&2; \
+      exit 1; \
+    fi
 
 RUN npm --workspace @acaos/web run build
 

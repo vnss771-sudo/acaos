@@ -7,9 +7,14 @@
     "start": "tsx src/worker.ts"
   },
   "dependencies": {
+    "@prisma/client": "^5.18.0",
     "bullmq": "^5.12.12",
     "dotenv": "^16.4.5",
+    "imapflow": "^1.0.181",
     "ioredis": "^5.4.1",
+    "nodemailer": "^8.0.5",
+    "openai": "^6.0.0",
+    "prisma": "^5.18.0",
     "tsx": "^4.16.2"
   },
   "devDependencies": {
