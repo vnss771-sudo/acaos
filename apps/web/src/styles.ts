@@ -84,6 +84,17 @@ export const s = {
     fontSize: 13
   } as React.CSSProperties,
 
+  btnSecondary: {
+    padding: '10px 18px',
+    borderRadius: 8,
+    border: `1px solid #334155`,
+    background: 'transparent',
+    color: '#94a3b8',
+    cursor: 'pointer',
+    fontSize: 14,
+    fontWeight: 600,
+  } as React.CSSProperties,
+
   btnDanger: {
     padding: '6px 12px',
     borderRadius: 6,

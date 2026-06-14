@@ -13,6 +13,11 @@ import {
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
+import { generateOutreach } from '../../api/src/services/openai.js'
+import { sendMail, isMailConfigured, type SmtpConfig } from '../../api/src/services/mail.js'
+import { checkAndIncrementAiUsage } from '../../api/src/lib/limits.js'
+import { bulkCheckSuppression } from '../../api/src/lib/suppressions.js'
+import { randomBytes } from 'crypto'
 
 type Progress = (n: number) => unknown
 
@@ -44,8 +49,8 @@ export async function scoreProspects(
       }
     : undefined
 
-  let updated = 0
-  for (const prospect of prospects) {
+  // Compute all score updates in memory first (pure CPU — no DB)
+  const updates = prospects.map(prospect => {
     const rawSignals = prospect.signals.map(toRawSignal)
     const scores = calculateOpportunityScores(rawSignals, {
       industry: prospect.industry,
@@ -57,15 +62,20 @@ export async function scoreProspects(
     }, icpConfig, signalWeights ?? undefined)
     const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
     const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-    await prisma.prospect.update({
+    return prisma.prospect.update({
       where: { id: prospect.id },
       data: { ...scores, buyingStage, winProbability },
     })
-    updated++
+  })
+
+  // Execute in parallel batches of 100 to avoid overwhelming the connection pool
+  const BATCH = 100
+  for (let i = 0; i < updates.length; i += BATCH) {
+    await Promise.all(updates.slice(i, i + BATCH))
   }
 
   await progress?.(100)
-  return { workspaceId, updated }
+  return { workspaceId, updated: prospects.length }
 }
 
 /**
@@ -146,4 +156,200 @@ export async function calibrateScoring(
 
   await progress?.(100)
   return result.stats
+}
+
+type SendCampaignResult = {
+  campaignId: string
+  sent: number
+  skipped: number
+  failed: number
+}
+
+/**
+ * Execute a campaign: generate personalised outreach for each eligible lead
+ * (or reuse an existing draft), send via SMTP, and record in OutreachSent for
+ * closed-loop reply tracking. Processes leads serially to stay within plan limits.
+ */
+export async function sendCampaignBatch(
+  campaignId: string,
+  workspaceId: string,
+  leadIds: string[] | undefined,
+  progress?: Progress
+): Promise<SendCampaignResult> {
+  // Load workspace-specific SMTP config (falls back to env vars in sendMail)
+  // Load workspace config and ICP settings together — both are needed before
+  // querying leads (approvalMode determines which drafts are eligible to send).
+  const [wsCfgRecord, icp, workspace] = await Promise.all([
+    prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId } }),
+    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
+  ])
+  const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
+  if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
+
+  await progress?.(5)
+
+  const where = {
+    campaignId,
+    workspaceId,
+    email: { not: null as null },
+    stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] },
+    ...(leadIds ? { id: { in: leadIds } } : {})
+  }
+
+  const leads = await prisma.lead.findMany({
+    where,
+    include: {
+      // When approvalMode is on, only include APPROVED drafts so leads without
+      // an approved draft are skipped rather than triggering AI generation.
+      outreachDrafts: {
+        where: icp?.approvalMode ? { status: 'APPROVED' } : undefined,
+        orderBy: { createdAt: 'desc' },
+        take: 1
+      }
+    }
+  })
+  let dailyRemaining = Infinity
+  if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const sentToday = await prisma.outreachSent.count({
+      where: { workspaceId, sentAt: { gte: startOfToday } }
+    })
+    dailyRemaining = Math.max(0, icp.dailySendLimit - sentToday)
+    if (dailyRemaining === 0) {
+      console.log(`[send-campaign] Daily limit of ${icp.dailySendLimit} reached for workspace ${workspaceId}`)
+      return { campaignId, sent: 0, skipped: leads.length, failed: 0 }
+    }
+  }
+
+  // Filter suppressed addresses before doing any AI work
+  const emailList = leads.map(l => l.email!).filter(Boolean)
+  const suppressedSet = emailList.length > 0
+    ? await bulkCheckSuppression(workspaceId, emailList)
+    : new Set<string>()
+
+  const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
+
+  await progress?.(10)
+
+  let sent = 0
+  let skipped = 0
+  let failed = 0
+  const total = leads.length
+
+  for (let i = 0; i < leads.length; i++) {
+    const lead = leads[i]
+
+    // Progress: 10% → 90% across the lead batch
+    await progress?.(10 + Math.floor((i / total) * 80))
+
+    // Idempotency guard: skip if this lead was already sent to for this campaign.
+    // Protects against duplicate sends when the worker crashes between SMTP send
+    // and the DB write (outbox pattern — treat an existing OutreachSent row as
+    // proof that the email was delivered and recorded).
+    const alreadySent = await prisma.outreachSent.findFirst({
+      where: { campaignId, leadId: lead.id },
+      select: { id: true },
+    })
+    if (alreadySent) { skipped++; continue }
+
+    // Skip suppressed addresses (unsubscribed or bounced)
+    if (suppressedSet.has(lead.email!.toLowerCase().trim())) { skipped++; continue }
+
+    // Stop once daily cap is reached
+    if (sent >= dailyRemaining) { skipped++; continue }
+
+    // Get or generate outreach copy
+    let subject: string
+    let body: string
+
+    if (lead.outreachDrafts[0]) {
+      subject = lead.outreachDrafts[0].subject
+      body = lead.outreachDrafts[0].emailBody
+    } else {
+      // Check AI limit before generating
+      try {
+        await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
+      } catch {
+        skipped++
+        continue  // AI limit reached — skip this lead
+      }
+
+      try {
+        const raw = await generateOutreach({
+          businessName: lead.businessName,
+          category:      lead.category   ?? undefined,
+          city:          lead.city        ?? undefined,
+          contactName:   lead.contactName ?? undefined,
+          aiSummary:     lead.aiSummary   ?? undefined,
+          outreachAngle: lead.outreachAngle ?? undefined,
+        })
+        const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }
+        if (!parsed.subject || !parsed.email) { skipped++; continue }
+        subject = parsed.subject
+        body    = parsed.email
+
+        // Persist the draft so future sends reuse it
+        await prisma.outreachDraft.create({
+          data: {
+            leadId:      lead.id,
+            workspaceId,
+            subject,
+            emailBody: body,
+            followup: parsed.followup ?? null,
+          }
+        })
+      } catch (err) {
+        console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
+        failed++
+        continue
+      }
+    }
+
+    const escHtml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    try {
+      const unsubscribeToken = randomBytes(24).toString('hex')
+      const safeAppUrl = escHtml(appUrl)
+      const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
+      // CAN-SPAM / GDPR: include sender identity and physical address when configured
+      const senderLine = workspace?.senderBusinessName
+        ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
+        : ''
+      const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
+      const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
+
+      const info = await sendMail(lead.email!, subject, htmlBody, smtpCfg)
+      const msgId = (info as any).messageId ?? null
+
+      await prisma.$transaction([
+        prisma.outreachSent.create({
+          data: {
+            workspaceId,
+            campaignId,
+            leadId: lead.id,
+            toEmail: lead.email!,
+            subject,
+            body,
+            messageId: msgId,
+            unsubscribeToken,
+            status: 'SENT',
+          }
+        }),
+        prisma.lead.update({
+          where: { id: lead.id },
+          data: { stage: 'OUTREACH_SENT', lastContactedAt: new Date() }
+        })
+      ])
+
+      sent++
+    } catch (err) {
+      console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${(err as Error).message}`)
+      failed++
+    }
+  }
+
+  await progress?.(100)
+  return { campaignId, sent, skipped, failed }
 }

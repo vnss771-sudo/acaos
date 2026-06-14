@@ -16,18 +16,22 @@ export async function resolveUniqueWorkspaceSlug(name: string | undefined, email
   return appendSlugSuffix(base, Date.now())
 }
 
-export async function ensureWorkspaceSlug(input: string) {
+export async function ensureWorkspaceSlug(input: string, excludeId?: string) {
   const base = sanitizeWorkspaceSlug(input)
   if (!base) {
     throw new Error('Workspace slug must contain letters or numbers')
   }
 
-  const existingBase = await prisma.workspace.findUnique({ where: { slug: base } })
+  const existingBase = await prisma.workspace.findFirst({
+    where: { slug: base, ...(excludeId ? { id: { not: excludeId } } : {}) }
+  })
   if (!existingBase) return base
 
   for (let attempt = 1; attempt <= 20; attempt += 1) {
     const candidate = appendSlugSuffix(base, attempt)
-    const existing = await prisma.workspace.findUnique({ where: { slug: candidate } })
+    const existing = await prisma.workspace.findFirst({
+      where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }
+    })
     if (!existing) return candidate
   }
 

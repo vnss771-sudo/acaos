@@ -59,6 +59,7 @@ function baseSpec() {
         return null
       },
       create: async (args: any) => ({ id: 'sig-new', ...args.data }),
+      upsert: async (args: any) => ({ id: 'sig-new', ...args.create }),
       delete: async (args: any) => ({ id: args?.where?.id }),
     },
     prospect: {
@@ -167,7 +168,7 @@ test('POST creates a signal and rescores the prospect in the owned workspace', a
     }),
   })
   assert.equal(res.status, 201)
-  assert.equal(prisma.callsTo('signal', 'create').length, 1)
+  assert.equal(prisma.callsTo('signal', 'upsert').length, 1)
   // Prospect rescore side effect ran.
   assert.equal(prisma.callsTo('prospect', 'update').length, 1)
 })
@@ -184,7 +185,7 @@ test('POST denies creating a signal in a workspace the user does NOT belong to',
     }),
   })
   assert.equal(res.status, 403)
-  assert.equal(prisma.callsTo('signal', 'create').length, 0)
+  assert.equal(prisma.callsTo('signal', 'upsert').length, 0)
 })
 
 // --- DELETE /api/signals/:id ---

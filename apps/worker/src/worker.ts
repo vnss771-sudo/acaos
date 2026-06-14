@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { Worker } from 'bullmq'
+import { Worker, Queue } from 'bullmq'
 import { connection } from './lib/queue.js'
 import { startHealthServer } from './health.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
@@ -14,7 +14,7 @@ import {
   toRawSignal,
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -244,14 +244,40 @@ const replyWorker = new Worker(
 const mailboxWorker = new Worker(
   'sync-mailbox',
   async (job) => {
-    const { workspaceId } = job.data as { workspaceId?: string }
+    const { workspaceId, autoSync } = job.data as { workspaceId?: string; autoSync?: boolean }
+    const { syncMailboxOnce, isMailboxConfigured } = await import('../../api/src/services/mail.js')
+
+    if (autoSync) {
+      log('sync-mailbox', 'Auto-scanning all workspace mailboxes')
+      const configs = await prisma.workspaceEmailConfig.findMany({
+        where: { imapHost: { not: null } }
+      })
+      let synced = 0
+      for (const cfg of configs) {
+        if (!isMailboxConfigured(cfg)) continue
+        try {
+          await syncMailboxOnce(cfg as any, cfg.workspaceId)
+          synced++
+        } catch (err) {
+          log('sync-mailbox', `Auto-sync failed for ${cfg.workspaceId}: ${(err as Error).message}`)
+        }
+      }
+      log('sync-mailbox', `Auto-sync complete: ${synced}/${configs.length} workspaces`)
+      return { autoSync: true, synced, total: configs.length }
+    }
+
     log('sync-mailbox', `Processing workspaceId=${workspaceId}`)
-
     await job.updateProgress(10)
-    const { syncMailboxOnce } = await import('../../api/src/services/mail.js')
-    const result = await syncMailboxOnce()
+    const cfg = workspaceId
+      ? await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+      : null
+    if (!isMailboxConfigured(cfg ?? undefined)) {
+      log('sync-mailbox', `No IMAP config for workspaceId=${workspaceId}, skipping`)
+      await job.updateProgress(100)
+      return { inspected: 0, matched: 0, queued: 0 }
+    }
+    const result = await syncMailboxOnce(cfg as any, workspaceId)
     await job.updateProgress(100)
-
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
     return result
   },
@@ -318,6 +344,23 @@ const recommendWorker = new Worker(
   { connection, concurrency: 3 }
 )
 
+// ── send-campaign ─────────────────────────────────────────────────────────────
+const sendCampaignWorker = new Worker(
+  'send-campaign',
+  async (job) => {
+    const { campaignId, workspaceId, leadIds } = job.data as {
+      campaignId: string
+      workspaceId: string
+      leadIds?: string[]
+    }
+    log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
+    const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
+    log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`)
+    return result
+  },
+  { connection, concurrency: 2 }
+)
+
 // ── calibrate-scoring ─────────────────────────────────────────────────────────
 const calibrateWorker = new Worker(
   'calibrate-scoring',
@@ -344,6 +387,7 @@ for (const [name, worker] of [
   ['score-prospects',         scoreProspectsWorker],
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
+  ['send-campaign',           sendCampaignWorker],
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
@@ -351,6 +395,17 @@ for (const [name, worker] of [
   worker.on('error', (err) => {
     log(name, `Worker error: ${err.message}`)
   })
+}
+
+// ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
+// upsertJobScheduler is idempotent — safe to call on every worker restart.
+{
+  const syncQueue = new Queue('sync-mailbox', { connection })
+  syncQueue.upsertJobScheduler(
+    'auto-imap-sync',
+    { every: 10 * 60 * 1000 },
+    { name: 'auto-imap-sync', data: { autoSync: true }, opts: { attempts: 1, removeOnComplete: { count: 5 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule IMAP auto-sync:', err.message))
 }
 
 // ── Liveness probe ──────────────────────────────────────────────────────────────
@@ -368,6 +423,7 @@ async function shutdown(signal: string) {
     scoreProspectsWorker.close(),
     recommendWorker.close(),
     calibrateWorker.close(),
+    sendCampaignWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -377,4 +433,4 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
 
-console.log('[worker] Started — listening on 7 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring)')
+console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')

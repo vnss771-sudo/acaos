@@ -13,7 +13,11 @@ let server: TestServer
 beforeEach(async () => {
   // Ensure mail/mailbox are not configured.
   for (const k of ['SMTP_HOST', 'SMTP_FROM', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASS']) delete process.env[k]
-  installPrisma(createFakePrisma({ user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null }) } }))
+  installPrisma(createFakePrisma({
+    user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null, emailVerified: true }) },
+    membership: { findFirst: async (a: any) => (a?.where?.userId === 'u1' && a?.where?.workspaceId === 'ws1' ? { id: 'm1' } : null) },
+    workspaceEmailConfig: { findUnique: async () => null },
+  }))
   server = await startTestServer('/api/mailbox', mailboxRouter)
 })
 afterEach(async () => { await server.close(); resetPrisma() })
@@ -31,7 +35,7 @@ test('send-test requires authentication', async () => {
 test('send-test returns 503 when SMTP is not configured', async () => {
   const res = await server.request('/api/mailbox/send-test', {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.2' },
-    body: JSON.stringify({ to: 'a@b.test' }),
+    body: JSON.stringify({ to: 'a@b.test', workspaceId: 'ws1' }),
   })
   assert.equal(res.status, 503)
 })
@@ -41,14 +45,31 @@ test('send-test validates the recipient when SMTP IS configured', async () => {
   process.env.SMTP_FROM = 'noreply@test'
   const res = await server.request('/api/mailbox/send-test', {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.3' },
-    body: JSON.stringify({ to: 'not-an-email' }),
+    body: JSON.stringify({ to: 'not-an-email', workspaceId: 'ws1' }),
   })
   assert.equal(res.status, 400)
 })
 
-test('sync returns 503 when IMAP is not configured', async () => {
+test('sync requires workspaceId', async () => {
   const res = await server.request('/api/mailbox/sync', {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.4' },
+    body: JSON.stringify({}),
+  })
+  assert.equal(res.status, 400)
+})
+
+test('sync returns 503 when IMAP is not configured for the workspace', async () => {
+  const res = await server.request('/api/mailbox/sync', {
+    method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.5' },
+    body: JSON.stringify({ workspaceId: 'ws1' }),
   })
   assert.equal(res.status, 503)
+})
+
+test('sync denies non-member workspace', async () => {
+  const res = await server.request('/api/mailbox/sync', {
+    method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.6' },
+    body: JSON.stringify({ workspaceId: 'ws-other' }),
+  })
+  assert.equal(res.status, 403)
 })

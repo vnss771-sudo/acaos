@@ -23,7 +23,7 @@ async function tryRefresh(): Promise<string | null> {
   }
 }
 
-export function useApi(token: string | null, onUnauth: () => void) {
+export function useApi(token: string | null, onUnauth: () => void, onTokenRefresh?: (t: string) => void) {
   return useCallback(
     async <T = unknown>(path: string, init: ApiOptions = {}): Promise<T> => {
       const { skipContentType, ...fetchInit } = init
@@ -39,6 +39,10 @@ export function useApi(token: string | null, onUnauth: () => void) {
       if (res.status === 401) {
         const newToken = await tryRefresh()
         if (newToken) {
+          // Notify the auth layer so React state stays in sync with localStorage.
+          // Without this, the stale token prop would be used for all subsequent
+          // requests until the next full component mount.
+          onTokenRefresh?.(newToken)
           const retryHeaders = new Headers(fetchInit.headers || {})
           if (!skipContentType && !retryHeaders.has('Content-Type') && fetchInit.body) {
             retryHeaders.set('Content-Type', 'application/json')
@@ -61,7 +65,7 @@ export function useApi(token: string | null, onUnauth: () => void) {
       }
       return data as T
     },
-    [token, onUnauth]
+    [token, onUnauth, onTokenRefresh]
   )
 }
 

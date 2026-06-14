@@ -32,6 +32,9 @@ function spec(extra: Record<string, any> = {}) {
       findUnique: async (a: any) => a?.where?.id === WS
         ? { id: WS, name: 'Acme', slug: 'acme', plan: 'free', stripeCustomerId: null, _count: { leads: 2, campaigns: 1 } }
         : null,
+      // ensureWorkspaceSlug (used by POST / and PATCH /:id) calls findFirst to
+      // check slug uniqueness — return null so the slug is always available.
+      findFirst: async () => null,
       update: async (a: any) => ({ id: WS, ...a.data }),
     },
     ...extra,

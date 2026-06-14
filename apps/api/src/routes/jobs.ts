@@ -13,10 +13,25 @@ import {
 } from '../lib/queues.js'
 import { issueSseTicket, consumeSseTicket } from '../lib/sseTickets.js'
 import type { AuthedRequest } from '../types/auth.js'
+import type { Job } from 'bullmq'
+
+async function assertCanReadJob(userId: string, job: Job): Promise<void> {
+  const data = job.data as Record<string, unknown>
+  if (typeof data.userId === 'string') {
+    if (data.userId !== userId) throw new ApiError(403, 'Access denied')
+    return
+  }
+  if (typeof data.workspaceId === 'string') {
+    const member = await userBelongsToWorkspace(userId, data.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    return
+  }
+  throw new ApiError(403, 'Job is not scoped to a user or workspace')
+}
 
 export const jobsRouter = Router()
 
-const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox']
+const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox', 'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations']
 const MAX_REPLY_BODY = 10_000
 
 // Server-Sent Events stream for real-time job progress. Registered BEFORE
@@ -34,8 +49,7 @@ jobsRouter.get('/events/:queue/:jobId', asyncHandler(async (req, res) => {
   const job = await getJobById(queue, jobId)
   if (!job) throw new ApiError(404, 'Job not found')
 
-  const jobUserId = (job.data as Record<string, unknown>).userId
-  if (jobUserId && jobUserId !== userId) throw new ApiError(403, 'Access denied')
+  await assertCanReadJob(userId, job)
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -208,8 +222,7 @@ jobsRouter.get(
     const job = await getJobById(queue, jobId)
     if (!job) throw new ApiError(404, 'Job not found')
 
-    const jobUserId = (job.data as Record<string, unknown>).userId
-    if (jobUserId && jobUserId !== user.id) throw new ApiError(403, 'Access denied')
+    await assertCanReadJob(user.id, job)
 
     const state = await job.getState()
     const result = state === 'completed' ? job.returnvalue : undefined

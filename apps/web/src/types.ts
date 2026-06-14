@@ -2,6 +2,7 @@ export type User = {
   id: string
   email: string
   name?: string | null
+  emailVerified?: boolean
 }
 
 export type Workspace = {
@@ -12,6 +13,9 @@ export type Workspace = {
   subscriptionStatus?: string | null
   createdAt?: string
   ingestApiKey?: string | null
+  onboardingCompleted?: boolean
+  senderBusinessName?: string | null
+  senderPostalAddress?: string | null
   _count?: { leads: number; campaigns: number }
 }
 
@@ -54,6 +58,8 @@ export type OutreachDraft = {
   subject: string
   emailBody: string
   followup?: string | null
+  status: string  // DRAFTED | APPROVED | REJECTED | SENT | SKIPPED
+  reviewedAt?: string | null
   createdAt: string
 }
 
@@ -100,7 +106,7 @@ export type StatsData = {
   usage: UsageData
 }
 
-export type View = 'dashboard' | 'intelligence' | 'prospects' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings'
+export type View = 'dashboard' | 'intelligence' | 'prospects' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
 
 export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
 export type Stage = typeof STAGES[number]
@@ -200,6 +206,7 @@ export type Prospect = {
   lastContactedAt?: string | null
   aiSummary?: string | null
   signalCount?: number
+  isExample?: boolean
   latestSignal?: Signal | null
   topRecommendation?: Recommendation | null
   signals?: Signal[]

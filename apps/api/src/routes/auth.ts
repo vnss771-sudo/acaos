@@ -11,8 +11,11 @@ import {
 import { requireAuth } from '../middleware/auth.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { buildWorkspaceName, isValidEmail, normalizeEmail, validatePassword } from '../lib/validation.js'
+import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/validation.js'
 import { resolveUniqueWorkspaceSlug } from '../lib/workspaces.js'
+import { isMailConfigured, sendMail } from '../services/mail.js'
+import { validate, emailField, passwordField } from '../lib/validate.js'
+import { z } from 'zod'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const authRouter = Router()
@@ -33,18 +36,19 @@ async function persistRefreshToken(userId: string, refreshToken: string) {
   })
 }
 
+const signupSchema = z.object({
+  email: emailField,
+  password: passwordField,
+  name: z.string().trim().max(100).optional(),
+})
+
 authRouter.post(
   '/signup',
   authRateLimit,
+  validate(signupSchema),
   asyncHandler(async (req, res) => {
-    const rawEmail = String(req.body?.email || '')
-    const password = String(req.body?.password || '')
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined
-
-    if (!rawEmail || !password) throw new ApiError(400, 'Email and password are required')
-
-    const email = normalizeEmail(rawEmail)
-    if (!isValidEmail(email)) throw new ApiError(400, 'Valid email is required')
+    const { password, name } = req.body as z.infer<typeof signupSchema>
+    const email = normalizeEmail(req.body.email)
 
     const passwordError = validatePassword(password)
     if (passwordError) throw new ApiError(400, passwordError)
@@ -74,18 +78,25 @@ authRouter.post(
     const { token, refreshToken } = issueTokens(result.user.id)
     await persistRefreshToken(result.user.id, refreshToken)
 
+    // Send verification email (non-blocking — don't fail signup if SMTP is down)
+    sendVerificationEmail(result.user.id, result.user.email).catch(() => {})
+
     res.status(201).json({ token, refreshToken, user: result.user, workspace: result.workspace })
   })
 )
 
+const loginSchema = z.object({
+  email: emailField,
+  password: z.string().min(1, 'Password required').max(128),
+})
+
 authRouter.post(
   '/login',
   authRateLimit,
+  validate(loginSchema),
   asyncHandler(async (req, res) => {
-    const email = normalizeEmail(String(req.body?.email || ''))
-    const password = String(req.body?.password || '')
-
-    if (!email || !password) throw new ApiError(400, 'Email and password are required')
+    const email = normalizeEmail(req.body.email)
+    const { password } = req.body as z.infer<typeof loginSchema>
 
     const user = await prisma.user.findUnique({ where: { email } })
     if (!user?.passwordHash) throw new ApiError(401, 'Invalid credentials')
@@ -112,15 +123,21 @@ authRouter.post(
     if (!rawToken) throw new ApiError(400, 'refreshToken required')
 
     const tokenHash = hashRefreshToken(rawToken)
-    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } })
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+    // Atomic conditional update — only one concurrent request can win (count === 1)
+    const now = new Date()
+    const result = await prisma.refreshToken.updateMany({
+      where: { tokenHash, revokedAt: null, expiresAt: { gt: now } },
+      data: { revokedAt: now },
+    })
+    if (result.count === 0) {
       throw new ApiError(401, 'Refresh token invalid or expired')
     }
+    // Fetch token record to obtain userId (already atomically revoked above)
+    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } })
+    if (!stored) throw new ApiError(401, 'Refresh token invalid or expired')
 
-    // Rotate: revoke old, issue new
-    await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } })
-
+    // Rotate: issue new token
     const { token, refreshToken: newRefreshToken } = issueTokens(stored.userId)
     await persistRefreshToken(stored.userId, newRefreshToken)
 
@@ -152,16 +169,103 @@ authRouter.get(
   '/me',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
-    const workspaces = await prisma.workspace.findMany({
-      where: { memberships: { some: { userId: user.id } } },
-      select: {
-        id: true, name: true, slug: true, plan: true,
-        subscriptionStatus: true, createdAt: true
-      },
-      orderBy: { createdAt: 'asc' }
+    const authedUser = (req as AuthedRequest).user
+    const [dbUser, workspaces] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: authedUser.id },
+        select: { id: true, email: true, name: true, emailVerified: true }
+      }),
+      prisma.workspace.findMany({
+        where: { memberships: { some: { userId: authedUser.id } } },
+        select: {
+          id: true, name: true, slug: true, plan: true,
+          subscriptionStatus: true, createdAt: true, onboardingCompleted: true,
+          _count: { select: { leads: true, campaigns: true } }
+        },
+        orderBy: { createdAt: 'asc' }
+      })
+    ])
+    res.json({ user: dbUser ?? authedUser, workspaces })
+  })
+)
+
+const forgotPasswordSchema = z.object({ email: emailField })
+
+authRouter.post(
+  '/forgot-password',
+  authRateLimit,
+  validate(forgotPasswordSchema),
+  asyncHandler(async (req, res) => {
+    const email = normalizeEmail(req.body.email)
+
+    const user = await prisma.user.findUnique({ where: { email } })
+    // Always 200 — prevents email enumeration
+    if (!user?.passwordHash) return res.json({ ok: true })
+
+    const rawToken = generateRefreshToken()
+    const tokenHash = hashRefreshToken(rawToken)
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+
+    await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash, expiresAt } })
+
+    const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+    const resetUrl = `${appUrl}?reset=${rawToken}`
+
+    if (isMailConfigured()) {
+      await sendMail(email, 'Reset your ACAOS password',
+        `<p>Click the link below to reset your password. This link expires in 1 hour.</p>` +
+        `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+        `<p>If you didn't request this, you can safely ignore this email.</p>`
+      )
+    } else {
+      console.log(`[auth] Reset URL (SMTP not configured): ${resetUrl}`)
+    }
+
+    res.json({ ok: true })
+  })
+)
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Token required'),
+  password: passwordField,
+})
+
+authRouter.post(
+  '/reset-password',
+  authRateLimit,
+  validate(resetPasswordSchema),
+  asyncHandler(async (req, res) => {
+    const { token: rawToken, password: newPassword } = req.body as z.infer<typeof resetPasswordSchema>
+
+    const passwordError = validatePassword(newPassword)
+    if (passwordError) throw new ApiError(400, passwordError)
+
+    const tokenHash = hashRefreshToken(rawToken)
+
+    // Atomic conditional update — only one concurrent request can win (count === 1)
+    const now = new Date()
+    const updateResult = await prisma.passwordResetToken.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+      data: { usedAt: now },
     })
-    res.json({ user, workspaces })
+    if (updateResult.count === 0) {
+      throw new ApiError(400, 'Reset link is invalid or has expired')
+    }
+    const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } })
+    if (!record) throw new ApiError(400, 'Reset link is invalid or has expired')
+
+    const passwordHash = await bcrypt.hash(newPassword, 10)
+
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+      // Invalidate all active sessions for security
+      prisma.refreshToken.updateMany({
+        where: { userId: record.userId, revokedAt: null },
+        data: { revokedAt: new Date() }
+      }),
+    ])
+
+    res.json({ ok: true })
   })
 )
 
@@ -195,5 +299,121 @@ authRouter.patch(
     })
 
     res.json({ user: updated })
+  })
+)
+
+// ── Email verification ────────────────────────────────────────────────────────
+
+async function sendVerificationEmail(userId: string, email: string) {
+  const rawToken = generateRefreshToken()
+  const tokenHash = hashRefreshToken(rawToken)
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+
+  await prisma.emailVerificationToken.create({ data: { userId, tokenHash, expiresAt } })
+
+  const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
+  const verifyUrl = `${appUrl}?verify=${rawToken}`
+
+  if (isMailConfigured()) {
+    await sendMail(email, 'Verify your ACAOS email address',
+      `<p>Please verify your email address by clicking the link below. This link expires in 24 hours.</p>` +
+      `<p><a href="${verifyUrl}">Verify email address</a></p>` +
+      `<p>If you didn't sign up for ACAOS, you can ignore this email.</p>`
+    )
+  } else {
+    console.log(`[auth] Verification URL (SMTP not configured): ${verifyUrl}`)
+  }
+}
+
+authRouter.get(
+  '/verify-email/:token',
+  asyncHandler(async (req, res) => {
+    const rawToken = String(req.params.token || '').trim()
+    const tokenHash = hashRefreshToken(rawToken)
+
+    // Atomic conditional update — only one concurrent request can win (count === 1)
+    const now = new Date()
+    const updateResult = await prisma.emailVerificationToken.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+      data: { usedAt: now },
+    })
+    if (updateResult.count === 0) {
+      throw new ApiError(400, 'Verification link is invalid or has expired')
+    }
+    const record = await prisma.emailVerificationToken.findUnique({ where: { tokenHash } })
+    if (!record) throw new ApiError(400, 'Verification link is invalid or has expired')
+
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: record.userId }, data: { emailVerified: true } }),
+    ])
+
+    res.json({ ok: true })
+  })
+)
+
+authRouter.post(
+  '/resend-verification',
+  authRateLimit,
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { emailVerified: true, email: true } })
+    if (dbUser?.emailVerified) return res.json({ ok: true }) // already verified
+
+    await sendVerificationEmail(user.id, user.email)
+    res.json({ ok: true })
+  })
+)
+
+// ── Invite verification (public) ──────────────────────────────────────────────
+
+authRouter.get(
+  '/invite/:token',
+  asyncHandler(async (req, res) => {
+    const rawToken = String(req.params.token || '').trim()
+    const tokenHash = hashRefreshToken(rawToken)
+    const invite = await prisma.workspaceInvite.findUnique({
+      where: { tokenHash },
+      include: { workspace: { select: { id: true, name: true } } }
+    })
+    if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) {
+      throw new ApiError(400, 'Invite link is invalid or has expired')
+    }
+    res.json({ invite: { email: invite.email, role: invite.role, workspaceName: invite.workspace.name, workspaceId: invite.workspaceId } })
+  })
+)
+
+authRouter.post(
+  '/invite/:token/accept',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const authedUser = (req as AuthedRequest).user
+    const rawToken = String(req.params.token || '').trim()
+    const tokenHash = hashRefreshToken(rawToken)
+
+    const invite = await prisma.workspaceInvite.findUnique({ where: { tokenHash } })
+    if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) {
+      throw new ApiError(400, 'Invite link is invalid or has expired')
+    }
+
+    // Email must match the invited address
+    if (normalizeEmail(authedUser.email) !== normalizeEmail(invite.email)) {
+      throw new ApiError(403, `This invite was sent to ${invite.email} — please sign in with that account`)
+    }
+
+    const alreadyMember = await prisma.membership.findFirst({
+      where: { userId: authedUser.id, workspaceId: invite.workspaceId }
+    })
+
+    await prisma.$transaction([
+      ...(alreadyMember ? [] : [
+        prisma.membership.create({
+          data: { userId: authedUser.id, workspaceId: invite.workspaceId, role: invite.role }
+        })
+      ]),
+      prisma.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } }),
+    ])
+
+    res.json({ workspaceId: invite.workspaceId, role: invite.role })
   })
 )

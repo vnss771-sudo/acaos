@@ -38,7 +38,7 @@ describe('Campaigns', () => {
     })
     render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
 
-    await userEvent.click(screen.getByRole('button', { name: /New Campaign/i }))
+    await userEvent.click(screen.getByRole('button', { name: /Advanced/i }))
     await userEvent.type(screen.getByPlaceholderText('Q3 Brisbane Outreach'), 'New Pilot')
     await userEvent.click(screen.getByRole('button', { name: 'Create Campaign' }))
 

@@ -5,6 +5,7 @@ import { createCheckoutSession, constructWebhookEvent, createBillingPortalSessio
 import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
+import { isMailConfigured, sendMail } from '../services/mail.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const billingRouter = Router()
@@ -211,6 +212,28 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
               data: { subscriptionStatus: 'past_due' }
             })
             console.log(`[billing] invoice.payment_failed ws=${ws.id}`)
+            // Send dunning email to the workspace owner
+            if (isMailConfigured()) {
+              const ownerMembership = await prisma.membership.findFirst({
+                where: { workspaceId: ws.id, role: 'owner' },
+                select: { user: { select: { email: true } } }
+              })
+              const ownerEmail = ownerMembership?.user?.email
+              if (ownerEmail) {
+                const appUrl = process.env.APP_URL || 'http://localhost:5173'
+                const billingUrl = `${appUrl}/settings/billing`
+                await sendMail(
+                  ownerEmail,
+                  'Action required: payment failed for your ACAOS subscription',
+                  `<p>Hi,</p>
+<p>We were unable to process the payment for your ACAOS subscription. Your workspace has been marked as <strong>past due</strong>.</p>
+<p>Please update your billing information to avoid any interruption to your service:</p>
+<p><a href="${billingUrl}">${billingUrl}</a></p>
+<p>If you have any questions, please reply to this email.</p>
+<p>Thanks,<br>The ACAOS Team</p>`
+                ).catch(() => {})
+              }
+            }
           }
         }
         break

@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer'
 import { ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
+import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
 
 function getRequiredEnv(key: string) {
   const value = process.env[key]?.trim()
@@ -9,31 +10,59 @@ function getRequiredEnv(key: string) {
   return value
 }
 
-export function isMailConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM)
+export type SmtpConfig = {
+  smtpHost?: string | null
+  smtpPort?: number | null
+  smtpSecure?: boolean | null
+  smtpUser?: string | null
+  smtpPass?: string | null
+  smtpFrom?: string | null
 }
 
-export function isMailboxConfigured() {
-  return Boolean(process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS)
+export type ImapConfig = {
+  imapHost?: string | null
+  imapPort?: number | null
+  imapSecure?: boolean | null
+  imapUser?: string | null
+  imapPass?: string | null
 }
 
-export function buildTransport() {
+export function isMailConfigured(cfg?: SmtpConfig | null) {
+  return Boolean((cfg?.smtpHost || process.env.SMTP_HOST) && (cfg?.smtpFrom || process.env.SMTP_FROM))
+}
+
+export function isMailboxConfigured(cfg?: ImapConfig | null) {
+  return Boolean(
+    (cfg?.imapHost || process.env.IMAP_HOST) &&
+    (cfg?.imapUser || process.env.IMAP_USER) &&
+    (cfg?.imapPass || process.env.IMAP_PASS)
+  )
+}
+
+function maybeDecrypt(s: string | null | undefined): string | undefined {
+  if (!s) return undefined
+  return isEncrypted(s) ? decryptSecret(s) : s
+}
+
+export function buildTransport(cfg?: SmtpConfig | null) {
+  const host = cfg?.smtpHost || getRequiredEnv('SMTP_HOST')
+  const port = cfg?.smtpPort ?? Number(process.env.SMTP_PORT || 587)
+  const secure = cfg?.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465)
+  const user = cfg?.smtpUser || process.env.SMTP_USER
+  const pass = maybeDecrypt(cfg?.smtpPass) || process.env.SMTP_PASS
   return nodemailer.createTransport({
-    host: getRequiredEnv('SMTP_HOST'),
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT || 587) === 465,
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
-    // Bound every phase of the SMTP handshake so a stalled server can't hang the
-    // caller (or a worker slot) indefinitely.
+    host, port, secure,
+    auth: user ? { user, pass } : undefined,
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
   })
 }
 
-export async function sendMail(to: string, subject: string, html: string) {
-  const transporter = buildTransport()
-  return transporter.sendMail({ from: getRequiredEnv('SMTP_FROM'), to, subject, html })
+export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null) {
+  const transporter = buildTransport(cfg)
+  const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
+  return transporter.sendMail({ from, to, subject, html })
 }
 
 // Strips quoted text and signatures to get the fresh reply content
@@ -76,15 +105,16 @@ export async function recordProcessedReply(params: {
   uid: number
   messageId: string | null
   fromAddress: string
+  workspaceId: string
   lead: { id: string; stage: string } | null
 }): Promise<{ advanced: boolean }> {
-  const { uid, messageId, fromAddress, lead } = params
+  const { uid, messageId, fromAddress, workspaceId, lead } = params
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
   await prisma.$transaction(async (tx) => {
     await tx.processedEmail.upsert({
-      where: { uid },
-      create: { uid, messageId: messageId ?? undefined, fromAddress },
+      where: { workspaceId_uid: { workspaceId, uid } },
+      create: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
       update: {},
     })
     if (advance) {
@@ -93,12 +123,20 @@ export async function recordProcessedReply(params: {
         data: { stage: 'REPLIED', lastContactedAt: new Date() },
       })
     }
+    // Always close the outreach loop regardless of lead stage — a BOOKED or
+    // CLOSED lead that replies still deserves an accurate outreach record.
+    if (lead) {
+      await tx.outreachSent.updateMany({
+        where: { leadId: lead.id, status: 'SENT' },
+        data: { status: 'REPLIED', repliedAt: new Date() },
+      })
+    }
   })
 
   return { advanced: advance }
 }
 
-export async function syncMailboxOnce(): Promise<{
+export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: string): Promise<{
   inspected: number
   matched: number
   queued: number
@@ -112,13 +150,16 @@ export async function syncMailboxOnce(): Promise<{
     throw new ApiError(503, 'IMAP support is not installed in this environment')
   }
 
+  const host = cfg?.imapHost || getRequiredEnv('IMAP_HOST')
+  const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
+  const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
+  const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')
+  const pass = maybeDecrypt(cfg?.imapPass) || getRequiredEnv('IMAP_PASS')
+
   const client = new ImapFlow({
-    host: getRequiredEnv('IMAP_HOST'),
-    port: Number(process.env.IMAP_PORT || 993),
-    secure: String(process.env.IMAP_SECURE || 'true') === 'true',
-    auth: { user: getRequiredEnv('IMAP_USER'), pass: getRequiredEnv('IMAP_PASS') },
+    host, port, secure,
+    auth: { user, pass },
     logger: false,
-    // Don't let a stalled IMAP socket pin a worker slot forever.
     socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 30_000),
     greetingTimeout: 10_000,
   })
@@ -127,11 +168,12 @@ export async function syncMailboxOnce(): Promise<{
     await client.connect()
     await client.mailboxOpen('INBOX')
 
-    // Load already-processed records within the fetch window only — not the
-    // whole (unbounded, ever-growing) table.
+    // Load already-processed records within the fetch window, scoped to this
+    // workspace — IMAP UIDs are only unique per-mailbox, not globally.
     const windowStart = Math.max(1, (client.mailbox?.exists ?? 200) - 199)
+    if (!workspaceId) throw new Error('workspaceId required for mailbox sync')
     const existing = await prisma.processedEmail.findMany({
-      where: { uid: { gte: windowStart } },
+      where: { workspaceId, uid: { gte: windowStart } },
       select: { uid: true, messageId: true }
     })
     const seenUids = new Set(existing.map(e => e.uid))
@@ -175,10 +217,11 @@ export async function syncMailboxOnce(): Promise<{
       return { inspected, matched: 0, queued: 0, skipped: 0 }
     }
 
-    // Find leads matching any of the sender addresses
+    // Find leads matching any of the sender addresses, scoped to the workspace
+    // when known so replies can never bleed across tenant boundaries.
     const addresses = [...new Set(toProcess.map(m => m.fromAddress))]
     const matchedLeads = await prisma.lead.findMany({
-      where: { email: { in: addresses } },
+      where: { email: { in: addresses }, ...(workspaceId ? { workspaceId } : {}) },
       select: { id: true, email: true, workspaceId: true, stage: true, score: true }
     })
     const emailToLead = new Map(matchedLeads.map(l => [l.email!.toLowerCase(), l]))
@@ -198,6 +241,7 @@ export async function syncMailboxOnce(): Promise<{
         uid: msg.uid,
         messageId: msg.messageId,
         fromAddress: msg.fromAddress,
+        workspaceId: workspaceId,
         lead,
       })
       processedUids.push(msg.uid)

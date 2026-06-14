@@ -139,6 +139,18 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
+  const handleEnrich = async () => {
+    try {
+      const result = await api<{ signalsCreated: number }>(`/api/prospects/${prospect.id}/enrich`, { method: 'POST' })
+      const updated = await api<Prospect>(`/api/prospects/${prospect.id}`)
+      setDetail(updated)
+      onRefresh()
+      toast.success(result.signalsCreated > 0
+        ? `Apollo enriched — ${result.signalsCreated} new signal${result.signalsCreated !== 1 ? 's' : ''} added`
+        : 'Apollo enriched — no new signals found')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
   const p = detail ?? prospect
   const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
 
@@ -266,7 +278,11 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
+              <button style={{ ...s.btnSm, background: '#1d4ed8', color: '#fff' }} onClick={handleEnrich} title="Pull signals from Apollo.io">
+                ⚡ Enrich with Apollo
+              </button>
               <button style={s.btnGhost} onClick={onClose}>Close</button>
             </div>
           </>
@@ -282,6 +298,37 @@ const BLANK: Partial<Prospect> & { companyName: string } = {
   expectedDealValue: undefined
 }
 
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let cur = '', inQuote = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuote) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++ }
+      else if (ch === '"') inQuote = false
+      else cur += ch
+    } else {
+      if (ch === '"') inQuote = true
+      else if (ch === ',') { fields.push(cur); cur = '' }
+      else cur += ch
+    }
+  }
+  fields.push(cur)
+  return fields
+}
+
+function parseCsv(text: string): Record<string, string>[] {
+  const lines = text.trim().split(/\r?\n/)
+  if (lines.length < 2) return []
+  const headers = parseCsvLine(lines[0]).map(h => h.trim())
+  return lines.slice(1).map(line => {
+    const vals = parseCsvLine(line).map(v => v.trim())
+    const row: Record<string, string> = {}
+    headers.forEach((h, i) => { if (vals[i] !== undefined) row[h] = vals[i] })
+    return row
+  }).filter(row => Object.values(row).some(v => v !== ''))
+}
+
 export function ProspectsView({ api, workspace, toast }: Props) {
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(false)
@@ -290,6 +337,17 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [discovering, setDiscovering] = useState(false)
+  const [discoverSources, setDiscoverSources] = useState<{ name: string; label: string }[]>([])
+
+  useEffect(() => {
+    api<{ sources: { name: string; label: string; isConfigured: boolean }[] }>('/api/prospects/sources')
+      .then(d => setDiscoverSources(
+        d.sources.filter(s => s.name !== 'csv' && s.isConfigured)
+      ))
+      .catch(() => {})
+  }, [])
 
   const load = () => {
     if (!workspace) return
@@ -320,6 +378,50 @@ export function ProspectsView({ api, workspace, toast }: Props) {
     finally { setSaving(false) }
   }
 
+  const handleDiscover = async (sourceName = 'apollo') => {
+    if (!workspace || discovering) return
+    setDiscovering(true)
+    try {
+      const res = await api<{ discovered: number; skipped: number; total: number }>(
+        '/api/prospects/discover',
+        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, source: sourceName }) }
+      )
+      if (res.discovered === 0 && res.total === 0) {
+        toast.error('No results — try broadening your ICP settings')
+      } else {
+        toast.success(
+          `Found ${res.discovered} new prospect${res.discovered !== 1 ? 's' : ''}` +
+          (res.skipped ? ` · ${res.skipped} already tracked` : '')
+        )
+        if (res.discovered > 0) load()
+      }
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setDiscovering(false) }
+  }
+
+  const handleImportCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !workspace) return
+    setImporting(true)
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target?.result as string
+        const rows = parseCsv(text)
+        if (rows.length === 0) { toast.error('No valid rows found in CSV'); return }
+        const res = await api<{ imported: number; skipped: number; failed: number; errors: string[] }>(
+          '/api/prospects/import',
+          { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, rows }) }
+        )
+        toast.success(`Imported ${res.imported} prospect${res.imported !== 1 ? 's' : ''}${res.skipped ? `, ${res.skipped} skipped` : ''}${res.failed ? `, ${res.failed} failed` : ''}`)
+        load()
+      } catch (err: unknown) { toast.error((err as Error).message) }
+      finally { setImporting(false) }
+    }
+    reader.readAsText(file)
+  }
+
   if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="◎" /></div>
 
   return (
@@ -333,7 +435,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
             style={{ ...s.input, width: 240 }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button style={s.btnSm} onClick={() => {
             const url = `${API_BASE}/api/prospects/export?workspaceId=${workspace.id}`
             const link = document.createElement('a')
@@ -345,6 +447,33 @@ export function ProspectsView({ api, workspace, toast }: Props) {
           }}>
             ↓ Export CSV
           </button>
+          <label style={{
+            ...s.btnSm,
+            cursor: importing ? 'wait' : 'pointer',
+            opacity: importing ? 0.6 : 1,
+            display: 'inline-flex', alignItems: 'center'
+          }}>
+            {importing ? 'Importing…' : '↑ Import CSV'}
+            <input
+              type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+              onChange={handleImportCsv} disabled={importing}
+            />
+          </label>
+          {discoverSources.map(src => (
+            <button
+              key={src.name}
+              style={{
+                ...s.btn,
+                background: discovering ? '#1e3a5f' : '#1d4ed8',
+                opacity: discovering ? 0.8 : 1,
+              }}
+              onClick={() => handleDiscover(src.name)}
+              disabled={discovering}
+              title={`Search ${src.label} for companies matching your ICP`}
+            >
+              {discovering ? `⟳ Searching…` : `⚡ ${src.label}`}
+            </button>
+          ))}
           <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
         </div>
       </div>
@@ -424,6 +553,13 @@ export function ProspectsView({ api, workspace, toast }: Props) {
                   >
                     <td style={{ padding: '10px 12px 10px 0', color: colors.text, fontSize: 14, fontWeight: 600 }}>
                       {p.companyName}
+                      {p.isExample && (
+                        <span style={{
+                          marginLeft: 6, background: '#64748b22', color: '#94a3b8',
+                          fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 99, letterSpacing: '0.06em',
+                          verticalAlign: 'middle'
+                        }}>EXAMPLE</span>
+                      )}
                     </td>
                     <td style={{ padding: '10px 12px 10px 0', color: colors.textFaint, fontSize: 13 }}>
                       {p.industry || '–'}

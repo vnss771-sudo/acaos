@@ -5,6 +5,37 @@ import { Spinner } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
+type IcpConfig = {
+  targetIndustries: string[]
+  targetGeos: string[]
+  minEmployees: number | null
+  maxEmployees: number | null
+  mustHaveEmail: boolean
+  approvalMode?: boolean
+  dailySendLimit?: number
+}
+
+type DomainCheckResult = {
+  hasSPF: boolean
+  hasDKIM: boolean
+} | null
+
+type EmailConfigState = {
+  smtpHost: string
+  smtpPort: string
+  smtpSecure: boolean
+  smtpUser: string
+  smtpPass: string
+  smtpFrom: string
+  imapHost: string
+  imapPort: string
+  imapSecure: boolean
+  imapUser: string
+  imapPass: string
+  smtpPassSet: boolean
+  imapPassSet: boolean
+}
+
 type Props = {
   api: ApiHook
   user: User
@@ -17,7 +48,7 @@ type Props = {
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
-  const [wsForm, setWsForm] = useState({ name: workspace?.name ?? '', slug: workspace?.slug ?? '' })
+  const [wsForm, setWsForm] = useState({ name: workspace?.name ?? '', slug: workspace?.slug ?? '', senderBusinessName: workspace?.senderBusinessName ?? '', senderPostalAddress: workspace?.senderPostalAddress ?? '' })
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
   const [savingWs, setSavingWs] = useState(false)
@@ -28,12 +59,30 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [memberForm, setMemberForm] = useState({ email: '', role: 'member' })
   const [addingMember, setAddingMember] = useState(false)
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null)
+  const [pendingInvites, setPendingInvites] = useState<{ id: string; email: string; role: string; expiresAt: string }[]>([])
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'member' })
+
+  // ICP
+  const [icp, setIcp] = useState<IcpConfig | null>(null)
+  const [icpForm, setIcpForm] = useState({ targetIndustries: '', targetGeos: '', minEmployees: '', maxEmployees: '', mustHaveEmail: false })
+  const [savingIcp, setSavingIcp] = useState(false)
+
+  // Email config
+  const emptyEmail: EmailConfigState = { smtpHost: '', smtpPort: '587', smtpSecure: false, smtpUser: '', smtpPass: '', smtpFrom: '', imapHost: '', imapPort: '993', imapSecure: true, imapUser: '', imapPass: '', smtpPassSet: false, imapPassSet: false }
+  const [emailForm, setEmailForm] = useState<EmailConfigState>(emptyEmail)
+  const [savingEmail, setSavingEmail] = useState(false)
 
   // API Keys
   const [keyWorking, setKeyWorking] = useState(false)
   const [newKeyModal, setNewKeyModal] = useState<string | null>(null)
   const [keyCopied, setKeyCopied] = useState(false)
   const [hasKey, setHasKey] = useState(!!workspace?.ingestApiKey)
+
+  // Compliance & Deliverability
+  const [domainCheck, setDomainCheck] = useState<DomainCheckResult>(null)
+  const [domainCheckLoading, setDomainCheckLoading] = useState(false)
+  const [suppressionCount, setSuppressionCount] = useState<number | null>(null)
 
   useEffect(() => {
     setHasKey(!!workspace?.ingestApiKey)
@@ -46,6 +95,74 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .then(d => setMembers(d.members || []))
       .catch(() => {})
       .finally(() => setMembersLoading(false))
+    api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
+      .then(d => setPendingInvites(d.invites || []))
+      .catch(() => {})
+    api<{ icp: IcpConfig | null }>(`/api/workspaces/${workspace.id}/icp`)
+      .then(d => {
+        if (d.icp) {
+          setIcp(d.icp)
+          setIcpForm({
+            targetIndustries: d.icp.targetIndustries.join(', '),
+            targetGeos: d.icp.targetGeos.join(', '),
+            minEmployees: d.icp.minEmployees != null ? String(d.icp.minEmployees) : '',
+            maxEmployees: d.icp.maxEmployees != null ? String(d.icp.maxEmployees) : '',
+            mustHaveEmail: d.icp.mustHaveEmail,
+          })
+        }
+      })
+      .catch(() => {})
+    api<{ config: Record<string, unknown> | null }>(`/api/workspaces/${workspace.id}/email-config`)
+      .then(d => {
+        if (d.config) {
+          setEmailForm({
+            smtpHost: String(d.config.smtpHost ?? ''),
+            smtpPort: String(d.config.smtpPort ?? '587'),
+            smtpSecure: Boolean(d.config.smtpSecure),
+            smtpUser: String(d.config.smtpUser ?? ''),
+            smtpPass: '', // never returned
+            smtpFrom: String(d.config.smtpFrom ?? ''),
+            imapHost: String(d.config.imapHost ?? ''),
+            imapPort: String(d.config.imapPort ?? '993'),
+            imapSecure: Boolean(d.config.imapSecure ?? true),
+            imapUser: String(d.config.imapUser ?? ''),
+            imapPass: '', // never returned
+            smtpPassSet: Boolean(d.config.smtpPassSet),
+            imapPassSet: Boolean(d.config.imapPassSet),
+          })
+        }
+      })
+      .catch(() => {})
+  }, [workspace?.id])
+
+  // Compliance: fetch domain check and suppression count when email config is set
+  useEffect(() => {
+    if (!workspace) return
+    const smtpFrom = emailForm.smtpFrom
+    if (!smtpFrom) {
+      setDomainCheck(null)
+      return
+    }
+    const atIdx = smtpFrom.lastIndexOf('@')
+    const domain = atIdx !== -1 ? smtpFrom.slice(atIdx + 1).replace(/[>\s]+$/, '').trim() : ''
+    if (!domain) {
+      setDomainCheck(null)
+      return
+    }
+    setDomainCheckLoading(true)
+    api<{ hasSPF: boolean; hasDKIM: boolean }>(
+      `/api/mailbox/check-domain?domain=${encodeURIComponent(domain)}&workspaceId=${encodeURIComponent(workspace.id)}`
+    )
+      .then(result => setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM }))
+      .catch(() => setDomainCheck(null))
+      .finally(() => setDomainCheckLoading(false))
+  }, [workspace?.id, emailForm.smtpFrom])
+
+  useEffect(() => {
+    if (!workspace) return
+    api<{ suppressions: { id: string }[] }>(`/api/unsubscribe?workspaceId=${workspace.id}`)
+      .then(d => setSuppressionCount(d.suppressions?.length ?? 0))
+      .catch(() => setSuppressionCount(null))
   }, [workspace?.id])
 
   async function saveProfile() {
@@ -88,7 +205,12 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     try {
       const d = await api<{ workspace: Workspace }>(`/api/workspaces/${workspace.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: wsForm.name.trim(), slug: wsForm.slug.trim() })
+        body: JSON.stringify({
+          name: wsForm.name.trim(),
+          slug: wsForm.slug.trim(),
+          senderBusinessName: wsForm.senderBusinessName.trim() || null,
+          senderPostalAddress: wsForm.senderPostalAddress.trim() || null,
+        })
       })
       onWorkspaceUpdate(d.workspace)
       toast.success('Workspace updated')
@@ -100,11 +222,12 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !memberForm.email.trim()) return
     setAddingMember(true)
     try {
-      const d = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`, {
+      await api(`/api/workspaces/${workspace.id}/members`, {
         method: 'POST',
         body: JSON.stringify({ email: memberForm.email.trim(), role: memberForm.role })
       })
-      setMembers(d.members || [])
+      const refreshed = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
+      setMembers(refreshed.members || [])
       setMemberForm({ email: '', role: 'member' })
       toast.success('Member added')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to add member') }
@@ -115,21 +238,91 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !confirm('Remove this member?')) return
     setRemovingMemberId(userId)
     try {
-      const d = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members/${userId}`, {
-        method: 'DELETE'
-      })
-      setMembers(d.members || [])
+      await api(`/api/workspaces/${workspace.id}/members/${userId}`, { method: 'DELETE' })
+      setMembers(prev => prev.filter(m => m.user.id !== userId))
       toast.success('Member removed')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
     finally { setRemovingMemberId(null) }
+  }
+
+  async function sendInvite() {
+    if (!workspace || !inviteForm.email.trim()) return
+    setSendingInvite(true)
+    try {
+      await api(`/api/workspaces/${workspace.id}/invites`, {
+        method: 'POST',
+        body: JSON.stringify({ email: inviteForm.email.trim(), role: inviteForm.role })
+      })
+      setInviteForm({ email: '', role: 'member' })
+      toast.success('Invite sent')
+      // Refresh pending invites
+      const d = await api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
+      setPendingInvites(d.invites || [])
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to send invite') }
+    finally { setSendingInvite(false) }
+  }
+
+  async function cancelInvite(inviteId: string) {
+    if (!workspace) return
+    try {
+      await api(`/api/workspaces/${workspace.id}/invites/${inviteId}`, { method: 'DELETE' })
+      setPendingInvites(prev => prev.filter(i => i.id !== inviteId))
+      toast.success('Invite cancelled')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
+  }
+
+  async function saveEmailConfig() {
+    if (!workspace) return
+    setSavingEmail(true)
+    try {
+      await api(`/api/workspaces/${workspace.id}/email-config`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          smtpHost: emailForm.smtpHost || null,
+          smtpPort: emailForm.smtpPort ? parseInt(emailForm.smtpPort, 10) : null,
+          smtpSecure: emailForm.smtpSecure,
+          smtpUser: emailForm.smtpUser || null,
+          smtpPass: emailForm.smtpPass || null, // null = keep existing
+          smtpFrom: emailForm.smtpFrom || null,
+          imapHost: emailForm.imapHost || null,
+          imapPort: emailForm.imapPort ? parseInt(emailForm.imapPort, 10) : null,
+          imapSecure: emailForm.imapSecure,
+          imapUser: emailForm.imapUser || null,
+          imapPass: emailForm.imapPass || null, // null = keep existing
+        })
+      })
+      toast.success('Email config saved')
+      setEmailForm(f => ({ ...f, smtpPass: '', imapPass: '', smtpPassSet: !!f.smtpHost, imapPassSet: !!f.imapHost }))
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to save email config') }
+    finally { setSavingEmail(false) }
+  }
+
+  async function saveIcp() {
+    if (!workspace) return
+    setSavingIcp(true)
+    try {
+      const d = await api<{ icp: IcpConfig }>(`/api/workspaces/${workspace.id}/icp`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          targetIndustries: icpForm.targetIndustries.split(',').map(s => s.trim()).filter(Boolean),
+          targetGeos: icpForm.targetGeos.split(',').map(s => s.trim()).filter(Boolean),
+          minEmployees: icpForm.minEmployees ? parseInt(icpForm.minEmployees, 10) : null,
+          maxEmployees: icpForm.maxEmployees ? parseInt(icpForm.maxEmployees, 10) : null,
+          mustHaveEmail: icpForm.mustHaveEmail,
+        })
+      })
+      setIcp(d.icp)
+      toast.success('ICP settings saved')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to save ICP') }
+    finally { setSavingIcp(false) }
   }
 
   async function generateApiKey() {
     if (!workspace) return
     setKeyWorking(true)
     try {
-      const d = await api<{ key: string }>(`/api/workspaces/${workspace.id}/api-key/rotate`, { method: 'POST' })
-      setNewKeyModal(d.key)
+      const d = await api<{ apiKey: string }>(`/api/workspaces/${workspace.id}/api-key/rotate`, { method: 'POST' })
+      setNewKeyModal(d.apiKey)
       setHasKey(true)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to generate key') }
     finally { setKeyWorking(false) }
@@ -188,10 +381,24 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       {/* Profile */}
       <div style={s.card}>
         <div style={s.sectionHeader}>Profile</div>
+        {!user.emailVerified && (
+          <div style={{ background: '#422006', border: '1px solid #92400e', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ color: '#fbbf24', fontSize: 13 }}>Your email address is not verified.</span>
+            <button
+              style={{ ...s.btnSm, background: '#92400e', color: '#fbbf24', flexShrink: 0 }}
+              onClick={() => api('/api/auth/resend-verification', { method: 'POST' }).then(() => toast.success('Verification email sent')).catch(() => toast.error('Failed to send'))}
+            >
+              Resend
+            </button>
+          </div>
+        )}
         <div style={{ display: 'grid', gap: 12, maxWidth: 400, marginBottom: 16 }}>
           <div>
             <label style={s.label}>Email</label>
-            <input style={{ ...s.input, opacity: 0.6, cursor: 'not-allowed' }} value={user.email} disabled />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input style={{ ...s.input, flex: 1, opacity: 0.6, cursor: 'not-allowed' }} value={user.email} disabled />
+              {user.emailVerified && <span style={{ color: '#22c55e', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>✓ Verified</span>}
+            </div>
           </div>
           <div>
             <label style={s.label}>Name</label>
@@ -250,6 +457,15 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                 />
               </div>
             </div>
+            <div>
+              <label style={s.label}>Sender Business Name <span style={{ color: colors.textFaint, fontWeight: 400 }}>(CAN-SPAM / GDPR)</span></label>
+              <input style={s.input} placeholder="Acme Services LLC" value={wsForm.senderBusinessName} onChange={e => setWsForm(f => ({ ...f, senderBusinessName: e.target.value }))} />
+            </div>
+            <div>
+              <label style={s.label}>Sender Postal Address</label>
+              <input style={s.input} placeholder="123 Main St, City, ST 00000, USA" value={wsForm.senderPostalAddress} onChange={e => setWsForm(f => ({ ...f, senderPostalAddress: e.target.value }))} />
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>Included in outbound email footer to meet commercial email regulations.</div>
+            </div>
           </div>
           <button style={s.btn} disabled={savingWs} onClick={saveWorkspace}>
             {savingWs ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Workspace'}
@@ -304,37 +520,340 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               </div>
 
               {isOwnerOrAdmin && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                  <div>
-                    <label style={s.label}>Email</label>
-                    <input
-                      style={{ ...s.input, width: 220 }}
-                      placeholder="colleague@company.com"
-                      value={memberForm.email}
-                      onChange={e => setMemberForm(f => ({ ...f, email: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label style={s.label}>Role</label>
-                    <select
-                      style={{ ...s.input, width: 120 }}
-                      value={memberForm.role}
-                      onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
+                <>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
+                    <div>
+                      <label style={s.label}>Email (existing account)</label>
+                      <input
+                        style={{ ...s.input, width: 220 }}
+                        placeholder="colleague@company.com"
+                        value={memberForm.email}
+                        onChange={e => setMemberForm(f => ({ ...f, email: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label style={s.label}>Role</label>
+                      <select
+                        style={{ ...s.input, width: 120 }}
+                        value={memberForm.role}
+                        onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
+                      >
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </div>
+                    <button
+                      style={s.btn}
+                      disabled={addingMember || !memberForm.email.trim()}
+                      onClick={addMember}
                     >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                      {addingMember ? <><Spinner size={14} color="#fff" /> Adding…</> : 'Add Member'}
+                    </button>
                   </div>
-                  <button
-                    style={s.btn}
-                    disabled={addingMember || !memberForm.email.trim()}
-                    onClick={addMember}
-                  >
-                    {addingMember ? <><Spinner size={14} color="#fff" /> Adding…</> : 'Add Member'}
-                  </button>
-                </div>
+                  <div style={{ borderTop: `1px solid #1f2937`, paddingTop: 12, marginTop: 8 }}>
+                    <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Send Invite Email</div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div>
+                        <label style={s.label}>Email</label>
+                        <input
+                          style={{ ...s.input, width: 220 }}
+                          placeholder="new-user@company.com"
+                          value={inviteForm.email}
+                          onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={s.label}>Role</label>
+                        <select
+                          style={{ ...s.input, width: 120 }}
+                          value={inviteForm.role}
+                          onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}
+                        >
+                          <option value="member">Member</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <button
+                        style={{ ...s.btn, background: colors.purple }}
+                        disabled={sendingInvite || !inviteForm.email.trim()}
+                        onClick={sendInvite}
+                      >
+                        {sendingInvite ? <><Spinner size={14} color="#fff" /> Sending…</> : 'Send Invite'}
+                      </button>
+                    </div>
+                    {pendingInvites.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Pending Invites</div>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          {pendingInvites.map(inv => (
+                            <div key={inv.id} style={{ ...s.cardInner, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div>
+                                <span style={{ color: colors.text, fontSize: 13 }}>{inv.email}</span>
+                                <span style={{ color: colors.textFaint, fontSize: 12, marginLeft: 8 }}>({inv.role})</span>
+                              </div>
+                              <button style={s.btnDanger} onClick={() => cancelInvite(inv.id)}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {/* Ideal Customer Profile */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Ideal Customer Profile (ICP)</div>
+          <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
+            Defines the types of prospects ACAOS targets when scoring and filtering leads.
+          </div>
+          <div style={{ display: 'grid', gap: 12, maxWidth: 500, marginBottom: 16 }}>
+            <div>
+              <label style={s.label}>Target Industries (comma-separated)</label>
+              <input
+                style={s.input}
+                placeholder="e.g. HVAC, Electrical, Plumbing"
+                value={icpForm.targetIndustries}
+                onChange={e => setIcpForm(f => ({ ...f, targetIndustries: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label style={s.label}>Target Geographies (comma-separated)</label>
+              <input
+                style={s.input}
+                placeholder="e.g. Brisbane, Sydney, Melbourne"
+                value={icpForm.targetGeos}
+                onChange={e => setIcpForm(f => ({ ...f, targetGeos: e.target.value }))}
+              />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={s.label}>Min Employees</label>
+                <input
+                  style={s.input}
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 5"
+                  value={icpForm.minEmployees}
+                  onChange={e => setIcpForm(f => ({ ...f, minEmployees: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label style={s.label}>Max Employees</label>
+                <input
+                  style={s.input}
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 200"
+                  value={icpForm.maxEmployees}
+                  onChange={e => setIcpForm(f => ({ ...f, maxEmployees: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <input
+                type="checkbox"
+                id="mustHaveEmail"
+                checked={icpForm.mustHaveEmail}
+                onChange={e => setIcpForm(f => ({ ...f, mustHaveEmail: e.target.checked }))}
+                style={{ accentColor: colors.blue, width: 16, height: 16 }}
+              />
+              <label htmlFor="mustHaveEmail" style={{ ...s.label, marginBottom: 0, cursor: 'pointer' }}>
+                Only score prospects that have an email address
+              </label>
+            </div>
+          </div>
+          <button style={s.btn} disabled={savingIcp} onClick={saveIcp}>
+            {savingIcp ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save ICP'}
+          </button>
+        </div>
+      )}
+
+      {/* Email Configuration */}
+      {workspace && isOwnerOrAdmin && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Email Configuration</div>
+          <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
+            Per-workspace SMTP/IMAP settings. Leave blank to use the server defaults.
+          </div>
+          <div style={{ display: 'grid', gap: 16 }}>
+            <div>
+              <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>SMTP (outbound)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[
+                  { label: 'Host', field: 'smtpHost', placeholder: 'smtp.gmail.com' },
+                  { label: 'Port', field: 'smtpPort', placeholder: '587' },
+                  { label: 'Username', field: 'smtpUser', placeholder: 'you@gmail.com' },
+                  { label: emailForm.smtpPassSet ? 'Password (leave blank to keep)' : 'Password', field: 'smtpPass', placeholder: '••••••••' },
+                  { label: 'From Address', field: 'smtpFrom', placeholder: 'You <you@company.com>' },
+                ].map(({ label, field, placeholder }) => (
+                  <div key={field} style={field === 'smtpFrom' ? { gridColumn: '1/-1' } : {}}>
+                    <label style={s.label}>{label}</label>
+                    <input
+                      style={s.input}
+                      type={field === 'smtpPass' ? 'password' : 'text'}
+                      placeholder={placeholder}
+                      value={(emailForm as Record<string, unknown>)[field] as string}
+                      onChange={e => setEmailForm(f => ({ ...f, [field]: e.target.value }))}
+                      autoComplete={field === 'smtpPass' ? 'new-password' : 'off'}
+                    />
+                  </div>
+                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, gridColumn: '1/-1' }}>
+                  <input
+                    type="checkbox"
+                    id="smtpSecure"
+                    checked={emailForm.smtpSecure}
+                    onChange={e => setEmailForm(f => ({ ...f, smtpSecure: e.target.checked }))}
+                    style={{ accentColor: colors.blue, width: 16, height: 16 }}
+                  />
+                  <label htmlFor="smtpSecure" style={{ ...s.label, marginBottom: 0, cursor: 'pointer' }}>
+                    Use SSL/TLS (port 465)
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>IMAP (inbound reply tracking)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[
+                  { label: 'Host', field: 'imapHost', placeholder: 'imap.gmail.com' },
+                  { label: 'Port', field: 'imapPort', placeholder: '993' },
+                  { label: 'Username', field: 'imapUser', placeholder: 'you@gmail.com' },
+                  { label: emailForm.imapPassSet ? 'Password (leave blank to keep)' : 'Password', field: 'imapPass', placeholder: '••••••••' },
+                ].map(({ label, field, placeholder }) => (
+                  <div key={field}>
+                    <label style={s.label}>{label}</label>
+                    <input
+                      style={s.input}
+                      type={field === 'imapPass' ? 'password' : 'text'}
+                      placeholder={placeholder}
+                      value={(emailForm as Record<string, unknown>)[field] as string}
+                      onChange={e => setEmailForm(f => ({ ...f, [field]: e.target.value }))}
+                      autoComplete={field === 'imapPass' ? 'new-password' : 'off'}
+                    />
+                  </div>
+                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, gridColumn: '1/-1' }}>
+                  <input
+                    type="checkbox"
+                    id="imapSecure"
+                    checked={emailForm.imapSecure}
+                    onChange={e => setEmailForm(f => ({ ...f, imapSecure: e.target.checked }))}
+                    style={{ accentColor: colors.blue, width: 16, height: 16 }}
+                  />
+                  <label htmlFor="imapSecure" style={{ ...s.label, marginBottom: 0, cursor: 'pointer' }}>
+                    Use SSL/TLS (port 993)
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <button style={s.btn} disabled={savingEmail} onClick={saveEmailConfig}>
+              {savingEmail ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Save Email Config'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Compliance & Deliverability */}
+      {workspace && (
+        <div style={s.card}>
+          <div style={s.sectionHeader}>Compliance &amp; Deliverability</div>
+          <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
+            Real-time health check for your sending domain and outreach compliance.
+          </div>
+          {!emailForm.smtpFrom ? (
+            <div style={{
+              background: '#0f172a', border: `1px solid ${colors.border}`,
+              borderRadius: 8, padding: '12px 16px', color: colors.textMuted, fontSize: 13
+            }}>
+              Configure your email settings above to enable deliverability checks.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {/* Sending domain */}
+              <div style={{ ...s.cardInner }}>
+                <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
+                  Sending Domain
+                </div>
+                {domainCheckLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: colors.textMuted, fontSize: 13 }}>
+                    <Spinner size={13} /> Checking DNS records…
+                  </div>
+                ) : domainCheck ? (
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ color: colors.textMuted, fontSize: 13 }}>SPF record</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: domainCheck.hasSPF ? colors.green : colors.red }}>
+                        {domainCheck.hasSPF ? '✓ Configured' : '✗ Missing'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ color: colors.textMuted, fontSize: 13 }}>DKIM signature</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: domainCheck.hasDKIM ? colors.green : colors.red }}>
+                        {domainCheck.hasDKIM ? '✓ Configured' : '✗ Missing'}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: colors.textFaint, fontSize: 13 }}>DNS lookup unavailable</div>
+                )}
+              </div>
+
+              {/* Unsubscribe coverage */}
+              <div style={{ ...s.cardInner, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: colors.textMuted, fontSize: 13 }}>Unsubscribe coverage</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: colors.green }}>
+                  ✓ All outbound emails include unsubscribe link
+                </span>
+              </div>
+
+              {/* Suppression list */}
+              <div style={{ ...s.cardInner, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: colors.textMuted, fontSize: 13 }}>Suppression list</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
+                  {suppressionCount !== null
+                    ? `${suppressionCount} contact${suppressionCount !== 1 ? 's' : ''} suppressed`
+                    : 'Active'}
+                </span>
+              </div>
+
+              {/* Email footer */}
+              <div style={{ ...s.cardInner, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: colors.textMuted, fontSize: 13 }}>Email footer</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: colors.green }}>
+                  ✓ Unsubscribe link included
+                </span>
+              </div>
+
+              {/* Sending limits */}
+              <div style={{ ...s.cardInner }}>
+                <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
+                  Sending Limits
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: colors.textMuted, fontSize: 13 }}>Daily limit</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
+                      {icp?.dailySendLimit != null ? `${icp.dailySendLimit} emails` : '50 emails (default)'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: colors.textMuted, fontSize: 13 }}>Approval mode</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: icp?.approvalMode !== false ? colors.amber : colors.green }}>
+                      {icp?.approvalMode !== false ? 'ON — campaigns require approval' : 'OFF — campaigns send automatically'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

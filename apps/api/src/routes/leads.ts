@@ -5,10 +5,17 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit } from '../lib/limits.js'
+import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
+
+async function assertCampaignInWorkspace(campaignId: string | null | undefined, workspaceId: string): Promise<void> {
+  if (!campaignId) return
+  const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId } })
+  if (!campaign) throw new ApiError(400, 'campaignId not found in this workspace')
+}
 
 const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
 const MAX_SHORT = 200
@@ -98,6 +105,8 @@ leadsRouter.post(
       notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() || null : null
     }
 
+    await assertCampaignInWorkspace(leadData.campaignId, workspaceId)
+
     const weights = await getWorkspaceWeights(workspaceId)
     const score = computeLeadScore(leadData, weights)
 
@@ -143,6 +152,9 @@ leadsRouter.post(
         return { ...row, score: computeLeadScore(row, weights) }
       })
 
+    const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
+    for (const cid of campaignIds) await assertCampaignInWorkspace(cid, workspaceId)
+
     const result = await prisma.lead.createMany({ data: rows, skipDuplicates: false })
     res.json({ created: result.count })
   })
@@ -157,27 +169,44 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
   const member = await userBelongsToWorkspace(user.id, workspaceId)
   if (!member) throw new ApiError(403, 'Access denied')
 
-  const leads = await prisma.lead.findMany({
-    where: { workspaceId },
-    select: {
-      id: true, businessName: true, contactName: true, email: true, phone: true,
-      website: true, city: true, category: true, score: true, stage: true,
-      sourceTag: true, notes: true, aiSummary: true, outreachAngle: true,
-      createdAt: true, updatedAt: true
-    },
-    orderBy: { createdAt: 'desc' }
-  })
-
-  const headers = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
-  const escCsv = (v: unknown) => {
-    const s = v == null ? '' : String(v)
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
-  }
-  const rows = [headers.join(','), ...leads.map((l: Record<string, unknown>) => headers.map(h => escCsv(l[h])).join(','))]
+  const HEADERS = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="leads-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
-  res.send(rows.join('\n'))
+  res.write(HEADERS.join(',') + '\n')
+
+  // Cursor-based pagination prevents OOM on large workspaces.
+  // Sort by id (unique, stable) rather than createdAt alone to avoid skipped/
+  // duplicated rows when multiple rows share the same createdAt timestamp.
+  const PAGE = 500
+  let cursor: string | undefined
+  let totalWritten = 0
+  const MAX = 50_000
+
+  while (totalWritten < MAX) {
+    const batch = await prisma.lead.findMany({
+      where: { workspaceId },
+      select: {
+        id: true, businessName: true, contactName: true, email: true, phone: true,
+        website: true, city: true, category: true, score: true, stage: true,
+        sourceTag: true, notes: true, aiSummary: true, outreachAngle: true,
+        createdAt: true, updatedAt: true
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {})
+    })
+
+    if (batch.length === 0) break
+    for (const l of batch) {
+      res.write(HEADERS.map(h => escCsv((l as Record<string, unknown>)[h])).join(',') + '\n')
+    }
+    totalWritten += batch.length
+    cursor = batch[batch.length - 1].id
+    if (batch.length < PAGE) break
+  }
+
+  res.end()
 }))
 
 // Get lead by id
@@ -237,7 +266,11 @@ leadsRouter.patch(
       if (!VALID_STAGES.includes(req.body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
       updates.stage = req.body.stage
     }
-    if (typeof req.body?.campaignId === 'string') updates.campaignId = req.body.campaignId || null
+    if (typeof req.body?.campaignId === 'string') {
+      const cid = req.body.campaignId || null
+      await assertCampaignInWorkspace(cid, lead.workspaceId)
+      updates.campaignId = cid
+    }
 
     // Recompute score whenever ICP-relevant fields change
     const scoringFields = ['businessName', 'category', 'contactName', 'email', 'website', 'notes', 'aiSummary', 'outreachAngle']
@@ -367,5 +400,66 @@ leadsRouter.get(
     })
 
     res.json({ drafts })
+  })
+)
+
+// Approval queue — all DRAFTED drafts awaiting review for a workspace
+leadsRouter.get(
+  '/approvals/pending',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.query.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const drafts = await prisma.outreachDraft.findMany({
+      where: { workspaceId, status: 'DRAFTED' },
+      include: { lead: { select: { id: true, businessName: true, email: true, city: true, category: true } } },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    })
+
+    res.json({ drafts })
+  })
+)
+
+// Approve a draft
+leadsRouter.post(
+  '/:id/drafts/:draftId/approve',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { id: leadId, draftId } = req.params as { id: string; draftId: string }
+    const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
+    if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
+
+    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const updated = await prisma.outreachDraft.update({
+      where: { id: draftId },
+      data: { status: 'APPROVED', reviewedAt: new Date(), reviewedBy: user.id },
+    })
+    res.json({ draft: updated })
+  })
+)
+
+// Reject a draft
+leadsRouter.post(
+  '/:id/drafts/:draftId/reject',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { id: leadId, draftId } = req.params as { id: string; draftId: string }
+    const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
+    if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
+
+    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const updated = await prisma.outreachDraft.update({
+      where: { id: draftId },
+      data: { status: 'REJECTED', reviewedAt: new Date(), reviewedBy: user.id },
+    })
+    res.json({ draft: updated })
   })
 )

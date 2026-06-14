@@ -61,7 +61,8 @@ test('validateConfig fails fast in production when required vars are missing', (
   assert.throws(() => validateConfig(), (e: Error) => {
     assert.match(e.message, /DATABASE_URL is required/)
     assert.match(e.message, /JWT_SECRET is required/)
-    assert.match(e.message, /ALLOWED_ORIGINS/)
+    // ALLOWED_ORIGINS is now a warning (not fatal) so it must not appear here
+    assert.doesNotMatch(e.message, /ALLOWED_ORIGINS/)
     return true
   })
 })
@@ -76,6 +77,8 @@ test('validateConfig passes in production when fully configured', () => {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgresql://x',
     JWT_SECRET: 'a-strong-production-secret-value',
+    EMAIL_ENCRYPTION_KEY: 'a-valid-encryption-key-for-testing',
+    REDIS_URL: 'redis://localhost:6379',
     ALLOWED_ORIGINS: 'https://app.acme.com',
   })
   assert.doesNotThrow(() => validateConfig())

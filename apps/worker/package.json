@@ -4,15 +4,17 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/worker.ts",
-    "start": "tsx src/worker.ts"
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/apps/worker/src/worker.js",
+    "start:dev": "tsx src/worker.ts"
   },
   "dependencies": {
     "bullmq": "^5.12.12",
     "dotenv": "^16.4.5",
-    "ioredis": "^5.4.1",
-    "tsx": "^4.16.2"
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
+    "tsx": "^4.16.2",
     "typescript": "^5.5.4"
   }
 }

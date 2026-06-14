@@ -6,13 +6,14 @@ COPY packages/db/package.json ./packages/db/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
 
-RUN npm ci --ignore-optional
+RUN npm ci
 
 COPY packages/db ./packages/db
 COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 
 RUN npm run prisma:generate
+RUN npm run build -w @acaos/worker
 
 ENV NODE_ENV=production
 

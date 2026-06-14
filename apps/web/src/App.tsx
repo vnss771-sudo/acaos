@@ -13,7 +13,11 @@ import { Billing } from './views/Billing.js'
 import { Settings } from './views/Settings.js'
 import { Intelligence } from './views/Intelligence.js'
 import { ProspectsView } from './views/Prospects.js'
+import { AdminView } from './views/Admin.js'
+import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { colors } from './styles.js'
+
+const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -42,8 +46,15 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
+function getUrlParam(key: string) {
+  return new URLSearchParams(window.location.search).get(key)
+}
+
 export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('acaos_token'))
+  const [resetToken] = useState<string | null>(() => getUrlParam('reset'))
+  const [inviteToken] = useState<string | null>(() => getUrlParam('invite'))
+  const [verifyToken] = useState<string | null>(() => getUrlParam('verify'))
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
@@ -69,7 +80,7 @@ export function App() {
     setActiveWsId(null)
   }
 
-  const api = useApi(token, logout)
+  const api = useApi(token, logout, setToken)
 
   // Transparent access token refresh
   const refreshAccessToken = useCallback(async () => {
@@ -121,6 +132,28 @@ export function App() {
     localStorage.setItem('acaos_workspace', id)
   }
 
+  // Verify email address when ?verify=TOKEN is present (runs once on mount)
+  useEffect(() => {
+    if (!verifyToken) return
+    fetch(`${API}/api/auth/verify-email/${verifyToken}`)
+      .then(() => window.history.replaceState({}, '', window.location.pathname))
+      .catch(() => {})
+  }, [verifyToken])
+
+  // Accept a pending invite once we know who the user is
+  useEffect(() => {
+    if (!inviteToken || !token || !user) return
+    fetch(`${API}/api/auth/invite/${inviteToken}/accept`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    }).then(r => r.json()).then(d => {
+      if (d.workspaceId) {
+        window.history.replaceState({}, '', window.location.pathname)
+        window.location.reload()
+      }
+    }).catch(() => {})
+  }, [inviteToken, token, user?.id])
+
   if (booting) {
     return (
       <div style={{ minHeight: '100vh', background: colors.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -132,21 +165,28 @@ export function App() {
   if (!token || !user) {
     return (
       <>
-        <AuthScreen onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }} />
+        <AuthScreen
+          onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }}
+          resetToken={resetToken}
+          inviteToken={inviteToken}
+        />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     )
   }
 
+  const isAdmin = Boolean(ADMIN_EMAIL && user.email.toLowerCase() === ADMIN_EMAIL)
+
   const VIEW_TITLE: Record<View, string> = {
-    dashboard: 'Dashboard',
+    dashboard: 'Acquisition Radar',
     intelligence: 'Acquisition Intelligence',
     prospects: 'Prospects',
     campaigns: 'Campaigns',
     leads: 'Leads',
     ai: 'AI Tools',
     billing: 'Billing',
-    settings: 'Settings'
+    settings: 'Settings',
+    admin: 'Admin Panel'
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
@@ -163,6 +203,7 @@ export function App() {
         email={user.email}
         workspace={activeWorkspace}
         onLogout={logout}
+        isAdmin={isAdmin}
       />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
@@ -191,6 +232,28 @@ export function App() {
           )}
         </header>
 
+        {/* Past-due payment warning banner */}
+        {activeWorkspace?.subscriptionStatus === 'past_due' && (
+          <div style={{
+            background: '#7c2d12', borderBottom: '1px solid #b45309',
+            padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0
+          }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <span style={{ fontSize: 13, color: '#fde68a', flex: 1 }}>
+              Your last payment failed. AI features are limited until billing is updated.
+            </span>
+            <button
+              onClick={() => setView('billing')}
+              style={{
+                background: '#b45309', color: '#fff', border: 'none', borderRadius: 6,
+                padding: '5px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer'
+              }}
+            >
+              Update billing
+            </button>
+          </div>
+        )}
+
         {/* Main content */}
         <main style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
           <ErrorBoundary>
@@ -209,9 +272,20 @@ export function App() {
                 onWorkspaceUpdate={handleWorkspaceUpdate}
               />
             )}
+            {view === 'admin' && isAdmin && <AdminView api={api} toast={toast} />}
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Onboarding wizard — shown once per workspace until dismissed */}
+      {activeWorkspace && !activeWorkspace.onboardingCompleted && (
+        <OnboardingWizard
+          workspace={activeWorkspace}
+          api={api}
+          toast={toast}
+          onComplete={() => handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })}
+        />
+      )}
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>

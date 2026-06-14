@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { buildSignalFingerprint } from './prospects.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const signalsRouter = Router()
@@ -28,10 +29,13 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
   if (req.query.prospectId) where.prospectId = req.query.prospectId
   if (req.query.type) where.type = req.query.type
 
+  const limit = Math.min(Number(req.query.limit ?? 100), 200)
+
   const signals = await prisma.signal.findMany({
     where,
     orderBy: { detectedAt: 'desc' },
-    take: 100
+    take: limit,
+    include: { prospect: { select: { id: true, companyName: true } } }
   })
 
   res.json({ signals })
@@ -57,8 +61,13 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Prospect does not belong to this workspace')
   }
 
-  const signal = await prisma.signal.create({
-    data: {
+  const resolvedSource = source ?? 'manual'
+  const resolvedDetectedAt = detectedAt ? new Date(detectedAt) : new Date()
+  const fp = buildSignalFingerprint(resolvedSource, type, title ?? null, resolvedDetectedAt)
+
+  const signal = await prisma.signal.upsert({
+    where: { prospectId_fingerprint: { prospectId, fingerprint: fp } },
+    create: {
       workspaceId,
       prospectId,
       type,
@@ -68,8 +77,13 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
       title: title ?? null,
       description: description ?? null,
       sourceUrl: sourceUrl ?? null,
-      source: source ?? 'manual',
-      detectedAt: detectedAt ? new Date(detectedAt) : new Date(),
+      source: resolvedSource,
+      fingerprint: fp,
+      detectedAt: resolvedDetectedAt,
+    },
+    update: {
+      strength: Number(strength),
+      detectedAt: resolvedDetectedAt,
     }
   })
 

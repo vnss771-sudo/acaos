@@ -16,12 +16,14 @@ import { outcomesRouter } from './routes/outcomes.js'
 import { prospectsRouter } from './routes/prospects.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
+import { adminRouter } from './routes/admin.js'
+import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
-import { isProduction, isOriginAllowed, validateConfig } from './lib/config.js'
+import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
 
 // Fail fast on a misconfigured deploy rather than surfacing it as a runtime 503.
 validateConfig()
@@ -52,6 +54,23 @@ app.use(generalRateLimit)
 // Liveness: cheap, never touches the database — safe for frequent probes.
 app.get('/api/live', (_req, res) => {
   res.json({ ok: true, service: 'acaos-api', timestamp: new Date().toISOString() })
+})
+
+// Readiness: checks required config + DB connectivity. Suitable for deployment
+// gates (e.g. Kubernetes readinessProbe or Render healthcheck).
+app.get('/api/ready', async (_req, res) => {
+  const report = getReadinessReport()
+  let dbOk = false
+  try {
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+    ])
+    dbOk = true
+  } catch { /* leave false */ }
+
+  const ok = report.ready && dbOk
+  res.status(ok ? 200 : 503).json({ ok, db: dbOk, config: report })
 })
 
 // Readiness / health: verifies the database is reachable.
@@ -89,9 +108,18 @@ app.use('/api/outcomes', outcomesRouter)
 app.use('/api/prospects', prospectsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
+app.use('/api/admin', adminRouter)
+app.use('/api/unsubscribe', unsubscribeRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)
+
+// Eagerly connect Redis so rate limiting and SSE tickets use the real store
+// from the first request rather than falling back to the per-process Map.
+import { getRedis } from './lib/redis.js'
+getRedis().connect().catch((err: Error) => {
+  console.warn('[redis] Initial connection failed — rate limiting will use in-process fallback:', err.message)
+})
 
 const port = Number(process.env.PORT || 4000)
 const server = app.listen(port, () => {

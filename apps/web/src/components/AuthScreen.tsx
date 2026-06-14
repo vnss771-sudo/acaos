@@ -5,21 +5,60 @@ const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
 type AuthScreenProps = {
   onToken: (token: string, refreshToken: string) => void
+  resetToken?: string | null
+  inviteToken?: string | null
 }
 
-export function AuthScreen({ onToken }: AuthScreenProps) {
+export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot' | 'reset'>(
+    resetToken ? 'reset' : inviteToken ? 'signup' : 'login'
+  )
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setErr('')
+    setSuccessMsg('')
+
     try {
+      if (mode === 'forgot') {
+        const res = await fetch(`${API}/api/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.trim().toLowerCase() })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Request failed')
+        setSuccessMsg('If that email is registered, a reset link has been sent.')
+        setEmail('')
+        return
+      }
+
+      if (mode === 'reset') {
+        if (password !== confirmPassword) throw new Error('Passwords do not match')
+        const res = await fetch(`${API}/api/auth/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: resetToken, password })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Reset failed')
+        setSuccessMsg('Password reset! You can now sign in.')
+        setPassword('')
+        setConfirmPassword('')
+        // Clear the ?reset= param from URL without reload
+        window.history.replaceState({}, '', window.location.pathname)
+        setTimeout(() => setMode('login'), 1500)
+        return
+      }
+
       const body: Record<string, string> = {
         email: email.trim().toLowerCase(),
         password
@@ -44,6 +83,8 @@ export function AuthScreen({ onToken }: AuthScreenProps) {
     }
   }
 
+  const isForgotOrReset = mode === 'forgot' || mode === 'reset'
+
   return (
     <div style={{
       minHeight: '100vh', background: '#030712',
@@ -58,24 +99,50 @@ export function AuthScreen({ onToken }: AuthScreenProps) {
         </div>
 
         <div style={{ ...s.card, padding: 28 }}>
-          {/* Mode toggle */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#0b1220', borderRadius: 8, padding: 4 }}>
-            {(['login', 'signup'] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => { setMode(m); setErr('') }}
-                style={{
-                  flex: 1, padding: '8px 0', borderRadius: 6, border: 'none',
-                  background: mode === m ? '#1e293b' : 'transparent',
-                  color: mode === m ? '#f1f5f9' : '#64748b',
-                  cursor: 'pointer', fontSize: 14, fontWeight: mode === m ? 600 : 400,
-                  transition: 'all 0.15s'
-                }}
-              >
-                {m === 'login' ? 'Sign in' : 'Create account'}
-              </button>
-            ))}
-          </div>
+          {/* Invite banner */}
+          {inviteToken && !isForgotOrReset && (
+            <div style={{
+              background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: 8,
+              padding: '10px 14px', marginBottom: 20, color: '#93c5fd', fontSize: 13
+            }}>
+              You've been invited to join a workspace. Sign in or create an account to accept.
+            </div>
+          )}
+
+          {/* Mode toggle (only for login/signup) */}
+          {!isForgotOrReset && (
+            <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#0b1220', borderRadius: 8, padding: 4 }}>
+              {(['login', 'signup'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => { setMode(m); setErr(''); setSuccessMsg('') }}
+                  style={{
+                    flex: 1, padding: '8px 0', borderRadius: 6, border: 'none',
+                    background: mode === m ? '#1e293b' : 'transparent',
+                    color: mode === m ? '#f1f5f9' : '#64748b',
+                    cursor: 'pointer', fontSize: 14, fontWeight: mode === m ? 600 : 400,
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  {m === 'login' ? 'Sign in' : 'Create account'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Forgot/Reset header */}
+          {isForgotOrReset && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ color: '#f1f5f9', fontWeight: 600, fontSize: 16, marginBottom: 4 }}>
+                {mode === 'forgot' ? 'Reset your password' : 'Set a new password'}
+              </div>
+              <div style={{ color: '#64748b', fontSize: 13 }}>
+                {mode === 'forgot'
+                  ? 'Enter your email and we\'ll send a reset link.'
+                  : 'Enter your new password below.'}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
             {mode === 'signup' && (
@@ -91,31 +158,53 @@ export function AuthScreen({ onToken }: AuthScreenProps) {
                 />
               </div>
             )}
-            <div>
-              <label style={s.label}>Email</label>
-              <input
-                style={s.input}
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                autoComplete="email"
-              />
-            </div>
-            <div>
-              <label style={s.label}>Password</label>
-              <input
-                style={s.input}
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="At least 8 characters"
-                required
-                minLength={8}
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              />
-            </div>
+
+            {(mode === 'login' || mode === 'signup' || mode === 'forgot') && (
+              <div>
+                <label style={s.label}>Email</label>
+                <input
+                  style={s.input}
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  autoComplete="email"
+                />
+              </div>
+            )}
+
+            {(mode === 'login' || mode === 'signup' || mode === 'reset') && (
+              <div>
+                <label style={s.label}>{mode === 'reset' ? 'New Password' : 'Password'}</label>
+                <input
+                  style={s.input}
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  required
+                  minLength={8}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                />
+              </div>
+            )}
+
+            {mode === 'reset' && (
+              <div>
+                <label style={s.label}>Confirm New Password</label>
+                <input
+                  style={s.input}
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat password"
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+            )}
 
             {err && (
               <div style={{
@@ -126,14 +215,51 @@ export function AuthScreen({ onToken }: AuthScreenProps) {
               </div>
             )}
 
+            {successMsg && (
+              <div style={{
+                background: '#052e16', border: '1px solid #166534', borderRadius: 6,
+                padding: '10px 12px', color: '#86efac', fontSize: 13
+              }}>
+                {successMsg}
+              </div>
+            )}
+
             <button
               type="submit"
               style={{ ...s.btn, width: '100%', padding: '12px', opacity: loading ? 0.7 : 1 }}
               disabled={loading}
             >
-              {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+              {loading ? 'Please wait…' :
+                mode === 'login' ? 'Sign in' :
+                mode === 'signup' ? 'Create account' :
+                mode === 'forgot' ? 'Send reset link' :
+                'Set new password'}
             </button>
           </form>
+
+          {/* Forgot password link (login mode only) */}
+          {mode === 'login' && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <button
+                onClick={() => { setMode('forgot'); setErr(''); setSuccessMsg('') }}
+                style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
+              >
+                Forgot your password?
+              </button>
+            </div>
+          )}
+
+          {/* Back to login link (forgot/reset mode) */}
+          {isForgotOrReset && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <button
+                onClick={() => { setMode('login'); setErr(''); setSuccessMsg('') }}
+                style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer' }}
+              >
+                ← Back to sign in
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

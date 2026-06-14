@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
+import { openAiBreaker, CircuitOpenError } from '../lib/circuit.js'
 
 function getOpenAiClient() {
   if (!hasEnv(['OPENAI_API_KEY'])) throw new ApiError(503, 'OpenAI is not configured')
@@ -18,17 +19,43 @@ function model() {
 }
 
 async function chat(system: string, user: string): Promise<string> {
-  const client = getOpenAiClient()
-  const completion = await client.chat.completions.create({
-    model: model(),
-    response_format: { type: 'json_object' },
-    temperature: 0.4,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user }
-    ]
-  })
-  return completion.choices[0]?.message?.content ?? '{}'
+  try {
+    return await openAiBreaker.call(async () => {
+      const client = getOpenAiClient()
+      const completion = await client.chat.completions.create({
+        model: model(),
+        response_format: { type: 'json_object' },
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ]
+      })
+      return completion.choices[0]?.message?.content ?? '{}'
+    })
+  } catch (err) {
+    if (err instanceof CircuitOpenError) {
+      throw new ApiError(503, 'AI service temporarily unavailable — try again shortly')
+    }
+    throw err
+  }
+}
+
+export type IcpContext = {
+  targetIndustries?: string[]
+  businessType?: string
+  outreachTone?: string
+}
+
+function buildVerticalDesc(icp: IcpContext | undefined): string {
+  const industries = icp?.targetIndustries?.filter(Boolean) ?? []
+  if (industries.length > 0) return industries.join(', ')
+  return 'field-service businesses — civil engineering, electrical, plumbing, HVAC, landscaping, facilities management, roofing, painting, construction, and adjacent trades'
+}
+
+function buildProductDesc(icp: IcpContext | undefined): string {
+  if (icp?.businessType) return icp.businessType
+  return 'field operations software (scheduling, dispatch, quoting, job costing, invoicing)'
 }
 
 export async function generateLeadResearch(input: {
@@ -37,19 +64,22 @@ export async function generateLeadResearch(input: {
   category?: string
   city?: string
   notes?: string
+  icp?: IcpContext
 }): Promise<string> {
+  const vertical = buildVerticalDesc(input.icp)
+  const product = buildProductDesc(input.icp)
   return chat(
-    `You are an expert B2B sales intelligence analyst specialising in field-service businesses — civil engineering, electrical, plumbing, HVAC, landscaping, facilities management, roofing, painting, construction, and adjacent trades.
+    `You are an expert B2B sales intelligence analyst specialising in ${vertical}.
 
-Your job: produce actionable sales intelligence for a cold outreach campaign selling field operations software (scheduling, dispatch, quoting, job costing, invoicing).
+Your job: produce actionable sales intelligence for a cold outreach campaign selling ${product}.
 
 Return ONLY a valid JSON object with these exact keys:
-- aiSummary (string): 2–3 sentences. Describe the business, its likely operational pain points, and why they are a strong or weak fit for field ops software. Be concrete: mention the type of field work they do, estimated team size signals, and the single biggest coordination headache they probably face.
+- aiSummary (string): 2–3 sentences. Describe the business, its likely operational pain points, and why they are a strong or weak fit for the seller's solution. Be concrete: mention the type of work they do, estimated team size signals, and the single biggest problem they probably face.
 - outreachAngle (string): The single strongest personalised hook for a cold email opener — under 20 words. Must reference something specific about their business, NOT a generic benefit. Good: "Managing job dispatch across 12 crews without a shared schedule". Bad: "We help you save time".
-- qualificationSignals (string[]): 3–5 specific signals extracted from available info (e.g. "Field-based workforce, likely 10–50 field staff", "No FSM software visible on site or in job listings", "Active hiring suggests growth phase", "Multiple office locations imply coordination complexity").
-- icpScore (number): 0–100. How closely this prospect matches the ideal field-service ICP: 50–400 employees, field-based ops, low digital maturity, growing. Deduct for: very small (<10 employees), enterprise with existing software, non-field industries.
+- qualificationSignals (string[]): 3–5 specific signals extracted from available info (e.g. "Field-based workforce, likely 10–50 field staff", "No dedicated software visible on site or in job listings", "Active hiring suggests growth phase", "Multiple office locations imply coordination complexity").
+- icpScore (number): 0–100. How closely this prospect matches the target vertical (${vertical}): right size, right pain, low digital maturity, growing. Deduct for: too small (<10 employees), enterprise already saturated, wrong industry.
 - hiringSignals (boolean): true if any evidence suggests they are currently hiring or expanding headcount.
-- digitalMaturity ("low" | "medium" | "high"): Infer from web presence, job listings, and mentions of tools. Low = spreadsheets/paper, Medium = generic software, High = dedicated FSM/ERP already in place.
+- digitalMaturity ("low" | "medium" | "high"): Infer from web presence, job listings, and mentions of tools. Low = spreadsheets/paper, Medium = generic software, High = dedicated platform already in place.
 - estimatedTeamSize ("1-10" | "10-50" | "50-200" | "200-500" | "500+"): Best estimate from all available signals.`,
 
     `Analyse this prospect for B2B cold outreach:
@@ -71,11 +101,21 @@ export async function generateOutreach(input: {
   contactName?: string
   aiSummary?: string
   outreachAngle?: string
+  icp?: IcpContext
 }): Promise<string> {
   const firstName = input.contactName?.split(' ')[0] ?? null
+  const vertical = buildVerticalDesc(input.icp)
+  const product = buildProductDesc(input.icp)
+  const toneNote = input.icp?.outreachTone === 'casual'
+    ? 'Tone: conversational and friendly — like a peer, not a salesperson.'
+    : input.icp?.outreachTone === 'direct'
+    ? 'Tone: direct and to the point — no fluff, lead with the value.'
+    : 'Tone: professional but human — warm, not stiff.'
 
   return chat(
-    `You are an elite B2B cold email copywriter. You write for a field operations software company targeting trades and field-service businesses.
+    `You are an elite B2B cold email copywriter. You write for a company selling ${product} to ${vertical}.
+
+${toneNote}
 
 Your emails achieve 15–30% reply rates because they:
 1. Reference something specific about the recipient's actual business — not generic platitudes
@@ -85,18 +125,18 @@ Your emails achieve 15–30% reply rates because they:
 5. Sound like a thoughtful human, not a marketing department
 
 Return ONLY a valid JSON object with these exact keys:
-- subject (string): Under 8 words. No "Intro:", no emoji. Feels like an internal forward, not a campaign email. Example: "field scheduling for ${input.businessName || 'your team'}".
+- subject (string): Under 8 words. No "Intro:", no emoji. Feels like an internal forward, not a campaign email. Example: "scheduling for ${input.businessName || 'your team'}".
 - email (string): The full email body. No subject line, no sign-off — body only. Under 90 words. Personalised opener referencing their specific business. One clear question CTA at the end.
 - followup (string): A 2-sentence follow-up for 4–5 days later if no reply. Acknowledge the first email, offer a slightly different angle or value point. Still ends with a question.`,
 
     `Write a cold outreach email for this prospect:
 
 Business: ${input.businessName}
-Industry: ${input.category || 'field services'}
+Industry: ${input.category || vertical.split(',')[0].trim()}
 Location: ${input.city || 'their area'}
 ${firstName ? `Contact first name: ${firstName}` : ''}
-Research summary: ${input.aiSummary || 'Growing field service company needing better coordination tools'}
-Best hook: ${input.outreachAngle || 'streamlining field team coordination as they scale'}
+Research summary: ${input.aiSummary || `Growing ${vertical.split(',')[0].trim()} business needing better coordination tools`}
+Best hook: ${input.outreachAngle || 'streamlining team coordination as they scale'}
 
 Make the email feel like it was written specifically for ${input.businessName}, not from a template.`
   )

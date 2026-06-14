@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import {
@@ -15,11 +15,25 @@ import {
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
+import { listSources, getSource } from '../lib/prospectSources.js'
+import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
+import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
+
+export function normalizeDomain(domain: string | null | undefined): string | null {
+  if (!domain) return null
+  return domain.toLowerCase().replace(/^www\./, '')
+}
+
+export function buildSignalFingerprint(source: string, type: string, title: string | null, date: Date): string {
+  const slug = (title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
+  const month = date.toISOString().slice(0, 7)
+  return `${source}:${type}:${slug}:${month}`
+}
 
 // Money is stored as integer cents; expose whole-unit amounts at the API edge.
 function withDollars<T extends Record<string, unknown>>(p: T): T {
@@ -71,6 +85,14 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     else if (tier === 'COLD') where.opportunityScore = { lt: 45 }
   }
 
+  // Auto-hide example prospects once any real prospect exists.
+  // Pass ?showExamples=true to override (e.g. from admin or onboarding preview).
+  const showExamples = req.query.showExamples === 'true'
+  if (!showExamples) {
+    const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+    if (realCount > 0) where.isExample = false
+  }
+
   const [prospects, total] = await Promise.all([
     prisma.prospect.findMany({
       where,
@@ -82,7 +104,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
         timingScore: true, confidenceScore: true,
         buyingStage: true, outcomeStage: true, expectedDealValue: true,
         winProbability: true, lastSignalAt: true, lastContactedAt: true,
-        sourceTag: true, createdAt: true, updatedAt: true,
+        sourceTag: true, isExample: true, createdAt: true, updatedAt: true,
         _count: { select: { signals: true } },
         recommendations: { orderBy: { priority: 'desc' }, take: 1 },
       },
@@ -96,6 +118,8 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const hasMore = prospects.length > limit
   if (hasMore) prospects.pop()
 
+  const hasRealProspects = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+
   res.json({
     prospects: prospects.map((p: (typeof prospects)[0]) => withDollars({
       ...p,
@@ -107,7 +131,13 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     limit,
     total,
     hasMore,
+    hasRealProspects: hasRealProspects > 0,
   })
+}))
+
+// GET /api/prospects/sources — which discovery integrations are wired up
+prospectsRouter.get('/sources', asyncHandler(async (_req, res) => {
+  res.json({ sources: listSources() })
 }))
 
 // GET /api/prospects/export?workspaceId=&format=csv
@@ -118,29 +148,46 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
 
   if (!await userHasWorkspaceAccess(user.id, workspaceId)) throw new ApiError(403, 'Access denied')
 
-  const prospects = await prisma.prospect.findMany({
-    where: { workspaceId },
-    select: {
-      id: true, companyName: true, domain: true, industry: true, employeeCount: true,
-      location: true, contactName: true, contactEmail: true, contactPhone: true, contactTitle: true,
-      linkedinUrl: true, opportunityScore: true, intentScore: true, fitScore: true,
-      buyingStage: true, outcomeStage: true, winProbability: true,
-      expectedDealValue: true, estimatedRevenue: true, sourceTag: true,
-      createdAt: true, updatedAt: true
-    },
-    orderBy: { opportunityScore: 'desc' }
-  })
-
-  const headers = ['id','companyName','domain','industry','employeeCount','location','contactName','contactEmail','contactPhone','contactTitle','linkedinUrl','opportunityScore','intentScore','fitScore','buyingStage','outcomeStage','winProbability','expectedDealValue','estimatedRevenue','sourceTag','createdAt','updatedAt']
-  const escCsv = (v: unknown) => {
-    const s = v == null ? '' : String(v)
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
-  }
-  const rows = [headers.join(','), ...prospects.map((p: Record<string, unknown>) => headers.map(h => escCsv(p[h])).join(','))]
+  const HEADERS = ['id','companyName','domain','industry','employeeCount','location','contactName','contactEmail','contactPhone','contactTitle','linkedinUrl','opportunityScore','intentScore','fitScore','buyingStage','outcomeStage','winProbability','expectedDealValue','estimatedRevenue','sourceTag','createdAt','updatedAt']
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="prospects-${workspaceId}-${new Date().toISOString().slice(0,10)}.csv"`)
-  res.send(rows.join('\n'))
+  res.write(HEADERS.join(',') + '\n')
+
+  // Cursor-based pagination prevents OOM on large workspaces.
+  // Sort by id (unique, stable) to avoid skipped/duplicated rows when multiple
+  // rows share the same createdAt timestamp (common in bulk imports).
+  const PAGE = 500
+  let cursor: string | undefined
+  let totalWritten = 0
+  const MAX = 50_000
+
+  while (totalWritten < MAX) {
+    const batch = await prisma.prospect.findMany({
+      where: { workspaceId },
+      select: {
+        id: true, companyName: true, domain: true, industry: true, employeeCount: true,
+        location: true, contactName: true, contactEmail: true, contactPhone: true, contactTitle: true,
+        linkedinUrl: true, opportunityScore: true, intentScore: true, fitScore: true,
+        buyingStage: true, outcomeStage: true, winProbability: true,
+        expectedDealValue: true, estimatedRevenue: true, sourceTag: true,
+        createdAt: true, updatedAt: true
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {})
+    })
+
+    if (batch.length === 0) break
+    for (const p of batch) {
+      res.write(HEADERS.map(h => escCsv((p as Record<string, unknown>)[h])).join(',') + '\n')
+    }
+    totalWritten += batch.length
+    cursor = batch[batch.length - 1].id
+    if (batch.length < PAGE) break
+  }
+
+  res.end()
 }))
 
 // GET /api/prospects/:id
@@ -161,7 +208,222 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const rawSignals = prospect.signals.map(toRawSignal)
   const prediction = predictBuyingIntent(rawSignals, prospect.buyingStage, prospect.opportunityScore)
 
-  res.json(withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }))
+  const scoreBreakdown = prospect.signals?.map((s: any) => ({
+    type: s.type,
+    title: s.title,
+    contribution: s.weight ?? null,
+    detectedAt: s.detectedAt,
+  })) ?? []
+
+  res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown })
+}))
+
+// POST /api/prospects/discover — pull companies from Apollo using workspace ICP
+prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req, res) => {
+  const workspaceId = req.body.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const sourceName = String(req.body.source ?? 'apollo')
+  const source = getSource(sourceName)
+  if (!source) throw new ApiError(400, `Unknown source: ${sourceName}`)
+  if (!source.isConfigured) {
+    const available = listSources().filter(s => s.name !== 'csv' && s.isConfigured).map(s => s.label)
+    const hint = available.length > 0
+      ? `Available: ${available.join(', ')}`
+      : 'No discovery sources configured. Set APOLLO_API_KEY or GOOGLE_PLACES_API_KEY.'
+    throw new ApiError(503, `${source.label} is not configured. ${hint}`)
+  }
+
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+  const limit = Math.min(Number(req.body.limit ?? 25), 50)
+
+  const candidates = await source.search({
+    industries: req.body.industries ?? icp?.targetIndustries ?? [],
+    locations:  req.body.locations  ?? icp?.targetGeos       ?? [],
+    keywords:   req.body.keywords   ?? [],
+    minEmployees: icp?.minEmployees  ?? req.body.minEmployees,
+    maxEmployees: icp?.maxEmployees  ?? req.body.maxEmployees,
+    limit,
+  })
+
+  if (candidates.length === 0) {
+    return res.json({ discovered: 0, skipped: 0, total: 0 })
+  }
+
+  // Deduplicate against existing prospects using targeted IN queries — only
+  // check domains/names that appear in this candidate batch, not the full table.
+  const candidateDomains = candidates.map(c => c.domain?.toLowerCase()).filter(Boolean) as string[]
+  const candidateNames   = candidates.map(c => c.companyName.toLowerCase()).filter(Boolean)
+
+  const [existingDomainRows, existingNameRows] = await Promise.all([
+    candidateDomains.length > 0
+      ? prisma.prospect.findMany({ where: { workspaceId, domain: { in: candidateDomains } }, select: { domain: true } })
+      : [],
+    prisma.prospect.findMany({ where: { workspaceId, companyName: { in: candidateNames } }, select: { companyName: true } }),
+  ])
+  const existingDomains = new Set(existingDomainRows.map(p => p.domain!.toLowerCase()))
+  const existingNames   = new Set(existingNameRows.map(p => p.companyName.toLowerCase()))
+
+  const icpCfg: ICPConfig | undefined = icp ? {
+    targetIndustries: icp.targetIndustries,
+    minEmployees: icp.minEmployees ?? undefined,
+    maxEmployees: icp.maxEmployees ?? undefined,
+    targetGeos:   icp.targetGeos,
+    mustHaveEmail: icp.mustHaveEmail,
+  } : undefined
+
+  let discovered = 0
+  let skipped    = 0
+
+  for (const c of candidates) {
+    if (!c.companyName) { skipped++; continue }
+    const dk = c.domain?.toLowerCase()
+    const nk = c.companyName.toLowerCase()
+    if ((dk && existingDomains.has(dk)) || existingNames.has(nk)) { skipped++; continue }
+
+    const meta = {
+      industry:      c.industry      ?? null,
+      employeeCount: c.employeeCount ?? null,
+      contactEmail:  c.contactEmail  ?? null,
+      contactName:   c.contactName   ?? null,
+      domain:        c.domain        ?? null,
+      location:      c.location      ?? null,
+    }
+    const scores         = calculateOpportunityScores([], meta, icpCfg)
+    const buyingStage    = detectBuyingStage([], scores.opportunityScore)
+    const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+    const created = await prisma.prospect.create({
+      data: {
+        workspaceId,
+        companyName:  c.companyName,
+        domain:       meta.domain,
+        domainKey:    normalizeDomain(meta.domain),
+        industry:     meta.industry,
+        employeeCount: meta.employeeCount,
+        location:     meta.location,
+        description:  c.description  ?? null,
+        contactName:  meta.contactName,
+        contactEmail: meta.contactEmail,
+        contactTitle: c.contactTitle  ?? null,
+        sourceTag:    sourceName,
+        ...scores,
+        buyingStage,
+        winProbability,
+      }
+    })
+
+    // Seed HIRING/FUNDING signals from source data — no extra API call needed.
+    const now = new Date()
+    if (c.hiringCount && c.hiringCount > 0) {
+      const title = `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} detected`
+      const fp = buildSignalFingerprint(sourceName, 'HIRING', title, now)
+      await prisma.signal.upsert({
+        where: { prospectId_fingerprint: { prospectId: created.id, fingerprint: fp } },
+        create: {
+          workspaceId, prospectId: created.id, type: 'HIRING',
+          strength: Math.min(95, 50 + c.hiringCount * 4),
+          sourceReliability: 80, industryRelevance: 75,
+          title, source: sourceName, fingerprint: fp, detectedAt: now,
+        },
+        update: { strength: Math.min(95, 50 + c.hiringCount * 4), detectedAt: now },
+      }).catch(err => console.warn(`[discover] HIRING signal upsert failed: ${(err as Error).message}`))
+    }
+    if (c.fundingStage && c.totalFunding && c.totalFunding > 0) {
+      const amt = `$${(c.totalFunding / 1_000_000).toFixed(1)}M`
+      const title = `${c.fundingStage} · ${amt} total funding`
+      const fp = buildSignalFingerprint(sourceName, 'FUNDING', title, now)
+      await prisma.signal.upsert({
+        where: { prospectId_fingerprint: { prospectId: created.id, fingerprint: fp } },
+        create: {
+          workspaceId, prospectId: created.id, type: 'FUNDING',
+          strength: 85, sourceReliability: 90, industryRelevance: 80,
+          title, source: sourceName, fingerprint: fp, detectedAt: now,
+        },
+        update: { detectedAt: now },
+      }).catch(err => console.warn(`[discover] FUNDING signal upsert failed: ${(err as Error).message}`))
+    }
+
+    if (dk) existingDomains.add(dk)
+    existingNames.add(nk)
+    discovered++
+  }
+
+  if (discovered > 0) {
+    enqueueScoreProspects(workspaceId).catch(() => {})
+  }
+
+  res.json({ discovered, skipped, total: candidates.length })
+}))
+
+// POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
+prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, res) => {
+  const workspaceId = req.body.workspaceId as string
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const rows: Record<string, unknown>[] = req.body.rows
+  if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
+  if (rows.length > 1000) throw new ApiError(400, 'Maximum 1000 rows per import')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const icp = await getICP(workspaceId)
+
+  let imported = 0
+  let skipped = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
+    if (!companyName) { skipped++; continue }
+    try {
+      const meta = {
+        industry:      row.industry      ? String(row.industry)      : null,
+        employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
+        contactEmail:  row.contactEmail  ? String(row.contactEmail)  : null,
+        contactName:   row.contactName   ? String(row.contactName)   : null,
+        domain:        row.domain        ? String(row.domain)        : null,
+        location:      row.location      ? String(row.location)      : null,
+      }
+      const scores        = calculateOpportunityScores([], meta, icp)
+      const buyingStage   = detectBuyingStage([], scores.opportunityScore)
+      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+      await prisma.prospect.create({
+        data: {
+          workspaceId,
+          companyName,
+          domain:        meta.domain,
+          domainKey:     normalizeDomain(meta.domain),
+          industry:      meta.industry,
+          employeeCount: meta.employeeCount,
+          location:      meta.location,
+          contactName:   meta.contactName,
+          contactEmail:  meta.contactEmail,
+          contactPhone:  row.contactPhone  ? String(row.contactPhone)  : null,
+          contactTitle:  row.contactTitle  ? String(row.contactTitle)  : null,
+          linkedinUrl:   row.linkedinUrl   ? String(row.linkedinUrl)   : null,
+          description:   row.description   ? String(row.description)   : null,
+          notes:         row.notes         ? String(row.notes)         : null,
+          sourceTag:     row.sourceTag     ? String(row.sourceTag)     : 'csv_import',
+          estimatedRevenue: row.estimatedRevenue ? dollarsToCents(Number(row.estimatedRevenue)) : null,
+          expectedDealValue: row.expectedDealValue ? dollarsToCents(Number(row.expectedDealValue)) : null,
+          ...scores,
+          buyingStage,
+          winProbability,
+        }
+      })
+      imported++
+    } catch (err) {
+      errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
+    }
+  }
+
+  res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20) })
 }))
 
 // POST /api/prospects
@@ -192,6 +454,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
       workspaceId,
       companyName:       req.body.companyName,
       domain:            meta.domain,
+      domainKey:         normalizeDomain(meta.domain),
       industry:          meta.industry,
       employeeCount:     meta.employeeCount,
       estimatedRevenue:  req.body.estimatedRevenue  ? dollarsToCents(Number(req.body.estimatedRevenue))  : null,
@@ -240,6 +503,8 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
       : req.body[key]
   }
   if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
+  // Keep domainKey in sync whenever domain is patched
+  if ('domain' in data) data.domainKey = normalizeDomain(data.domain as string | null)
 
   const updated = await prisma.prospect.update({ where: { id: req.params.id as string }, data })
   res.json(withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }))
@@ -376,12 +641,16 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
+  if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot be enriched — add real prospects first')
+
   const result = await enrichProspect(prospect)
 
   const created: string[] = []
   for (const sig of result.signals) {
-    const s = await prisma.signal.create({
-      data: {
+    const fp = buildSignalFingerprint(sig.source, sig.type, sig.title, sig.detectedAt)
+    const s = await prisma.signal.upsert({
+      where: { prospectId_fingerprint: { prospectId: prospect.id, fingerprint: fp } },
+      create: {
         workspaceId:       prospect.workspaceId,
         prospectId:        prospect.id,
         type:              sig.type as import('@prisma/client').SignalType,
@@ -391,8 +660,10 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
         title:             sig.title,
         description:       sig.description,
         source:            sig.source,
+        fingerprint:       fp,
         detectedAt:        sig.detectedAt,
-      }
+      },
+      update: { strength: sig.strength, detectedAt: sig.detectedAt },
     })
     created.push(s.id)
   }
@@ -418,6 +689,22 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   const latestSignalAt = allSignals.reduce<Date | null>((max, s) => {
     return !max || s.detectedAt > max ? s.detectedAt : max
   }, null)
+
+  // Hunter email finder — if prospect has domain but no contact email, try Hunter
+  if (prospect.domain && !prospect.contactEmail && !result.updates.contactEmail && isHunterConfigured()) {
+    try {
+      const contact = await findContactEmail(prospect.domain)
+      if (contact) {
+        result.updates.contactEmail = contact.email
+        if (contact.firstName && !prospect.contactName) {
+          result.updates.contactName = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+        }
+        if (contact.position && !prospect.contactTitle) {
+          result.updates.contactTitle = contact.position
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
 
   const updated = await prisma.prospect.update({
     where: { id: prospect.id },
