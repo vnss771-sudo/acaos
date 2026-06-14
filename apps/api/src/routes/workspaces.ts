@@ -122,7 +122,12 @@ workspaceRouter.get(
 const updateWorkspaceSchema = z.object({
   name: nonEmptyString.max(100).optional(),
   slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens').optional(),
-}).refine(data => data.name !== undefined || data.slug !== undefined, { message: 'At least one field required' })
+  senderBusinessName: z.string().trim().max(200).nullable().optional(),
+  senderPostalAddress: z.string().trim().max(500).nullable().optional(),
+}).refine(
+  data => data.name !== undefined || data.slug !== undefined || data.senderBusinessName !== undefined || data.senderPostalAddress !== undefined,
+  { message: 'At least one field required' }
+)
 
 workspaceRouter.patch(
   '/:id',
@@ -139,14 +144,19 @@ workspaceRouter.patch(
     })
     if (!membership) throw new ApiError(403, 'Must be owner or admin to update workspace')
 
-    const updates: { name?: string; slug?: string } = {}
+    const updates: { name?: string; slug?: string; senderBusinessName?: string | null; senderPostalAddress?: string | null } = {}
 
     if (req.body.name) {
       updates.name = req.body.name
     }
-
     if (req.body.slug) {
       updates.slug = await ensureWorkspaceSlug(req.body.slug, workspaceId)
+    }
+    if (req.body.senderBusinessName !== undefined) {
+      updates.senderBusinessName = req.body.senderBusinessName || null
+    }
+    if (req.body.senderPostalAddress !== undefined) {
+      updates.senderPostalAddress = req.body.senderPostalAddress || null
     }
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No valid updates provided')
@@ -154,7 +164,7 @@ workspaceRouter.patch(
     const workspace = await prisma.workspace.update({
       where: { id: workspaceId },
       data: updates,
-      select: { id: true, name: true, slug: true, plan: true }
+      select: { id: true, name: true, slug: true, plan: true, senderBusinessName: true, senderPostalAddress: true }
     })
 
     res.json({ workspace })

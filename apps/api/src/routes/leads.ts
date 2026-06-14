@@ -402,3 +402,64 @@ leadsRouter.get(
     res.json({ drafts })
   })
 )
+
+// Approval queue — all DRAFTED drafts awaiting review for a workspace
+leadsRouter.get(
+  '/approvals/pending',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.query.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const drafts = await prisma.outreachDraft.findMany({
+      where: { workspaceId, status: 'DRAFTED' },
+      include: { lead: { select: { id: true, businessName: true, email: true, city: true, category: true } } },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    })
+
+    res.json({ drafts })
+  })
+)
+
+// Approve a draft
+leadsRouter.post(
+  '/:id/drafts/:draftId/approve',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { id: leadId, draftId } = req.params as { id: string; draftId: string }
+    const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
+    if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
+
+    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const updated = await prisma.outreachDraft.update({
+      where: { id: draftId },
+      data: { status: 'APPROVED', reviewedAt: new Date(), reviewedBy: user.id },
+    })
+    res.json({ draft: updated })
+  })
+)
+
+// Reject a draft
+leadsRouter.post(
+  '/:id/drafts/:draftId/reject',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { id: leadId, draftId } = req.params as { id: string; draftId: string }
+    const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
+    if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
+
+    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const updated = await prisma.outreachDraft.update({
+      where: { id: draftId },
+      data: { status: 'REJECTED', reviewedAt: new Date(), reviewedBy: user.id },
+    })
+    res.json({ draft: updated })
+  })
+)

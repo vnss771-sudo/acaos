@@ -14,6 +14,8 @@ export type Workspace = {
   createdAt?: string
   ingestApiKey?: string | null
   onboardingCompleted?: boolean
+  senderBusinessName?: string | null
+  senderPostalAddress?: string | null
   _count?: { leads: number; campaigns: number }
 }
 
@@ -56,6 +58,8 @@ export type OutreachDraft = {
   subject: string
   emailBody: string
   followup?: string | null
+  status: string  // DRAFTED | APPROVED | REJECTED | SENT | SKIPPED
+  reviewedAt?: string | null
   createdAt: string
 }
 

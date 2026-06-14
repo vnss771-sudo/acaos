@@ -48,7 +48,7 @@ type Props = {
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
-  const [wsForm, setWsForm] = useState({ name: workspace?.name ?? '', slug: workspace?.slug ?? '' })
+  const [wsForm, setWsForm] = useState({ name: workspace?.name ?? '', slug: workspace?.slug ?? '', senderBusinessName: workspace?.senderBusinessName ?? '', senderPostalAddress: workspace?.senderPostalAddress ?? '' })
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
   const [savingWs, setSavingWs] = useState(false)
@@ -205,7 +205,12 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     try {
       const d = await api<{ workspace: Workspace }>(`/api/workspaces/${workspace.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: wsForm.name.trim(), slug: wsForm.slug.trim() })
+        body: JSON.stringify({
+          name: wsForm.name.trim(),
+          slug: wsForm.slug.trim(),
+          senderBusinessName: wsForm.senderBusinessName.trim() || null,
+          senderPostalAddress: wsForm.senderPostalAddress.trim() || null,
+        })
       })
       onWorkspaceUpdate(d.workspace)
       toast.success('Workspace updated')
@@ -451,6 +456,15 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                   onChange={e => setWsForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))}
                 />
               </div>
+            </div>
+            <div>
+              <label style={s.label}>Sender Business Name <span style={{ color: colors.textFaint, fontWeight: 400 }}>(CAN-SPAM / GDPR)</span></label>
+              <input style={s.input} placeholder="Acme Services LLC" value={wsForm.senderBusinessName} onChange={e => setWsForm(f => ({ ...f, senderBusinessName: e.target.value }))} />
+            </div>
+            <div>
+              <label style={s.label}>Sender Postal Address</label>
+              <input style={s.input} placeholder="123 Main St, City, ST 00000, USA" value={wsForm.senderPostalAddress} onChange={e => setWsForm(f => ({ ...f, senderPostalAddress: e.target.value }))} />
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>Included in outbound email footer to meet commercial email regulations.</div>
             </div>
           </div>
           <button style={s.btn} disabled={savingWs} onClick={saveWorkspace}>

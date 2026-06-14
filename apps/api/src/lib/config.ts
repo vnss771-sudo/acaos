@@ -37,8 +37,22 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   return getAllowedOrigins().includes(origin)
 }
 
-// Variables without which the API cannot function in production.
-const REQUIRED_IN_PRODUCTION = ['DATABASE_URL', 'JWT_SECRET'] as const
+// Variables without which the API cannot function at all in production.
+const REQUIRED_IN_PRODUCTION = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'EMAIL_ENCRYPTION_KEY',
+  'REDIS_URL',
+] as const
+
+// Variables required only when their feature is in use. Missing values produce
+// a startup warning rather than a hard crash — the operator may intentionally
+// deploy without Stripe or AI configured during initial rollout.
+const FEATURE_GATED: Array<{ key: string; feature: string }> = [
+  { key: 'OPENAI_API_KEY', feature: 'AI features (research, outreach, classification)' },
+  { key: 'STRIPE_SECRET_KEY', feature: 'Billing (Stripe)' },
+  { key: 'STRIPE_WEBHOOK_SECRET', feature: 'Stripe webhook validation' },
+]
 
 /**
  * Validate configuration at process start. Throws a single aggregated error
@@ -50,6 +64,11 @@ export function validateConfig(): void {
   if (isProduction()) {
     for (const key of REQUIRED_IN_PRODUCTION) {
       if (!process.env[key]?.trim()) problems.push(`${key} is required in production`)
+    }
+    for (const { key, feature } of FEATURE_GATED) {
+      if (!process.env[key]?.trim()) {
+        console.warn(`[config] ${key} not set — ${feature} will be unavailable`)
+      }
     }
     if (getAllowedOrigins().length === 0) {
       // Warn but don't crash — CORS middleware will reject cross-origin requests
@@ -74,4 +93,17 @@ export function validateConfig(): void {
   if (unique.length > 0) {
     throw new Error(`Invalid configuration:\n  - ${unique.join('\n  - ')}`)
   }
+}
+
+/** Returns a structured readiness report for /api/ready. */
+export function getReadinessReport() {
+  const missing: string[] = []
+  for (const key of REQUIRED_IN_PRODUCTION) {
+    if (!process.env[key]?.trim()) missing.push(key)
+  }
+  const features = FEATURE_GATED.map(({ key, feature }) => ({
+    feature,
+    configured: Boolean(process.env[key]?.trim()),
+  }))
+  return { ready: missing.length === 0, missing, features }
 }

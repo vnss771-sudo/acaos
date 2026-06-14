@@ -80,7 +80,7 @@ export function App() {
     setActiveWsId(null)
   }
 
-  const api = useApi(token, logout)
+  const api = useApi(token, logout, setToken)
 
   // Transparent access token refresh
   const refreshAccessToken = useCallback(async () => {

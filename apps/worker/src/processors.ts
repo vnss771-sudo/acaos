@@ -177,7 +177,13 @@ export async function sendCampaignBatch(
   progress?: Progress
 ): Promise<SendCampaignResult> {
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
-  const wsCfgRecord = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+  // Load workspace config and ICP settings together — both are needed before
+  // querying leads (approvalMode determines which drafts are eligible to send).
+  const [wsCfgRecord, icp, workspace] = await Promise.all([
+    prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId } }),
+    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
+  ])
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
 
@@ -194,12 +200,15 @@ export async function sendCampaignBatch(
   const leads = await prisma.lead.findMany({
     where,
     include: {
-      outreachDrafts: { orderBy: { createdAt: 'desc' }, take: 1 }
+      // When approvalMode is on, only include APPROVED drafts so leads without
+      // an approved draft are skipped rather than triggering AI generation.
+      outreachDrafts: {
+        where: icp?.approvalMode ? { status: 'APPROVED' } : undefined,
+        orderBy: { createdAt: 'desc' },
+        take: 1
+      }
     }
   })
-
-  // Enforce daily send limit inside the worker (double-enforced; route checks too)
-  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
   let dailyRemaining = Infinity
   if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
     const startOfToday = new Date()
@@ -304,7 +313,11 @@ export async function sendCampaignBatch(
       const unsubscribeToken = randomBytes(24).toString('hex')
       const safeAppUrl = escHtml(appUrl)
       const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
-      const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.</p>`
+      // CAN-SPAM / GDPR: include sender identity and physical address when configured
+      const senderLine = workspace?.senderBusinessName
+        ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
+        : ''
+      const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
       const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
 
       const info = await sendMail(lead.email!, subject, htmlBody, smtpCfg)

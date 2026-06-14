@@ -77,6 +77,8 @@ test('validateConfig passes in production when fully configured', () => {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgresql://x',
     JWT_SECRET: 'a-strong-production-secret-value',
+    EMAIL_ENCRYPTION_KEY: 'a-valid-encryption-key-for-testing',
+    REDIS_URL: 'redis://localhost:6379',
     ALLOWED_ORIGINS: 'https://app.acme.com',
   })
   assert.doesNotThrow(() => validateConfig())

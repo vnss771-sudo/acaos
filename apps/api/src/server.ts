@@ -23,7 +23,7 @@ import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
-import { isProduction, isOriginAllowed, validateConfig } from './lib/config.js'
+import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
 
 // Fail fast on a misconfigured deploy rather than surfacing it as a runtime 503.
 validateConfig()
@@ -54,6 +54,23 @@ app.use(generalRateLimit)
 // Liveness: cheap, never touches the database — safe for frequent probes.
 app.get('/api/live', (_req, res) => {
   res.json({ ok: true, service: 'acaos-api', timestamp: new Date().toISOString() })
+})
+
+// Readiness: checks required config + DB connectivity. Suitable for deployment
+// gates (e.g. Kubernetes readinessProbe or Render healthcheck).
+app.get('/api/ready', async (_req, res) => {
+  const report = getReadinessReport()
+  let dbOk = false
+  try {
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+    ])
+    dbOk = true
+  } catch { /* leave false */ }
+
+  const ok = report.ready && dbOk
+  res.status(ok ? 200 : 503).json({ ok, db: dbOk, config: report })
 })
 
 // Readiness / health: verifies the database is reachable.

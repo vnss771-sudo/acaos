@@ -19,6 +19,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Security audit
+        run: npm audit --omit=dev --audit-level=high
+
       # The Prisma client must be generated before typecheck — the route and
       # worker layers depend on its generated types.
       - name: Generate Prisma client

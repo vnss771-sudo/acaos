@@ -32,6 +32,8 @@ model Workspace {
   subscriptionStatus   String?
   ingestApiKey         String?              @unique
   onboardingCompleted  Boolean              @default(false)
+  senderBusinessName   String?
+  senderPostalAddress  String?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   memberships          Membership[]
@@ -113,18 +115,22 @@ model Lead {
 }
 
 model OutreachDraft {
-  id          String    @id @default(cuid())
-  leadId      String
-  workspaceId String
-  subject     String
-  emailBody   String
-  followup    String?
-  createdAt   DateTime  @default(now())
-  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id           String    @id @default(cuid())
+  leadId       String
+  workspaceId  String
+  subject      String
+  emailBody    String
+  followup     String?
+  status       String    @default("DRAFTED")  // DRAFTED | APPROVED | REJECTED | SENT | SKIPPED
+  reviewedAt   DateTime?
+  reviewedBy   String?   // userId of approver/rejecter
+  createdAt    DateTime  @default(now())
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([leadId])
   @@index([workspaceId])
+  @@index([workspaceId, status])
 }
 
 // Tracks every email sent via a campaign — provides closed-loop reply correlation.
