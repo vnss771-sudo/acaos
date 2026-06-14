@@ -45,6 +45,9 @@ echo "[test-db] starting postgres on port ${PGPORT}"
 "${RUN[@]}" "${PGBIN}/createdb" -h 127.0.0.1 -p "${PGPORT}" -U postgres "${DBNAME}"
 
 export DATABASE_URL="postgresql://postgres@127.0.0.1:${PGPORT}/${DBNAME}"
+# The Prisma schema declares directUrl; mirror DATABASE_URL so the CLI and
+# client both resolve it (CI sets DIRECT_URL explicitly on the job).
+export DIRECT_URL="${DATABASE_URL}"
 echo "[test-db] applying migrations"
 npx prisma migrate deploy --schema packages/db/prisma/schema.prisma >/dev/null
 

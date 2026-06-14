@@ -75,6 +75,19 @@ jobs:
       - name: Apply migrations
         run: npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
 
+      # Guard against schema drift: after replaying the migration history, the
+      # live database must match schema.prisma exactly. If they diverge (e.g. a
+      # schema edit landed without a matching migration), fail here rather than
+      # letting `prisma migrate dev` generate a surprise migration later.
+      - name: Check for schema drift
+        run: >-
+          npx prisma migrate diff
+          --from-url "$DATABASE_URL"
+          --to-schema-datamodel packages/db/prisma/schema.prisma
+          --exit-code
+          && echo "No schema drift."
+          || (echo "::error::Schema drift detected: schema.prisma does not match the migration history. Run 'prisma migrate dev' and commit the generated migration." && exit 1)
+
       - name: Database-backed tests
         run: npm run test:db
 

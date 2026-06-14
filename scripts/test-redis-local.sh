@@ -43,6 +43,9 @@ echo "[test-redis] initializing postgres cluster in ${PGDATA}"
 "${RUN[@]}" "${PGBIN}/createdb" -h 127.0.0.1 -p "${PGPORT}" -U postgres "${DBNAME}"
 
 export DATABASE_URL="postgresql://postgres@127.0.0.1:${PGPORT}/${DBNAME}"
+# The Prisma schema declares directUrl; mirror DATABASE_URL so the CLI and
+# client both resolve it (CI sets DIRECT_URL explicitly on the job).
+export DIRECT_URL="${DATABASE_URL}"
 export REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
 echo "[test-redis] applying migrations"
 npx prisma migrate deploy --schema packages/db/prisma/schema.prisma >/dev/null
