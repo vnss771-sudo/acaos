@@ -55,6 +55,9 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/acaos_test
+      # The schema declares a directUrl; in CI there is no connection pooler,
+      # so the direct URL is the same as DATABASE_URL.
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/acaos_test
     steps:
       - uses: actions/checkout@v4
 
@@ -103,6 +106,9 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/acaos_test
+      # The schema declares a directUrl; in CI there is no connection pooler,
+      # so the direct URL is the same as DATABASE_URL.
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/acaos_test
       REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
