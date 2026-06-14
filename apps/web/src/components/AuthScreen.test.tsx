@@ -23,8 +23,8 @@ describe('AuthScreen', () => {
     expect(screen.getByPlaceholderText('Your name')).toBeInTheDocument()
   })
 
-  test('submitting login posts credentials, stores the token, and calls onToken', async () => {
-    const fetchMock = mockFetch(200, { token: 'jwt-abc', refreshToken: 'ref-xyz' })
+  test('submitting login posts credentials with cookies and calls onToken with only the access token', async () => {
+    const fetchMock = mockFetch(200, { token: 'jwt-abc' })
     vi.stubGlobal('fetch', fetchMock)
     const onToken = vi.fn()
     const { container } = render(<AuthScreen onToken={onToken} />)
@@ -36,9 +36,13 @@ describe('AuthScreen', () => {
     const [url, init] = (fetchMock as any).mock.calls[0]
     expect(url).toMatch(/\/api\/auth\/login$/)
     expect(JSON.parse(init.body)).toMatchObject({ email: 'sarah@northwind.test', password: 'hunter2hunter' }) // normalised
+    // Must send credentials so the browser stores the HttpOnly refresh cookie.
+    expect(init.credentials).toBe('include')
 
-    expect(onToken).toHaveBeenCalledWith('jwt-abc', 'ref-xyz')
-    expect(localStorage.getItem('acaos_token')).toBe('jwt-abc')
+    // Only the access token is handed up; the refresh token is in the cookie and
+    // is never written to localStorage.
+    expect(onToken).toHaveBeenCalledWith('jwt-abc')
+    expect(localStorage.getItem('acaos_token')).toBeNull()
   })
 
   test('shows the server error message on a failed login', async () => {

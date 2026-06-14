@@ -5,18 +5,17 @@ const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 export type ApiOptions = RequestInit & { skipContentType?: boolean }
 
 async function tryRefresh(): Promise<string | null> {
-  const refreshToken = localStorage.getItem('acaos_refresh')
-  if (!refreshToken) return null
+  // The refresh token lives in an HttpOnly cookie (sent automatically with
+  // credentials: 'include'); JS never sees it. A custom header satisfies the
+  // server's CSRF guard. The new access token comes back in the body.
   try {
     const res = await fetch(`${API}/api/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken })
+      credentials: 'include',
+      headers: { 'X-CSRF-Protection': '1' }
     })
     if (!res.ok) return null
     const data = await res.json()
-    localStorage.setItem('acaos_token', data.token)
-    if (data.refreshToken) localStorage.setItem('acaos_refresh', data.refreshToken)
     return data.token as string
   } catch {
     return null
@@ -34,7 +33,9 @@ export function useApi(token: string | null, onUnauth: () => void, onTokenRefres
       }
       if (token) headers.set('Authorization', `Bearer ${token}`)
 
-      const res = await fetch(`${API}${path}`, { ...fetchInit, headers })
+      // credentials: 'include' so the HttpOnly refresh cookie is sent to the
+      // auth endpoints; harmless for the rest (they authenticate via the header).
+      const res = await fetch(`${API}${path}`, { ...fetchInit, headers, credentials: 'include' })
 
       if (res.status === 401) {
         const newToken = await tryRefresh()
@@ -48,7 +49,7 @@ export function useApi(token: string | null, onUnauth: () => void, onTokenRefres
             retryHeaders.set('Content-Type', 'application/json')
           }
           retryHeaders.set('Authorization', `Bearer ${newToken}`)
-          const retryRes = await fetch(`${API}${path}`, { ...fetchInit, headers: retryHeaders })
+          const retryRes = await fetch(`${API}${path}`, { ...fetchInit, headers: retryHeaders, credentials: 'include' })
           const retryData = await retryRes.json().catch(() => ({}))
           if (!retryRes.ok) {
             throw new Error(typeof retryData.error === 'string' ? retryData.error : `Request failed (${retryRes.status})`)

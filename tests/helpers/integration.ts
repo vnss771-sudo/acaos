@@ -93,7 +93,7 @@ export type TestServer = {
   request: (
     path: string,
     init?: RequestInit
-  ) => Promise<{ status: number; body: any }>
+  ) => Promise<{ status: number; headers: Headers; body: any }>
 }
 
 /**
@@ -132,7 +132,7 @@ export async function startTestServer(
       } catch {
         /* keep raw text */
       }
-      return { status: res.status, body }
+      return { status: res.status, headers: res.headers, body }
     },
   }
 }

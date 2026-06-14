@@ -4,7 +4,7 @@ import { s } from '../styles.js'
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
 type AuthScreenProps = {
-  onToken: (token: string, refreshToken: string) => void
+  onToken: (token: string) => void
   resetToken?: string | null
   inviteToken?: string | null
 }
@@ -67,15 +67,16 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
 
       const res = await fetch(`${API}/api/auth/${mode}`, {
         method: 'POST',
+        credentials: 'include', // accept the HttpOnly refresh cookie the server sets
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Authentication failed')
 
-      localStorage.setItem('acaos_token', data.token)
-      if (data.refreshToken) localStorage.setItem('acaos_refresh', data.refreshToken)
-      onToken(data.token, data.refreshToken)
+      // The refresh token is now in an HttpOnly cookie; only the access token is
+      // returned, and it is held in memory by the app (not localStorage).
+      onToken(data.token)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Authentication failed')
     } finally {

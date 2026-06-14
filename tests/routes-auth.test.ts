@@ -98,20 +98,51 @@ afterEach(async () => {
   resetPrisma()
 })
 
+// Each request gets a unique source IP (via X-Forwarded-For + trust proxy) so
+// the per-IP auth rate limiter never bleeds across independent test cases.
+let ipSeq = 0
+const nextIp = () => `9.0.${Math.floor(ipSeq / 256) % 256}.${ipSeq++ % 256}`
+
 const post = (path: string, body: unknown) =>
   server.request(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': nextIp() },
     body: JSON.stringify(body),
   })
 
+// Refresh/logout authenticate via the HttpOnly cookie and require the CSRF
+// header. This helper sends both.
+const postWithRefreshCookie = (path: string, rawRefresh: string, opts: { csrf?: boolean } = {}) =>
+  server.request(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': nextIp(),
+      Cookie: `acaos_refresh=${rawRefresh}`,
+      ...(opts.csrf === false ? {} : { 'X-CSRF-Protection': '1' }),
+    },
+  })
+
+// Extract the acaos_refresh cookie value from a Set-Cookie header, if present.
+function refreshCookieFrom(headers: Headers): string | null {
+  const raw = headers.get('set-cookie')
+  if (!raw) return null
+  const m = raw.match(/acaos_refresh=([^;]+)/)
+  return m ? m[1] : null
+}
+
 // --- signup ---
 
-test('signup creates user + workspace + owner membership and returns tokens', async () => {
+test('signup creates user + workspace + owner membership; refresh token only in an HttpOnly cookie', async () => {
   const res = await post('/api/auth/signup', { email: 'New@Acme.test ', password: 'sup3rsecret' })
   assert.equal(res.status, 201)
   assert.ok(res.body.token)
-  assert.ok(res.body.refreshToken)
+  // The refresh token must NOT be exposed to JS via the body...
+  assert.equal(res.body.refreshToken, undefined)
+  // ...it is delivered as an HttpOnly cookie instead.
+  const setCookie = res.headers.get('set-cookie') ?? ''
+  assert.match(setCookie, /acaos_refresh=/)
+  assert.match(setCookie, /HttpOnly/i)
   assert.equal(res.body.user.email, 'new@acme.test') // normalized
   assert.equal(prisma.callsTo('membership', 'create').length, 1)
   assert.equal(prisma.callsTo('refreshToken', 'create').length, 1)
@@ -131,12 +162,14 @@ test('signup rejects a duplicate email', async () => {
 
 // --- login ---
 
-test('login succeeds with correct credentials', async () => {
+test('login succeeds with correct credentials and sets the refresh cookie (not the body)', async () => {
   const passwordHash = await bcrypt.hash('sup3rsecret', 10)
   users.push({ id: 'u-1', email: 'a@acme.test', name: 'A', passwordHash })
   const res = await post('/api/auth/login', { email: 'A@acme.test', password: 'sup3rsecret' })
   assert.equal(res.status, 200)
   assert.ok(res.body.token)
+  assert.equal(res.body.refreshToken, undefined)
+  assert.match(res.headers.get('set-cookie') ?? '', /acaos_refresh=.*HttpOnly/i)
 })
 
 test('login rejects a wrong password without leaking which field failed', async () => {
@@ -155,7 +188,7 @@ test('login rejects an unknown email with the same generic error', async () => {
 
 // --- refresh-token rotation ---
 
-test('refresh rotates the token: old is revoked, a new one is issued', async () => {
+test('refresh rotates the token: old is revoked, a new one is issued in a fresh cookie', async () => {
   users.push({ id: 'u-1', email: 'a@acme.test', name: null })
   const raw = 'plain-refresh-token-value'
   refreshTokens.push({
@@ -166,13 +199,36 @@ test('refresh rotates the token: old is revoked, a new one is issued', async () 
     revokedAt: null,
   })
 
-  const res = await post('/api/auth/refresh', { refreshToken: raw })
+  const res = await postWithRefreshCookie('/api/auth/refresh', raw)
   assert.equal(res.status, 200)
   assert.ok(res.body.token)
-  assert.notEqual(res.body.refreshToken, raw)
+  // New refresh token comes back as a rotated cookie, never in the body.
+  assert.equal(res.body.refreshToken, undefined)
+  const rotated = refreshCookieFrom(res.headers)
+  assert.ok(rotated && rotated !== raw, 'a new refresh cookie should be set')
   // Old token revoked, new token persisted.
   assert.ok(refreshTokens.find((r) => r.id === 'rt-1')!.revokedAt)
   assert.equal(refreshTokens.length, 2)
+})
+
+test('refresh without the CSRF header is rejected (403) before any token work', async () => {
+  const raw = 'csrf-missing-token'
+  refreshTokens.push({
+    id: 'rt-1', userId: 'u-1', tokenHash: hashRefreshToken(raw),
+    expiresAt: new Date(Date.now() + 60_000), revokedAt: null,
+  })
+  const res = await postWithRefreshCookie('/api/auth/refresh', raw, { csrf: false })
+  assert.equal(res.status, 403)
+  // Token must not have been touched.
+  assert.equal(refreshTokens[0].revokedAt, null)
+})
+
+test('refresh with no cookie returns 401', async () => {
+  const res = await server.request('/api/auth/refresh', {
+    method: 'POST',
+    headers: { 'X-CSRF-Protection': '1', 'X-Forwarded-For': nextIp() },
+  })
+  assert.equal(res.status, 401)
 })
 
 test('refresh rejects an already-revoked token', async () => {
@@ -184,7 +240,7 @@ test('refresh rejects an already-revoked token', async () => {
     expiresAt: new Date(Date.now() + 60_000),
     revokedAt: new Date(),
   })
-  const res = await post('/api/auth/refresh', { refreshToken: raw })
+  const res = await postWithRefreshCookie('/api/auth/refresh', raw)
   assert.equal(res.status, 401)
 })
 
@@ -197,11 +253,11 @@ test('refresh rejects an expired token', async () => {
     expiresAt: new Date(Date.now() - 60_000),
     revokedAt: null,
   })
-  const res = await post('/api/auth/refresh', { refreshToken: raw })
+  const res = await postWithRefreshCookie('/api/auth/refresh', raw)
   assert.equal(res.status, 401)
 })
 
-test('logout revokes the supplied refresh token', async () => {
+test('logout revokes the cookie token and clears the cookie', async () => {
   const raw = 'logout-token'
   refreshTokens.push({
     id: 'rt-1',
@@ -210,7 +266,20 @@ test('logout revokes the supplied refresh token', async () => {
     expiresAt: new Date(Date.now() + 60_000),
     revokedAt: null,
   })
-  const res = await post('/api/auth/logout', { refreshToken: raw })
+  const res = await postWithRefreshCookie('/api/auth/logout', raw)
   assert.equal(res.status, 200)
   assert.ok(refreshTokens[0].revokedAt)
+  // The cookie is cleared (expired) on logout.
+  assert.match(res.headers.get('set-cookie') ?? '', /acaos_refresh=/)
+})
+
+test('logout without the CSRF header is rejected (403)', async () => {
+  const raw = 'logout-csrf-token'
+  refreshTokens.push({
+    id: 'rt-1', userId: 'u-1', tokenHash: hashRefreshToken(raw),
+    expiresAt: new Date(Date.now() + 60_000), revokedAt: null,
+  })
+  const res = await postWithRefreshCookie('/api/auth/logout', raw, { csrf: false })
+  assert.equal(res.status, 403)
+  assert.equal(refreshTokens[0].revokedAt, null)
 })

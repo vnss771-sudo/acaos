@@ -51,7 +51,9 @@ function getUrlParam(key: string) {
 }
 
 export function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('acaos_token'))
+  // Access token is held in memory only. On load it is re-derived from the
+  // HttpOnly refresh cookie via /api/auth/refresh (see the boot effect below).
+  const [token, setToken] = useState<string | null>(null)
   const [resetToken] = useState<string | null>(() => getUrlParam('reset'))
   const [inviteToken] = useState<string | null>(() => getUrlParam('invite'))
   const [verifyToken] = useState<string | null>(() => getUrlParam('verify'))
@@ -64,16 +66,13 @@ export function App() {
   const { toasts, toast, removeToast } = useToast()
 
   function logout() {
-    const refreshToken = localStorage.getItem('acaos_refresh')
-    if (refreshToken) {
-      fetch(`${API}/api/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken })
-      }).catch(() => {})
-    }
-    localStorage.removeItem('acaos_token')
-    localStorage.removeItem('acaos_refresh')
+    // The refresh cookie is HttpOnly; the server clears it. A custom header
+    // satisfies the CSRF guard.
+    fetch(`${API}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRF-Protection': '1' }
+    }).catch(() => {})
     setToken(null)
     setUser(null)
     setWorkspaces([])
@@ -82,27 +81,35 @@ export function App() {
 
   const api = useApi(token, logout, setToken)
 
-  // Transparent access token refresh
+  // Exchange the HttpOnly refresh cookie for a fresh access token. Returns true
+  // when a session was (re)established.
   const refreshAccessToken = useCallback(async () => {
-    const refreshToken = localStorage.getItem('acaos_refresh')
-    if (!refreshToken) return false
     try {
       const res = await fetch(`${API}/api/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken })
+        credentials: 'include',
+        headers: { 'X-CSRF-Protection': '1' }
       })
-      const data = await res.json()
       if (!res.ok) return false
-      localStorage.setItem('acaos_token', data.token)
-      if (data.refreshToken) localStorage.setItem('acaos_refresh', data.refreshToken)
+      const data = await res.json()
       setToken(data.token)
       return true
     } catch { return false }
   }, [])
 
+  // Boot: try to re-establish a session from the refresh cookie. If it fails,
+  // there is no session — show the auth screen.
   useEffect(() => {
-    if (!token) { setBooting(false); return }
+    let cancelled = false
+    refreshAccessToken().then(ok => {
+      if (!cancelled && !ok) setBooting(false)
+    })
+    return () => { cancelled = true }
+  }, [refreshAccessToken])
+
+  // Once we have an access token, load the user + workspaces.
+  useEffect(() => {
+    if (!token) return
     api<{ user: User; workspaces: Workspace[] }>('/api/auth/me')
       .then(d => {
         setUser(d.user)
@@ -114,10 +121,7 @@ export function App() {
           setActiveWsId(found ? found.id : wsList[0].id)
         }
       })
-      .catch(async () => {
-        const refreshed = await refreshAccessToken()
-        if (!refreshed) logout()
-      })
+      .catch(() => logout())
       .finally(() => setBooting(false))
   }, [token])
 
@@ -166,7 +170,7 @@ export function App() {
     return (
       <>
         <AuthScreen
-          onToken={(t, rt) => { setToken(t); if (rt) localStorage.setItem('acaos_refresh', rt) }}
+          onToken={(t) => setToken(t)}
           resetToken={resetToken}
           inviteToken={inviteToken}
         />

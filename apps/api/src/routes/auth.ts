@@ -10,6 +10,7 @@ import {
 } from '../lib/jwt.js'
 import { requireAuth } from '../middleware/auth.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
+import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/validation.js'
 import { resolveUniqueWorkspaceSlug } from '../lib/workspaces.js'
@@ -81,7 +82,10 @@ authRouter.post(
     // Send verification email (non-blocking — don't fail signup if SMTP is down)
     sendVerificationEmail(result.user.id, result.user.email).catch(() => {})
 
-    res.status(201).json({ token, refreshToken, user: result.user, workspace: result.workspace })
+    // Refresh token goes in an HttpOnly cookie, never the response body, so it
+    // cannot be read by JavaScript. The access token stays in the body (memory).
+    setRefreshCookie(res, refreshToken)
+    res.status(201).json({ token, user: result.user, workspace: result.workspace })
   })
 )
 
@@ -107,9 +111,9 @@ authRouter.post(
     const { token, refreshToken } = issueTokens(user.id)
     await persistRefreshToken(user.id, refreshToken)
 
+    setRefreshCookie(res, refreshToken)
     res.json({
       token,
-      refreshToken,
       user: { id: user.id, email: user.email, name: user.name }
     })
   })
@@ -118,9 +122,11 @@ authRouter.post(
 authRouter.post(
   '/refresh',
   authRateLimit,
+  requireCsrfHeader,
   asyncHandler(async (req, res) => {
-    const rawToken = String(req.body?.refreshToken || '').trim()
-    if (!rawToken) throw new ApiError(400, 'refreshToken required')
+    // The refresh token is read from the HttpOnly cookie, never the body.
+    const rawToken = (readCookie(req, REFRESH_COOKIE) || '').trim()
+    if (!rawToken) throw new ApiError(401, 'Refresh token invalid or expired')
 
     const tokenHash = hashRefreshToken(rawToken)
 
@@ -146,14 +152,18 @@ authRouter.post(
       select: { id: true, email: true, name: true }
     })
 
-    res.json({ token, refreshToken: newRefreshToken, user })
+    // Rotate the cookie to the new refresh token; only the access token is
+    // returned in the body.
+    setRefreshCookie(res, newRefreshToken)
+    res.json({ token, user })
   })
 )
 
 authRouter.post(
   '/logout',
+  requireCsrfHeader,
   asyncHandler(async (req, res) => {
-    const rawToken = String(req.body?.refreshToken || '').trim()
+    const rawToken = (readCookie(req, REFRESH_COOKIE) || '').trim()
     if (rawToken) {
       const tokenHash = hashRefreshToken(rawToken)
       await prisma.refreshToken.updateMany({
@@ -161,6 +171,7 @@ authRouter.post(
         data: { revokedAt: new Date() }
       })
     }
+    clearRefreshCookie(res)
     res.json({ ok: true })
   })
 )
