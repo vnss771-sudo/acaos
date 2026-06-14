@@ -134,10 +134,19 @@ statsRouter.get(
       orderBy: { createdAt: 'desc' }
     })
 
-    const data = campaigns.map(c => {
-      const active = c.leads.filter(l => ['REPLIED', 'BOOKED', 'CLOSED'].includes(l.stage))
+    type CampaignStatsRow = {
+      id: string
+      name: string
+      goalType: string
+      createdAt: Date
+      _count: { leads: number }
+      leads: Array<{ stage: string; score: number }>
+    }
+
+    const data = (campaigns as CampaignStatsRow[]).map((c: CampaignStatsRow) => {
+      const active = c.leads.filter((l: { stage: string }) => ['REPLIED', 'BOOKED', 'CLOSED'].includes(l.stage))
       const avgScore = c.leads.length > 0
-        ? Math.round(c.leads.reduce((s, l) => s + l.score, 0) / c.leads.length)
+        ? Math.round(c.leads.reduce((s: number, l: { score: number }) => s + l.score, 0) / c.leads.length)
         : 0
       return {
         id: c.id,

@@ -176,8 +176,10 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       where: { workspaceId, uid: { gte: windowStart } },
       select: { uid: true, messageId: true }
     })
-    const seenUids = new Set(existing.map(e => e.uid))
-    const seenMsgIds = new Set(existing.map(e => e.messageId).filter(Boolean))
+    type ProcessedEmailRow = { uid: number; messageId: string | null }
+    const processedRows = existing as ProcessedEmailRow[]
+    const seenUids = new Set(processedRows.map((e: ProcessedEmailRow) => e.uid))
+    const seenMsgIds = new Set(processedRows.map((e: ProcessedEmailRow) => e.messageId).filter(Boolean))
 
     type ParsedMsg = {
       uid: number
@@ -224,7 +226,9 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       where: { email: { in: addresses }, ...(workspaceId ? { workspaceId } : {}) },
       select: { id: true, email: true, workspaceId: true, stage: true, score: true }
     })
-    const emailToLead = new Map(matchedLeads.map(l => [l.email!.toLowerCase(), l]))
+    type MatchedLead = { id: string; email: string | null; workspaceId: string; stage: string; score: number }
+    const typedMatchedLeads = matchedLeads as MatchedLead[]
+    const emailToLead = new Map(typedMatchedLeads.map((l: MatchedLead) => [l.email!.toLowerCase(), l]))
 
     let matched = 0
     let queued = 0

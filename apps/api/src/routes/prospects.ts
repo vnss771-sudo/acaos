@@ -11,11 +11,12 @@ import {
   predictBuyingIntent,
   toRawSignal,
   type ICPConfig,
+  type SignalType,
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
-import { listSources, getSource } from '../lib/prospectSources.js'
+import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import { escCsv } from '../lib/csv.js'
@@ -264,8 +265,8 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
       : [],
     prisma.prospect.findMany({ where: { workspaceId, companyName: { in: candidateNames } }, select: { companyName: true } }),
   ])
-  const existingDomains = new Set(existingDomainRows.map(p => p.domain!.toLowerCase()))
-  const existingNames   = new Set(existingNameRows.map(p => p.companyName.toLowerCase()))
+  const existingDomains = new Set((existingDomainRows as Array<{ domain: string | null }>).map((p: { domain: string | null }) => p.domain!.toLowerCase()))
+  const existingNames   = new Set((existingNameRows as Array<{ companyName: string }>).map((p: { companyName: string }) => p.companyName.toLowerCase()))
 
   const icpCfg: ICPConfig | undefined = icp ? {
     targetIndustries: icp.targetIndustries,
@@ -330,7 +331,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
           title, source: sourceName, fingerprint: fp, detectedAt: now,
         },
         update: { strength: Math.min(95, 50 + c.hiringCount * 4), detectedAt: now },
-      }).catch(err => console.warn(`[discover] HIRING signal upsert failed: ${(err as Error).message}`))
+      }).catch((err: unknown) => console.warn(`[discover] HIRING signal upsert failed: ${(err as Error).message}`))
     }
     if (c.fundingStage && c.totalFunding && c.totalFunding > 0) {
       const amt = `$${(c.totalFunding / 1_000_000).toFixed(1)}M`
@@ -344,7 +345,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
           title, source: sourceName, fingerprint: fp, detectedAt: now,
         },
         update: { detectedAt: now },
-      }).catch(err => console.warn(`[discover] FUNDING signal upsert failed: ${(err as Error).message}`))
+      }).catch((err: unknown) => console.warn(`[discover] FUNDING signal upsert failed: ${(err as Error).message}`))
     }
 
     if (dk) existingDomains.add(dk)
@@ -653,7 +654,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
       create: {
         workspaceId:       prospect.workspaceId,
         prospectId:        prospect.id,
-        type:              sig.type as import('@prisma/client').SignalType,
+        type:              sig.type as SignalType,
         strength:          sig.strength,
         sourceReliability: sig.sourceReliability,
         industryRelevance: sig.industryRelevance,
@@ -686,7 +687,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
   // Most recent signal detectedAt — use as lastSignalAt
-  const latestSignalAt = allSignals.reduce<Date | null>((max, s) => {
+  const latestSignalAt = (allSignals as Array<{ detectedAt: Date }>).reduce((max: Date | null, s: { detectedAt: Date }) => {
     return !max || s.detectedAt > max ? s.detectedAt : max
   }, null)
 

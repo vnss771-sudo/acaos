@@ -20,7 +20,7 @@ test('advances a non-terminal lead to REPLIED and records the processed email', 
 
   const { advanced } = await recordProcessedReply({
     uid: 101, messageId: '<m1@x>', fromAddress: 'replier@x.test',
-    lead: { id: lead.id, stage: lead.stage },
+    workspaceId: workspace.id, lead: { id: lead.id, stage: lead.stage },
   })
   assert.equal(advanced, true)
 
@@ -36,7 +36,7 @@ test('records the email but does NOT advance a terminal lead', async () => {
 
   const { advanced } = await recordProcessedReply({
     uid: 102, messageId: null, fromAddress: 'replier@x.test',
-    lead: { id: lead.id, stage: lead.stage },
+    workspaceId: workspace.id, lead: { id: lead.id, stage: lead.stage },
   })
   assert.equal(advanced, false)
   assert.equal((await prisma.lead.findUnique({ where: { id: lead.id } }))!.stage, 'CLOSED')
@@ -44,8 +44,10 @@ test('records the email but does NOT advance a terminal lead', async () => {
 })
 
 test('records the email with no matching lead', async () => {
+  const { workspace } = await seedUserWithWorkspace()
   const { advanced } = await recordProcessedReply({
-    uid: 103, messageId: null, fromAddress: 'stranger@x.test', lead: null,
+    uid: 103, messageId: null, fromAddress: 'stranger@x.test',
+    workspaceId: workspace.id, lead: null,
   })
   assert.equal(advanced, false)
   assert.equal(await prisma.processedEmail.count({ where: { uid: 103 } }), 1)
@@ -54,7 +56,7 @@ test('records the email with no matching lead', async () => {
 test('is idempotent on uid (re-running does not error or double-advance)', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const lead = await seedLead(workspace.id, 'OUTREACH_SENT')
-  const args = { uid: 104, messageId: '<m4@x>', fromAddress: 'replier@x.test', lead: { id: lead.id, stage: 'OUTREACH_SENT' } }
+  const args = { uid: 104, messageId: '<m4@x>', fromAddress: 'replier@x.test', workspaceId: workspace.id, lead: { id: lead.id, stage: 'OUTREACH_SENT' } }
 
   await recordProcessedReply(args)
   await recordProcessedReply(args) // second run — must not throw on the unique uid

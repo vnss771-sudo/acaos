@@ -205,7 +205,7 @@ jobsRouter.post(
       await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
     }
 
-    const jobs = await Promise.all(leads.map(l => enqueueResearchLead(l.id, user.id)))
+    const jobs = await Promise.all((leads as Array<{ id: string }>).map((l: { id: string }) => enqueueResearchLead(l.id, user.id)))
     res.status(202).json({ queued: jobs.length, jobs: jobs.map(j => ({ jobId: j.id, leadId: j.name })) })
   })
 )

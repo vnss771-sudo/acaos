@@ -3,8 +3,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
-import type { BuyingStage } from '../lib/signalEngine.js'
-import { OutcomeStage } from '@prisma/client'
+import type { BuyingStage, OutcomeStage } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { centsToDollars } from '../lib/money.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -22,6 +21,44 @@ async function requireWorkspace(req: import('express').Request): Promise<string>
   }
   return workspaceId
 }
+
+type OpportunityProspectRow = {
+  id: string
+  companyName: string
+  industry: string | null
+  location: string | null
+  opportunityScore: number
+  intentScore: number
+  fitScore: number
+  timingScore: number
+  confidenceScore: number
+  buyingStage: BuyingStage
+  outcomeStage: OutcomeStage
+  contactName: string | null
+  contactEmail: string | null
+  contactTitle: string | null
+  expectedDealValue: number | null
+  winProbability: number | null
+  lastSignalAt: Date | null
+  signals: unknown[]
+  recommendations: unknown[]
+  isExample: boolean
+}
+
+type ForecastProspectRow = {
+  id: string
+  companyName: string
+  buyingStage: BuyingStage
+  outcomeStage: OutcomeStage
+  opportunityScore: number
+  expectedDealValue: number | null
+  winProbability: number | null
+  industry: string | null
+}
+
+type WonOutcomeRow = { dealValue: number | null; recordedAt: Date }
+type SignalCountRow = { type: string; _count: number }
+type StageCountRow = { buyingStage: string; _count: number }
 
 // GET /api/intelligence/opportunities?workspaceId=
 // Returns hot/warm/cold prospects with recommendations
@@ -44,13 +81,13 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
     },
     orderBy: { opportunityScore: 'desc' },
     take: 200
-  })
+  }) as OpportunityProspectRow[]
 
-  const hot = prospects.filter(p => p.opportunityScore >= 72)
-  const warm = prospects.filter(p => p.opportunityScore >= 45 && p.opportunityScore < 72)
-  const cold = prospects.filter(p => p.opportunityScore < 45)
+  const hot = prospects.filter((p: OpportunityProspectRow) => p.opportunityScore >= 72)
+  const warm = prospects.filter((p: OpportunityProspectRow) => p.opportunityScore >= 45 && p.opportunityScore < 72)
+  const cold = prospects.filter((p: OpportunityProspectRow) => p.opportunityScore < 45)
 
-  const toSummary = (p: typeof prospects[0]) => ({
+  const toSummary = (p: OpportunityProspectRow) => ({
     id: p.id,
     companyName: p.companyName,
     industry: p.industry,
@@ -100,12 +137,12 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
       opportunityScore: true, expectedDealValue: true, winProbability: true,
       industry: true
     }
-  })
+  }) as ForecastProspectRow[]
 
   const won = await prisma.prospectOutcome.findMany({
     where: { workspaceId, stage: 'WON' },
     select: { dealValue: true, recordedAt: true }
-  })
+  }) as WonOutcomeRow[]
 
   // Default deal value by rough industry category
   function defaultDealValue(industry: string | null): number {
@@ -118,7 +155,7 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
     return 5000
   }
 
-  const pipeline = prospects.map(p => {
+  const pipeline = prospects.map((p: ForecastProspectRow) => {
     // expectedDealValue is stored in cents; forecast math works in whole units.
     const dealValue = centsToDollars(p.expectedDealValue) ?? defaultDealValue(p.industry)
     const winProb = p.winProbability ?? calcWinProbability(p.buyingStage as BuyingStage, p.opportunityScore)
@@ -135,9 +172,9 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
     }
   })
 
-  const totalPipelineValue = pipeline.reduce((s, p) => s + p.dealValue, 0)
-  const weightedForecast = pipeline.reduce((s, p) => s + p.expectedRevenue, 0)
-  const wonRevenue = won.reduce((s, o) => s + (centsToDollars(o.dealValue) ?? 0), 0)
+  const totalPipelineValue = pipeline.reduce((s: number, p: { dealValue: number }) => s + p.dealValue, 0)
+  const weightedForecast = pipeline.reduce((s: number, p: { expectedRevenue: number }) => s + p.expectedRevenue, 0)
+  const wonRevenue = won.reduce((s: number, o: WonOutcomeRow) => s + (centsToDollars(o.dealValue) ?? 0), 0)
   const wonCount = won.length
 
   // Stage breakdown
@@ -158,11 +195,11 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
       wonCount,
       avgDealValue: pipeline.length > 0 ? Math.round(totalPipelineValue / pipeline.length) : 0,
       avgWinRate: pipeline.length > 0
-        ? Math.round(pipeline.reduce((s, p) => s + p.winProbability, 0) / pipeline.length)
+        ? Math.round(pipeline.reduce((s: number, p: { winProbability: number }) => s + p.winProbability, 0) / pipeline.length)
         : 0
     },
     stageBreakdown,
-    pipeline: pipeline.sort((a, b) => b.expectedRevenue - a.expectedRevenue).slice(0, 50)
+    pipeline: pipeline.sort((a: { expectedRevenue: number }, b: { expectedRevenue: number }) => b.expectedRevenue - a.expectedRevenue).slice(0, 50)
   })
 }))
 
@@ -176,7 +213,7 @@ intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
 
   // Tier counts are computed with bounded SQL range counts rather than loading
   // every prospect into memory and bucketing in JS (which grows unbounded).
-  const [totalProspects, signalCounts, stageDist, hot, warm, cold] = await Promise.all([
+  const [totalProspects, rawSignalCounts, rawStageDist, hot, warm, cold] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId, ...exampleFilter } }),
     prisma.signal.groupBy({ by: ['type'], where: { workspaceId }, _count: true }),
     prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId, ...exampleFilter }, _count: true }),
@@ -184,11 +221,13 @@ intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
     prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 45, lt: 72 }, ...exampleFilter } }),
     prisma.prospect.count({ where: { workspaceId, opportunityScore: { lt: 45 }, ...exampleFilter } }),
   ])
+  const signalCounts = rawSignalCounts as SignalCountRow[]
+  const stageDist = rawStageDist as StageCountRow[]
 
   res.json({
     totalProspects,
     tierDistribution: { HOT: hot, WARM: warm, COLD: cold },
-    signalBreakdown: Object.fromEntries(signalCounts.map(r => [r.type, r._count])),
-    stageDistribution: Object.fromEntries(stageDist.map(r => [r.buyingStage, r._count]))
+    signalBreakdown: Object.fromEntries(signalCounts.map((r: SignalCountRow) => [r.type, r._count])),
+    stageDistribution: Object.fromEntries(stageDist.map((r: StageCountRow) => [r.buyingStage, r._count]))
   })
 }))

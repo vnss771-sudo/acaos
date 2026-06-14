@@ -1,14 +1,14 @@
 import 'dotenv/config'
-import IORedis from 'ioredis'
+import { Redis } from 'ioredis'
 import { Queue } from 'bullmq'
 
-export const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+export const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
-  retryStrategy: (times) => Math.min(times * 1000, 10_000)
+  retryStrategy: (times: number) => Math.min(times * 1000, 10_000)
 })
 
-connection.on('error', (err) => console.error('[redis] Error:', err.message))
+connection.on('error', (err: Error) => console.error('[redis] Error:', err.message))
 connection.on('connect', () => console.log('[redis] Connected'))
 
 export const defaultJobOptions = {
