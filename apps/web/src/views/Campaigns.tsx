@@ -51,6 +51,7 @@ export function Campaigns({ api, workspace, toast }: Props) {
   const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
   const [approvalPending, setApprovalPending] = useState<{ id: string; name: string; eligible: number } | null>(null)
+  const [domainCheck, setDomainCheck] = useState<{ hasSPF: boolean; hasDKIM: boolean } | null | 'loading'>('loading')
   const [showMissionBuilder, setShowMissionBuilder] = useState(false)
 
   const loadStats = useCallback(async (id: string) => {
@@ -72,6 +73,33 @@ export function Campaigns({ api, workspace, toast }: Props) {
       .catch(e => toast.error(e.message))
       .finally(() => setLoading(false))
   }, [workspace?.id])
+
+  useEffect(() => {
+    if (!approvalPending || !workspace) {
+      setDomainCheck('loading')
+      return
+    }
+    setDomainCheck('loading')
+    api<{ config: { smtpFrom?: string | null } | null }>(`/api/workspaces/${workspace.id}/email-config`)
+      .then(({ config }) => {
+        const smtpFrom = config?.smtpFrom || ''
+        const atIdx = smtpFrom.lastIndexOf('@')
+        // Extract domain from "Name <user@domain.com>" or "user@domain.com"
+        const raw = atIdx !== -1 ? smtpFrom.slice(atIdx + 1).replace(/[>\s]+$/, '').trim() : ''
+        if (!raw) {
+          setDomainCheck({ hasSPF: false, hasDKIM: false })
+          return
+        }
+        return api<{ hasSPF: boolean; hasDKIM: boolean }>(
+          `/api/mailbox/check-domain?domain=${encodeURIComponent(raw)}&workspaceId=${encodeURIComponent(workspace.id)}`
+        ).then(result => {
+          setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM })
+        })
+      })
+      .catch(() => {
+        setDomainCheck({ hasSPF: false, hasDKIM: false })
+      })
+  }, [approvalPending?.id, workspace?.id])
 
   async function create() {
     if (!form.name.trim() || !workspace) return
@@ -192,9 +220,34 @@ export function Campaigns({ api, workspace, toast }: Props) {
               borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 12
             }}>
               <div style={{ color: colors.textMuted, fontWeight: 700, marginBottom: 8, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Deliverability checklist</div>
+              {/* SPF — dynamic */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
+                <span style={{ color: domainCheck === 'loading' ? colors.textFaint : domainCheck?.hasSPF ? colors.green : '#ef4444', flexShrink: 0 }}>
+                  {domainCheck === 'loading' ? '…' : domainCheck?.hasSPF ? '✓' : '✗'}
+                </span>
+                <span style={{ color: colors.textFaint }}>
+                  {domainCheck === 'loading'
+                    ? 'Checking… SPF record (v=spf1 include:…)'
+                    : domainCheck?.hasSPF
+                      ? 'Sending domain has SPF record (v=spf1 include:…)'
+                      : 'Sending domain has SPF record (v=spf1 include:…) — not detected'}
+                </span>
+              </div>
+              {/* DKIM — dynamic */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
+                <span style={{ color: domainCheck === 'loading' ? colors.textFaint : domainCheck?.hasDKIM ? colors.green : '#ef4444', flexShrink: 0 }}>
+                  {domainCheck === 'loading' ? '…' : domainCheck?.hasDKIM ? '✓' : '✗'}
+                </span>
+                <span style={{ color: colors.textFaint }}>
+                  {domainCheck === 'loading'
+                    ? 'Checking… DKIM signature configured for sending domain'
+                    : domainCheck?.hasDKIM
+                      ? 'DKIM signature configured for sending domain'
+                      : 'DKIM signature configured for sending domain — not detected'}
+                </span>
+              </div>
+              {/* Static items */}
               {[
-                'Sending domain has SPF record (v=spf1 include:…)',
-                'DKIM signature configured for sending domain',
                 'Sending address matches your workspace email config',
                 'Lead list has been reviewed for quality',
               ].map(item => (

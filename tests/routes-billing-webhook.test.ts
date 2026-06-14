@@ -51,6 +51,9 @@ function baseSpec(workspaceRow: any = { id: 'ws1' }) {
       findFirst: async (args: any) =>
         args?.where?.stripeSubscriptionId === 'sub_known' ? workspaceRow : null,
     },
+    membership: {
+      findFirst: async (_args: any) => ({ id: 'mem1', user: { email: 'owner@test.com' } }),
+    },
   }
 }
 
