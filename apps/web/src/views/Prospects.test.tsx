@@ -15,16 +15,31 @@ const prospect = {
 
 afterEach(() => vi.restoreAllMocks())
 
+function makeApi(overrides?: (path: string) => unknown) {
+  return vi.fn((path: string) => {
+    if (overrides) {
+      const result = overrides(path)
+      if (result !== undefined) return result
+    }
+    if (path.includes('/sources')) return Promise.resolve({ sources: [] })
+    return Promise.resolve({ prospects: [], total: 0 })
+  })
+}
+
 describe('ProspectsView', () => {
   test('shows an empty state when no workspace is selected', () => {
-    const api = vi.fn()
+    const api = makeApi()
     render(<ProspectsView api={api as never} workspace={null} toast={toast as never} />)
     expect(screen.getByText('No workspace selected')).toBeInTheDocument()
-    expect(api).not.toHaveBeenCalled()
+    // sources endpoint is fetched regardless of workspace; prospects endpoint is not
+    expect(api).not.toHaveBeenCalledWith(expect.stringContaining('/api/prospects?workspaceId'))
   })
 
   test('fetches and renders prospects with their opportunity score', async () => {
-    const api = vi.fn().mockResolvedValue({ prospects: [prospect], total: 1 })
+    const api = makeApi((path) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [] })
+      if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect], total: 1 })
+    })
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
 
     expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument()
@@ -33,13 +48,13 @@ describe('ProspectsView', () => {
   })
 
   test('shows the empty state when the workspace has no prospects', async () => {
-    const api = vi.fn().mockResolvedValue({ prospects: [], total: 0 })
+    const api = makeApi()
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
     expect(await screen.findByText(/No prospects yet/i)).toBeInTheDocument()
   })
 
   test('typing in search refetches with the search query', async () => {
-    const api = vi.fn().mockResolvedValue({ prospects: [], total: 0 })
+    const api = makeApi()
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
 
     await userEvent.type(screen.getByPlaceholderText('Search prospects…'), 'acme')

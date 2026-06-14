@@ -1,4 +1,4 @@
-import IORedis from 'ioredis'
+import { Redis as IORedis } from 'ioredis'
 
 // Shared Redis client for non-queue API uses (e.g. one-time SSE tickets).
 // Lazily connected so importing this module never opens a socket on its own.
@@ -11,7 +11,7 @@ export function getRedis(): IORedis {
       enableReadyCheck: false,
       lazyConnect: true,
     })
-    client.on('error', (err) => console.warn('[redis] connection error:', err.message))
+    client.on('error', (err: Error) => console.warn('[redis] connection error:', err.message))
   }
   return client
 }

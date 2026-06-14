@@ -8,6 +8,20 @@ const user: User = { id: 'u1', email: 'sarah@northwind.test', name: 'Sarah' }
 const workspace: Workspace = { id: 'ws1', name: 'Northwind', slug: 'northwind', plan: 'growth', _count: { leads: 42, campaigns: 3 } }
 const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }
 
+function makeApi(overrides?: (path: string, init?: { method?: string }) => unknown) {
+  return vi.fn((path: string, init?: { method?: string }) => {
+    if (overrides) {
+      const result = overrides(path, init)
+      if (result !== undefined) return result
+    }
+    if (path.includes('/members')) return Promise.resolve({ members: [] })
+    if (path.includes('/invites')) return Promise.resolve({ invites: [] })
+    if (path.includes('/icp')) return Promise.resolve({ icp: null })
+    if (path.includes('/email-config')) return Promise.resolve({ config: null })
+    return Promise.resolve({})
+  })
+}
+
 function renderSettings(api: ReturnType<typeof vi.fn>, over: Partial<React.ComponentProps<typeof Settings>> = {}) {
   const onUserUpdate = vi.fn()
   const onWorkspaceUpdate = vi.fn()
@@ -22,14 +36,17 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('Settings', () => {
   test('shows the (disabled) email and workspace info', () => {
-    renderSettings(vi.fn())
+    renderSettings(makeApi())
     expect(screen.getByDisplayValue('sarah@northwind.test')).toBeDisabled()
     expect(screen.getByText('42')).toBeInTheDocument()  // total leads
     expect(screen.getByText('Growth')).toBeInTheDocument() // capitalised plan
   })
 
   test('saving the profile PATCHes and calls onUserUpdate', async () => {
-    const api = vi.fn().mockResolvedValue({ user: { ...user, name: 'Sarah C' } })
+    const api = makeApi((path, init) => {
+      if (path === '/api/auth/profile' && init?.method === 'PATCH')
+        return Promise.resolve({ user: { ...user, name: 'Sarah C' } })
+    })
     const { onUserUpdate } = renderSettings(api)
 
     await userEvent.clear(screen.getByPlaceholderText('Your name'))
@@ -42,7 +59,7 @@ describe('Settings', () => {
   })
 
   test('password change is rejected client-side when the confirmation does not match', async () => {
-    const api = vi.fn()
+    const api = makeApi()
     const { container } = render(
       <Settings api={api as never} user={user} workspace={workspace} toast={toast as never}
         onUserUpdate={vi.fn()} onWorkspaceUpdate={vi.fn()} />
@@ -54,11 +71,15 @@ describe('Settings', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Change Password' }))
 
     expect(toast.error).toHaveBeenCalledWith('Passwords do not match')
-    expect(api).not.toHaveBeenCalled()
+    // api should not be called for profile/password endpoints due to client-side validation failure
+    expect(api).not.toHaveBeenCalledWith('/api/auth/password', expect.anything())
   })
 
   test('saving the workspace PATCHes and calls onWorkspaceUpdate', async () => {
-    const api = vi.fn().mockResolvedValue({ workspace: { ...workspace, name: 'Northwind Co' } })
+    const api = makeApi((path, init) => {
+      if (path === '/api/workspaces/ws1' && init?.method === 'PATCH')
+        return Promise.resolve({ workspace: { ...workspace, name: 'Northwind Co' } })
+    })
     const { onWorkspaceUpdate } = renderSettings(api)
 
     await userEvent.click(screen.getByRole('button', { name: 'Save Workspace' }))

@@ -12,7 +12,7 @@
     "dev": "echo Run dev:web, dev:api and dev:worker in separate terminals",
     "prisma:generate": "npm --workspace @acaos/db run prisma:generate",
     "prisma:migrate": "npm --workspace @acaos/db run prisma:migrate",
-    "build": "npm --workspace @acaos/web run build",
+    "build": "npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
     "typecheck:api": "tsc --noEmit -p apps/api/tsconfig.json",
     "typecheck:web": "tsc --noEmit -p apps/web/tsconfig.json",
     "typecheck:worker": "tsc --noEmit -p apps/worker/tsconfig.json",

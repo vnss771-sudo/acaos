@@ -171,9 +171,9 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     // Load already-processed records within the fetch window, scoped to this
     // workspace — IMAP UIDs are only unique per-mailbox, not globally.
     const windowStart = Math.max(1, (client.mailbox?.exists ?? 200) - 199)
-    const wsScope = workspaceId ?? 'legacy-unknown'
+    if (!workspaceId) throw new Error('workspaceId required for mailbox sync')
     const existing = await prisma.processedEmail.findMany({
-      where: { workspaceId: wsScope, uid: { gte: windowStart } },
+      where: { workspaceId, uid: { gte: windowStart } },
       select: { uid: true, messageId: true }
     })
     const seenUids = new Set(existing.map(e => e.uid))
@@ -241,7 +241,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
         uid: msg.uid,
         messageId: msg.messageId,
         fromAddress: msg.fromAddress,
-        workspaceId: wsScope,
+        workspaceId: workspaceId,
         lead,
       })
       processedUids.push(msg.uid)

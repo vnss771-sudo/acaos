@@ -21,26 +21,18 @@ mailboxRouter.post(
     const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : 'Test'
     const html = typeof req.body?.html === 'string' ? req.body.html : '<p>Hello</p>'
     const workspaceId = String(req.body?.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    const emailCfg = workspaceId
-      ? await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
-      : null
+    const emailCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+    if (!isMailConfigured(emailCfg)) throw new ApiError(503, 'SMTP is not configured')
 
-    if (!isMailConfigured(emailCfg)) {
-      throw new ApiError(503, 'SMTP is not configured')
-    }
-
-    if (!to || !isValidEmail(to)) {
-      throw new ApiError(400, 'Valid recipient email required')
-    }
+    if (!to || !isValidEmail(to)) throw new ApiError(400, 'Valid recipient email required')
 
     // Require owner or admin — test-send uses real SMTP credits
-    if (workspaceId) {
-      const member = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!member) throw new ApiError(403, 'Must be owner or admin to send test emails')
-    }
+    const member = await prisma.membership.findFirst({
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+    })
+    if (!member) throw new ApiError(403, 'Must be owner or admin to send test emails')
 
     const result = await sendMail(to, subject || 'Test', html || '<p>Hello</p>', emailCfg)
     res.json({ id: result.messageId })

@@ -9,9 +9,9 @@ DROP INDEX IF EXISTS "ProcessedEmail_messageId_key";
 -- Add workspaceId column (nullable first so existing rows aren't rejected)
 ALTER TABLE "ProcessedEmail" ADD COLUMN "workspaceId" TEXT;
 
--- Backfill: existing rows have no workspace context — assign a sentinel
--- that won't match any real workspace. They will be ignored during sync.
-UPDATE "ProcessedEmail" SET "workspaceId" = 'legacy-unknown' WHERE "workspaceId" IS NULL;
+-- Delete unscoped rows: they cannot be safely attributed to a workspace
+-- and are only dedup cache records, not source-of-truth data.
+DELETE FROM "ProcessedEmail" WHERE "workspaceId" IS NULL;
 
 -- Make the column required going forward
 ALTER TABLE "ProcessedEmail" ALTER COLUMN "workspaceId" SET NOT NULL;

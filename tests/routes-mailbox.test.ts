@@ -35,7 +35,7 @@ test('send-test requires authentication', async () => {
 test('send-test returns 503 when SMTP is not configured', async () => {
   const res = await server.request('/api/mailbox/send-test', {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.2' },
-    body: JSON.stringify({ to: 'a@b.test' }),
+    body: JSON.stringify({ to: 'a@b.test', workspaceId: 'ws1' }),
   })
   assert.equal(res.status, 503)
 })
@@ -45,7 +45,7 @@ test('send-test validates the recipient when SMTP IS configured', async () => {
   process.env.SMTP_FROM = 'noreply@test'
   const res = await server.request('/api/mailbox/send-test', {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.3' },
-    body: JSON.stringify({ to: 'not-an-email' }),
+    body: JSON.stringify({ to: 'not-an-email', workspaceId: 'ws1' }),
   })
   assert.equal(res.status, 400)
 })

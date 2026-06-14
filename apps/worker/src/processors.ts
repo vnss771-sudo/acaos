@@ -234,6 +234,16 @@ export async function sendCampaignBatch(
     // Progress: 10% → 90% across the lead batch
     await progress?.(10 + Math.floor((i / total) * 80))
 
+    // Idempotency guard: skip if this lead was already sent to for this campaign.
+    // Protects against duplicate sends when the worker crashes between SMTP send
+    // and the DB write (outbox pattern — treat an existing OutreachSent row as
+    // proof that the email was delivered and recorded).
+    const alreadySent = await prisma.outreachSent.findFirst({
+      where: { campaignId, leadId: lead.id },
+      select: { id: true },
+    })
+    if (alreadySent) { skipped++; continue }
+
     // Skip suppressed addresses (unsubscribed or bounced)
     if (suppressedSet.has(lead.email!.toLowerCase().trim())) { skipped++; continue }
 

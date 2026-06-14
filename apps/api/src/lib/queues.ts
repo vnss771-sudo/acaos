@@ -1,4 +1,4 @@
-import IORedis from 'ioredis'
+import { Redis as IORedis } from 'ioredis'
 import { Queue } from 'bullmq'
 
 let _connection: IORedis | null = null
@@ -10,7 +10,7 @@ function getConnection(): IORedis {
       enableReadyCheck: false,
       lazyConnect: true
     })
-    _connection.on('error', (err) => {
+    _connection.on('error', (err: Error) => {
       console.warn('[redis] Connection error:', err.message)
     })
   }
