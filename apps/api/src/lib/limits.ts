@@ -49,7 +49,7 @@ export async function checkAndIncrementAiUsage(workspaceId: string, action: Usag
   // advisory lock, so concurrent requests can't both pass the check and exceed
   // the limit (the previous plain read-then-upsert had a check-then-increment
   // race). The lock is released automatically when the transaction ends.
-  await prisma.$transaction(async (tx: typeof prisma) => {
+  await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`
 
     if (isFinite(aiCallsPerMonth)) {

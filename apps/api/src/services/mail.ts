@@ -111,7 +111,7 @@ export async function recordProcessedReply(params: {
   const { uid, messageId, fromAddress, workspaceId, lead } = params
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
-  await prisma.$transaction(async (tx: typeof prisma) => {
+  await prisma.$transaction(async (tx) => {
     await tx.processedEmail.upsert({
       where: { workspaceId_uid: { workspaceId, uid } },
       create: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
