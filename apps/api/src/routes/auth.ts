@@ -217,6 +217,9 @@ authRouter.post(
         `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
         `<p>If you didn't request this, you can safely ignore this email.</p>`
       )
+    } else if (process.env.NODE_ENV === 'production') {
+      // Never log a URL containing the raw reset token in production.
+      console.warn('[auth] SMTP not configured; password reset email was not sent')
     } else {
       console.log(`[auth] Reset URL (SMTP not configured): ${resetUrl}`)
     }
@@ -320,6 +323,9 @@ async function sendVerificationEmail(userId: string, email: string) {
       `<p><a href="${verifyUrl}">Verify email address</a></p>` +
       `<p>If you didn't sign up for ACAOS, you can ignore this email.</p>`
     )
+  } else if (process.env.NODE_ENV === 'production') {
+    // Never log a URL containing the raw verification token in production.
+    console.warn('[auth] SMTP not configured; verification email was not sent')
   } else {
     console.log(`[auth] Verification URL (SMTP not configured): ${verifyUrl}`)
   }

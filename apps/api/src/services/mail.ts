@@ -100,11 +100,21 @@ function extractPlainText(source: Buffer): string {
   return raw.trim()
 }
 
+/** True for a Prisma unique-constraint violation (P2002). */
+function isUniqueConstraintError(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'P2002')
+}
+
 /**
  * Atomically record a processed inbound email and, when it maps to a non-
  * terminal lead, advance that lead to REPLIED. Extracted from syncMailboxOnce so
  * the integrity-critical persistence is testable without an IMAP server.
- * Idempotent on `uid` (re-running is a no-op for the processed row).
+ *
+ * Idempotent on `uid`: the processed-email insert is the gate. If this message
+ * was already recorded (e.g. two mailbox syncs race past the caller's seen-uid
+ * pre-filter), the unique constraint fires, the transaction rolls back, and we
+ * return `{ advanced: false }` WITHOUT re-advancing the lead or signalling the
+ * caller to re-enqueue reply analysis (which would double-spend AI).
  */
 export async function recordProcessedReply(params: {
   uid: number
@@ -116,27 +126,33 @@ export async function recordProcessedReply(params: {
   const { uid, messageId, fromAddress, workspaceId, lead } = params
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
-  await prisma.$transaction(async (tx) => {
-    await tx.processedEmail.upsert({
-      where: { workspaceId_uid: { workspaceId, uid } },
-      create: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
-      update: {},
+  try {
+    await prisma.$transaction(async (tx) => {
+      // create (not upsert) so a duplicate uid throws P2002 and aborts the whole
+      // transaction — the lead/outreach mutations below must not run twice.
+      await tx.processedEmail.create({
+        data: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
+      })
+      if (advance) {
+        await tx.lead.update({
+          where: { id: lead!.id },
+          data: { stage: 'REPLIED', lastContactedAt: new Date() },
+        })
+      }
+      // Always close the outreach loop regardless of lead stage — a BOOKED or
+      // CLOSED lead that replies still deserves an accurate outreach record.
+      if (lead) {
+        await tx.outreachSent.updateMany({
+          where: { leadId: lead.id, status: 'SENT' },
+          data: { status: 'REPLIED', repliedAt: new Date() },
+        })
+      }
     })
-    if (advance) {
-      await tx.lead.update({
-        where: { id: lead!.id },
-        data: { stage: 'REPLIED', lastContactedAt: new Date() },
-      })
-    }
-    // Always close the outreach loop regardless of lead stage — a BOOKED or
-    // CLOSED lead that replies still deserves an accurate outreach record.
-    if (lead) {
-      await tx.outreachSent.updateMany({
-        where: { leadId: lead.id, status: 'SENT' },
-        data: { status: 'REPLIED', repliedAt: new Date() },
-      })
-    }
-  })
+  } catch (err) {
+    // Already processed (unique violation on workspaceId+uid) — a no-op replay.
+    if (isUniqueConstraintError(err)) return { advanced: false }
+    throw err
+  }
 
   return { advanced: advance }
 }
