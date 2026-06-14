@@ -187,8 +187,22 @@ export function Campaigns({ api, workspace, toast }: Props) {
                 leads will each receive a personalised AI-generated email.
               </div>
             </div>
-            <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 24 }}>
-              Outreach will be sent from your configured SMTP. Review your lead list and email config before approving.
+            <div style={{
+              background: '#1e293b', border: `1px solid ${colors.border}`,
+              borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 12
+            }}>
+              <div style={{ color: colors.textMuted, fontWeight: 700, marginBottom: 8, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Deliverability checklist</div>
+              {[
+                'Sending domain has SPF record (v=spf1 include:…)',
+                'DKIM signature configured for sending domain',
+                'Sending address matches your workspace email config',
+                'Lead list has been reviewed for quality',
+              ].map(item => (
+                <div key={item} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
+                  <span style={{ color: colors.green, flexShrink: 0 }}>✓</span>
+                  <span style={{ color: colors.textFaint }}>{item}</span>
+                </div>
+              ))}
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button style={s.btnSecondary} onClick={() => setApprovalPending(null)}>Cancel</button>

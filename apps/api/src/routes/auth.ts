@@ -11,9 +11,11 @@ import {
 import { requireAuth } from '../middleware/auth.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { buildWorkspaceName, isValidEmail, normalizeEmail, validatePassword } from '../lib/validation.js'
+import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/validation.js'
 import { resolveUniqueWorkspaceSlug } from '../lib/workspaces.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
+import { validate, emailField, passwordField } from '../lib/validate.js'
+import { z } from 'zod'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const authRouter = Router()
@@ -34,18 +36,19 @@ async function persistRefreshToken(userId: string, refreshToken: string) {
   })
 }
 
+const signupSchema = z.object({
+  email: emailField,
+  password: passwordField,
+  name: z.string().trim().max(100).optional(),
+})
+
 authRouter.post(
   '/signup',
   authRateLimit,
+  validate(signupSchema),
   asyncHandler(async (req, res) => {
-    const rawEmail = String(req.body?.email || '')
-    const password = String(req.body?.password || '')
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined
-
-    if (!rawEmail || !password) throw new ApiError(400, 'Email and password are required')
-
-    const email = normalizeEmail(rawEmail)
-    if (!isValidEmail(email)) throw new ApiError(400, 'Valid email is required')
+    const { password, name } = req.body as z.infer<typeof signupSchema>
+    const email = normalizeEmail(req.body.email)
 
     const passwordError = validatePassword(password)
     if (passwordError) throw new ApiError(400, passwordError)
@@ -82,14 +85,18 @@ authRouter.post(
   })
 )
 
+const loginSchema = z.object({
+  email: emailField,
+  password: z.string().min(1, 'Password required').max(128),
+})
+
 authRouter.post(
   '/login',
   authRateLimit,
+  validate(loginSchema),
   asyncHandler(async (req, res) => {
-    const email = normalizeEmail(String(req.body?.email || ''))
-    const password = String(req.body?.password || '')
-
-    if (!email || !password) throw new ApiError(400, 'Email and password are required')
+    const email = normalizeEmail(req.body.email)
+    const { password } = req.body as z.infer<typeof loginSchema>
 
     const user = await prisma.user.findUnique({ where: { email } })
     if (!user?.passwordHash) throw new ApiError(401, 'Invalid credentials')
@@ -176,12 +183,14 @@ authRouter.get(
   })
 )
 
+const forgotPasswordSchema = z.object({ email: emailField })
+
 authRouter.post(
   '/forgot-password',
   authRateLimit,
+  validate(forgotPasswordSchema),
   asyncHandler(async (req, res) => {
-    const email = normalizeEmail(String(req.body?.email || ''))
-    if (!isValidEmail(email)) throw new ApiError(400, 'Valid email required')
+    const email = normalizeEmail(req.body.email)
 
     const user = await prisma.user.findUnique({ where: { email } })
     // Always 200 — prevents email enumeration
@@ -210,14 +219,17 @@ authRouter.post(
   })
 )
 
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Token required'),
+  password: passwordField,
+})
+
 authRouter.post(
   '/reset-password',
   authRateLimit,
+  validate(resetPasswordSchema),
   asyncHandler(async (req, res) => {
-    const rawToken = String(req.body?.token || '').trim()
-    const newPassword = String(req.body?.password || '')
-
-    if (!rawToken) throw new ApiError(400, 'Token required')
+    const { token: rawToken, password: newPassword } = req.body as z.infer<typeof resetPasswordSchema>
 
     const passwordError = validatePassword(newPassword)
     if (passwordError) throw new ApiError(400, passwordError)

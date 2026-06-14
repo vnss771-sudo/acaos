@@ -4,12 +4,21 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { enqueueSendCampaign, getJobById } from '../lib/queues.js'
+import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
+import { z } from 'zod'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const campaignsRouter = Router()
 campaignsRouter.use(requireAuth)
 
-const MAX_NAME = 200
+const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] as const
+
+const createCampaignSchema = z.object({
+  workspaceId: workspaceIdField,
+  name: nonEmptyString.max(200, 'name must be at most 200 characters'),
+  goalType: z.enum(GOAL_TYPES).default('BOOK_CALL'),
+  description: z.string().max(1000).optional(),
+})
 
 // List campaigns for a workspace
 campaignsRouter.get(
@@ -36,21 +45,16 @@ campaignsRouter.get(
 // Create campaign
 campaignsRouter.post(
   '/',
+  validate(createCampaignSchema),
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    const name = String(req.body?.name || '').trim()
-    const goalType = String(req.body?.goalType || 'BOOK_CALL').trim()
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (!name) throw new ApiError(400, 'name required')
-    if (name.length > MAX_NAME) throw new ApiError(400, `name must be at most ${MAX_NAME} characters`)
+    const { workspaceId, name, goalType, description } = req.body as z.infer<typeof createCampaignSchema>
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
     const campaign = await prisma.campaign.create({
-      data: { workspaceId, name, goalType }
+      data: { workspaceId, name, goalType, description }
     })
 
     res.status(201).json({ campaign })

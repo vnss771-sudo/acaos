@@ -5,6 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
 import { isValidEmail } from '../lib/validation.js'
+import { promises as dns } from 'dns'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const mailboxRouter = Router()
@@ -66,5 +67,32 @@ mailboxRouter.post(
 
     const result = await syncMailboxOnce(emailCfg, workspaceId)
     res.json(result)
+  })
+)
+
+// Check domain DNS records for SPF/DKIM deliverability prerequisites
+mailboxRouter.get(
+  '/check-domain',
+  asyncHandler(async (req, res) => {
+    const domain = String(req.query.domain || '').trim()
+    if (!domain) throw new ApiError(400, 'domain required')
+
+    let records: string[] = []
+    try {
+      const txtRecords = await dns.resolveTxt(domain)
+      records = txtRecords.flat()
+    } catch {
+      // NXDOMAIN or SERVFAIL — domain has no TXT records
+    }
+
+    const hasSPF = records.some(r => r.startsWith('v=spf1'))
+    const hasDKIM = records.some(r => r.startsWith('v=DKIM1'))
+
+    res.json({
+      domain,
+      hasSPF,
+      hasDKIM,
+      spfRecords: records.filter(r => r.startsWith('v=spf1')),
+    })
   })
 )

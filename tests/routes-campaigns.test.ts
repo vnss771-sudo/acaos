@@ -64,7 +64,7 @@ test('POST denies a non-member workspace', async () => {
   assert.equal(prisma.callsTo('campaign', 'create').length, 0)
 })
 test('POST creates a campaign for a member', async () => {
-  const res = await server.request('/api/campaigns', { method: 'POST', headers: jsonAuth(), body: JSON.stringify({ workspaceId: OWNED, name: 'Spring', goalType: 'DEMO' }) })
+  const res = await server.request('/api/campaigns', { method: 'POST', headers: jsonAuth(), body: JSON.stringify({ workspaceId: OWNED, name: 'Spring', goalType: 'GET_REPLY' }) })
   assert.equal(res.status, 201)
   assert.equal(res.body.campaign.name, 'Spring')
 })
