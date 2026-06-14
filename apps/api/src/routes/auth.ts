@@ -123,15 +123,21 @@ authRouter.post(
     if (!rawToken) throw new ApiError(400, 'refreshToken required')
 
     const tokenHash = hashRefreshToken(rawToken)
-    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } })
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+    // Atomic conditional update — only one concurrent request can win (count === 1)
+    const now = new Date()
+    const result = await prisma.refreshToken.updateMany({
+      where: { tokenHash, revokedAt: null, expiresAt: { gt: now } },
+      data: { revokedAt: now },
+    })
+    if (result.count === 0) {
       throw new ApiError(401, 'Refresh token invalid or expired')
     }
+    // Fetch token record to obtain userId (already atomically revoked above)
+    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } })
+    if (!stored) throw new ApiError(401, 'Refresh token invalid or expired')
 
-    // Rotate: revoke old, issue new
-    await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } })
-
+    // Rotate: issue new token
     const { token, refreshToken: newRefreshToken } = issueTokens(stored.userId)
     await persistRefreshToken(stored.userId, newRefreshToken)
 
@@ -235,17 +241,23 @@ authRouter.post(
     if (passwordError) throw new ApiError(400, passwordError)
 
     const tokenHash = hashRefreshToken(rawToken)
-    const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } })
 
-    if (!record || record.usedAt || record.expiresAt < new Date()) {
+    // Atomic conditional update — only one concurrent request can win (count === 1)
+    const now = new Date()
+    const updateResult = await prisma.passwordResetToken.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+      data: { usedAt: now },
+    })
+    if (updateResult.count === 0) {
       throw new ApiError(400, 'Reset link is invalid or has expired')
     }
+    const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } })
+    if (!record) throw new ApiError(400, 'Reset link is invalid or has expired')
 
     const passwordHash = await bcrypt.hash(newPassword, 10)
 
     await prisma.$transaction([
       prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
-      prisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
       // Invalidate all active sessions for security
       prisma.refreshToken.updateMany({
         where: { userId: record.userId, revokedAt: null },
@@ -318,15 +330,21 @@ authRouter.get(
   asyncHandler(async (req, res) => {
     const rawToken = String(req.params.token || '').trim()
     const tokenHash = hashRefreshToken(rawToken)
-    const record = await prisma.emailVerificationToken.findUnique({ where: { tokenHash } })
 
-    if (!record || record.usedAt || record.expiresAt < new Date()) {
+    // Atomic conditional update — only one concurrent request can win (count === 1)
+    const now = new Date()
+    const updateResult = await prisma.emailVerificationToken.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+      data: { usedAt: now },
+    })
+    if (updateResult.count === 0) {
       throw new ApiError(400, 'Verification link is invalid or has expired')
     }
+    const record = await prisma.emailVerificationToken.findUnique({ where: { tokenHash } })
+    if (!record) throw new ApiError(400, 'Verification link is invalid or has expired')
 
     await prisma.$transaction([
       prisma.user.update({ where: { id: record.userId }, data: { emailVerified: true } }),
-      prisma.emailVerificationToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
     ])
 
     res.json({ ok: true })

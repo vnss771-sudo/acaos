@@ -24,6 +24,11 @@ import type { AuthedRequest } from '../types/auth.js'
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
 
+export function normalizeDomain(domain: string | null | undefined): string | null {
+  if (!domain) return null
+  return domain.toLowerCase().replace(/^www\./, '')
+}
+
 export function buildSignalFingerprint(source: string, type: string, title: string | null, date: Date): string {
   const slug = (title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
   const month = date.toISOString().slice(0, 7)
@@ -289,6 +294,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
         workspaceId,
         companyName:  c.companyName,
         domain:       meta.domain,
+        domainKey:    normalizeDomain(meta.domain),
         industry:     meta.industry,
         employeeCount: meta.employeeCount,
         location:     meta.location,
@@ -385,6 +391,7 @@ prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, r
           workspaceId,
           companyName,
           domain:        meta.domain,
+          domainKey:     normalizeDomain(meta.domain),
           industry:      meta.industry,
           employeeCount: meta.employeeCount,
           location:      meta.location,
@@ -440,6 +447,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
       workspaceId,
       companyName:       req.body.companyName,
       domain:            meta.domain,
+      domainKey:         normalizeDomain(meta.domain),
       industry:          meta.industry,
       employeeCount:     meta.employeeCount,
       estimatedRevenue:  req.body.estimatedRevenue  ? dollarsToCents(Number(req.body.estimatedRevenue))  : null,
@@ -488,6 +496,8 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
       : req.body[key]
   }
   if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
+  // Keep domainKey in sync whenever domain is patched
+  if ('domain' in data) data.domainKey = normalizeDomain(data.domain as string | null)
 
   const updated = await prisma.prospect.update({ where: { id: req.params.id as string }, data })
   res.json(withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }))

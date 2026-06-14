@@ -20,19 +20,19 @@ aiRouter.post(
   '/research',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : null
+    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
 
     let icp: IcpContext | undefined
-    if (workspaceId) {
-      const member = await userBelongsToWorkspace(user.id, workspaceId)
-      if (!member) throw new ApiError(403, 'Access denied')
-      await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
-      const icpRow = await prisma.workspaceICP.findUnique({
-        where: { workspaceId },
-        select: { targetIndustries: true, businessType: true, outreachTone: true }
-      })
-      if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
-    }
+    const icpRow = await prisma.workspaceICP.findUnique({
+      where: { workspaceId },
+      select: { targetIndustries: true, businessType: true, outreachTone: true }
+    })
+    if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
     const businessName = String(req.body?.businessName || '').trim()
     if (!businessName) throw new ApiError(400, 'businessName is required')
@@ -58,19 +58,19 @@ aiRouter.post(
   '/outreach',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : null
+    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
 
     let icp: IcpContext | undefined
-    if (workspaceId) {
-      const member = await userBelongsToWorkspace(user.id, workspaceId)
-      if (!member) throw new ApiError(403, 'Access denied')
-      await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
-      const icpRow = await prisma.workspaceICP.findUnique({
-        where: { workspaceId },
-        select: { targetIndustries: true, businessType: true, outreachTone: true }
-      })
-      if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
-    }
+    const icpRow = await prisma.workspaceICP.findUnique({
+      where: { workspaceId },
+      select: { targetIndustries: true, businessType: true, outreachTone: true }
+    })
+    if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
     const businessName = String(req.body?.businessName || '').trim()
     if (!businessName) throw new ApiError(400, 'businessName is required')
@@ -93,13 +93,12 @@ aiRouter.post(
   '/reply-analysis',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : null
+    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    if (workspaceId) {
-      const member = await userBelongsToWorkspace(user.id, workspaceId)
-      if (!member) throw new ApiError(403, 'Access denied')
-      await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
-    }
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
     const replyBody = String(req.body?.replyBody || '').trim()
     if (!replyBody) throw new ApiError(400, 'replyBody is required')

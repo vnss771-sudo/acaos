@@ -4,6 +4,8 @@ import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { ensureWorkspaceSlug, userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { normalizeOptionalString } from '../lib/validation.js'
+import { validate, nonEmptyString } from '../lib/validate.js'
+import { z } from 'zod'
 import { createBillingPortalSession } from '../services/stripe.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { generateRefreshToken, hashRefreshToken } from '../lib/jwt.js'
@@ -83,8 +85,14 @@ workspaceRouter.get(
   })
 )
 
+const updateWorkspaceSchema = z.object({
+  name: nonEmptyString.max(100).optional(),
+  slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens').optional(),
+}).refine(data => data.name !== undefined || data.slug !== undefined, { message: 'At least one field required' })
+
 workspaceRouter.patch(
   '/:id',
+  validate(updateWorkspaceSchema),
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const workspaceId = req.params.id as string
@@ -99,12 +107,12 @@ workspaceRouter.patch(
 
     const updates: { name?: string; slug?: string } = {}
 
-    if (typeof req.body?.name === 'string' && req.body.name.trim()) {
-      updates.name = req.body.name.trim()
+    if (req.body.name) {
+      updates.name = req.body.name
     }
 
-    if (typeof req.body?.slug === 'string' && req.body.slug.trim()) {
-      updates.slug = await ensureWorkspaceSlug(req.body.slug.trim())
+    if (req.body.slug) {
+      updates.slug = await ensureWorkspaceSlug(req.body.slug)
     }
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No valid updates provided')

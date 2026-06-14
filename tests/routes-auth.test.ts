@@ -71,8 +71,11 @@ function spec() {
       updateMany: async (args: any) => {
         let count = 0
         for (const r of refreshTokens) {
-          if (r.tokenHash === args.where.tokenHash && r.revokedAt === null) {
-            r.revokedAt = new Date()
+          const tokenMatch = r.tokenHash === args.where.tokenHash
+          const notRevoked = args.where.revokedAt === null ? r.revokedAt === null : true
+          const notExpired = args.where.expiresAt?.gt ? r.expiresAt > args.where.expiresAt.gt : true
+          if (tokenMatch && notRevoked && notExpired) {
+            Object.assign(r, args.data)
             count++
           }
         }

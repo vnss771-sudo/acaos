@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "npx prisma migrate deploy --schema ../../packages/db/prisma/schema.prisma && node dist/server.js",
+    "migrate": "npx prisma migrate deploy --schema ../../packages/db/prisma/schema.prisma",
+    "start": "node dist/server.js",
     "start:dev": "tsx src/server.ts"
   },
   "dependencies": {

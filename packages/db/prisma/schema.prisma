@@ -352,6 +352,7 @@ model Prospect {
   workspaceId      String
   companyName      String
   domain           String?
+  domainKey        String?      // normalized domain: lowercased, www-stripped
   industry         String?
   employeeCount    Int?
   estimatedRevenue Int?    // cents
@@ -388,6 +389,7 @@ model Prospect {
   @@index([workspaceId, opportunityScore])
   @@index([workspaceId, buyingStage])
   @@index([workspaceId, outcomeStage])
+  @@index([workspaceId, domainKey])
 }
 
 model Signal {

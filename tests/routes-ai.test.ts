@@ -56,9 +56,9 @@ test('research increments AI usage then hits the OpenAI guard (503) for a member
   assert.equal(res.status, 503) // no OPENAI_API_KEY
   assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1) // usage counted
 })
-test('research without a workspaceId skips usage and still hits the guard', async () => {
+test('research without a workspaceId returns 400', async () => {
   const res = await post('/api/ai/research', { businessName: 'Acme' })
-  assert.equal(res.status, 503)
+  assert.equal(res.status, 400)
   assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 0)
 })
 test('outreach requires businessName', async () => {

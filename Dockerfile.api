@@ -11,8 +11,9 @@ COPY packages/db ./packages/db
 COPY apps/api ./apps/api
 
 RUN npm run prisma:generate
+RUN npm run build -w @acaos/api
 
 EXPOSE 4000
 ENV NODE_ENV=production
 
-CMD ["npm", "--workspace", "@acaos/api", "run", "start"]
+CMD ["sh", "-c", "npm --workspace @acaos/api run migrate && npm --workspace @acaos/api run start"]
