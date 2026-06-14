@@ -56,6 +56,15 @@ function baseSpec(extra: Record<string, any> = {}) {
       findUnique: async (args: any) =>
         args?.where?.ingestApiKey === hashApiKey(API_KEY) ? { id: WS } : null,
     },
+    // The referenced prospect/lead must belong to the resolved workspace.
+    prospect: {
+      findFirst: async (args: any) =>
+        args?.where?.id === 'p1' && args?.where?.workspaceId === WS ? { id: 'p1' } : null,
+    },
+    lead: {
+      findFirst: async (args: any) =>
+        args?.where?.id === 'l1' && args?.where?.workspaceId === WS ? { id: 'l1' } : null,
+    },
     scoringModel: {
       upsert: async () => ({ id: 'model-1', weights: {}, performanceMetrics: {} }),
       update: async () => ({ id: 'model-1' }),
@@ -74,6 +83,10 @@ let prisma: FakePrisma
 let server: TestServer
 
 async function boot(spec = baseSpec()) {
+  // Close any server from a prior boot() (some tests re-boot with a custom spec)
+  // so we never leak an open listener — a leaked TCPServerWrap keeps the event
+  // loop alive and forces the runner to rely on --test-force-exit.
+  if (server) await server.close()
   prisma = createFakePrisma(spec)
   installPrisma(prisma)
   server = await startTestServer('/api/outcomes', outcomesRouter)
@@ -125,6 +138,26 @@ test('POST via JWT denies a non-member workspace', async () => {
     json(bearer(STRANGER), { workspaceId: WS, prospectId: 'p1', score: 80, replied: true })
   )
   assert.equal(res.status, 403)
+  assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
+})
+
+test('POST rejects a prospectId that does not belong to the workspace (no data poisoning)', async () => {
+  const res = await server.request('/api/outcomes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+    body: JSON.stringify({ prospectId: 'p-foreign', score: 80, replied: true }),
+  })
+  assert.equal(res.status, 400)
+  assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
+})
+
+test('POST rejects a leadId that does not belong to the workspace', async () => {
+  const res = await server.request('/api/outcomes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+    body: JSON.stringify({ prospectId: 'p1', leadId: 'l-foreign', score: 80, replied: true }),
+  })
+  assert.equal(res.status, 400)
   assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
 })
 

@@ -42,22 +42,29 @@ const post = (path: string, u: string, b: unknown) => server.request(path, {
 })
 
 test('checkout requires a workspaceId', async () => {
-  assert.equal((await post('/api/billing/checkout', OWNER, {})).status, 400)
+  assert.equal((await post('/api/billing/checkout', OWNER, { plan: 'starter' })).status, 400)
+})
+
+test('checkout rejects a missing or unknown plan (no raw price ids accepted)', async () => {
+  assert.equal((await post('/api/billing/checkout', OWNER, { workspaceId: WS })).status, 400)
+  assert.equal((await post('/api/billing/checkout', OWNER, { workspaceId: WS, plan: 'enterprise' })).status, 400)
+  // A raw Stripe price id is not a valid plan and must be rejected.
+  assert.equal((await post('/api/billing/checkout', OWNER, { workspaceId: WS, priceId: 'price_attacker' })).status, 400)
 })
 
 test('checkout denies a non-owner/admin', async () => {
-  assert.equal((await post('/api/billing/checkout', MEMBER, { workspaceId: WS })).status, 403)
+  assert.equal((await post('/api/billing/checkout', MEMBER, { workspaceId: WS, plan: 'starter' })).status, 403)
 })
 
 test('checkout 409s when the workspace already has an active subscription', async () => {
   boot(spec({ id: WS, subscriptionStatus: 'active', stripeCustomerId: 'cus_1' }))
-  const res = await post('/api/billing/checkout', OWNER, { workspaceId: WS })
+  const res = await post('/api/billing/checkout', OWNER, { workspaceId: WS, plan: 'starter' })
   assert.equal(res.status, 409)
 })
 
 test('checkout 404s when the workspace is missing', async () => {
   boot(spec(null))
-  const res = await post('/api/billing/checkout', OWNER, { workspaceId: WS })
+  const res = await post('/api/billing/checkout', OWNER, { workspaceId: WS, plan: 'starter' })
   assert.equal(res.status, 404)
 })
 

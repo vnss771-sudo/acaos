@@ -10,6 +10,7 @@ import { createBillingPortalSession } from '../services/stripe.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { generateRefreshToken, hashRefreshToken } from '../lib/jwt.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
+import { escapeHtml } from '../lib/html.js'
 import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -284,8 +285,11 @@ workspaceRouter.post(
     const inviteUrl = `${appUrl}?invite=${rawToken}`
 
     if (isMailConfigured()) {
+      // Escape the workspace name — it is user-controlled and must not be able to
+      // inject markup into the HTML email body. The subject is plain text.
+      const safeName = escapeHtml(workspace?.name ?? 'a workspace')
       await sendMail(email, `You've been invited to join ${workspace?.name ?? 'a workspace'} on ACAOS`,
-        `<p>You've been invited to join <strong>${workspace?.name ?? 'a workspace'}</strong> on ACAOS as ${role === 'admin' ? 'an admin' : 'a member'}.</p>` +
+        `<p>You've been invited to join <strong>${safeName}</strong> on ACAOS as ${role === 'admin' ? 'an admin' : 'a member'}.</p>` +
         `<p><a href="${inviteUrl}">Accept invitation</a></p>` +
         `<p>This link expires in 7 days. If you don't have an ACAOS account yet, you'll be asked to create one first.</p>`
       )

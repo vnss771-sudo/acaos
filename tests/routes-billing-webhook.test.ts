@@ -237,7 +237,7 @@ test('subscription.updated with a known price still sets that plan', async () =>
   assert.equal(data.plan, 'growth')
 })
 
-test('checkout with an unrecognized price still activates, defaulting to starter', async () => {
+test('checkout with an unrecognized price activates WITHOUT granting a tier (no default to starter)', async () => {
   const res = await postWebhook({
     type: 'checkout.session.completed',
     data: { object: { customer: 'cus_1', subscription: 'sub_1', metadata: { workspaceId: 'ws1', priceId: 'price_unrecognized' } } },
@@ -245,5 +245,26 @@ test('checkout with an unrecognized price still activates, defaulting to starter
   assert.equal(res.status, 200)
   const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
   assert.equal(data.subscriptionStatus, 'active')
-  assert.equal(data.plan, 'starter')
+  assert.equal('plan' in data, false, 'an unrecognized price must not be guessed into a plan')
+})
+
+test('checkout.session.completed honors the server-set plan in metadata', async () => {
+  const res = await postWebhook({
+    type: 'checkout.session.completed',
+    data: { object: { customer: 'cus_1', subscription: 'sub_1', metadata: { workspaceId: 'ws1', plan: 'growth' } } },
+  })
+  assert.equal(res.status, 200)
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal(data.subscriptionStatus, 'active')
+  assert.equal(data.plan, 'growth')
+})
+
+test('checkout.session.completed rejects a forged plan in metadata (not a known tier)', async () => {
+  const res = await postWebhook({
+    type: 'checkout.session.completed',
+    data: { object: { customer: 'cus_1', subscription: 'sub_1', metadata: { workspaceId: 'ws1', plan: 'enterprise' } } },
+  })
+  assert.equal(res.status, 200)
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal('plan' in data, false, 'an unknown plan string must not be applied')
 })

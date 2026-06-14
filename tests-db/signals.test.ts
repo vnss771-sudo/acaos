@@ -94,6 +94,62 @@ test('POST creates a signal and rescores the prospect (real columns persisted)',
   assert.ok(updated!.opportunityScore >= 0)
 })
 
+test('POST is idempotent: re-posting the same signal dedups via ON CONFLICT and updates in place', async () => {
+  // Regression test for the Signal(prospectId, fingerprint) index. The route
+  // upserts with `where: { prospectId_fingerprint }`, which Prisma compiles to
+  // INSERT ... ON CONFLICT ("prospectId","fingerprint") DO UPDATE. A *partial*
+  // unique index cannot serve as that ON CONFLICT arbiter, so this path failed
+  // in production until the index was made full. The fingerprint is derived
+  // from (source, type, title, detectedAt-month), so two posts with the same
+  // inputs in the same month collide deterministically.
+  const { user, workspace } = await seedUserWithWorkspace()
+  const prospect = await seedProspect(workspace.id)
+
+  const post = (strength: number) =>
+    server.request('/api/signals', {
+      method: 'POST',
+      headers: { Authorization: bearer(user.id), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workspaceId: workspace.id,
+        prospectId: prospect.id,
+        type: 'FUNDING',
+        title: 'Series B raised',
+        source: 'crunchbase',
+        detectedAt: '2026-06-01T00:00:00.000Z',
+        strength,
+      }),
+    })
+
+  const first = await post(60)
+  assert.equal(first.status, 201)
+  const second = await post(95)
+  assert.equal(second.status, 201)
+
+  // Deduped to a single row (the DO UPDATE branch fired, not a second INSERT).
+  assert.equal(await prisma.signal.count({ where: { prospectId: prospect.id } }), 1)
+  // The update branch persisted the new strength.
+  const rows = await prisma.signal.findMany({ where: { prospectId: prospect.id } })
+  assert.equal(rows[0]!.strength, 95)
+  assert.equal(rows[0]!.id, second.body.id)
+})
+
+test('signals with a NULL fingerprint are not collapsed (NULLS DISTINCT)', async () => {
+  // The migration relies on PostgreSQL treating NULLs as distinct in the unique
+  // index so signals without a fingerprint (e.g. legacy/manual inserts) can
+  // coexist on the same prospect. Lock that behavior in at the DB layer.
+  const { workspace } = await seedUserWithWorkspace()
+  const prospect = await seedProspect(workspace.id)
+
+  await prisma.signal.create({
+    data: { workspaceId: workspace.id, prospectId: prospect.id, type: 'HIRING', strength: 40, fingerprint: null },
+  })
+  await prisma.signal.create({
+    data: { workspaceId: workspace.id, prospectId: prospect.id, type: 'FUNDING', strength: 50, fingerprint: null },
+  })
+
+  assert.equal(await prisma.signal.count({ where: { prospectId: prospect.id } }), 2)
+})
+
 test('POST rejects a prospect that belongs to another workspace', async () => {
   const a = await seedUserWithWorkspace('a@acme.test')
   const b = await seedUserWithWorkspace('b@acme.test')

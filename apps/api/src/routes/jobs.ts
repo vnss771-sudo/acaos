@@ -162,21 +162,31 @@ jobsRouter.post(
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const replyBody = String(req.body?.replyBody || '').trim()
-    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() : undefined
+    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() || undefined : undefined
+    const bodyWorkspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() || undefined : undefined
 
     if (!replyBody) throw new ApiError(400, 'replyBody required')
     if (replyBody.length > MAX_REPLY_BODY) throw new ApiError(400, `replyBody must be at most ${MAX_REPLY_BODY} characters`)
+    // Require a billable scope. Previously leadId was optional and an omitted
+    // leadId skipped metering entirely while the worker still ran the AI call —
+    // an unmetered OpenAI spend path. Now every analyze-reply resolves to a
+    // workspace and is charged before enqueue.
+    if (!leadId && !bodyWorkspaceId) throw new ApiError(400, 'leadId or workspaceId required')
 
-    let workspaceId: string | null = null
+    let workspaceId: string
     if (leadId) {
       const lead = await prisma.lead.findUnique({ where: { id: leadId } })
       if (!lead) throw new ApiError(404, 'Lead not found')
       const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
       workspaceId = lead.workspaceId
+    } else {
+      const member = await userBelongsToWorkspace(user.id, bodyWorkspaceId as string)
+      if (!member) throw new ApiError(403, 'Access denied')
+      workspaceId = bodyWorkspaceId as string
     }
 
-    if (workspaceId) await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
+    await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
     const job = await enqueueAnalyzeReply(replyBody, leadId, user.id)
     res.status(202).json({ jobId: job.id, queue: 'analyze-reply', status: 'queued' })

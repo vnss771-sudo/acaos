@@ -1,6 +1,10 @@
 // Plan enforcement: AI call limits and lead count caps per billing tier
+import type { PrismaClient, Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { ApiError } from './http.js'
+
+// Either the singleton client or an interactive-transaction client.
+type Db = PrismaClient | Prisma.TransactionClient
 
 export type UsageAction = 'AI_RESEARCH' | 'AI_OUTREACH' | 'AI_REPLY'
 
@@ -22,8 +26,8 @@ function resolvePlan(plan: string | null | undefined): Plan {
   return 'free'
 }
 
-async function getWorkspacePlan(workspaceId: string): Promise<Plan> {
-  const ws = await prisma.workspace.findUnique({
+async function getWorkspacePlan(workspaceId: string, client: Db = prisma): Promise<Plan> {
+  const ws = await client.workspace.findUnique({
     where: { id: workspaceId },
     select: { plan: true, subscriptionStatus: true }
   })
@@ -84,6 +88,29 @@ export async function checkLeadLimit(workspaceId: string): Promise<void> {
       `Lead limit reached (${maxLeads} leads on ${plan} plan). Upgrade to add more leads.`
     )
   }
+}
+
+/**
+ * Atomically determine how many of `requested` new leads a workspace may create
+ * without exceeding its plan cap. MUST be called inside an interactive
+ * transaction; it takes a per-workspace advisory lock so concurrent batch
+ * imports cannot each pass an independent check and collectively overshoot the
+ * limit. Returns the number permitted (clamped to 0..requested); unlimited plans
+ * pass `requested` straight through. The caller inserts exactly the returned
+ * count within the same transaction so the count-then-insert stays atomic.
+ */
+export async function reserveLeadCapacity(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  requested: number
+): Promise<number> {
+  if (requested <= 0) return 0
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`
+  const plan = await getWorkspacePlan(workspaceId, tx)
+  const { maxLeads } = PLAN_LIMITS[plan]
+  if (!isFinite(maxLeads)) return requested
+  const count = await tx.lead.count({ where: { workspaceId } })
+  return Math.max(0, Math.min(requested, maxLeads - count))
 }
 
 export async function getMonthlyUsage(workspaceId: string): Promise<{

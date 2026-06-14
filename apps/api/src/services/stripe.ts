@@ -13,15 +13,25 @@ function getStripe() {
   })
 }
 
+export type BillingPlan = 'starter' | 'growth'
+
+// Resolve the Stripe price id for a plan from server-side config only. The
+// client never supplies a price id directly (it would let a user point checkout
+// at an arbitrary price in the account).
+export function priceIdForPlan(plan: BillingPlan): string {
+  const id = plan === 'growth' ? process.env.STRIPE_PRICE_GROWTH : process.env.STRIPE_PRICE_STARTER
+  if (!id) throw new ApiError(503, `No Stripe price configured for the ${plan} plan`)
+  return id
+}
+
 export async function createCheckoutSession(
   workspaceId: string,
+  plan: BillingPlan,
   customerEmail?: string,
-  existingCustomerId?: string,
-  priceId?: string
+  existingCustomerId?: string
 ) {
   const stripe = getStripe()
-  const selectedPrice = priceId || process.env.STRIPE_PRICE_STARTER
-  if (!selectedPrice) throw new ApiError(503, 'No Stripe price configured')
+  const selectedPrice = priceIdForPlan(plan)
 
   const webBase = process.env.WEB_URL || process.env.API_URL || 'https://acaos.app'
   const sessionParams: Stripe.Checkout.SessionCreateParams = {
@@ -30,7 +40,9 @@ export async function createCheckoutSession(
     line_items: [{ price: selectedPrice, quantity: 1 }],
     success_url: `${webBase}/billing/success?workspaceId=${workspaceId}`,
     cancel_url: `${webBase}/billing/cancel?workspaceId=${workspaceId}`,
-    metadata: { workspaceId, priceId: selectedPrice },
+    // Record the resolved plan (and price, for traceability) so the webhook
+    // grants exactly the tier that was purchased.
+    metadata: { workspaceId, plan, priceId: selectedPrice },
     allow_promotion_codes: true,
     billing_address_collection: 'auto'
   }

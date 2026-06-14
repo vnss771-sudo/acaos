@@ -77,12 +77,12 @@ export function Billing({ api, workspace, toast }: Props) {
     if (!workspace) return
     setCheckoutLoading(priceKey)
     try {
-      const priceId = priceKey === 'starter'
-        ? import.meta.env.VITE_STRIPE_PRICE_STARTER
-        : import.meta.env.VITE_STRIPE_PRICE_GROWTH
+      // Send the plan name, not a price id. The server resolves the Stripe price
+      // from the plan so a client can't point checkout at an arbitrary price.
+      const plan = priceKey === 'growth' ? 'growth' : 'starter'
       const d = await api<{ url: string }>('/api/billing/checkout', {
         method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, priceId })
+        body: JSON.stringify({ workspaceId: workspace.id, plan })
       })
       window.location.href = d.url
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Checkout failed') }

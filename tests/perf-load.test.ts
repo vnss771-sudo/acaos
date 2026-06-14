@@ -77,6 +77,8 @@ describe('A. Ingest endpoint under concurrent load', () => {
         findFirst: async () => null,
       },
       lead: {
+        // The capacity check counts current leads in the workspace.
+        count: async () => leadStore.get(WS_ID)?.size ?? 0,
         findMany: async (a: any) => {
           // Return emails already "saved" to simulate DB dedup check
           const wsEmails = leadStore.get(WS_ID) ?? new Set()
@@ -93,10 +95,8 @@ describe('A. Ingest endpoint under concurrent load', () => {
           return { id: `lead-${Math.random().toString(36).slice(2)}`, ...a.data }
         },
       },
-      $transaction: async (arg: unknown) => {
-        if (Array.isArray(arg)) return Promise.all(arg)
-        return (arg as (tx: unknown) => unknown)(undefined)
-      },
+      // Use the default interactive $transaction (passes the fake client as tx)
+      // so reserveLeadCapacity can run its lock/count/create on a real client.
     })
     installPrisma(fake)
     server = await startTestServer('/api/ingest', ingestRouter)

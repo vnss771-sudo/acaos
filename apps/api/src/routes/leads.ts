@@ -4,7 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
-import { checkLeadLimit } from '../lib/limits.js'
+import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -130,8 +130,6 @@ leadsRouter.post(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    await checkLeadLimit(workspaceId)
-
     const weights = await getWorkspaceWeights(workspaceId)
 
     const rows = leads
@@ -155,8 +153,21 @@ leadsRouter.post(
     const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
     for (const cid of campaignIds) await assertCampaignInWorkspace(cid, workspaceId)
 
-    const result = await prisma.lead.createMany({ data: rows, skipDuplicates: false })
-    res.json({ created: result.count })
+    // Reserve capacity and insert atomically under a per-workspace lock so the
+    // batch as a whole is checked against the plan cap (not just "already full"),
+    // and concurrent imports cannot race past the limit.
+    const created = await prisma.$transaction(async (tx) => {
+      const allowed = await reserveLeadCapacity(tx, workspaceId, rows.length)
+      if (allowed < rows.length) {
+        throw new ApiError(
+          429,
+          `Lead limit reached — importing ${rows.length} leads would exceed your plan's cap (${allowed} slot${allowed === 1 ? '' : 's'} remaining). Upgrade or import fewer.`
+        )
+      }
+      const result = await tx.lead.createMany({ data: rows, skipDuplicates: false })
+      return result.count
+    })
+    res.json({ created })
   })
 )
 
