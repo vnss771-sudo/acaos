@@ -14,6 +14,40 @@ import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
 import { SignalType } from '@prisma/client'
+import { evictCachedWorkspace } from '../lib/ingestCache.js'
+
+// ── F-04: SSRF protection helpers ────────────────────────────────────────────
+
+function validateMailHost(host: string | undefined | null, field: string): void {
+  if (!host) return
+  const lower = host.toLowerCase().trim()
+  // Block localhost variants
+  if (['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(lower)) {
+    throw new ApiError(400, `${field}: localhost not permitted`)
+  }
+  // Block private/link-local/metadata IPv4 ranges (simple prefix check)
+  const privatePatterns = [
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^169\.254\./,         // link-local
+    /^100\.(6[4-9]|[7-9]\d|1([01]\d|2[0-7]))\./,  // CGNAT
+  ]
+  if (privatePatterns.some(p => p.test(lower))) {
+    throw new ApiError(400, `${field}: private IP ranges not permitted`)
+  }
+  // Block AWS/GCP/Azure metadata endpoints
+  if (lower.includes('169.254.169.254') || lower.includes('metadata.google') || lower.includes('metadata.azure')) {
+    throw new ApiError(400, `${field}: metadata endpoints not permitted`)
+  }
+}
+
+function validateMailPort(port: number | undefined | null, allowed: number[], field: string): void {
+  if (!port) return
+  if (!allowed.includes(port)) {
+    throw new ApiError(400, `${field}: port ${port} not permitted. Allowed: ${allowed.join(', ')}`)
+  }
+}
 
 export const workspaceRouter = Router()
 workspaceRouter.use(requireAuth)
@@ -112,7 +146,7 @@ workspaceRouter.patch(
     }
 
     if (req.body.slug) {
-      updates.slug = await ensureWorkspaceSlug(req.body.slug)
+      updates.slug = await ensureWorkspaceSlug(req.body.slug, workspaceId)
     }
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No valid updates provided')
@@ -326,6 +360,10 @@ workspaceRouter.post(
     })
     if (!canManage) throw new ApiError(403, 'Must be owner or admin')
 
+    // F-05: Evict old hash from cache before rotating so the revoked key stops working immediately
+    const beforeRotate = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ingestApiKey: true } })
+    if (beforeRotate?.ingestApiKey) evictCachedWorkspace(beforeRotate.ingestApiKey)
+
     const rawKey = generateApiKey()
     const hashedKey = hashApiKey(rawKey)
 
@@ -402,6 +440,12 @@ workspaceRouter.put(
       imapUser:   str(b.imapUser),
       imapPass:   rawImapPass ? encryptSecret(rawImapPass) : null,
     }
+
+    // F-04: SSRF validation — reject private/metadata hosts and non-standard ports
+    validateMailHost(data.smtpHost, 'smtpHost')
+    validateMailHost(data.imapHost, 'imapHost')
+    validateMailPort(data.smtpPort, [25, 465, 587, 2525], 'smtpPort')
+    validateMailPort(data.imapPort, [143, 993], 'imapPort')
 
     // If password fields omitted (null), preserve existing encrypted values
     const existing = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
@@ -508,6 +552,10 @@ workspaceRouter.delete(
       where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
     })
     if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+
+    // F-05: Evict old hash from cache before deleting so the revoked key stops working immediately
+    const existing = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ingestApiKey: true } })
+    if (existing?.ingestApiKey) evictCachedWorkspace(existing.ingestApiKey)
 
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
     res.json({ ok: true })

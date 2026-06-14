@@ -39,6 +39,7 @@ export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
       const redis = getRedis()
       // Only issue commands when the client is connected — avoids hanging indefinitely
       // on `maxRetriesPerRequest: null` when Redis is unavailable (e.g. in tests).
+      // Redis is connected eagerly at server startup; if it hasn't connected yet, fall back.
       if (redis.status !== 'ready') throw new Error('Redis not ready')
       count = await redis.incr(redisKey)
       if (count === 1) await redis.expire(redisKey, windowSec)

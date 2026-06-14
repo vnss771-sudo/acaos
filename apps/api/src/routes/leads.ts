@@ -11,6 +11,12 @@ import type { AuthedRequest } from '../types/auth.js'
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
 
+async function assertCampaignInWorkspace(campaignId: string | null | undefined, workspaceId: string): Promise<void> {
+  if (!campaignId) return
+  const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId } })
+  if (!campaign) throw new ApiError(400, 'campaignId not found in this workspace')
+}
+
 const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
 const MAX_SHORT = 200
 const MAX_NOTES = 2_000
@@ -99,6 +105,8 @@ leadsRouter.post(
       notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() || null : null
     }
 
+    await assertCampaignInWorkspace(leadData.campaignId, workspaceId)
+
     const weights = await getWorkspaceWeights(workspaceId)
     const score = computeLeadScore(leadData, weights)
 
@@ -143,6 +151,9 @@ leadsRouter.post(
         }
         return { ...row, score: computeLeadScore(row, weights) }
       })
+
+    const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
+    for (const cid of campaignIds) await assertCampaignInWorkspace(cid, workspaceId)
 
     const result = await prisma.lead.createMany({ data: rows, skipDuplicates: false })
     res.json({ created: result.count })
@@ -255,7 +266,11 @@ leadsRouter.patch(
       if (!VALID_STAGES.includes(req.body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
       updates.stage = req.body.stage
     }
-    if (typeof req.body?.campaignId === 'string') updates.campaignId = req.body.campaignId || null
+    if (typeof req.body?.campaignId === 'string') {
+      const cid = req.body.campaignId || null
+      await assertCampaignInWorkspace(cid, lead.workspaceId)
+      updates.campaignId = cid
+    }
 
     // Recompute score whenever ICP-relevant fields change
     const scoringFields = ['businessName', 'category', 'contactName', 'email', 'website', 'notes', 'aiSummary', 'outreachAngle']

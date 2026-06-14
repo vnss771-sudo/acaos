@@ -97,6 +97,13 @@ app.use('/api/unsubscribe', unsubscribeRouter)
 app.use(notFoundHandler)
 app.use(errorHandler)
 
+// Eagerly connect Redis so rate limiting and SSE tickets use the real store
+// from the first request rather than falling back to the per-process Map.
+import { getRedis } from './lib/redis.js'
+getRedis().connect().catch((err: Error) => {
+  console.warn('[redis] Initial connection failed — rate limiting will use in-process fallback:', err.message)
+})
+
 const port = Number(process.env.PORT || 4000)
 const server = app.listen(port, () => {
   console.log(`[api] Running on http://localhost:${port} (${process.env.NODE_ENV || 'development'})`)

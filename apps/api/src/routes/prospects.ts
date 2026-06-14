@@ -208,7 +208,14 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const rawSignals = prospect.signals.map(toRawSignal)
   const prediction = predictBuyingIntent(rawSignals, prospect.buyingStage, prospect.opportunityScore)
 
-  res.json(withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }))
+  const scoreBreakdown = prospect.signals?.map((s: any) => ({
+    type: s.type,
+    title: s.title,
+    contribution: s.weight ?? null,
+    detectedAt: s.detectedAt,
+  })) ?? []
+
+  res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown })
 }))
 
 // POST /api/prospects/discover — pull companies from Apollo using workspace ICP

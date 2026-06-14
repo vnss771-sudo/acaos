@@ -90,8 +90,11 @@ intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   const workspaceId = await requireWorkspace(req)
 
+  const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+  const exampleFilter = realCount > 0 ? { isExample: false } : {}
+
   const prospects = await prisma.prospect.findMany({
-    where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] } },
+    where: { workspaceId, outcomeStage: { notIn: ['WON', 'LOST'] }, ...exampleFilter },
     select: {
       id: true, companyName: true, buyingStage: true, outcomeStage: true,
       opportunityScore: true, expectedDealValue: true, winProbability: true,
@@ -168,15 +171,18 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
   const workspaceId = await requireWorkspace(req)
 
+  const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
+  const exampleFilter = realCount > 0 ? { isExample: false } : {}
+
   // Tier counts are computed with bounded SQL range counts rather than loading
   // every prospect into memory and bucketing in JS (which grows unbounded).
   const [totalProspects, signalCounts, stageDist, hot, warm, cold] = await Promise.all([
-    prisma.prospect.count({ where: { workspaceId } }),
+    prisma.prospect.count({ where: { workspaceId, ...exampleFilter } }),
     prisma.signal.groupBy({ by: ['type'], where: { workspaceId }, _count: true }),
-    prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId }, _count: true }),
-    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 72 } } }),
-    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 45, lt: 72 } } }),
-    prisma.prospect.count({ where: { workspaceId, opportunityScore: { lt: 45 } } }),
+    prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId, ...exampleFilter }, _count: true }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 72 }, ...exampleFilter } }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 45, lt: 72 }, ...exampleFilter } }),
+    prisma.prospect.count({ where: { workspaceId, opportunityScore: { lt: 45 }, ...exampleFilter } }),
   ])
 
   res.json({

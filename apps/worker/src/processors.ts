@@ -185,6 +185,7 @@ export async function sendCampaignBatch(
 
   const where = {
     campaignId,
+    workspaceId,
     email: { not: null as null },
     stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] },
     ...(leadIds ? { id: { in: leadIds } } : {})
