@@ -35,6 +35,25 @@ const post = (path: string, body: unknown) =>
     body: JSON.stringify(body),
   })
 
+// Refresh/logout authenticate via the HttpOnly cookie + CSRF header.
+const postWithRefreshCookie = (path: string, rawRefresh: string, opts: { csrf?: boolean } = {}) =>
+  server.request(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': testIp,
+      Cookie: `acaos_refresh=${rawRefresh}`,
+      ...(opts.csrf === false ? {} : { 'X-CSRF-Protection': '1' }),
+    },
+  })
+
+function refreshCookieFrom(headers: Headers): string | null {
+  const raw = headers.get('set-cookie')
+  if (!raw) return null
+  const m = raw.match(/acaos_refresh=([^;]+)/)
+  return m ? m[1] : null
+}
+
 test('signup persists user, workspace, owner membership, and a refresh token', async () => {
   const res = await post('/api/auth/signup', { email: 'Founder@Acme.test', password: 'sup3rsecret', name: 'Fred' })
   assert.equal(res.status, 201)
@@ -48,8 +67,12 @@ test('signup persists user, workspace, owner membership, and a refresh token', a
   assert.equal(user!.memberships[0].role, 'owner')
   assert.ok(user!.memberships[0].workspace.slug, 'workspace has a slug')
   assert.equal(user!.refreshTokens.length, 1)
-  // The refresh token is stored hashed, never in plaintext.
-  assert.notEqual(user!.refreshTokens[0].tokenHash, res.body.refreshToken)
+  // The refresh token is delivered as an HttpOnly cookie (never in the body)...
+  assert.equal(res.body.refreshToken, undefined)
+  const cookie = refreshCookieFrom(res.headers)
+  assert.ok(cookie, 'refresh token set as a cookie')
+  // ...and stored hashed, never as the raw cookie value.
+  assert.notEqual(user!.refreshTokens[0].tokenHash, cookie)
 })
 
 test('signup is rejected for a duplicate email (unique constraint upheld)', async () => {
@@ -67,22 +90,25 @@ test('two signups produce distinct, unique workspace slugs', async () => {
   assert.notEqual(slugs[0].slug, slugs[1].slug)
 })
 
-test('login then refresh rotates the token: old revoked, new usable', async () => {
+test('login then refresh rotates the cookie: old revoked, new usable', async () => {
   await post('/api/auth/signup', { email: 'rot@acme.test', password: 'sup3rsecret' })
   const login = await post('/api/auth/login', { email: 'rot@acme.test', password: 'sup3rsecret' })
   assert.equal(login.status, 200)
 
-  const first = login.body.refreshToken
-  const refresh = await post('/api/auth/refresh', { refreshToken: first })
+  const first = refreshCookieFrom(login.headers)
+  assert.ok(first, 'login sets a refresh cookie')
+
+  const refresh = await postWithRefreshCookie('/api/auth/refresh', first!)
   assert.equal(refresh.status, 200)
-  assert.notEqual(refresh.body.refreshToken, first)
+  const rotated = refreshCookieFrom(refresh.headers)
+  assert.ok(rotated && rotated !== first, 'refresh rotates the cookie')
 
   // Old token now revoked in the DB; reusing it fails.
-  const reuseOld = await post('/api/auth/refresh', { refreshToken: first })
+  const reuseOld = await postWithRefreshCookie('/api/auth/refresh', first!)
   assert.equal(reuseOld.status, 401)
 
   // New token works.
-  const useNew = await post('/api/auth/refresh', { refreshToken: refresh.body.refreshToken })
+  const useNew = await postWithRefreshCookie('/api/auth/refresh', rotated!)
   assert.equal(useNew.status, 200)
 
   const revokedCount = await prisma.refreshToken.count({ where: { revokedAt: { not: null } } })

@@ -24,6 +24,33 @@ describe('useApi', () => {
     const headers = init.headers as Headers
     expect(headers.get('Authorization')).toBe('Bearer tok-123')
     expect(headers.get('Content-Type')).toBe('application/json')
+    // credentials must be included so the HttpOnly refresh cookie travels.
+    expect(init.credentials).toBe('include')
+  })
+
+  test('on 401 it refreshes via the cookie endpoint and retries with the new token', async () => {
+    // First call → 401; refresh → new token; retry → success.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 401, ok: false, json: async () => ({ error: 'expired' }) })
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ token: 'fresh-tok' }) })
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ lead: { id: 'l9' } }) })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const onRefresh = vi.fn()
+    const { result } = renderHook(() => useApi('stale', () => {}, onRefresh))
+    const data = await result.current<{ lead: { id: string } }>('/api/leads/l9')
+    expect(data.lead.id).toBe('l9')
+
+    // The refresh call hits the auth endpoint with credentials + CSRF header and no body.
+    const [refreshUrl, refreshInit] = (fetchMock as any).mock.calls[1]
+    expect(refreshUrl).toMatch(/\/api\/auth\/refresh$/)
+    expect(refreshInit.credentials).toBe('include')
+    expect((refreshInit.headers as Record<string, string>)['X-CSRF-Protection']).toBe('1')
+    expect(refreshInit.body).toBeUndefined()
+    // The retry used the fresh access token.
+    expect(onRefresh).toHaveBeenCalledWith('fresh-tok')
+    const [, retryInit] = (fetchMock as any).mock.calls[2]
+    expect((retryInit.headers as Headers).get('Authorization')).toBe('Bearer fresh-tok')
   })
 
   test('returns parsed JSON on success', async () => {
