@@ -65,9 +65,6 @@ there are no cross-origin requests and `ALLOWED_ORIGINS` is not needed.
 > Existing users authenticated before the move to same-origin cookie auth will be
 > prompted to log in once; subsequent sessions use the HttpOnly refresh cookie.
 
-`Dockerfile.web` (standalone nginx) remains for the optional split-origin setup;
-it is not used by the same-origin deployment.
-
 ### Useful commands
 
 ```bash

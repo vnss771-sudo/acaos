@@ -1,8 +1,0 @@
-{
-  "buildCommand": "npm --workspace @acaos/web run build",
-  "outputDirectory": "apps/web/dist",
-  "installCommand": "npm install",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
-}
