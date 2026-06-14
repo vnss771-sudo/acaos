@@ -65,6 +65,14 @@ test('analyze-reply rejects an over-long body', async () => {
 test('analyze-reply denies a referenced lead in another workspace', async () => {
   assert.equal((await post('/api/jobs/analyze-reply', { replyBody: 'hi', leadId: 'l-other' })).status, 403)
 })
+test('analyze-reply requires a leadId or workspaceId (closes the unmetered AI path)', async () => {
+  // Previously an omitted leadId skipped metering while the worker still ran the
+  // AI call. Now a billable scope is mandatory.
+  assert.equal((await post('/api/jobs/analyze-reply', { replyBody: 'a real reply body' })).status, 400)
+})
+test('analyze-reply denies a workspaceId the user is not a member of', async () => {
+  assert.equal((await post('/api/jobs/analyze-reply', { replyBody: 'hi', workspaceId: OTHER })).status, 403)
+})
 test('research-bulk requires a workspaceId', async () => {
   assert.equal((await post('/api/jobs/research-bulk', {})).status, 400)
 })

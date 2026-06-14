@@ -25,14 +25,21 @@ const NON_OWNER = 'member-1'
 
 // Emails already present in the workspace (lowercased).
 let existingEmails: string[]
+// Current lead count in the workspace, used by the plan-capacity check.
+let leadCount: number
 let prisma: FakePrisma
 let server: TestServer
 
 function spec() {
   return {
     workspace: {
-      findUnique: async (args: any) =>
-        args?.where?.ingestApiKey === hashApiKey(API_KEY) ? { id: WS } : null,
+      findUnique: async (args: any) => {
+        // requireIngestKey middleware resolves the workspace by key hash.
+        if (args?.where?.ingestApiKey === hashApiKey(API_KEY)) return { id: WS, plan: 'free' }
+        // Capacity check + delete-eviction look the workspace up by id.
+        if (args?.where?.id === WS) return { id: WS, plan: 'free', subscriptionStatus: null, ingestApiKey: hashApiKey(API_KEY) }
+        return null
+      },
       update: async (args: any) => ({ id: args?.where?.id }),
     },
     campaign: {
@@ -40,6 +47,7 @@ function spec() {
         args?.where?.id === 'camp-1' && args?.where?.workspaceId === WS ? { id: 'camp-1' } : null,
     },
     lead: {
+      count: async () => leadCount,
       findMany: async (args: any) => {
         const wanted = (args?.where?.email?.in ?? []) as string[]
         return existingEmails
@@ -64,6 +72,7 @@ function spec() {
 
 beforeEach(async () => {
   existingEmails = []
+  leadCount = 0
   prisma = createFakePrisma(spec())
   installPrisma(prisma)
   server = await startTestServer('/api/ingest', ingestRouter)
@@ -153,6 +162,34 @@ test('skips emails that already exist in the workspace (case-insensitive)', asyn
   assert.equal(res.body.created, 1)
 })
 
+// --- plan lead-cap enforcement (cannot be bypassed via ingest) ---
+
+test('truncates a batch that would exceed the plan lead cap', async () => {
+  // Free plan caps at 500 leads; the workspace already has 499, so only one of
+  // the five fresh leads may be created — the rest are skipped, not silently
+  // allowed past the cap.
+  leadCount = 499
+  const res = await ingest({
+    leads: Array.from({ length: 5 }, (_, i) => ({ businessName: `Biz ${i}` })),
+    autoResearch: false,
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 1)
+  assert.equal(res.body.skipped, 4)
+  assert.equal(prisma.callsTo('lead', 'create').length, 1)
+})
+
+test('creates nothing when the workspace is already at the cap', async () => {
+  leadCount = 500
+  const res = await ingest({
+    leads: [{ businessName: 'Over' }, { businessName: 'Limit' }],
+    autoResearch: false,
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.created, 0)
+  assert.equal(prisma.callsTo('lead', 'create').length, 0)
+})
+
 // --- key management (owner only) ---
 
 test('key rotation is denied for a non-owner', async () => {
@@ -180,4 +217,19 @@ test('key deletion is denied for a non-owner', async () => {
     headers: { Authorization: bearer(NON_OWNER) },
   })
   assert.equal(res.status, 403)
+})
+
+test('key deletion looks up the existing key (to evict it) and clears it', async () => {
+  const res = await server.request(`/api/ingest/keys?workspaceId=${WS}`, {
+    method: 'DELETE',
+    headers: { Authorization: bearer(OWNER) },
+  })
+  assert.equal(res.status, 200)
+  // The pre-delete lookup that feeds cache eviction must have run...
+  const lookups = prisma.callsTo('workspace', 'findUnique')
+    .filter((c) => (c.args[0] as any)?.select?.ingestApiKey)
+  assert.equal(lookups.length, 1)
+  // ...and the key is nulled out.
+  const update = prisma.callsTo('workspace', 'update')[0]
+  assert.equal((update.args[0] as any).data.ingestApiKey, null)
 })

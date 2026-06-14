@@ -198,6 +198,16 @@ outcomesRouter.post(
     const channelUsed = req.body?.channelUsed === 'LINKEDIN' ? 'LINKEDIN' : 'EMAIL'
     const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() || null : null
 
+    // The referenced records must belong to the resolved workspace. Without this
+    // a valid API key could submit outcomes pointing at arbitrary prospect/lead
+    // ids in other workspaces, poisoning their scoring data.
+    const prospect = await prisma.prospect.findFirst({ where: { id: prospectId, workspaceId }, select: { id: true } })
+    if (!prospect) throw new ApiError(400, 'prospectId not found in this workspace')
+    if (leadId) {
+      const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId }, select: { id: true } })
+      if (!lead) throw new ApiError(400, 'leadId not found in this workspace')
+    }
+
     const model = await getOrCreateModel(workspaceId)
 
     await prisma.scoringOutcome.create({

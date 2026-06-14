@@ -3,6 +3,7 @@ import { ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
 import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
+import { assertPublicMailHost } from '../lib/ssrf.js'
 
 function getRequiredEnv(key: string) {
   const value = process.env[key]?.trim()
@@ -60,6 +61,10 @@ export function buildTransport(cfg?: SmtpConfig | null) {
 }
 
 export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null) {
+  // Workspace-supplied SMTP hosts are an SSRF surface: resolve and reject
+  // private/loopback/metadata targets immediately before connecting. Env-
+  // configured system hosts are trusted and skipped.
+  if (cfg?.smtpHost) await assertPublicMailHost(cfg.smtpHost, 'smtpHost')
   const transporter = buildTransport(cfg)
   const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
   return transporter.sendMail({ from, to, subject, html })
@@ -151,6 +156,8 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
   }
 
   const host = cfg?.imapHost || getRequiredEnv('IMAP_HOST')
+  // Workspace-supplied IMAP hosts are an SSRF surface — see sendMail above.
+  if (cfg?.imapHost) await assertPublicMailHost(cfg.imapHost, 'imapHost')
   const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
   const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
   const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')

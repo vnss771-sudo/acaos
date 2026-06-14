@@ -16,9 +16,16 @@ billingRouter.post(
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const workspaceId = String(req.body?.workspaceId || '').trim()
-    const priceId = typeof req.body?.priceId === 'string' ? req.body.priceId.trim() : undefined
+    // Accept a server-side plan enum, never a raw Stripe price id from the
+    // client. A client-supplied price could point at an arbitrary (cheaper or
+    // unintended) price in the Stripe account; the price is resolved server-side
+    // from the chosen plan instead.
+    const plan = typeof req.body?.plan === 'string' ? req.body.plan.trim() : ''
 
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    if (plan !== 'starter' && plan !== 'growth') {
+      throw new ApiError(400, 'plan must be "starter" or "growth"')
+    }
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
     if (!allowed) throw new ApiError(403, 'Workspace billing access denied')
@@ -33,7 +40,7 @@ billingRouter.post(
       throw new ApiError(409, 'Workspace already has an active subscription')
     }
 
-    const session = await createCheckoutSession(workspaceId, user.email, workspace.stripeCustomerId ?? undefined, priceId)
+    const session = await createCheckoutSession(workspaceId, plan, user.email, workspace.stripeCustomerId ?? undefined)
     if (!session.url) throw new ApiError(502, 'Stripe checkout URL unavailable')
 
     res.json({ url: session.url })
@@ -129,26 +136,27 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
       case 'checkout.session.completed': {
         const session = event.data.object as {
           customer?: string
-          metadata?: { workspaceId?: string; priceId?: string }
+          metadata?: { workspaceId?: string; plan?: string; priceId?: string }
           subscription?: string
         }
         const workspaceId = session.metadata?.workspaceId
         if (workspaceId) {
-          // New subscription: default an unrecognized price to starter, but log it.
-          const plan = resolvePlanFromPrice(session.metadata?.priceId) ?? 'starter'
-          if (!resolvePlanFromPrice(session.metadata?.priceId)) {
-            console.warn(`[billing] unrecognized priceId on checkout for workspace=${workspaceId}; defaulting to starter`)
+          const plan = resolveCheckoutPlan(session.metadata)
+          // Always activate the paid subscription, but never grant a tier by
+          // guessing: if the plan/price is unrecognized, leave the existing plan
+          // untouched rather than defaulting to starter.
+          const data: Record<string, unknown> = {
+            stripeCustomerId: session.customer ?? undefined,
+            stripeSubscriptionId: session.subscription ?? undefined,
+            subscriptionStatus: 'active',
           }
-          await prisma.workspace.update({
-            where: { id: workspaceId },
-            data: {
-              stripeCustomerId: session.customer ?? undefined,
-              stripeSubscriptionId: session.subscription ?? undefined,
-              subscriptionStatus: 'active',
-              plan
-            }
-          })
-          console.log(`[billing] checkout.session.completed workspace=${workspaceId} plan=${plan}`)
+          if (plan !== null) {
+            data.plan = plan
+          } else {
+            console.error(`[billing] checkout.session.completed workspace=${workspaceId} with unrecognized plan/price; activating without changing plan tier`)
+          }
+          await prisma.workspace.update({ where: { id: workspaceId }, data })
+          console.log(`[billing] checkout.session.completed workspace=${workspaceId} plan=${plan ?? 'unchanged'}`)
         }
         break
       }
@@ -270,4 +278,14 @@ function resolvePlanFromPrice(priceId: string | undefined): string | null {
   if (priceId === process.env.STRIPE_PRICE_GROWTH) return 'growth'
   if (priceId === process.env.STRIPE_PRICE_STARTER) return 'starter'
   return null
+}
+
+// Resolves the plan for a completed checkout from its session metadata. Prefers
+// the server-set `plan` field (which the checkout route now controls) and falls
+// back to mapping the price id for sessions created before that change. Returns
+// null when neither yields a known plan.
+function resolveCheckoutPlan(metadata: { plan?: string; priceId?: string } | undefined): string | null {
+  const p = metadata?.plan
+  if (p === 'starter' || p === 'growth') return p
+  return resolvePlanFromPrice(metadata?.priceId)
 }

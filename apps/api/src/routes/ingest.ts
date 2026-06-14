@@ -3,7 +3,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
-import { checkAndIncrementAiUsage } from '../lib/limits.js'
+import { checkAndIncrementAiUsage, reserveLeadCapacity } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -112,8 +112,18 @@ ingestRouter.post(
       return res.json({ created: 0, skipped: leads.length, queued: 0 })
     }
 
-    // Insert new leads one-by-one so we get their IDs for queue jobs
-    const created = await prisma.$transaction(rows.map((data) => prisma.lead.create({ data })))
+    // Insert new leads one-by-one so we get their IDs for queue jobs. The
+    // insert runs inside a transaction that first reserves plan capacity under a
+    // per-workspace lock, so an ingest key cannot exceed the workspace's lead
+    // cap (rows beyond the remaining quota are truncated and reported as skipped).
+    const created = await prisma.$transaction(async (tx) => {
+      const allowed = await reserveLeadCapacity(tx, workspace.id, rows.length)
+      const out = []
+      for (const data of rows.slice(0, allowed)) {
+        out.push(await tx.lead.create({ data }))
+      }
+      return out
+    })
 
     // Enqueue AI research for each new lead if requested — subject to the same
     // monthly AI plan limit as the dashboard, so the ingest key cannot drive
@@ -183,6 +193,11 @@ keyRouter.delete(
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
+
+    // Evict the old hash from cache before deletion so a revoked key cannot keep
+    // authenticating until its TTL expires on a warm API process.
+    const existing = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ingestApiKey: true } })
+    if (existing?.ingestApiKey) evictCachedWorkspace(existing.ingestApiKey)
 
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
     res.json({ ok: true })
