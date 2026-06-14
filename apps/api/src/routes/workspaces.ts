@@ -293,6 +293,9 @@ workspaceRouter.post(
         `<p><a href="${inviteUrl}">Accept invitation</a></p>` +
         `<p>This link expires in 7 days. If you don't have an ACAOS account yet, you'll be asked to create one first.</p>`
       )
+    } else if (process.env.NODE_ENV === 'production') {
+      // Never log a URL containing the raw invite token in production.
+      console.warn(`[invites] SMTP not configured; invite email was not sent to ${email}`)
     } else {
       console.log(`[invites] Invite URL for ${email}: ${inviteUrl}`)
     }

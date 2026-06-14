@@ -136,9 +136,11 @@ const outreachWorker = new Worker(
         }
       })
 
-      if (lead.stage === 'RESEARCHED') {
-        await prisma.lead.update({ where: { id: lead.id }, data: { stage: 'OUTREACH_SENT' } })
-      }
+      // Generating a draft is NOT a send. Do not advance the lead to
+      // OUTREACH_SENT here — sendCampaignBatch excludes that stage from the send
+      // selection, so marking it now would prevent the campaign from ever
+      // sending the draft. sendCampaignBatch sets OUTREACH_SENT only after SMTP
+      // delivery is recorded in OutreachSent.
     }
 
     await job.updateProgress(100)
