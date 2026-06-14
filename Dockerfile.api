@@ -4,16 +4,24 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
 COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
 
 RUN npm ci
 
 COPY packages/db ./packages/db
 COPY apps/api ./apps/api
+COPY apps/web ./apps/web
 
 RUN npm run prisma:generate
 RUN npm run build -w @acaos/api
+# Build the SPA into apps/web/dist so the API can serve it from the same origin.
+# VITE_API_BASE_URL is intentionally left blank: the frontend calls /api on its
+# own origin.
+RUN npm --workspace @acaos/web run build
 
 EXPOSE 4000
 ENV NODE_ENV=production
+# Tell the API where the built SPA lives.
+ENV WEB_DIST_DIR=/app/apps/web/dist
 
 CMD ["sh", "-c", "npm --workspace @acaos/api run migrate && npm --workspace @acaos/api run start"]

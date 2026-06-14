@@ -20,6 +20,7 @@ import { adminRouter } from './routes/admin.js'
 import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
+import { mountWebApp } from './middleware/serveWeb.js'
 import { requestContext } from './middleware/requestContext.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
@@ -110,6 +111,11 @@ app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/unsubscribe', unsubscribeRouter)
+
+// Serve the built web SPA from the same origin as the API (when a build is
+// present). Mounted after the API routers so unknown /api/* paths still 404 as
+// JSON, and before the handlers below so SPA deep links resolve to the app.
+mountWebApp(app)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

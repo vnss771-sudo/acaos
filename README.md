@@ -49,6 +49,25 @@ npm run dev:web             # http://localhost:5173
 docker compose -f docker-compose.local.yml up --build
 ```
 
+### Production deployment (same-origin)
+
+In production the web frontend is served from the **same origin as the API**:
+the API process serves the built SPA (with client-side-routing fallback) for any
+non-`/api` path. This is the supported topology — the refresh token lives in a
+first-party `SameSite=Lax` HttpOnly cookie (see `apps/api/src/lib/cookies.ts`),
+which requires the app and API to share a site.
+
+`Dockerfile.api` builds both the API and the SPA and sets `WEB_DIST_DIR` so the
+API can find the static build, so a single deployed service serves the whole app.
+The frontend calls `/api` on its own origin (`VITE_API_BASE_URL` left blank), so
+there are no cross-origin requests and `ALLOWED_ORIGINS` is not needed.
+
+> Existing users authenticated before the move to same-origin cookie auth will be
+> prompted to log in once; subsequent sessions use the HttpOnly refresh cookie.
+
+`Dockerfile.web` (standalone nginx) remains for the optional split-origin setup;
+it is not used by the same-origin deployment.
+
 ### Useful commands
 
 ```bash
