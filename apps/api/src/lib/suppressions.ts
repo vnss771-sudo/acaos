@@ -21,5 +21,5 @@ export async function bulkCheckSuppression(workspaceId: string, emails: string[]
     where: { workspaceId, email: { in: normalised } },
     select: { email: true }
   })
-  return new Set(hits.map(h => h.email))
+  return new Set((hits as Array<{ email: string }>).map((h: { email: string }) => h.email))
 }

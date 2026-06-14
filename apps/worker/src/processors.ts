@@ -11,7 +11,7 @@ import {
   calcWinProbability,
   toRawSignal,
 } from '../../api/src/lib/signalEngine.js'
-import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
+import type { SignalType, SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
 import { generateOutreach } from '../../api/src/services/openai.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '../../api/src/services/mail.js'
@@ -21,6 +21,46 @@ import { randomBytes } from 'crypto'
 
 type Progress = (n: number) => unknown
 
+type DbSignalRow = {
+  type: SignalType
+  strength: number
+  sourceReliability: number
+  industryRelevance: number
+  detectedAt: Date
+}
+
+type ScoreProspectRow = {
+  id: string
+  industry: string | null
+  employeeCount: number | null
+  contactEmail: string | null
+  contactName: string | null
+  domain: string | null
+  location: string | null
+  signals: DbSignalRow[]
+}
+
+type CalibrationOutcomeRow = {
+  stage: string
+  prospect: {
+    industry: string | null
+    employeeCount: number | null
+    signals: Array<{ type: SignalType }>
+  }
+}
+
+type CampaignLeadRow = {
+  id: string
+  businessName: string
+  category: string | null
+  city: string | null
+  contactName: string | null
+  email: string | null
+  aiSummary: string | null
+  outreachAngle: string | null
+  outreachDrafts: Array<{ subject: string; emailBody: string }>
+}
+
 /** Recompute opportunity scores for every prospect in a workspace. */
 export async function scoreProspects(
   workspaceId: string,
@@ -29,7 +69,7 @@ export async function scoreProspects(
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId },
     include: { signals: true },
-  })
+  }) as ScoreProspectRow[]
   await progress?.(10)
 
   const [icp, scoringModel] = await Promise.all([
@@ -50,7 +90,7 @@ export async function scoreProspects(
     : undefined
 
   // Compute all score updates in memory first (pure CPU — no DB)
-  const updates = prospects.map(prospect => {
+  const updates = prospects.map((prospect: ScoreProspectRow) => {
     const rawSignals = prospect.signals.map(toRawSignal)
     const scores = calculateOpportunityScores(rawSignals, {
       industry: prospect.industry,
@@ -93,15 +133,15 @@ export async function calibrateScoring(
     include: { prospect: { include: { signals: true } } },
     orderBy: { recordedAt: 'desc' },
     take: 100,
-  })
+  }) as CalibrationOutcomeRow[]
   await progress?.(30)
 
-  const outcomes = rawOutcomes.map((o) => ({
+  const outcomes = rawOutcomes.map((o: CalibrationOutcomeRow) => ({
     stage: o.stage as 'WON' | 'LOST',
     prospect: {
       industry: o.prospect.industry,
       employeeCount: o.prospect.employeeCount,
-      signals: o.prospect.signals.map((s) => ({ type: s.type })),
+      signals: o.prospect.signals.map((s: { type: SignalType }) => ({ type: s.type })),
     },
   }))
 
@@ -208,7 +248,7 @@ export async function sendCampaignBatch(
         take: 1
       }
     }
-  })
+  }) as CampaignLeadRow[]
   let dailyRemaining = Infinity
   if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
     const startOfToday = new Date()
@@ -224,7 +264,7 @@ export async function sendCampaignBatch(
   }
 
   // Filter suppressed addresses before doing any AI work
-  const emailList = leads.map(l => l.email!).filter(Boolean)
+  const emailList = leads.map((l: CampaignLeadRow) => l.email!).filter(Boolean)
   const suppressedSet = emailList.length > 0
     ? await bulkCheckSuppression(workspaceId, emailList)
     : new Set<string>()

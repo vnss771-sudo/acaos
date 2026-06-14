@@ -13,7 +13,7 @@ import { isMailConfigured, sendMail } from '../services/mail.js'
 import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
-import { SignalType } from '@prisma/client'
+import type { SignalType } from '../lib/signalEngine.js'
 import { evictCachedWorkspace } from '../lib/ingestCache.js'
 
 // ── F-04: SSRF protection helpers ────────────────────────────────────────────

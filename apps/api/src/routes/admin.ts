@@ -46,9 +46,32 @@ adminRouter.get(
       })
     ])
 
-    const usageByWs = new Map(aiUsage.map(u => [u.workspaceId, u._sum.count ?? 0]))
+    type AdminUsageRow = { workspaceId: string; _sum: { count: number | null } }
+    type AdminWorkspaceRow = {
+      id: string
+      name: string
+      slug: string
+      plan: string
+      subscriptionStatus: string | null
+      createdAt: Date
+      _count: { leads: number; campaigns: number; memberships: number }
+    }
+    type AdminWorkspaceSummary = {
+      id: string
+      name: string
+      slug: string
+      plan: string
+      subscriptionStatus: string | null
+      createdAt: Date
+      memberCount: number
+      leadCount: number
+      campaignCount: number
+      aiCallsThisMonth: number
+    }
 
-    const summary = workspaces.map(ws => ({
+    const usageByWs = new Map((aiUsage as AdminUsageRow[]).map((u: AdminUsageRow) => [u.workspaceId, u._sum.count ?? 0]))
+
+    const summary: AdminWorkspaceSummary[] = (workspaces as AdminWorkspaceRow[]).map((ws: AdminWorkspaceRow) => ({
       id: ws.id,
       name: ws.name,
       slug: ws.slug,
@@ -63,10 +86,10 @@ adminRouter.get(
 
     const totals = {
       workspaceCount: summary.length,
-      totalLeads: summary.reduce((s, w) => s + w.leadCount, 0),
-      totalCampaigns: summary.reduce((s, w) => s + w.campaignCount, 0),
-      totalAiCalls: summary.reduce((s, w) => s + w.aiCallsThisMonth, 0),
-      paidWorkspaces: summary.filter(w => w.plan !== 'free').length
+      totalLeads: summary.reduce((s: number, w: AdminWorkspaceSummary) => s + w.leadCount, 0),
+      totalCampaigns: summary.reduce((s: number, w: AdminWorkspaceSummary) => s + w.campaignCount, 0),
+      totalAiCalls: summary.reduce((s: number, w: AdminWorkspaceSummary) => s + w.aiCallsThisMonth, 0),
+      paidWorkspaces: summary.filter((w: AdminWorkspaceSummary) => w.plan !== 'free').length
     }
 
     res.json({ workspaces: summary, totals })

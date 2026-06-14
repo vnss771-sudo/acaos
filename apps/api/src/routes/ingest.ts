@@ -77,7 +77,7 @@ ingestRouter.post(
           select: { email: true }
         })
       : []
-    const existingEmails = new Set(existing.map((l) => l.email!.toLowerCase()))
+    const existingEmails = new Set((existing as Array<{ email: string | null }>).map((l: { email: string | null }) => l.email!.toLowerCase()))
 
     // Deduplicate the batch itself (first occurrence wins)
     const seenEmails = new Set<string>()
