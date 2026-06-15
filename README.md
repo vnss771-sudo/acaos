@@ -110,8 +110,8 @@ Apollo, Google Places, and Hunter keys are set once in environment variables for
 
 ### Low priority (polish)
 
-**8. Language is inconsistent across the product**
-The UI calls things "Missions" but the database models, API routes, and backend code all say "Campaign". Acceptable short-term, but the product language should converge as the Mission workflow matures.
+**8. Mission workflow is still maturing**
+`Mission` is now a first-class model and API (`/api/missions`) with a Missions view; creating a mission also provisions its linked execution `Campaign`. Still to deepen: wiring discovery runs, recommendations, and an approval queue directly into the mission control plane (status lifecycle exists: DRAFT→…→COMPLETE).
 
 **9. Observability is incomplete**
 Request IDs and structured request logging exist. Missing: frontend error reporting (Sentry-style), provider/SMTP failure dashboards, discovery run dashboard, and uptime checks.

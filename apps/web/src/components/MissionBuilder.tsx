@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import type { CreateMissionRequest } from '@acaos/shared'
 import { colors, s } from '../styles.js'
 import type { Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -84,14 +85,17 @@ export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Pr
     const name = missionName.trim() || buildDefaultName(answer1)
     setSaving(true)
     try {
-      const d = await api<{ campaign: { id: string; name: string } }>('/api/campaigns', {
+      // Creates a first-class Mission and its linked execution Campaign.
+      const body: CreateMissionRequest = {
+        workspaceId: workspace.id,
+        name,
+        goalType,
+        targetCustomer: answer1.trim(),
+        offer: answer2.trim(),
+      }
+      const d = await api<{ mission: { id: string; name: string }; campaign: { id: string; name: string } }>('/api/missions', {
         method: 'POST',
-        body: JSON.stringify({
-          workspaceId: workspace.id,
-          name,
-          goalType,
-          description: `Target: ${answer1.trim()}\nOffer: ${answer2.trim()}`
-        })
+        body: JSON.stringify(body)
       })
       onCreated(d.campaign.id, d.campaign.name)
     } catch (err) {

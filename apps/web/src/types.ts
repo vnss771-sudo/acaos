@@ -34,6 +34,21 @@ export type Campaign = {
   _count?: { leads: number }
 }
 
+export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
+
+export type Mission = {
+  id: string
+  name: string
+  goalType: string
+  targetCustomer?: string | null
+  offer?: string | null
+  playbookId?: string | null
+  status: MissionStatus
+  campaignId?: string | null
+  createdAt: string
+  campaign?: Campaign | null
+}
+
 export type Lead = {
   id: string
   businessName: string
@@ -106,7 +121,7 @@ export type StatsData = {
   usage: UsageData
 }
 
-export type View = 'dashboard' | 'intelligence' | 'prospects' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
+export type View = 'dashboard' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
 
 export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
 export type Stage = typeof STAGES[number]
