@@ -161,7 +161,7 @@ model Lead {
   aiSummary      String?
   outreachAngle  String?
   score          Int             @default(0)
-  stage          String          @default("NEW")
+  stage          LeadStage       @default(NEW)
   sourceTag      String?
   lastContactedAt DateTime?
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -405,6 +405,17 @@ enum OutcomeStage {
   PROPOSAL
   WON
   LOST
+}
+
+// Lead pipeline stage (was a free-form String — now DB-enforced).
+enum LeadStage {
+  NEW
+  RESEARCHED
+  OUTREACH_SENT
+  REPLIED
+  BOOKED
+  CLOSED
+  DEAD
 }
 
 model Suppression {
