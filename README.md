@@ -98,7 +98,7 @@ Example/seed prospects are hidden from the opportunities list when real prospect
 Outbound emails include an unsubscribe link, which is good. But the footer should also include the workspace business name, sender email, and a contact address to meet commercial email compliance requirements (CAN-SPAM, GDPR). Needs `senderBusinessName` and `senderPostalAddress` fields on the workspace.
 
 **5. Discovery source errors — partially addressed**
-A `DiscoveryRun` model records every run (status, counts, error code/message), provider failures surface as a `502` with a clear message (not a misleading "no results"), `GET /api/prospects/discovery-runs` exposes history, and the Prospects view shows a **discovery-history panel** flagging failed runs and their reasons. Remaining: make the Google Places provider throw on failure rather than returning `[]`.
+A `DiscoveryRun` model records every run (status, counts, error code/message); both Apollo and Google Places now throw on provider failure (no swallowed `[]`), failures surface as a `502` with a clear message (not a misleading "no results"), `GET /api/prospects/discovery-runs` exposes history, and the Prospects view shows a **discovery-history panel** flagging failed runs and their reasons. ✓ Resolved.
 
 ### Medium priority (important before scaling)
 

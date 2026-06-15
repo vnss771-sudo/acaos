@@ -167,51 +167,53 @@ class GooglePlacesSource implements ProspectSourceProvider {
     const textQuery = [industry, location].filter(Boolean).join(' in ')
     if (!textQuery) return []
 
-    try {
-      const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': apiKey,
-          'X-Goog-FieldMask': [
-            'places.id', 'places.displayName', 'places.formattedAddress',
-            'places.websiteUri', 'places.businessStatus',
-            'places.nationalPhoneNumber', 'places.types',
-          ].join(','),
-        },
-        body: JSON.stringify({ textQuery, pageSize: limit }),
-      })
+    // Let failures propagate (the discover route records a FAILED DiscoveryRun and
+    // returns a clear 502) rather than swallowing them into an empty result, which
+    // is indistinguishable from "no matches".
+    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': [
+          'places.id', 'places.displayName', 'places.formattedAddress',
+          'places.websiteUri', 'places.businessStatus',
+          'places.nationalPhoneNumber', 'places.types',
+        ].join(','),
+      },
+      body: JSON.stringify({ textQuery, pageSize: limit }),
+    })
 
-      if (!res.ok) return []
-
-      const data = await res.json() as {
-        places?: Array<{
-          id?: string
-          displayName?: { text?: string }
-          formattedAddress?: string
-          websiteUri?: string
-          nationalPhoneNumber?: string
-          types?: string[]
-          businessStatus?: string
-        }>
-      }
-
-      return (data.places ?? [])
-        .filter(p => p.businessStatus !== 'CLOSED_PERMANENTLY' && p.displayName?.text)
-        .map(p => {
-          let domain: string | undefined
-          try { domain = new URL(p.websiteUri!).hostname.replace(/^www\./, '') } catch { /* no website */ }
-          return {
-            companyName: p.displayName!.text!,
-            domain,
-            location:    p.formattedAddress ?? undefined,
-            description: p.types?.slice(0, 3).map(t => t.replace(/_/g, ' ')).join(', ') ?? undefined,
-            sourceId:    p.id ?? undefined,
-          }
-        })
-    } catch {
-      return []
+    if (!res.ok) {
+      const msg = await res.text().catch(() => res.statusText)
+      throw new Error(`Google Places search ${res.status}: ${msg.slice(0, 200)}`)
     }
+
+    const data = await res.json() as {
+      places?: Array<{
+        id?: string
+        displayName?: { text?: string }
+        formattedAddress?: string
+        websiteUri?: string
+        nationalPhoneNumber?: string
+        types?: string[]
+        businessStatus?: string
+      }>
+    }
+
+    return (data.places ?? [])
+      .filter(p => p.businessStatus !== 'CLOSED_PERMANENTLY' && p.displayName?.text)
+      .map(p => {
+        let domain: string | undefined
+        try { domain = new URL(p.websiteUri!).hostname.replace(/^www\./, '') } catch { /* no website */ }
+        return {
+          companyName: p.displayName!.text!,
+          domain,
+          location:    p.formattedAddress ?? undefined,
+          description: p.types?.slice(0, 3).map(t => t.replace(/_/g, ' ')).join(', ') ?? undefined,
+          sourceId:    p.id ?? undefined,
+        }
+      })
   }
 }
 
