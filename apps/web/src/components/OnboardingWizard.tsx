@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import type { SeedWorkspaceRequest, UpdateIcpRequest } from '@acaos/shared'
 import { colors, s } from '../styles.js'
 import type { Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -96,9 +97,10 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
   async function handleSkipSetup() {
     try {
       setSaving(true)
+      const body: SeedWorkspaceRequest = { playbookId: null, includeExamples: false }
       await api(`/api/workspaces/${workspace.id}/seed`, {
         method: 'POST',
-        body: JSON.stringify({ playbookId: null, includeExamples: false })
+        body: JSON.stringify(body)
       })
       onComplete()
     } catch (err) {
@@ -111,21 +113,22 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
   async function handleStep2Continue() {
     try {
       setSaving(true)
+      const icpBody: UpdateIcpRequest = {
+        businessType: icpForm.businessType,
+        playbook: selectedPlaybook?.id ?? null,
+        targetIndustries: icpForm.targetIndustries.split('\n').map(s => s.trim()).filter(Boolean),
+        targetGeos: icpForm.targetGeos.split('\n').map(s => s.trim()).filter(Boolean),
+        minEmployees: null,
+        maxEmployees: null,
+        mustHaveEmail: false,
+        outreachTone: icpForm.outreachTone,
+        dailySendLimit: icpForm.dailySendLimit,
+        approvalMode: icpForm.approvalMode,
+        excludedIndustries: []
+      }
       await api(`/api/workspaces/${workspace.id}/icp`, {
         method: 'PUT',
-        body: JSON.stringify({
-          businessType: icpForm.businessType,
-          playbook: selectedPlaybook?.id ?? null,
-          targetIndustries: icpForm.targetIndustries.split('\n').map(s => s.trim()).filter(Boolean),
-          targetGeos: icpForm.targetGeos.split('\n').map(s => s.trim()).filter(Boolean),
-          minEmployees: null,
-          maxEmployees: null,
-          mustHaveEmail: false,
-          outreachTone: icpForm.outreachTone,
-          dailySendLimit: icpForm.dailySendLimit,
-          approvalMode: icpForm.approvalMode,
-          excludedIndustries: []
-        })
+        body: JSON.stringify(icpBody)
       })
       setStep(3)
     } catch (err) {
@@ -139,12 +142,10 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
     try {
       setSaving(true)
       const useExamples = skip ? false : includeExamples
+      const body: SeedWorkspaceRequest = { playbookId: selectedPlaybook?.id ?? null, includeExamples: useExamples }
       await api(`/api/workspaces/${workspace.id}/seed`, {
         method: 'POST',
-        body: JSON.stringify({
-          playbookId: selectedPlaybook?.id ?? null,
-          includeExamples: useExamples
-        })
+        body: JSON.stringify(body)
       })
       setStep(4)
     } catch (err) {

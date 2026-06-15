@@ -579,6 +579,17 @@ workspaceRouter.delete(
   })
 )
 
+// Deterministic per-company pseudo-score so demos look identical run-to-run and
+// any test that depends on seeded data is stable. (Previously Math.random(),
+// which made the dashboard and seed-dependent tests non-deterministic.)
+function seededScore(companyName: string, salt: number, range: number, base: number): number {
+  let h = salt >>> 0
+  for (let i = 0; i < companyName.length; i++) {
+    h = (Math.imul(h, 31) + companyName.charCodeAt(i)) >>> 0
+  }
+  return (h % range) + base
+}
+
 // Onboarding seed — marks workspace setup complete and optionally creates
 // example (isExample=true) prospects so the dashboard is never empty on day 1.
 workspaceRouter.post(
@@ -608,11 +619,11 @@ workspaceRouter.post(
         for (const s of seeds) {
           const exampleSignals = EXAMPLE_SIGNALS[s.companyName] ?? EXAMPLE_SIGNALS['__default__']
           const score = {
-            opportunityScore: Math.floor(Math.random() * 25) + 62,
-            intentScore:      Math.floor(Math.random() * 20) + 55,
-            fitScore:         Math.floor(Math.random() * 20) + 58,
-            timingScore:      Math.floor(Math.random() * 25) + 52,
-            confidenceScore:  Math.floor(Math.random() * 15) + 45,
+            opportunityScore: seededScore(s.companyName, 1, 25, 62),
+            intentScore:      seededScore(s.companyName, 2, 20, 55),
+            fitScore:         seededScore(s.companyName, 3, 20, 58),
+            timingScore:      seededScore(s.companyName, 4, 25, 52),
+            confidenceScore:  seededScore(s.companyName, 5, 15, 45),
           }
           // Check idempotency
           const already = await prisma.prospect.findFirst({ where: { workspaceId, companyName: s.companyName } })

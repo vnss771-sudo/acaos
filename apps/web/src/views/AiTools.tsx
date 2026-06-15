@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import type { AiResearchRequest, AiOutreachRequest, AiReplyAnalysisRequest } from '@acaos/shared'
 import type { Workspace, Lead } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
@@ -93,20 +94,15 @@ export function AiTools({ api, workspace, toast }: Props) {
     try {
       let data
       if (tab === 'research') {
-        data = await api<{ result: string }>('/api/ai/research', {
-          method: 'POST',
-          body: JSON.stringify({ workspaceId: workspace.id, businessName: inputs.businessName, website: inputs.website, notes: inputs.notes })
-        })
+        // Typed against the shared contract: omitting workspaceId is a compile error.
+        const body: AiResearchRequest = { workspaceId: workspace.id, businessName: inputs.businessName, website: inputs.website, notes: inputs.notes }
+        data = await api<{ result: string }>('/api/ai/research', { method: 'POST', body: JSON.stringify(body) })
       } else if (tab === 'outreach') {
-        data = await api<{ result: string }>('/api/ai/outreach', {
-          method: 'POST',
-          body: JSON.stringify({ workspaceId: workspace.id, businessName: inputs.businessName, category: inputs.category })
-        })
+        const body: AiOutreachRequest = { workspaceId: workspace.id, businessName: inputs.businessName, category: inputs.category }
+        data = await api<{ result: string }>('/api/ai/outreach', { method: 'POST', body: JSON.stringify(body) })
       } else {
-        data = await api<{ result: string }>('/api/ai/reply-analysis', {
-          method: 'POST',
-          body: JSON.stringify({ workspaceId: workspace.id, replyBody: inputs.replyBody })
-        })
+        const body: AiReplyAnalysisRequest = { workspaceId: workspace.id, replyBody: inputs.replyBody }
+        data = await api<{ result: string }>('/api/ai/reply-analysis', { method: 'POST', body: JSON.stringify(body) })
       }
       setResult(typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2))
     } catch (e) { toast.error(e instanceof Error ? e.message : 'AI request failed') }
