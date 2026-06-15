@@ -13,12 +13,13 @@ function getStripe() {
   })
 }
 
-export type BillingPlan = 'starter' | 'growth'
+// Paid plans eligible for Stripe checkout (the `free` tier is never purchased).
+export type CheckoutPlan = 'starter' | 'growth'
 
 // Resolve the Stripe price id for a plan from server-side config only. The
 // client never supplies a price id directly (it would let a user point checkout
 // at an arbitrary price in the account).
-export function priceIdForPlan(plan: BillingPlan): string {
+export function priceIdForPlan(plan: CheckoutPlan): string {
   const id = plan === 'growth' ? process.env.STRIPE_PRICE_GROWTH : process.env.STRIPE_PRICE_STARTER
   if (!id) throw new ApiError(503, `No Stripe price configured for the ${plan} plan`)
   return id
@@ -26,7 +27,7 @@ export function priceIdForPlan(plan: BillingPlan): string {
 
 export async function createCheckoutSession(
   workspaceId: string,
-  plan: BillingPlan,
+  plan: CheckoutPlan,
   customerEmail?: string,
   existingCustomerId?: string
 ) {

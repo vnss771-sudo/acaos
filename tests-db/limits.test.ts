@@ -43,3 +43,15 @@ test('a growth (unlimited) workspace accepts many concurrent calls', async () =>
   )
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 25)
 })
+
+test('the DB rejects a plan value outside the BillingPlan enum', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  // Bypass Prisma's client-side typing with a raw write to prove the column type
+  // itself (not just the TS layer) enforces the closed set of plans.
+  await assert.rejects(
+    () => prisma.$executeRawUnsafe(
+      `UPDATE "Workspace" SET "plan" = 'enterprise' WHERE "id" = $1`, workspace.id,
+    ),
+    /invalid input value for enum "BillingPlan"/i,
+  )
+})
