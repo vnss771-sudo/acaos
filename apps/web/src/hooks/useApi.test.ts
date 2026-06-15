@@ -75,6 +75,18 @@ describe('useApi', () => {
       .rejects.toThrow('businessName required')
   })
 
+  test('aborts and throws a timeout error when a request exceeds timeoutMs', async () => {
+    // A fetch that never resolves until its abort signal fires.
+    const fetchMock = vi.fn((_url: string, init: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    const { result } = renderHook(() => useApi('t', () => {}))
+    await expect(result.current('/api/slow', { timeoutMs: 10 })).rejects.toThrow(/timed out/i)
+  })
+
   test('omits the Authorization header when there is no token', async () => {
     const fetchMock = mockFetch(200, {})
     vi.stubGlobal('fetch', fetchMock)
