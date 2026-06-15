@@ -172,6 +172,14 @@ export function Campaigns({ api, workspace, toast }: Props) {
     finally { setLaunching(prev => ({ ...prev, [id]: false })) }
   }
 
+  async function retryFailed(id: string) {
+    try {
+      const d = await api<{ cleared: number }>(`/api/campaigns/${id}/retry-failed`, { method: 'POST' })
+      toast.success(`Cleared ${d.cleared} failed send${d.cleared !== 1 ? 's' : ''} — relaunch to retry`)
+      loadStats(id)
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Retry failed') }
+  }
+
   async function toggleOutreach(id: string) {
     if (expanded === id) { setExpanded(null); return }
     setExpanded(id)
@@ -397,6 +405,17 @@ export function Campaigns({ api, workspace, toast }: Props) {
                   >
                     {isLaunching ? '⏳ Sending…' : '🚀 Launch Campaign'}
                   </button>
+
+                  {(st?.failed ?? 0) > 0 && (
+                    <button
+                      style={{ ...s.btnSm, border: '1px solid #ef4444', color: '#ef4444' }}
+                      disabled={isLaunching}
+                      onClick={() => retryFailed(c.id)}
+                      title="Clear failed sends so those leads can be retried on the next launch"
+                    >
+                      ↻ Retry {st!.failed} failed
+                    </button>
+                  )}
 
                   {(st?.sent ?? 0) > 0 && (
                     <button
