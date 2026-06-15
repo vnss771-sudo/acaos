@@ -46,6 +46,27 @@ test('GET /missions lists workspace missions with campaign lead counts', async (
   assert.equal(res.body.missions[0].campaign._count.leads, 0)
 })
 
+test('GET /missions includes per-mission deliverability stats from the linked campaign', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const created = await server.request('/api/missions', {
+    method: 'POST', headers: jsonAuth(user.id),
+    body: JSON.stringify({ workspaceId: workspace.id, name: 'M', goalType: 'BOOK_CALL' }),
+  })
+  const campaignId = created.body.mission.campaignId as string
+  for (const status of ['SENT', 'REPLIED', 'BOUNCED', 'FAILED']) {
+    await prisma.outreachSent.create({
+      data: { workspaceId: workspace.id, campaignId, toEmail: `${status}@x.test`, subject: 's', body: 'b', status },
+    })
+  }
+
+  const res = await server.request(`/api/missions?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
+  const stats = res.body.missions[0].stats
+  assert.equal(stats.sent, 3)   // SENT + REPLIED + BOUNCED (delivered)
+  assert.equal(stats.replied, 1)
+  assert.equal(stats.failed, 1)
+  assert.equal(stats.bounced, 1)
+})
+
 test('PATCH /missions/:id updates status', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const created = await server.request('/api/missions', {
