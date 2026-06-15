@@ -14,6 +14,8 @@ type CampaignStats = {
   eligible: number
   sent: number
   replied: number
+  failed?: number
+  bounced?: number
   replyRate: number
 }
 
@@ -25,6 +27,7 @@ type OutreachRecord = {
   sentAt: string
   repliedAt?: string
   replyIntent?: string
+  lastError?: string | null
   leadId?: string
 }
 
@@ -36,7 +39,7 @@ const GOAL_COLORS: Record<string, string> = {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  SENT: colors.blue, REPLIED: '#22c55e', BOUNCED: '#ef4444'
+  SENDING: colors.amber, SENT: colors.blue, REPLIED: '#22c55e', BOUNCED: '#ef4444', FAILED: '#ef4444'
 }
 
 export function Campaigns({ api, workspace, toast }: Props) {
@@ -365,6 +368,9 @@ export function Campaigns({ api, workspace, toast }: Props) {
                   <Stat label="Eligible" value={st?.eligible ?? '—'} color={colors.green} />
                   <Stat label="Sent" value={st?.sent ?? 0} color={colors.blue} />
                   <Stat label="Replied" value={st?.replied ?? 0} color="#22c55e" />
+                  {((st?.failed ?? 0) + (st?.bounced ?? 0)) > 0 && (
+                    <Stat label="Failed/Bounced" value={(st?.failed ?? 0) + (st?.bounced ?? 0)} color="#ef4444" />
+                  )}
                   <Stat
                     label="Reply Rate"
                     value={st ? `${Math.round(st.replyRate * 100)}%` : '—'}
@@ -433,6 +439,9 @@ export function Campaigns({ api, workspace, toast }: Props) {
                                 {o.toEmail}
                               </div>
                               <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 2 }}>{o.subject}</div>
+                              {o.status === 'FAILED' && o.lastError && (
+                                <div style={{ color: '#ef4444', fontSize: 11, marginTop: 2 }}>⚠ {o.lastError}</div>
+                              )}
                             </div>
                             <div style={{ flexShrink: 0, textAlign: 'right' }}>
                               <div style={{ color: STATUS_COLOR[o.status] || colors.textFaint, fontSize: 11, fontWeight: 600 }}>
