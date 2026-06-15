@@ -1,19 +1,22 @@
+# NOTE: Railway + Docker is the primary production deploy path (see Dockerfile.*).
+# This Render config is kept as an alternative platform-native path and is
+# hardened to run PRODUCTION builds/commands — never dev servers (tsx).
 services:
   - type: web
     name: acaos-api
     env: node
     rootDir: .
-    buildCommand: npm install && npm run prisma:generate
-    startCommand: npm run dev:api
+    buildCommand: npm ci && npm run prisma:generate && npm run build -w @acaos/api
+    startCommand: npm --workspace @acaos/api run migrate && npm --workspace @acaos/api run start
   - type: web
     name: acaos-web
     env: node
     rootDir: .
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run prisma:generate && npm run build -w @acaos/web
     startCommand: npx serve -s apps/web/dist -l 4173
   - type: worker
     name: acaos-worker
     env: node
     rootDir: .
-    buildCommand: npm install
-    startCommand: npm run dev:worker
+    buildCommand: npm ci && npm run prisma:generate && npm run build -w @acaos/worker
+    startCommand: npm --workspace @acaos/worker run start
