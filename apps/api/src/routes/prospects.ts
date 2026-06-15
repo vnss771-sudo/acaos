@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { recordAudit } from '../lib/audit.js'
+import { checkAndIncrementDiscoveryUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import {
   calculateOpportunityScores,
@@ -258,6 +259,10 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
       : 'No discovery sources configured. Set APOLLO_API_KEY or GOOGLE_PLACES_API_KEY.'
     throw new ApiError(503, `${source.label} is not configured. ${hint}`)
   }
+
+  // Enforce the per-workspace monthly discovery quota (cost/abuse control on
+  // platform-level provider keys). Throws 429 when the plan cap is reached.
+  await checkAndIncrementDiscoveryUsage(workspaceId)
 
   const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
   const limit = Math.min(Number(req.body.limit ?? 25), 50)

@@ -7,11 +7,13 @@ import { ApiError } from './http.js'
 type Db = PrismaClient | Prisma.TransactionClient
 
 export type UsageAction = 'AI_RESEARCH' | 'AI_OUTREACH' | 'AI_REPLY'
+const AI_ACTIONS: string[] = ['AI_RESEARCH', 'AI_OUTREACH', 'AI_REPLY']
+const DISCOVERY_ACTION = 'DISCOVERY'
 
 const PLAN_LIMITS = {
-  free: { aiCallsPerMonth: 15, maxLeads: 500 },
-  starter: { aiCallsPerMonth: 300, maxLeads: 10_000 },
-  growth: { aiCallsPerMonth: Infinity, maxLeads: Infinity }
+  free: { aiCallsPerMonth: 15, maxLeads: 500, discoveriesPerMonth: 25 },
+  starter: { aiCallsPerMonth: 300, maxLeads: 10_000, discoveriesPerMonth: 500 },
+  growth: { aiCallsPerMonth: Infinity, maxLeads: Infinity, discoveriesPerMonth: Infinity }
 } as const
 
 type Plan = keyof typeof PLAN_LIMITS
@@ -39,7 +41,7 @@ async function getWorkspacePlan(workspaceId: string, client: Db = prisma): Promi
 async function getMonthlyAiCount(workspaceId: string): Promise<number> {
   const month = currentMonth()
   const records = await prisma.usageRecord.findMany({
-    where: { workspaceId, month }
+    where: { workspaceId, month, action: { in: AI_ACTIONS } }
   })
   return (records as Array<{ count: number }>).reduce((s: number, r: { count: number }) => s + r.count, 0)
 }
@@ -57,7 +59,7 @@ export async function checkAndIncrementAiUsage(workspaceId: string, action: Usag
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`
 
     if (isFinite(aiCallsPerMonth)) {
-      const records = await tx.usageRecord.findMany({ where: { workspaceId, month } })
+      const records = await tx.usageRecord.findMany({ where: { workspaceId, month, action: { in: AI_ACTIONS } } })
       const used = (records as Array<{ count: number }>).reduce((s: number, r: { count: number }) => s + r.count, 0)
       if (used >= aiCallsPerMonth) {
         throw new ApiError(
@@ -72,6 +74,38 @@ export async function checkAndIncrementAiUsage(workspaceId: string, action: Usag
       where: { workspaceId_month_action: { workspaceId, month, action } },
       create: { workspaceId, month, action, count: 1 },
       update: { count: { increment: 1 } }
+    })
+  })
+}
+
+// Per-workspace monthly discovery quota. Discovery providers use platform-level
+// API keys, so an unbounded workspace is a real cost/abuse risk. Mirrors the AI
+// check: advisory-locked read-then-increment so concurrent runs can't overshoot.
+export async function checkAndIncrementDiscoveryUsage(workspaceId: string): Promise<void> {
+  const plan = await getWorkspacePlan(workspaceId)
+  const { discoveriesPerMonth } = PLAN_LIMITS[plan]
+  const month = currentMonth()
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`disc:${workspaceId}`}))`
+
+    if (isFinite(discoveriesPerMonth)) {
+      const record = await tx.usageRecord.findUnique({
+        where: { workspaceId_month_action: { workspaceId, month, action: DISCOVERY_ACTION } },
+      })
+      const used = record?.count ?? 0
+      if (used >= discoveriesPerMonth) {
+        throw new ApiError(
+          429,
+          `Monthly discovery limit reached (${discoveriesPerMonth} runs/month on ${plan} plan). Upgrade to run more.`
+        )
+      }
+    }
+
+    await tx.usageRecord.upsert({
+      where: { workspaceId_month_action: { workspaceId, month, action: DISCOVERY_ACTION } },
+      create: { workspaceId, month, action: DISCOVERY_ACTION, count: 1 },
+      update: { count: { increment: 1 } },
     })
   })
 }
