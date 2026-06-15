@@ -39,7 +39,8 @@ services:
     environment:
       PORT: 4000
       WEB_URL: http://localhost:5173
-      JWT_SECRET: change-me-local
+      JWT_SECRET: local-dev-cbc563b01877fb2524a2bd56b245e392fd4b10f336cd7c45
+      EMAIL_ENCRYPTION_KEY: cdd7e29638fe486fa78590ccb2a4605425883f51fa697af202b31900561fae53
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
       REDIS_URL: redis://redis:6379
     ports:
