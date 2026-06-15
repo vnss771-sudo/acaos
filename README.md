@@ -102,28 +102,19 @@ When Apollo or Google Places fails (network error, quota exceeded), the provider
 
 ### Medium priority (important before scaling)
 
-**6. Worker cannot compile with `tsc` cleanly**
-The worker imports shared utilities directly from `apps/api/src/lib/` (cross-package filesystem imports). This works with `tsx` at runtime but the TypeScript compiler enforces `rootDir` boundaries, so `npm run build -w @acaos/worker` fails with 3 type errors. Fix: move shared code (`suppressions`, `scoring`, `signalEngine`, `mail`, etc.) into a `packages/shared` workspace that both `api` and `worker` depend on as a proper package.
+**6. Worker shares backend code via cross-package file imports**
+The worker imports runtime utilities directly from `apps/api/src/lib/` (e.g. `prisma`, `scoring`, `signalEngine`, `mail`, `suppressions`). It now compiles and type-checks cleanly, but this couples the worker build to the API's source layout. Fix: extract shared backend logic into a `packages/backend-core` workspace that both `api` and `worker` depend on. (Typed request contracts already live in `packages/shared`.)
 
 **7. Discovery providers use platform-level API keys**
 Apollo, Google Places, and Hunter keys are set once in environment variables for the whole platform. There are no per-workspace quotas, usage tracking, or cost controls. As self-serve grows this becomes a cost and abuse risk. Needs per-workspace discovery quotas and a `DiscoveryRun` audit log.
 
-**8. Prospect deduplication is code-only**
-The code deduplicates by domain/company name in memory during import. The database has no unique constraint on `(workspaceId, domain)`, so concurrent imports or bugs can create duplicate prospect rows. Needs a partial unique index on the normalised domain field.
-
-**9. Seed data uses random scores**
-Example prospect scores are generated with `Math.random()` at seed time. This means demos look different every time and tests that depend on seed data are non-deterministic. Fix: use fixed, hardcoded scores per example company.
-
 ### Low priority (polish)
 
-**10. Language is inconsistent across the product**
+**8. Language is inconsistent across the product**
 The UI calls things "Missions" but the database models, API routes, and backend code all say "Campaign". Acceptable short-term, but the product language should converge as the Mission workflow matures.
 
-**11. Observability is incomplete**
-Request IDs exist. Structured logging is partial. Missing: frontend error reporting (Sentry-style), SMTP failure dashboard, provider failure dashboard, discovery run dashboard, uptime checks.
-
-**12. Tokens stored in localStorage**
-Auth tokens are stored in `localStorage`. This is acceptable for early beta but `httpOnly` cookies would be safer against XSS for a hardened production deployment.
+**9. Observability is incomplete**
+Request IDs and structured request logging exist. Missing: frontend error reporting (Sentry-style), provider/SMTP failure dashboards, discovery run dashboard, and uptime checks.
 
 ---
 

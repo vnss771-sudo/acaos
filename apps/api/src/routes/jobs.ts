@@ -17,13 +17,18 @@ import type { Job } from 'bullmq'
 
 async function assertCanReadJob(userId: string, job: Job): Promise<void> {
   const data = job.data as Record<string, unknown>
-  if (typeof data.userId === 'string') {
-    if (data.userId !== userId) throw new ApiError(403, 'Access denied')
-    return
-  }
+  // Prefer workspace membership so any teammate can poll a workspace-scoped job,
+  // regardless of who initiated it.
   if (typeof data.workspaceId === 'string') {
     const member = await userBelongsToWorkspace(userId, data.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+    return
+  }
+  // Fallback for user-scoped jobs (no workspace on the payload).
+  const owner = typeof data.initiatedByUserId === 'string' ? data.initiatedByUserId
+    : typeof data.userId === 'string' ? data.userId : null
+  if (owner) {
+    if (owner !== userId) throw new ApiError(403, 'Access denied')
     return
   }
   throw new ApiError(403, 'Job is not scoped to a user or workspace')
@@ -130,7 +135,7 @@ jobsRouter.post(
 
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_RESEARCH')
 
-    const job = await enqueueResearchLead(leadId, user.id)
+    const job = await enqueueResearchLead({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id })
     res.status(202).json({ jobId: job.id, queue: 'research-lead', status: 'queued' })
   })
 )
@@ -151,7 +156,7 @@ jobsRouter.post(
 
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_OUTREACH')
 
-    const job = await enqueueGenerateOutreach(leadId, user.id)
+    const job = await enqueueGenerateOutreach({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id })
     res.status(202).json({ jobId: job.id, queue: 'generate-outreach', status: 'queued' })
   })
 )
@@ -188,7 +193,7 @@ jobsRouter.post(
 
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
-    const job = await enqueueAnalyzeReply(replyBody, leadId, user.id)
+    const job = await enqueueAnalyzeReply({ replyBody, workspaceId, leadId, initiatedByUserId: user.id })
     res.status(202).json({ jobId: job.id, queue: 'analyze-reply', status: 'queued' })
   })
 )
@@ -215,7 +220,7 @@ jobsRouter.post(
       await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
     }
 
-    const jobs = await Promise.all((leads as Array<{ id: string }>).map((l: { id: string }) => enqueueResearchLead(l.id, user.id)))
+    const jobs = await Promise.all((leads as Array<{ id: string }>).map((l: { id: string }) => enqueueResearchLead({ leadId: l.id, workspaceId, initiatedByUserId: user.id })))
     res.status(202).json({ queued: jobs.length, jobs: jobs.map(j => ({ jobId: j.id, leadId: j.name })) })
   })
 )

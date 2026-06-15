@@ -276,7 +276,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       if (advanced) {
         // Enqueue only after the DB commit so a failed enqueue doesn't strand a
         // lead in REPLIED with no processed-row.
-        await enqueueAnalyzeReply(msg.body, lead!.id)
+        await enqueueAnalyzeReply({ replyBody: msg.body, workspaceId, leadId: lead!.id })
         queued++
       }
     }

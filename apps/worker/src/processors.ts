@@ -256,7 +256,7 @@ export async function sendCampaignBatch(
     const startOfToday = new Date()
     startOfToday.setHours(0, 0, 0, 0)
     const sentToday = await prisma.outreachSent.count({
-      where: { workspaceId, sentAt: { gte: startOfToday } }
+      where: { workspaceId, status: 'SENT', sentAt: { gte: startOfToday } }
     })
     dailyRemaining = Math.max(0, icp.dailySendLimit - sentToday)
     if (dailyRemaining === 0) {
@@ -286,12 +286,11 @@ export async function sendCampaignBatch(
     // Progress: 10% → 90% across the lead batch
     await progress?.(10 + Math.floor((i / total) * 80))
 
-    // Idempotency guard: skip if this lead was already sent to for this campaign.
-    // Protects against duplicate sends when the worker crashes between SMTP send
-    // and the DB write (outbox pattern — treat an existing OutreachSent row as
-    // proof that the email was delivered and recorded).
+    // Cheap pre-check before any AI work: skip leads already sent to or in-flight
+    // for this campaign. The unique (campaignId, leadId) constraint on the claim
+    // below is the real safety net against duplicate sends.
     const alreadySent = await prisma.outreachSent.findFirst({
-      where: { campaignId, leadId: lead.id },
+      where: { campaignId, leadId: lead.id, status: { in: ['SENT', 'SENDING'] } },
       select: { id: true },
     })
     if (alreadySent) { skipped++; continue }
@@ -351,33 +350,45 @@ export async function sendCampaignBatch(
 
     const escHtml = (s: string) =>
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    try {
-      const unsubscribeToken = randomBytes(24).toString('hex')
-      const safeAppUrl = escHtml(appUrl)
-      const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
-      // CAN-SPAM / GDPR: include sender identity and physical address when configured
-      const senderLine = workspace?.senderBusinessName
-        ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
-        : ''
-      const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
-      const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
+    const unsubscribeToken = randomBytes(24).toString('hex')
+    const safeAppUrl = escHtml(appUrl)
+    const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
+    // CAN-SPAM / GDPR: include sender identity and physical address when configured
+    const senderLine = workspace?.senderBusinessName
+      ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
+      : ''
+    const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
+    const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
 
+    // Outbox claim: insert a SENDING row BEFORE the SMTP call. The unique
+    // (campaignId, leadId) constraint guarantees at-most-once delivery — a racing
+    // attempt or a retry after a crash that happened post-send cannot create a
+    // second claim, so the email is never sent twice.
+    let claimId: string
+    try {
+      const claim = await prisma.outreachSent.create({
+        data: {
+          workspaceId, campaignId, leadId: lead.id,
+          toEmail: lead.email!, subject, body,
+          unsubscribeToken, status: 'SENDING',
+        },
+        select: { id: true },
+      })
+      claimId = claim.id
+    } catch (err) {
+      // Unique violation — another attempt already owns this send. Skip.
+      if ((err as { code?: string }).code === 'P2002') { skipped++; continue }
+      throw err
+    }
+
+    try {
       const info = await sendMail(lead.email!, subject, htmlBody, smtpCfg)
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([
-        prisma.outreachSent.create({
-          data: {
-            workspaceId,
-            campaignId,
-            leadId: lead.id,
-            toEmail: lead.email!,
-            subject,
-            body,
-            messageId: msgId,
-            unsubscribeToken,
-            status: 'SENT',
-          }
+        prisma.outreachSent.update({
+          where: { id: claimId },
+          data: { messageId: msgId, status: 'SENT', sentAt: new Date() }
         }),
         prisma.lead.update({
           where: { id: lead.id },
@@ -387,7 +398,11 @@ export async function sendCampaignBatch(
 
       sent++
     } catch (err) {
+      // Clean SMTP failure: delete the claim so the lead can be retried later. A
+      // crash AFTER a successful send (before this update) instead leaves the
+      // SENDING row in place, which the guard above treats as "do not resend".
       console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${(err as Error).message}`)
+      await prisma.outreachSent.delete({ where: { id: claimId } }).catch(() => {})
       failed++
     }
   }

@@ -158,6 +158,9 @@ model OutreachSent {
   @@index([campaignId])
   @@index([leadId])
   @@index([toEmail])
+  // Outbox idempotency: at most one send row per (campaign, lead). Postgres
+  // treats NULLs as distinct, so non-campaign/non-lead sends are unaffected.
+  @@unique([campaignId, leadId])
 }
 
 

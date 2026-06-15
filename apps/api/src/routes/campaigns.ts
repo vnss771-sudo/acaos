@@ -6,6 +6,8 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { enqueueSendCampaign, getJobById } from '../lib/queues.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
+import { isProduction } from '../lib/config.js'
+import { isMailConfigured } from '../services/mail.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { Assert, Extends, CreateCampaignRequest } from '@acaos/shared'
 
@@ -133,7 +135,8 @@ campaignsRouter.get(
     const [leadWithEmail, eligible, sent, replied] = await Promise.all([
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null } } }),
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null }, stage: { notIn: [...TERMINAL] } } }),
-      prisma.outreachSent.count({ where: { campaignId: campaign.id } }),
+      // Count delivered sends only — exclude in-flight/orphaned SENDING claims.
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: { not: 'SENDING' } } }),
       prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'REPLIED' } }),
     ])
 
@@ -198,6 +201,31 @@ campaignsRouter.post(
 
     const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+
+    // Production send-readiness / compliance gate. The frontend checks SPF/DKIM
+    // and sender setup before launch, but a direct API caller must not be able to
+    // bypass it. Enforced only in production so local/dev/test stays frictionless.
+    if (isProduction()) {
+      const [emailCfg, ws] = await Promise.all([
+        prisma.workspaceEmailConfig.findUnique({ where: { workspaceId: campaign.workspaceId } }),
+        prisma.workspace.findUnique({
+          where: { id: campaign.workspaceId },
+          select: { senderBusinessName: true, senderPostalAddress: true },
+        }),
+      ])
+      const checks = [
+        { name: 'smtpConfigured', ok: isMailConfigured(emailCfg ?? undefined) },
+        { name: 'senderBusinessName', ok: Boolean(ws?.senderBusinessName?.trim()) },
+        { name: 'senderPostalAddress', ok: Boolean(ws?.senderPostalAddress?.trim()) },
+      ]
+      if (checks.some((c) => !c.ok)) {
+        return res.status(422).json({
+          error: 'DELIVERABILITY_BLOCKED',
+          message: 'Sending is blocked until SMTP and CAN-SPAM sender identity (business name + postal address) are configured.',
+          checks,
+        })
+      }
+    }
 
     // Resolve which leads to send to — filter to string IDs only so non-string
     // elements (numbers, objects) from untrusted input don't reach Prisma.
