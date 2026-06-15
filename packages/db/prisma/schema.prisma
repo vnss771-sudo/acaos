@@ -64,7 +64,7 @@ model Workspace {
   id                   String               @id @default(cuid())
   name                 String
   slug                 String               @unique
-  plan                 String               @default("free")
+  plan                 BillingPlan          @default(free)
   stripeCustomerId     String?              @unique
   stripeSubscriptionId String?              @unique
   subscriptionStatus   String?
@@ -444,6 +444,14 @@ enum SendStatus {
   FAILED
   BOUNCED
   REPLIED
+}
+
+// Workspace billing tier (was a free-form String — now DB-enforced). `free` is
+// the default/lapsed tier; `starter` and `growth` are the paid Stripe plans.
+enum BillingPlan {
+  free
+  starter
+  growth
 }
 
 // Lead pipeline stage (was a free-form String — now DB-enforced).

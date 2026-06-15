@@ -7,6 +7,7 @@ import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import type { AuthedRequest } from '../types/auth.js'
+import type { BillingPlan } from '@prisma/client'
 
 export const billingRouter = Router()
 
@@ -273,7 +274,7 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
 // Maps a Stripe price id to a plan, or null when the price is not recognized.
 // Callers decide whether an unrecognized price should default (new checkout) or
 // be preserved (subscription update) — it must never blindly downgrade.
-function resolvePlanFromPrice(priceId: string | undefined): string | null {
+function resolvePlanFromPrice(priceId: string | undefined): BillingPlan | null {
   if (!priceId) return null
   if (priceId === process.env.STRIPE_PRICE_GROWTH) return 'growth'
   if (priceId === process.env.STRIPE_PRICE_STARTER) return 'starter'
@@ -284,7 +285,7 @@ function resolvePlanFromPrice(priceId: string | undefined): string | null {
 // the server-set `plan` field (which the checkout route now controls) and falls
 // back to mapping the price id for sessions created before that change. Returns
 // null when neither yields a known plan.
-function resolveCheckoutPlan(metadata: { plan?: string; priceId?: string } | undefined): string | null {
+function resolveCheckoutPlan(metadata: { plan?: string; priceId?: string } | undefined): BillingPlan | null {
   const p = metadata?.plan
   if (p === 'starter' || p === 'growth') return p
   return resolvePlanFromPrice(metadata?.priceId)
