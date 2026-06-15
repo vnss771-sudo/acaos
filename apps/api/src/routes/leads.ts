@@ -6,7 +6,9 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
+import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
+import type { UpdateDraftRequest } from '@acaos/shared'
 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
@@ -451,6 +453,10 @@ leadsRouter.post(
       where: { id: draftId },
       data: { status: 'APPROVED', reviewedAt: new Date(), reviewedBy: user.id },
     })
+    void recordAudit({
+      workspaceId: draft.workspaceId, actorUserId: user.id, type: 'draft.approve',
+      entityType: 'outreachDraft', entityId: draftId, metadata: { leadId },
+    })
     res.json({ draft: updated })
   })
 )
@@ -470,6 +476,52 @@ leadsRouter.post(
     const updated = await prisma.outreachDraft.update({
       where: { id: draftId },
       data: { status: 'REJECTED', reviewedAt: new Date(), reviewedBy: user.id },
+    })
+    void recordAudit({
+      workspaceId: draft.workspaceId, actorUserId: user.id, type: 'draft.reject',
+      entityType: 'outreachDraft', entityId: draftId, metadata: { leadId },
+    })
+    res.json({ draft: updated })
+  })
+)
+
+// Edit a draft's content before approval (reviewer tweaks copy). Only DRAFTED
+// drafts are editable — once APPROVED/SENT the content is locked.
+leadsRouter.patch(
+  '/:id/drafts/:draftId',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { id: leadId, draftId } = req.params as { id: string; draftId: string }
+    const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
+    if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
+
+    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    if (draft.status !== 'DRAFTED') throw new ApiError(409, `Cannot edit a ${draft.status.toLowerCase()} draft`)
+
+    const body = req.body as UpdateDraftRequest
+    const data: { subject?: string; emailBody?: string; followup?: string | null } = {}
+    if (typeof body.subject === 'string') {
+      const s = body.subject.trim()
+      if (!s) throw new ApiError(400, 'subject cannot be empty')
+      if (s.length > 300) throw new ApiError(400, 'subject must be at most 300 characters')
+      data.subject = s
+    }
+    if (typeof body.emailBody === 'string') {
+      const b = body.emailBody.trim()
+      if (!b) throw new ApiError(400, 'emailBody cannot be empty')
+      if (b.length > 20_000) throw new ApiError(400, 'emailBody must be at most 20000 characters')
+      data.emailBody = b
+    }
+    if (body.followup === null) data.followup = null
+    else if (typeof body.followup === 'string') data.followup = body.followup.trim() || null
+
+    if (Object.keys(data).length === 0) throw new ApiError(400, 'No editable fields provided')
+
+    const updated = await prisma.outreachDraft.update({ where: { id: draftId }, data })
+    void recordAudit({
+      workspaceId: draft.workspaceId, actorUserId: user.id, type: 'draft.edit',
+      entityType: 'outreachDraft', entityId: draftId, metadata: { leadId, fields: Object.keys(data) },
     })
     res.json({ draft: updated })
   })

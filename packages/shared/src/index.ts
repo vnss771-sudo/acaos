@@ -143,3 +143,11 @@ export interface UpdateMissionRequest {
   name?: string
   status?: MissionStatus
 }
+
+// ── Approval queue / drafts ───────────────────────────────────────────────────
+// PATCH /api/leads/:id/drafts/:draftId — reviewer edits copy before approving.
+export interface UpdateDraftRequest {
+  subject?: string
+  emailBody?: string
+  followup?: string | null
+}

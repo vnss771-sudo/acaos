@@ -8,6 +8,7 @@ import { AuthScreen } from './components/AuthScreen.js'
 import { Dashboard } from './views/Dashboard.js'
 import { Campaigns } from './views/Campaigns.js'
 import { MissionsView } from './views/Missions.js'
+import { ApprovalsView } from './views/Approvals.js'
 import { Leads } from './views/Leads.js'
 import { AiTools } from './views/AiTools.js'
 import { Billing } from './views/Billing.js'
@@ -188,6 +189,7 @@ export function App() {
     prospects: 'Prospects',
     missions: 'Missions',
     campaigns: 'Campaigns',
+    approvals: 'Review Queue',
     leads: 'Leads',
     ai: 'AI Tools',
     billing: 'Billing',
@@ -268,6 +270,7 @@ export function App() {
             {view === 'prospects' && <ProspectsView {...commonProps} />}
             {view === 'missions' && <MissionsView {...commonProps} />}
             {view === 'campaigns' && <Campaigns {...commonProps} />}
+            {view === 'approvals' && <ApprovalsView {...commonProps} />}
             {view === 'leads' && <Leads {...commonProps} />}
             {view === 'ai' && <AiTools {...commonProps} />}
             {view === 'billing' && <Billing {...commonProps} />}
