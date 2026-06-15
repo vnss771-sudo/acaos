@@ -69,3 +69,27 @@ test('forecast computes whole-unit revenue from cents-stored deal values', async
   assert.equal(res.body.summary.totalPipelineValue, 10000)
   assert.equal(res.body.summary.weightedForecast, 5000)
 })
+
+test('prospects list auto-hides examples once a real prospect exists and reports hasRealProspects (single count)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const h = { Authorization: bearer(user.id) }
+  await prisma.prospect.create({ data: { workspaceId: workspace.id, companyName: 'Example Co', isExample: true } })
+
+  // Only examples present: shown, and hasRealProspects is false.
+  let res = await prospects.request(`/api/prospects?workspaceId=${workspace.id}`, { headers: h })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.hasRealProspects, false)
+  assert.equal(res.body.prospects.length, 1)
+
+  // A real prospect appears: examples are auto-hidden, hasRealProspects flips true.
+  await prisma.prospect.create({ data: { workspaceId: workspace.id, companyName: 'Real Co', isExample: false } })
+  res = await prospects.request(`/api/prospects?workspaceId=${workspace.id}`, { headers: h })
+  assert.equal(res.body.hasRealProspects, true)
+  assert.equal(res.body.prospects.length, 1)
+  assert.equal(res.body.prospects[0].companyName, 'Real Co')
+
+  // showExamples=true overrides the hide.
+  res = await prospects.request(`/api/prospects?workspaceId=${workspace.id}&showExamples=true`, { headers: h })
+  assert.equal(res.body.prospects.length, 2)
+  assert.equal(res.body.hasRealProspects, true)
+})

@@ -88,13 +88,12 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     else if (tier === 'COLD') where.opportunityScore = { lt: 45 }
   }
 
-  // Auto-hide example prospects once any real prospect exists.
-  // Pass ?showExamples=true to override (e.g. from admin or onboarding preview).
+  // Count real (non-example) prospects once: it decides whether to auto-hide the
+  // example/onboarding prospects AND is reported to the client. Computed up front
+  // because the hide decision feeds the findMany `where`.
+  const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
   const showExamples = req.query.showExamples === 'true'
-  if (!showExamples) {
-    const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
-    if (realCount > 0) where.isExample = false
-  }
+  if (!showExamples && realCount > 0) where.isExample = false
 
   const [prospects, total] = await Promise.all([
     prisma.prospect.findMany({
@@ -121,8 +120,6 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const hasMore = prospects.length > limit
   if (hasMore) prospects.pop()
 
-  const hasRealProspects = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
-
   res.json({
     prospects: prospects.map((p: (typeof prospects)[0]) => withDollars({
       ...p,
@@ -134,7 +131,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
     limit,
     total,
     hasMore,
-    hasRealProspects: hasRealProspects > 0,
+    hasRealProspects: realCount > 0,
   })
 }))
 
