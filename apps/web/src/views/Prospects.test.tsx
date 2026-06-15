@@ -63,6 +63,26 @@ describe('ProspectsView', () => {
     )
   })
 
+  test('scopes discovery to a chosen mission (passes missionId to /discover)', async () => {
+    const api = makeApi((path) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [{ name: 'apollo', label: 'Apollo', isConfigured: true }] })
+      if (path.includes('/api/missions')) return Promise.resolve({ missions: [{ id: 'm1', name: 'Q3 Push', status: 'ACTIVE' }] })
+      if (path === '/api/prospects/discover') return Promise.resolve({ discovered: 2, skipped: 0, total: 2 })
+      return undefined
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+
+    // Pick the mission, then trigger discovery.
+    const select = await screen.findByTitle('Attribute discovered prospects to a mission')
+    await userEvent.selectOptions(select, 'm1')
+    await userEvent.click(await screen.findByText('⚡ Apollo'))
+
+    await waitFor(() => expect(api).toHaveBeenCalledWith(
+      '/api/prospects/discover',
+      expect.objectContaining({ body: JSON.stringify({ workspaceId: 'ws1', source: 'apollo', missionId: 'm1' }) }),
+    ))
+  })
+
   test('surfaces discovery run history including provider failures', async () => {
     const api = makeApi((path) => {
       if (path.includes('/discovery-runs')) return Promise.resolve({ runs: [
