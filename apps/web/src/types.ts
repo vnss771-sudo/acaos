@@ -34,6 +34,17 @@ export type Campaign = {
   _count?: { leads: number }
 }
 
+export type AuditEvent = {
+  id: string
+  workspaceId?: string | null
+  actorUserId?: string | null
+  type: string
+  entityType?: string | null
+  entityId?: string | null
+  metadata?: Record<string, unknown> | null
+  createdAt: string
+}
+
 export type DiscoveryRun = {
   id: string
   source: string
