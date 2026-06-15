@@ -184,7 +184,7 @@ model OutreachDraft {
   subject      String
   emailBody    String
   followup     String?
-  status       String    @default("DRAFTED")  // DRAFTED | APPROVED | REJECTED | SENT | SKIPPED
+  status       DraftStatus @default(DRAFTED)
   reviewedAt   DateTime?
   reviewedBy   String?   // userId of approver/rejecter
   createdAt    DateTime  @default(now())
@@ -409,6 +409,15 @@ enum OutcomeStage {
   PROPOSAL
   WON
   LOST
+}
+
+// Outreach draft review state (gates approval-mode sends).
+enum DraftStatus {
+  DRAFTED
+  APPROVED
+  REJECTED
+  SENT
+  SKIPPED
 }
 
 // Lead pipeline stage (was a free-form String — now DB-enforced).
