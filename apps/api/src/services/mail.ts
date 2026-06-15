@@ -4,6 +4,30 @@ import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
 import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { assertPublicMailHost } from '../lib/ssrf.js'
+import { suppress } from '../lib/suppressions.js'
+import { recordAudit } from '../lib/audit.js'
+
+const BOUNCE_SENDER = /(mailer-daemon|postmaster|mail delivery|maild?(a|ae)mon)/i
+const BOUNCE_SUBJECT = /(undeliverable|delivery status notification|mail delivery (failed|subsystem)|returned mail|failure notice|delivery has failed|message not delivered|delivery incomplete)/i
+
+// Extract candidate failed-recipient addresses from a message that looks like a
+// bounce/NDR. Detection is intentionally permissive (sender OR subject); SAFETY
+// comes from the caller, which only acts on returned addresses that we actually
+// sent outreach to — so a stray address in the DSN body can never be suppressed.
+export function detectBounceRecipients(subject: string, fromAddress: string, body: string): string[] {
+  const looksLikeBounce = BOUNCE_SENDER.test(fromAddress) || BOUNCE_SUBJECT.test(subject || '')
+  if (!looksLikeBounce) return []
+  const recips = new Set<string>()
+  for (const m of body.matchAll(/(?:final|original)-recipient:\s*(?:rfc822;)?\s*([^\s;<>]+@[^\s;<>]+)/gi)) {
+    recips.add(m[1].toLowerCase().replace(/[>.,;]+$/, ''))
+  }
+  if (recips.size === 0) {
+    for (const m of body.matchAll(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi)) {
+      recips.add(m[0].toLowerCase())
+    }
+  }
+  return [...recips]
+}
 
 function getRequiredEnv(key: string) {
   const value = process.env[key]?.trim()
@@ -162,6 +186,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
   matched: number
   queued: number
   skipped: number
+  bounced: number
 }> {
   let ImapFlow: any
   try {
@@ -208,7 +233,9 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       uid: number
       messageId: string | null
       fromAddress: string
+      subject: string
       body: string
+      bounceRecipients: string[]
     }
 
     const toProcess: ParsedMsg[] = []
@@ -230,21 +257,58 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       if (seenUids.has(uid)) continue
       if (messageId && seenMsgIds.has(messageId)) continue
 
+      const subject: string = msg.envelope?.subject ?? ''
       const body = msg.source ? extractPlainText(msg.source) : ''
+      const bounceRecipients = detectBounceRecipients(subject, fromAddress, body)
       const replyBody = extractReplyBody(body)
 
-      if (replyBody.length < 5) continue // skip empty / trivial
+      // Keep bounces even if their reply text is trivial; otherwise skip empties.
+      if (bounceRecipients.length === 0 && replyBody.length < 5) continue
 
-      toProcess.push({ uid, messageId, fromAddress, body: replyBody })
+      toProcess.push({ uid, messageId, fromAddress, subject, body: replyBody, bounceRecipients })
     }
 
     if (toProcess.length === 0) {
-      return { inspected, matched: 0, queued: 0, skipped: 0 }
+      return { inspected, matched: 0, queued: 0, skipped: 0, bounced: 0 }
     }
+
+    // ── Bounce handling ────────────────────────────────────────────────────────
+    // NDR/bounce messages: suppress the failed recipient(s) and mark their
+    // OutreachSent rows BOUNCED. Safety invariant — only addresses we ACTUALLY
+    // sent outreach to (present in OutreachSent) are ever suppressed, so a stray
+    // address in a DSN body can't poison the suppression list.
+    const handleBounces = Boolean(workspaceId)
+    const bounceMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length > 0) : []
+    let bounced = 0
+    const processedUids: number[] = []
+    if (bounceMsgs.length > 0) {
+      const candidates = [...new Set(bounceMsgs.flatMap(m => m.bounceRecipients))]
+      const sentRows = await prisma.outreachSent.findMany({
+        where: { workspaceId, toEmail: { in: candidates } },
+        select: { toEmail: true },
+      })
+      const sentSet = new Set((sentRows as Array<{ toEmail: string }>).map(r => r.toEmail.toLowerCase()))
+      for (const addr of candidates.filter(a => sentSet.has(a))) {
+        await suppress(workspaceId!, addr, 'BOUNCED')
+        await prisma.outreachSent.updateMany({
+          where: { workspaceId, toEmail: addr, status: { in: ['SENT', 'SENDING'] } },
+          data: { status: 'BOUNCED' },
+        })
+        bounced++
+        void recordAudit({ workspaceId, type: 'email.bounced', entityType: 'suppression', metadata: { email: addr } })
+      }
+      for (const m of bounceMsgs) {
+        await recordProcessedReply({ uid: m.uid, messageId: m.messageId, fromAddress: m.fromAddress, workspaceId, lead: null })
+        processedUids.push(m.uid)
+      }
+    }
+
+    // Replies = everything that isn't a handled bounce.
+    const replyMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length === 0) : toProcess
 
     // Find leads matching any of the sender addresses, scoped to the workspace
     // when known so replies can never bleed across tenant boundaries.
-    const addresses = [...new Set(toProcess.map(m => m.fromAddress))]
+    const addresses = [...new Set(replyMsgs.map(m => m.fromAddress))]
     const matchedLeads = await prisma.lead.findMany({
       where: { email: { in: addresses }, ...(workspaceId ? { workspaceId } : {}) },
       select: { id: true, email: true, workspaceId: true, stage: true, score: true }
@@ -255,9 +319,8 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
 
     let matched = 0
     let queued = 0
-    const processedUids: number[] = []
 
-    for (const msg of toProcess) {
+    for (const msg of replyMsgs) {
       const lead = emailToLead.get(msg.fromAddress) ?? null
       if (lead) matched++
 
@@ -290,7 +353,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       }
     }
 
-    return { inspected, matched, queued, skipped: toProcess.length - matched }
+    return { inspected, matched, queued, skipped: replyMsgs.length - matched, bounced }
   } finally {
     try { await client.logout() } catch { client.close() }
   }
