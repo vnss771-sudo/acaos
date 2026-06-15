@@ -197,3 +197,56 @@ test('DELETE removes a signal in the owned workspace but not another\'s', async 
   assert.equal(ok.status, 200)
   assert.equal(await prisma.signal.count({ where: { id: sigA.id } }), 0)
 })
+
+test('POST with an evidence object records provenance and links it to the signal', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const prospect = await seedProspect(workspace.id)
+
+  const res = await server.request('/api/signals', {
+    method: 'POST',
+    headers: { Authorization: bearer(user.id), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workspaceId: workspace.id,
+      prospectId: prospect.id,
+      type: 'HIRING',
+      strength: 80,
+      evidence: {
+        provider: 'apollo',
+        sourceType: 'job_posting',
+        sourceUrl: 'https://example.test/jobs/123',
+        confidence: 0.9,
+        rawText: 'Hiring 3 service coordinators',
+      },
+    }),
+  })
+  assert.equal(res.status, 201)
+
+  const ev = await prisma.evidenceSource.findFirst({ where: { prospectId: prospect.id } })
+  assert.ok(ev, 'an EvidenceSource row should exist')
+  assert.equal(ev!.provider, 'apollo')
+  assert.equal(ev!.sourceType, 'job_posting')
+  assert.equal(ev!.confidence, 0.9)
+
+  const signal = await prisma.signal.findFirst({ where: { prospectId: prospect.id } })
+  assert.equal(signal!.evidenceSourceId, ev!.id, 'the signal should link to the evidence source')
+})
+
+test('POST evidence without provider/sourceType is rejected (400)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const prospect = await seedProspect(workspace.id)
+
+  const res = await server.request('/api/signals', {
+    method: 'POST',
+    headers: { Authorization: bearer(user.id), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workspaceId: workspace.id,
+      prospectId: prospect.id,
+      type: 'HIRING',
+      strength: 80,
+      evidence: { sourceUrl: 'https://example.test' },
+    }),
+  })
+  assert.equal(res.status, 400)
+  // No partial write: neither the evidence row nor the signal should exist.
+  assert.equal(await prisma.evidenceSource.count({ where: { prospectId: prospect.id } }), 0)
+})

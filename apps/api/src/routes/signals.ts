@@ -72,11 +72,39 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   const resolvedDetectedAt = detectedAt ? new Date(detectedAt) : new Date()
   const fp = buildSignalFingerprint(resolvedSource, type, title ?? null, resolvedDetectedAt)
 
+  // Optionally record provenance for this signal. When an `evidence` object is
+  // supplied, create an EvidenceSource and link the signal to it, so the signal
+  // can answer "where did this come from?".
+  let evidenceSourceId: string | null = null
+  const evidence = req.body?.evidence
+  if (evidence && typeof evidence === 'object') {
+    const provider = typeof evidence.provider === 'string' ? evidence.provider.trim() : ''
+    const sourceType = typeof evidence.sourceType === 'string' ? evidence.sourceType.trim() : ''
+    if (!provider || !sourceType) throw new ApiError(400, 'evidence requires provider and sourceType')
+    const conf = Number(evidence.confidence)
+    const created = await prisma.evidenceSource.create({
+      data: {
+        workspaceId,
+        prospectId,
+        provider,
+        sourceType,
+        sourceUrl: typeof evidence.sourceUrl === 'string' ? evidence.sourceUrl : sourceUrl ?? null,
+        observedAt: evidence.observedAt ? new Date(evidence.observedAt) : resolvedDetectedAt,
+        expiresAt: evidence.expiresAt ? new Date(evidence.expiresAt) : null,
+        confidence: Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0.5,
+        rawText: typeof evidence.rawText === 'string' ? evidence.rawText.slice(0, 5000) : null,
+      },
+      select: { id: true },
+    })
+    evidenceSourceId = created.id
+  }
+
   const signal = await prisma.signal.upsert({
     where: { prospectId_fingerprint: { prospectId, fingerprint: fp } },
     create: {
       workspaceId,
       prospectId,
+      evidenceSourceId,
       type,
       strength: Number(strength),
       sourceReliability: sourceReliability !== undefined ? Number(sourceReliability) : 70,
@@ -91,6 +119,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     update: {
       strength: Number(strength),
       detectedAt: resolvedDetectedAt,
+      ...(evidenceSourceId ? { evidenceSourceId } : {}),
     }
   })
 

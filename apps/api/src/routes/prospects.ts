@@ -216,7 +216,7 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
     where: { id: req.params.id as string },
     include: {
-      signals:         { orderBy: { detectedAt: 'desc' } },
+      signals:         { orderBy: { detectedAt: 'desc' }, include: { evidenceSource: true } },
       recommendations: { orderBy: { priority: 'desc' } },
       outcomes:        { orderBy: { recordedAt: 'desc' } },
     },
@@ -235,6 +235,15 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
     contribution: s.weight ?? null,
     detectedAt: s.detectedAt,
     freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
+    evidence: s.evidenceSource
+      ? {
+          provider: s.evidenceSource.provider,
+          sourceType: s.evidenceSource.sourceType,
+          sourceUrl: s.evidenceSource.sourceUrl,
+          confidence: s.evidenceSource.confidence,
+          observedAt: s.evidenceSource.observedAt,
+        }
+      : null,
   })) ?? []
 
   res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown })
