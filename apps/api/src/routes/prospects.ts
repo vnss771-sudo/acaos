@@ -141,6 +141,26 @@ prospectsRouter.get('/sources', asyncHandler(async (_req, res) => {
   res.json({ sources: listSources() })
 }))
 
+// GET /api/prospects/discovery-runs?workspaceId= — recent discovery run history.
+// Registered before GET /:id so "discovery-runs" isn't matched as a prospect id.
+prospectsRouter.get('/discovery-runs', asyncHandler(async (req, res) => {
+  const workspaceId = String(req.query.workspaceId || '').trim()
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const runs = await prisma.discoveryRun.findMany({
+    where: { workspaceId },
+    orderBy: { startedAt: 'desc' },
+    take: 20,
+    select: {
+      id: true, source: true, status: true, resultCount: true, importedCount: true,
+      skippedCount: true, errorCode: true, errorMessage: true, startedAt: true, finishedAt: true,
+    },
+  })
+  res.json({ runs })
+}))
+
 // GET /api/prospects/export?workspaceId=&format=csv
 prospectsRouter.get('/export', asyncHandler(async (req, res) => {
   const user = (req as AuthedRequest).user
@@ -241,17 +261,41 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
   const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
   const limit = Math.min(Number(req.body.limit ?? 25), 50)
 
-  const candidates = await source.search({
+  const query = {
     industries: req.body.industries ?? icp?.targetIndustries ?? [],
     locations:  req.body.locations  ?? icp?.targetGeos       ?? [],
     keywords:   req.body.keywords   ?? [],
     minEmployees: icp?.minEmployees  ?? req.body.minEmployees,
     maxEmployees: icp?.maxEmployees  ?? req.body.maxEmployees,
     limit,
+  }
+
+  // Audit the run so users can distinguish "no prospects" from a provider
+  // failure / quota / misconfiguration.
+  const run = await prisma.discoveryRun.create({
+    data: { workspaceId, source: sourceName, status: 'RUNNING', query },
+    select: { id: true },
   })
 
+  let candidates: ProspectCandidate[]
+  try {
+    candidates = await source.search(query)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Discovery provider error'
+    const code = (err as { code?: string }).code ?? 'PROVIDER_ERROR'
+    await prisma.discoveryRun.update({
+      where: { id: run.id },
+      data: { status: 'FAILED', errorCode: code, errorMessage: message.slice(0, 500), finishedAt: new Date() },
+    })
+    throw new ApiError(502, `Discovery via ${source.label} failed: ${message}`)
+  }
+
   if (candidates.length === 0) {
-    return res.json({ discovered: 0, skipped: 0, total: 0 })
+    await prisma.discoveryRun.update({
+      where: { id: run.id },
+      data: { status: 'SUCCEEDED', resultCount: 0, finishedAt: new Date() },
+    })
+    return res.json({ discovered: 0, skipped: 0, total: 0, runId: run.id })
   }
 
   // Deduplicate against existing prospects using targeted IN queries — only
@@ -357,7 +401,18 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
     enqueueScoreProspects(workspaceId).catch(() => {})
   }
 
-  res.json({ discovered, skipped, total: candidates.length })
+  await prisma.discoveryRun.update({
+    where: { id: run.id },
+    data: {
+      status: 'SUCCEEDED',
+      resultCount: candidates.length,
+      importedCount: discovered,
+      skippedCount: skipped,
+      finishedAt: new Date(),
+    },
+  })
+
+  res.json({ discovered, skipped, total: candidates.length, runId: run.id })
 }))
 
 // POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
