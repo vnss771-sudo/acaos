@@ -53,10 +53,14 @@ docker compose -f docker-compose.local.yml up --build
 
 ```bash
 npm run build          # compile api + worker + web
-npm run test           # full API test suite (740+ tests)
-npm test -w @acaos/web # frontend test suite (51 tests)
+npm run test           # fast API/unit suite (no services required)
+npm run test:coverage  # same, with the 80/65/80 coverage gate
+npm run test:db        # DB-backed suite (needs Postgres)
+npm run test:redis     # queue/Redis suite (needs Redis)
+npm test -w @acaos/web # frontend test suite
 npm run test:e2e       # Playwright browser smoke tests (see e2e/README.md)
-npm run typecheck      # TypeScript check (web + api)
+npm run loadtest       # smoke load test (see docs/OPERATIONS.md)
+npm run typecheck      # TypeScript check (shared + api + web + worker)
 npm run prisma:generate
 npm run prisma:migrate
 ```
@@ -105,16 +109,16 @@ A `DiscoveryRun` model records every run (status, counts, error code/message); b
 **6. Worker shares backend code via cross-package file imports**
 The worker imports runtime utilities directly from `apps/api/src/lib/` (e.g. `prisma`, `scoring`, `signalEngine`, `mail`, `suppressions`). It now compiles and type-checks cleanly, but this couples the worker build to the API's source layout. Fix: extract shared backend logic into a `packages/backend-core` workspace that both `api` and `worker` depend on. (Typed request contracts already live in `packages/shared`.)
 
-**7. Discovery providers use platform-level API keys — quota now enforced**
-Apollo, Google Places, and Hunter keys are set once for the whole platform, but discovery is now metered per workspace with a monthly quota (`checkAndIncrementDiscoveryUsage`: free 25 / starter 500 / growth unlimited; `429` when exceeded) and every run is recorded in `DiscoveryRun`. Remaining: surface usage in the UI and per-provider cost weighting.
+**7. Discovery providers use platform-level API keys — quota enforced + surfaced**
+Apollo, Google Places, and Hunter keys are set once for the whole platform, but discovery is metered per workspace with a monthly quota (`checkAndIncrementDiscoveryUsage`: free 25 / starter 500 / growth unlimited; `429` when exceeded) and every run is recorded in `DiscoveryRun`. Usage vs. plan limits (AI, discovery, leads) is now shown on the Billing page. ✓ Resolved. Remaining: per-provider cost weighting.
 
 ### Low priority (polish)
 
 **8. Mission workflow is still maturing**
-`Mission` is now a first-class model and API (`/api/missions`) with a Missions view; creating a mission also provisions its linked execution `Campaign`. Still to deepen: wiring discovery runs, recommendations, and an approval queue directly into the mission control plane (status lifecycle exists: DRAFT→…→COMPLETE).
+`Mission` is a first-class model and API (`/api/missions`) with a Missions view; creating a mission provisions its linked execution `Campaign`, the list surfaces per-mission deliverability + pending-review + discovery stats, and discovery runs can be scoped to a mission (selectable from the Prospects view). Status lifecycle exists (DRAFT→…→COMPLETE). Still to deepen: wiring recommendations and the approval queue directly into the mission control plane.
 
-**9. Observability is incomplete**
-Request IDs and structured request logging exist; an `AuditEvent` log records significant actions (campaign sends, mission status changes, draft approvals, discovery/bounce failures) and is surfaced in the **Admin panel's Recent Activity view** (plus `GET /api/admin/audit`). Remaining: frontend error reporting (Sentry-style) and external uptime checks.
+**9. Observability — largely resolved**
+Request IDs + structured JSON logging, an `AuditEvent` log (surfaced in the Admin Recent Activity view + `GET /api/admin/audit`), DB+Redis-aware health/readiness probes, a Prometheus `GET /metrics` endpoint, and a pluggable error-capture seam with an optional Sentry transport (`SENTRY_DSN`) all exist. ✓ Resolved. Remaining (deployment-side): wiring an external uptime monitor and a metrics dashboard/alerts. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ---
 
@@ -154,3 +158,9 @@ conformance assertions, so validation and contract can't silently drift.
 - Stripe (billing + webhooks)
 - SMTP/IMAP (per-workspace or global fallback)
 - Apollo.io, Google Places, Hunter.io (prospect discovery — optional)
+
+**Observability & operations:** DB+Redis-aware health/readiness probes
+(`/api/live`, `/api/ready`, `/api/health`), a Prometheus `/metrics` endpoint, a
+pluggable error-capture seam with an optional Sentry transport, structured JSON
+logs with request-id correlation, and a dependency-free load-test harness
+(`npm run loadtest`). Full operator guide: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
