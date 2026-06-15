@@ -3,12 +3,14 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
+COPY packages/shared/package.json ./packages/shared/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
 
 RUN npm ci
 
 COPY packages/db ./packages/db
+COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 
