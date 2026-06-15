@@ -51,24 +51,35 @@ missionsRouter.get(
     // Per-mission execution outcomes from the linked campaign's outbox — the
     // mission as a control plane shows what actually happened, not just leads.
     const campaignIds = missions.map(m => m.campaignId).filter((id): id is string => Boolean(id))
-    const statsByCampaign = new Map<string, { sent: number; replied: number; failed: number; bounced: number }>()
+    const statsByCampaign = new Map<string, { sent: number; replied: number; failed: number; bounced: number; pendingDrafts: number }>()
+    const get = (cid: string) => {
+      let s = statsByCampaign.get(cid)
+      if (!s) { s = { sent: 0, replied: 0, failed: 0, bounced: 0, pendingDrafts: 0 }; statsByCampaign.set(cid, s) }
+      return s
+    }
     if (campaignIds.length > 0) {
-      const grouped = await prisma.outreachSent.groupBy({
-        by: ['campaignId', 'status'],
-        where: { campaignId: { in: campaignIds } },
-        _count: true,
-      })
+      const [grouped, pendingDrafts] = await Promise.all([
+        prisma.outreachSent.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: campaignIds } }, _count: true }),
+        // Drafts awaiting review for this mission's campaign leads (the actionable backlog).
+        prisma.outreachDraft.findMany({
+          where: { workspaceId, status: 'DRAFTED', lead: { campaignId: { in: campaignIds } } },
+          select: { lead: { select: { campaignId: true } } },
+        }),
+      ])
       for (const g of grouped as Array<{ campaignId: string | null; status: string; _count: number }>) {
         if (!g.campaignId) continue
-        const s = statsByCampaign.get(g.campaignId) ?? { sent: 0, replied: 0, failed: 0, bounced: 0 }
+        const s = get(g.campaignId)
         if (g.status === 'SENT' || g.status === 'REPLIED' || g.status === 'BOUNCED') s.sent += g._count
         if (g.status === 'REPLIED') s.replied += g._count
         if (g.status === 'FAILED') s.failed += g._count
         if (g.status === 'BOUNCED') s.bounced += g._count
-        statsByCampaign.set(g.campaignId, s)
+      }
+      for (const d of pendingDrafts as Array<{ lead: { campaignId: string | null } | null }>) {
+        const cid = d.lead?.campaignId
+        if (cid) get(cid).pendingDrafts += 1
       }
     }
-    const zero = { sent: 0, replied: 0, failed: 0, bounced: 0 }
+    const zero = { sent: 0, replied: 0, failed: 0, bounced: 0, pendingDrafts: 0 }
     const withStats = missions.map(m => ({
       ...m,
       stats: m.campaignId ? (statsByCampaign.get(m.campaignId) ?? zero) : zero,

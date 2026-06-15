@@ -58,6 +58,9 @@ test('GET /missions includes per-mission deliverability stats from the linked ca
       data: { workspaceId: workspace.id, campaignId, toEmail: `${status}@x.test`, subject: 's', body: 'b', status },
     })
   }
+  // A lead enrolled in the mission's campaign with a draft awaiting review.
+  const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, campaignId, businessName: 'L' } })
+  await prisma.outreachDraft.create({ data: { workspaceId: workspace.id, leadId: lead.id, subject: 's', emailBody: 'b', status: 'DRAFTED' } })
 
   const res = await server.request(`/api/missions?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
   const stats = res.body.missions[0].stats
@@ -65,6 +68,7 @@ test('GET /missions includes per-mission deliverability stats from the linked ca
   assert.equal(stats.replied, 1)
   assert.equal(stats.failed, 1)
   assert.equal(stats.bounced, 1)
+  assert.equal(stats.pendingDrafts, 1)
 })
 
 test('PATCH /missions/:id updates status', async () => {

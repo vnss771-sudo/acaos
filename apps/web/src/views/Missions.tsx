@@ -104,6 +104,11 @@ export function MissionsView({ api, workspace, toast }: Props) {
                     )}
                   </div>
                 )}
+                {(m.stats?.pendingDrafts ?? 0) > 0 && (
+                  <div style={{ fontSize: 12, color: colors.amber }}>
+                    ✎ {m.stats!.pendingDrafts} draft{m.stats!.pendingDrafts !== 1 ? 's' : ''} awaiting review
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <span style={{ color: colors.textFaint, fontSize: 12 }}>{leads} lead{leads !== 1 ? 's' : ''} enrolled</span>
                   <div style={{ display: 'flex', gap: 8 }}>
