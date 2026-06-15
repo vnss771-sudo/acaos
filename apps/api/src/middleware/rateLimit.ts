@@ -28,6 +28,11 @@ export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
   const keyFn = opts.keyFn ?? defaultKey
 
   return async (req: Request, res: Response, next: NextFunction) => {
+    // Escape hatch for test/E2E environments where many auth requests originate
+    // from a single IP and would otherwise exhaust the per-IP window. Never set
+    // in production (config validation keeps prod limits on).
+    if (process.env.RATE_LIMIT_DISABLED === 'true') return next()
+
     const clientKey = keyFn(req)
     const windowStart = Math.floor(Date.now() / windowMs)
     const redisKey = `rl:${name}:${clientKey}:${windowStart}`

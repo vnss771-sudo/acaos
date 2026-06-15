@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signUp, skipOnboarding, uniqueEmail, apiLogin, getWorkspaceId, PASSWORD, closeDb } from './helpers.js'
+import { signUp, skipOnboarding, uniqueEmail, apiLogin, getWorkspaceId, verifyEmailInDb, PASSWORD, closeDb } from './helpers.js'
 
 test.afterAll(closeDb)
 
@@ -14,6 +14,8 @@ test('Launching an approval-mode campaign sends { approved: true } and is accept
   const email = uniqueEmail()
   await signUp(page, email)
   await skipOnboarding(page)
+  // Sending requires a verified email (requireVerifiedEmail on /:id/send).
+  await verifyEmailInDb(email)
 
   // Preconditions via API (tedious to do through the UI, not what's under test).
   const token = await apiLogin(request, email, PASSWORD)

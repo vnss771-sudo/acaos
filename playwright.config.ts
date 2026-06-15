@@ -27,6 +27,9 @@ const serverEnv = {
   DIRECT_URL: DATABASE_URL,
   REDIS_URL,
   PORT: '4000',
+  // The suite drives many auth requests from one IP; without this the per-IP
+  // auth limiter (10/15min) 429s the run. Test-only — never set in production.
+  RATE_LIMIT_DISABLED: 'true',
 } as Record<string, string>
 
 export default defineConfig({
