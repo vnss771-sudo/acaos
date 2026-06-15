@@ -3,7 +3,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { getMonthlyUsage, getPlanInfo } from '../lib/limits.js'
+import { getMonthlyUsage } from '../lib/limits.js'
 import { getScoreTier } from '../lib/scoring.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -25,12 +25,10 @@ statsRouter.get(
     const [
       stageCounts,
       campaignCount,
-      totalLeads,
       recentLeads,
       topLeads,
       scoringModel,
       usageData,
-      workspace,
       scoreBuckets
     ] = await Promise.all([
       prisma.lead.groupBy({
@@ -39,7 +37,6 @@ statsRouter.get(
         _count: { _all: true }
       }),
       prisma.campaign.count({ where: { workspaceId } }),
-      prisma.lead.count({ where: { workspaceId } }),
       prisma.lead.findMany({
         where: { workspaceId },
         orderBy: { createdAt: 'desc' },
@@ -56,8 +53,9 @@ statsRouter.get(
         where: { workspaceId },
         select: { weights: true, performanceMetrics: true, updateCount: true, lastWeightUpdate: true }
       }),
+      // Returns the lapse-aware plan + lead usage/limit, so we don't separately
+      // count leads or refetch the workspace plan (both were redundant queries).
       getMonthlyUsage(workspaceId),
-      prisma.workspace.findUnique({ where: { id: workspaceId }, select: { plan: true } }),
       // Score distribution buckets for tier breakdown
       prisma.lead.groupBy({
         by: ['score'],
@@ -68,7 +66,11 @@ statsRouter.get(
 
     const funnel: Record<string, number> = {}
     for (const stage of STAGES) funnel[stage] = 0
-    for (const row of stageCounts) funnel[row.stage] = row._count._all
+    let totalLeads = 0
+    for (const row of stageCounts) {
+      funnel[row.stage] = row._count._all
+      totalLeads += row._count._all // every lead has a stage, so this is the total
+    }
 
     const contacted = (funnel['OUTREACH_SENT'] ?? 0) + (funnel['REPLIED'] ?? 0)
       + (funnel['BOOKED'] ?? 0) + (funnel['CLOSED'] ?? 0)
@@ -85,8 +87,6 @@ statsRouter.get(
       const tier = getScoreTier(row.score)
       scoreDistribution[tier] += row._count._all
     }
-
-    const planInfo = getPlanInfo(workspace?.plan ?? 'free')
 
     res.json({
       totalLeads,
@@ -106,7 +106,8 @@ statsRouter.get(
         : null,
       usage: {
         ...usageData,
-        maxLeads: isFinite(planInfo.maxLeads) ? planInfo.maxLeads : -1
+        // leads.limit is already the lapse-aware cap, normalized to -1 = unlimited.
+        maxLeads: usageData.leads.limit
       }
     })
   })
