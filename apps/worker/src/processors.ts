@@ -287,11 +287,13 @@ export async function sendCampaignBatch(
     // Progress: 10% → 90% across the lead batch
     await progress?.(10 + Math.floor((i / total) * 80))
 
-    // Cheap pre-check before any AI work: skip leads already sent to or in-flight
-    // for this campaign. The unique (campaignId, leadId) constraint on the claim
-    // below is the real safety net against duplicate sends.
+    // Cheap pre-check before any AI work: skip leads already sent to, in-flight,
+    // or terminally failed for this campaign. The unique (campaignId, leadId)
+    // constraint on the claim below is the real safety net against duplicate
+    // sends. FAILED is fail-closed (not auto-retried) — surfaced for operator
+    // review rather than blindly resent.
     const alreadySent = await prisma.outreachSent.findFirst({
-      where: { campaignId, leadId: lead.id, status: { in: ['SENT', 'SENDING'] } },
+      where: { campaignId, leadId: lead.id, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
       select: { id: true },
     })
     if (alreadySent) { skipped++; continue }
@@ -399,11 +401,17 @@ export async function sendCampaignBatch(
 
       sent++
     } catch (err) {
-      // Clean SMTP failure: delete the claim so the lead can be retried later. A
-      // crash AFTER a successful send (before this update) instead leaves the
-      // SENDING row in place, which the guard above treats as "do not resend".
-      console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${(err as Error).message}`)
-      await prisma.outreachSent.delete({ where: { id: claimId } }).catch(() => {})
+      // Known SMTP rejection (nodemailer throws only when the provider did NOT
+      // accept the message). Mark the claim FAILED with the error for operator
+      // review instead of deleting it — fail-closed: it won't be auto-resent.
+      // (A crash AFTER provider acceptance leaves the row SENDING, also never
+      // resent.) Operators can clear FAILED rows to deliberately retry.
+      const message = err instanceof Error ? err.message : 'SMTP send failed'
+      console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${message}`)
+      await prisma.outreachSent.update({
+        where: { id: claimId },
+        data: { status: 'FAILED', lastError: message.slice(0, 500) },
+      }).catch(() => {})
       failed++
     }
   }

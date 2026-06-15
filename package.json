@@ -19,6 +19,7 @@
     "typecheck:worker": "tsc --noEmit -p apps/worker/tsconfig.json",
     "typecheck": "npm run typecheck:shared && npm run typecheck:api && npm run typecheck:web && npm run typecheck:worker",
     "test": "tsx --test tests/**/*.test.ts",
+    "test:chaos": "tsx --test tests/chaos.test.ts tests/signal-chaos-advanced.test.ts tests/operational-chaos-safety-gates.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-lines=80 --test-coverage-branches=65 --test-coverage-functions=80 tests/**/*.test.ts",
     "test:db": "tsx --test --test-concurrency=1 --test-force-exit tests-db/**/*.test.ts",
     "test:db:local": "bash scripts/test-db-local.sh",
