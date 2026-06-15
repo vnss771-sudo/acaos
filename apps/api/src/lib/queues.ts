@@ -80,7 +80,9 @@ export async function enqueueSendCampaign(campaignId: string, workspaceId: strin
   const leadKey = leadIds?.length ? [...leadIds].sort().join(',') : 'all'
   const leadHash = createHash('sha256').update(leadKey).digest('hex').slice(0, 16)
   const minuteBucket = Math.floor(Date.now() / 60_000)
-  const dedupJobId = `send-campaign:${workspaceId}:${campaignId}:${leadHash}:${minuteBucket}`
+  // NOTE: BullMQ forbids ':' in custom job IDs (it's the internal Redis key
+  // separator), so use '-'. cuids/hex/number segments contain no '-'.
+  const dedupJobId = `send-campaign-${workspaceId}-${campaignId}-${leadHash}-${minuteBucket}`
 
   return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds }, {
     jobId: dedupJobId,
