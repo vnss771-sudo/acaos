@@ -134,12 +134,14 @@ campaignsRouter.get(
     if (!member) throw new ApiError(403, 'Access denied')
 
     const TERMINAL = ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
-    const [leadWithEmail, eligible, sent, replied] = await Promise.all([
+    const [leadWithEmail, eligible, sent, replied, failed, bounced] = await Promise.all([
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null } } }),
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null }, stage: { notIn: [...TERMINAL] } } }),
-      // Count delivered sends only — exclude in-flight/orphaned SENDING claims.
-      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: { not: 'SENDING' } } }),
+      // Delivered sends only — exclude in-flight SENDING and never-sent FAILED.
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: { in: ['SENT', 'REPLIED', 'BOUNCED'] } } }),
       prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'REPLIED' } }),
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'FAILED' } }),
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'BOUNCED' } }),
     ])
 
     res.json({
@@ -149,6 +151,8 @@ campaignsRouter.get(
         eligible,
         sent,
         replied,
+        failed,
+        bounced,
         replyRate: sent > 0 ? Math.round((replied / sent) * 100) / 100 : 0,
       }
     })
@@ -177,7 +181,7 @@ campaignsRouter.get(
         take: limit,
         select: {
           id: true, toEmail: true, subject: true, status: true,
-          sentAt: true, repliedAt: true, replyIntent: true, leadId: true,
+          sentAt: true, repliedAt: true, replyIntent: true, lastError: true, leadId: true,
         }
       }),
       prisma.outreachSent.count({ where: { campaignId: campaign.id } })
