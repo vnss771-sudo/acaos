@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import type { RecordProspectOutcomeRequest, OutcomeStage } from '@acaos/shared'
 import type { Workspace, OpportunitiesData, ForecastData, Prospect, Signal, View } from '../types.js'
 import { BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS, TIER_COLOR } from '../types.js'
 import { s, colors } from '../styles.js'
@@ -346,9 +347,10 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   const handleOutcome = async (prospectId: string, stage: string) => {
     if (!workspace) return
     try {
+      const body: RecordProspectOutcomeRequest = { stage: stage as OutcomeStage }
       await api(`/api/prospects/${prospectId}/outcome`, {
         method: 'POST',
-        body: JSON.stringify({ stage })
+        body: JSON.stringify(body)
       })
       toast.success(`Moved to ${stage}`)
       load()

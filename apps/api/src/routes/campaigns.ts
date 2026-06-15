@@ -7,6 +7,7 @@ import { enqueueSendCampaign, getJobById } from '../lib/queues.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import type { AuthedRequest } from '../types/auth.js'
+import type { Assert, Extends, CreateCampaignRequest } from '@acaos/shared'
 
 export const campaignsRouter = Router()
 campaignsRouter.use(requireAuth)
@@ -19,6 +20,10 @@ const createCampaignSchema = z.object({
   goalType: z.enum(GOAL_TYPES).default('BOOK_CALL'),
   description: z.string().max(1000).optional(),
 })
+
+// Compile-time guard: the validated request must satisfy the shared contract the
+// frontend is typed against. If the zod schema drifts from the contract, this fails.
+type _CreateCampaignConforms = Assert<Extends<z.infer<typeof createCampaignSchema>, CreateCampaignRequest>>
 
 // List campaigns for a workspace
 campaignsRouter.get(

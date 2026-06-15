@@ -136,8 +136,17 @@ apps/
   worker/     BullMQ background job worker
 packages/
   db/         Prisma schema and migrations (PostgreSQL)
+  shared/     Typed API contracts shared by api + web (single source of truth)
 tests/        API integration test suite (tsx + node:test)
+e2e/          Playwright browser smoke tests (real UI against real servers)
 ```
+
+**Typed API contract (`packages/shared`):** request bodies for mutation
+endpoints are defined once and imported (type-only) by both the API and the web
+client. Omitting a field the backend requires (e.g. `workspaceId`, `approved`)
+is a **compile error at the call site**, not a 400/403 discovered in production.
+Backend zod schemas are pinned to the same contracts with compile-time
+conformance assertions, so validation and contract can't silently drift.
 
 **Queues (BullMQ + Redis):**
 - `research-prospect` — AI company research

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import type { CreateCampaignRequest, SendCampaignRequest } from '@acaos/shared'
 import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
 import { s, colors } from '../styles.js'
@@ -105,9 +106,10 @@ export function Campaigns({ api, workspace, toast }: Props) {
     if (!form.name.trim() || !workspace) return
     setSaving(true)
     try {
+      const body: CreateCampaignRequest = { workspaceId: workspace.id, name: form.name, goalType: form.goalType, description: form.description }
       const d = await api<{ campaign: Campaign }>('/api/campaigns', {
         method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, name: form.name, goalType: form.goalType, description: form.description })
+        body: JSON.stringify(body)
       })
       setCampaigns(prev => [d.campaign, ...prev])
       setForm({ name: '', goalType: 'BOOK_CALL', description: '' })
@@ -152,11 +154,13 @@ export function Campaigns({ api, workspace, toast }: Props) {
     setApprovalPending(null)
     setLaunching(prev => ({ ...prev, [id]: true }))
     try {
+      // approvalMode workspaces (the default) require an explicit opt-in flag;
+      // the confirmation modal the user just accepted IS that approval. The
+      // shared SendCampaignRequest type makes `approved` mandatory at compile time.
+      const body: SendCampaignRequest = { approved: true }
       const d = await api<{ jobId: string; eligible: number; message: string }>(
         `/api/campaigns/${id}/send`,
-        // approvalMode workspaces (the default) require an explicit opt-in flag;
-        // the confirmation modal the user just accepted IS that approval.
-        { method: 'POST', body: JSON.stringify({ approved: true }) }
+        { method: 'POST', body: JSON.stringify(body) }
       )
       toast.success(`Approved — sending to ${d.eligible} leads (job ${d.jobId})`)
       setTimeout(() => loadStats(id), 3000)

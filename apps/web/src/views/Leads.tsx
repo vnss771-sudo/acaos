@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/shared'
 import type { Lead, Workspace, Campaign, OutreachDraft } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
@@ -391,9 +392,10 @@ export function Leads({ api, workspace, toast }: Props) {
     if (!form.businessName.trim() || !workspace) return
     setSaving(true)
     try {
+      const body: CreateLeadRequest = { ...form, workspaceId: workspace.id }
       const d = await api<{ lead: Lead }>('/api/leads', {
         method: 'POST',
-        body: JSON.stringify({ ...form, workspaceId: workspace.id })
+        body: JSON.stringify(body)
       })
       setLeads(prev => [d.lead, ...prev])
       setTotal(t => t + 1)
@@ -424,11 +426,12 @@ export function Leads({ api, workspace, toast }: Props) {
       const rows = parseCsv(text)
       if (rows.length === 0) { toast.error('No valid rows found in CSV'); return }
 
-      const leads = rows.map(r => ({
+      // Shape mapped CSV rows to the shared LeadInput contract (the API ignores
+      // any field not listed there, e.g. phone — so we don't send it).
+      const leads: LeadInput[] = rows.map(r => ({
         businessName: r.businessName || r.business_name || r.Business || r['Business Name'] || '',
         contactName: r.contactName || r.contact_name || r.Contact || '',
         email: r.email || r.Email || '',
-        phone: r.phone || r.Phone || '',
         website: r.website || r.Website || '',
         city: r.city || r.City || '',
         category: r.category || r.Category || '',
@@ -437,9 +440,10 @@ export function Leads({ api, workspace, toast }: Props) {
 
       if (leads.length === 0) { toast.error('No rows with a businessName found. Check your CSV column headers.'); return }
 
+      const body: ImportLeadsRequest = { workspaceId: workspace.id, leads }
       const d = await api<{ created: number }>('/api/leads/import', {
         method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, leads })
+        body: JSON.stringify(body)
       })
       toast.success(`Imported ${d.created} leads with auto-scoring`)
       fetchLeads()
