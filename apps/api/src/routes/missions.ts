@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
+import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { Assert, Extends, CreateMissionRequest, UpdateMissionRequest } from '@acaos/shared'
 
@@ -94,6 +95,11 @@ missionsRouter.post(
       })
     })
 
+    void recordAudit({
+      workspaceId, actorUserId: user.id, type: 'mission.create',
+      entityType: 'mission', entityId: mission.id, metadata: { name, goalType },
+    })
+
     res.status(201).json({ mission, campaign: mission.campaign })
   })
 )
@@ -113,6 +119,12 @@ missionsRouter.patch(
       data: { ...(name !== undefined ? { name } : {}), ...(status !== undefined ? { status } : {}) },
       include: { campaign: { include: { _count: { select: { leads: true } } } } },
     })
+    if (status !== undefined) {
+      void recordAudit({
+        workspaceId: existing.workspaceId, actorUserId: user.id, type: 'mission.status',
+        entityType: 'mission', entityId: existing.id, metadata: { status },
+      })
+    }
     res.json({ mission })
   })
 )

@@ -8,6 +8,23 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// Append-only audit log of significant actions (sends, approvals, mission status
+// changes, provider failures, api-key rotations). Deliberately FK-free so history
+// survives deletion of the referenced entity.
+model AuditEvent {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  actorUserId String?
+  type        String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([type, createdAt])
+}
+
 // Audit log for prospect-discovery runs so users can tell "no prospects" apart
 // from "the provider failed / quota exceeded / not configured", and see what was
 // searched, returned, imported, and skipped per run.
