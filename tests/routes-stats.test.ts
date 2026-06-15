@@ -59,6 +59,16 @@ test('GET / returns a funnel with computed conversion metrics', async () => {
   assert.equal(res.body.metrics.replied, 3)
   assert.equal(res.body.scoreDistribution.HOT, 2) // score 80 → HOT
 })
+test('GET / derives totalLeads from the stage funnel and surfaces the lead cap', async () => {
+  const res = await server.request(`/api/stats?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  // 4 + 2 + 1 across the stage groupBy — no separate lead.count round-trip.
+  assert.equal(res.body.totalLeads, 7)
+  // maxLeads now flows from the (lapse-aware) usage data: free plan = 500.
+  assert.equal(res.body.usage.maxLeads, 500)
+  assert.equal(res.body.usage.leads.used, 7)
+})
+
 test('GET /campaigns denies a non-member workspace', async () => {
   assert.equal((await server.request(`/api/stats/campaigns?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
 })
