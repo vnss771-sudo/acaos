@@ -95,6 +95,7 @@ model Workspace {
   processedEmails      ProcessedEmail[]
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
+  evidenceSources      EvidenceSource[]
 }
 
 model Membership {
@@ -519,6 +520,7 @@ model Prospect {
   signals          Signal[]
   recommendations  Recommendation[]
   outcomes         ProspectOutcome[]
+  evidenceSources  EvidenceSource[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
@@ -533,6 +535,7 @@ model Signal {
   id                String     @id @default(cuid())
   workspaceId       String
   prospectId        String
+  evidenceSourceId  String?
   type              SignalType
   strength          Int
   sourceReliability Int        @default(70)
@@ -546,6 +549,7 @@ model Signal {
   detectedAt        DateTime   @default(now())
   workspace         Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect          Prospect   @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  evidenceSource    EvidenceSource? @relation(fields: [evidenceSourceId], references: [id], onDelete: SetNull)
   createdAt         DateTime   @default(now())
 
   @@unique([prospectId, fingerprint])
@@ -553,6 +557,32 @@ model Signal {
   @@index([prospectId])
   @@index([type])
   @@index([detectedAt])
+  @@index([evidenceSourceId])
+}
+
+// Provenance for signals: where a piece of evidence came from, when it was
+// observed, how trustworthy it is, and when it goes stale. Lets every signal /
+// recommendation answer "what's the source?" — the basis for evidence-backed,
+// auditable recommendations.
+model EvidenceSource {
+  id          String    @id @default(cuid())
+  workspaceId String
+  prospectId  String
+  provider    String    // e.g. apollo | places | hunter | manual | crawler
+  sourceType  String    // e.g. job_posting | website | news | tender | review
+  sourceUrl   String?
+  observedAt  DateTime  @default(now())
+  expiresAt   DateTime?
+  confidence  Float     @default(0.5) // 0..1
+  rawText     String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect    Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  signals     Signal[]
+
+  @@index([workspaceId, prospectId])
+  @@index([provider, observedAt])
 }
 
 model Recommendation {
