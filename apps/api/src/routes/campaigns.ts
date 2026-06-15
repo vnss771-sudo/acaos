@@ -10,6 +10,7 @@ import { isProduction } from '../lib/config.js'
 import { isMailConfigured } from '../services/mail.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
+import type { LeadStage } from '@prisma/client'
 import type { Assert, Extends, CreateCampaignRequest } from '@acaos/shared'
 
 export const campaignsRouter = Router()
@@ -237,7 +238,7 @@ campaignsRouter.post(
     const where = {
       campaignId: campaign.id,
       email: { not: null as null },
-      stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] },
+      stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as LeadStage[] },
       ...(requestedIds ? { id: { in: requestedIds } } : {})
     }
 

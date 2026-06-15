@@ -6,6 +6,7 @@ import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
 import type { ScoringWeights } from '../../api/src/lib/scoring.js'
+import type { LeadStage } from '@prisma/client'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -173,7 +174,7 @@ const replyWorker = new Worker(
 
     if (leadId && parsed.classification) {
       if (!parsed.isAutoReply) {
-        const stageMap: Record<string, string> = {
+        const stageMap: Record<string, LeadStage> = {
           INTERESTED: 'REPLIED',
           NOT_INTERESTED: 'DEAD',
           NEEDS_MORE_INFO: 'REPLIED',

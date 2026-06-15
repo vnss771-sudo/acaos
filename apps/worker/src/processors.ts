@@ -4,6 +4,7 @@
 // directly.
 
 import { prisma } from '../../api/src/lib/prisma.js'
+import type { LeadStage } from '@prisma/client'
 import { DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
 import {
   calculateOpportunityScores,
@@ -235,7 +236,7 @@ export async function sendCampaignBatch(
     campaignId,
     workspaceId,
     email: { not: null as null },
-    stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] },
+    stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as LeadStage[] },
     ...(leadIds ? { id: { in: leadIds } } : {})
   }
 

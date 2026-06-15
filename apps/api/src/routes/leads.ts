@@ -8,6 +8,7 @@ import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
+import type { LeadStage } from '@prisma/client'
 import type { UpdateDraftRequest } from '@acaos/shared'
 
 export const leadsRouter = Router()
@@ -53,7 +54,7 @@ leadsRouter.get(
     const where = {
       workspaceId,
       ...(campaignId ? { campaignId } : {}),
-      ...(stage ? { stage } : {}),
+      ...(stage && VALID_STAGES.includes(stage) ? { stage: stage as LeadStage } : {}),
       ...(search ? {
         OR: [
           { businessName: { contains: search, mode: 'insensitive' as const } },
@@ -360,7 +361,7 @@ leadsRouter.post(
 
     const result = await prisma.lead.updateMany({
       where: { id: { in: ids }, workspaceId },
-      data: { stage }
+      data: { stage: stage as LeadStage }
     })
     res.json({ updated: result.count })
   })
