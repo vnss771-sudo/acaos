@@ -178,6 +178,9 @@ model Lead {
   @@index([workspaceId])
   @@index([workspaceId, stage])
   @@index([workspaceId, email])
+  // Serves the default leads list (ORDER BY score DESC, createdAt DESC scoped to a
+  // workspace) via a backward index scan instead of a full sort per request.
+  @@index([workspaceId, score, createdAt])
   @@index([campaignId])
 }
 
