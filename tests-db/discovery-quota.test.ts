@@ -3,8 +3,21 @@
 
 import { test, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAndIncrementDiscoveryUsage, checkAndIncrementAiUsage } from '../apps/api/src/lib/limits.ts'
+import { checkAndIncrementDiscoveryUsage, checkAndIncrementAiUsage, getMonthlyUsage } from '../apps/api/src/lib/limits.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+
+test('getMonthlyUsage reports discovery + lead usage with plan limits', async () => {
+  const { workspace } = await seedUserWithWorkspace() // free plan
+  await checkAndIncrementDiscoveryUsage(workspace.id)
+  await prisma.lead.create({ data: { workspaceId: workspace.id, businessName: 'L1' } })
+  await prisma.lead.create({ data: { workspaceId: workspace.id, businessName: 'L2' } })
+
+  const u = await getMonthlyUsage(workspace.id)
+  assert.equal(u.discovery.used, 1)
+  assert.equal(u.discovery.limit, 25)  // free plan
+  assert.equal(u.leads.used, 2)
+  assert.equal(u.leads.limit, 500)     // free plan
+})
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })

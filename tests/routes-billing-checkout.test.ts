@@ -28,6 +28,7 @@ function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: nu
     membership: { findFirst: async (a: any) => billingMember(a) },
     workspace: { findUnique: async () => ws },
     usageRecord: { findMany: async () => [] },
+    lead: { count: async () => 0 },
   }
 }
 

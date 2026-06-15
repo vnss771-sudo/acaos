@@ -14,6 +14,8 @@ type UsageStats = {
   total: number
   limit: number
   plan: string
+  discovery?: { used: number; limit: number }
+  leads?: { used: number; limit: number }
 }
 
 type BillingStatus = {
@@ -152,25 +154,32 @@ export function Billing({ api, workspace, toast }: Props) {
         )}
 
         {billingStatus?.usage && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ color: colors.textMuted, fontSize: 13 }}>AI calls used this month</span>
-              <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>
-                {billingStatus.usage.total}
-                {billingStatus.usage.limit > 0 ? ` / ${billingStatus.usage.limit}` : ' / ∞'}
-              </span>
-            </div>
-            {billingStatus.usage.limit > 0 && (
-              <div style={{ background: '#1e2d40', borderRadius: 4, height: 6, overflow: 'hidden' }}>
-                <div style={{
-                  width: `${Math.min(100, (billingStatus.usage.total / billingStatus.usage.limit) * 100)}%`,
-                  height: '100%',
-                  background: billingStatus.usage.total / billingStatus.usage.limit > 0.85 ? colors.red : colors.blue,
-                  borderRadius: 4,
-                  transition: 'width 0.4s'
-                }} />
+          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {[
+              { label: 'AI calls used this month', used: billingStatus.usage.total, limit: billingStatus.usage.limit },
+              ...(billingStatus.usage.discovery ? [{ label: 'Discovery runs this month', used: billingStatus.usage.discovery.used, limit: billingStatus.usage.discovery.limit }] : []),
+              ...(billingStatus.usage.leads ? [{ label: 'Leads', used: billingStatus.usage.leads.used, limit: billingStatus.usage.leads.limit }] : []),
+            ].map(m => (
+              <div key={m.label}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ color: colors.textMuted, fontSize: 13 }}>{m.label}</span>
+                  <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>
+                    {m.used}{m.limit > 0 ? ` / ${m.limit}` : ' / ∞'}
+                  </span>
+                </div>
+                {m.limit > 0 && (
+                  <div style={{ background: '#1e2d40', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${Math.min(100, (m.used / m.limit) * 100)}%`,
+                      height: '100%',
+                      background: m.used / m.limit > 0.85 ? colors.red : colors.blue,
+                      borderRadius: 4,
+                      transition: 'width 0.4s'
+                    }} />
+                  </div>
+                )}
               </div>
-            )}
+            ))}
           </div>
         )}
       </div>

@@ -153,24 +153,36 @@ export async function getMonthlyUsage(workspaceId: string): Promise<{
   total: number
   limit: number
   plan: Plan
+  discovery: { used: number; limit: number }
+  leads: { used: number; limit: number }
 }> {
   const plan = await getWorkspacePlan(workspaceId)
   const month = currentMonth()
-  const records = await prisma.usageRecord.findMany({ where: { workspaceId, month } })
+  const [records, leadsUsed] = await Promise.all([
+    prisma.usageRecord.findMany({ where: { workspaceId, month } }),
+    prisma.lead.count({ where: { workspaceId } }),
+  ])
 
   const totals: Record<UsageAction, number> = {
     AI_RESEARCH: 0,
     AI_OUTREACH: 0,
     AI_REPLY: 0
   }
+  let discoveryUsed = 0
   for (const r of records) {
     if (r.action in totals) totals[r.action as UsageAction] = r.count
+    else if (r.action === DISCOVERY_ACTION) discoveryUsed = r.count
   }
 
   const total = Object.values(totals).reduce((s, v) => s + v, 0)
   const limit = PLAN_LIMITS[plan].aiCallsPerMonth
+  const norm = (n: number) => (isFinite(n) ? n : -1) // -1 = unlimited
 
-  return { month, totals, total, limit: isFinite(limit) ? limit : -1, plan }
+  return {
+    month, totals, total, limit: norm(limit), plan,
+    discovery: { used: discoveryUsed, limit: norm(PLAN_LIMITS[plan].discoveriesPerMonth) },
+    leads: { used: leadsUsed, limit: norm(PLAN_LIMITS[plan].maxLeads) },
+  }
 }
 
 export function getPlanInfo(plan: string) {
