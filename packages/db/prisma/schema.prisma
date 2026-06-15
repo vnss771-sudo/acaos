@@ -74,6 +74,7 @@ model Workspace {
   suppressions         Suppression[]
   processedEmails      ProcessedEmail[]
   discoveryRuns        DiscoveryRun[]
+  missions             Mission[]
 }
 
 model Membership {
@@ -99,10 +100,33 @@ model Campaign {
   workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   leads        Lead[]
   outreachSent OutreachSent[]
+  mission      Mission?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
   @@index([workspaceId])
+}
+
+// First-class Mission: the user-facing control plane that ties ICP/playbook,
+// target + offer, and an execution Campaign into one workflow. The UI speaks
+// "Mission"; this is its backing entity (previously the UI only created a
+// Campaign). One Mission maps to one execution Campaign.
+model Mission {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  name           String
+  goalType       String
+  targetCustomer String?
+  offer          String?
+  playbookId     String?
+  status         String    @default("ACTIVE") // DRAFT | DISCOVERING | REVIEWING | ACTIVE | PAUSED | COMPLETE
+  campaignId     String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign       Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
 }
 
 model Lead {

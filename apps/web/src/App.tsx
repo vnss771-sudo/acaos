@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar.js'
 import { AuthScreen } from './components/AuthScreen.js'
 import { Dashboard } from './views/Dashboard.js'
 import { Campaigns } from './views/Campaigns.js'
+import { MissionsView } from './views/Missions.js'
 import { Leads } from './views/Leads.js'
 import { AiTools } from './views/AiTools.js'
 import { Billing } from './views/Billing.js'
@@ -185,6 +186,7 @@ export function App() {
     dashboard: 'Acquisition Radar',
     intelligence: 'Acquisition Intelligence',
     prospects: 'Prospects',
+    missions: 'Missions',
     campaigns: 'Campaigns',
     leads: 'Leads',
     ai: 'AI Tools',
@@ -264,6 +266,7 @@ export function App() {
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
             {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
             {view === 'prospects' && <ProspectsView {...commonProps} />}
+            {view === 'missions' && <MissionsView {...commonProps} />}
             {view === 'campaigns' && <Campaigns {...commonProps} />}
             {view === 'leads' && <Leads {...commonProps} />}
             {view === 'ai' && <AiTools {...commonProps} />}

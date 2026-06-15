@@ -8,6 +8,7 @@ import { aiRouter } from './routes/ai.js'
 import { mailboxRouter } from './routes/mailbox.js'
 import { workspaceRouter } from './routes/workspaces.js'
 import { campaignsRouter } from './routes/campaigns.js'
+import { missionsRouter } from './routes/missions.js'
 import { leadsRouter } from './routes/leads.js'
 import { statsRouter } from './routes/stats.js'
 import { jobsRouter } from './routes/jobs.js'
@@ -100,6 +101,7 @@ app.use('/api/ai', aiRouter)
 app.use('/api/mailbox', mailboxRouter)
 app.use('/api/workspaces', workspaceRouter)
 app.use('/api/campaigns', campaignsRouter)
+app.use('/api/missions', missionsRouter)
 app.use('/api/leads', leadsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/jobs', jobsRouter)

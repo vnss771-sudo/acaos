@@ -124,3 +124,22 @@ export interface SeedWorkspaceRequest {
   playbookId: string | null
   includeExamples: boolean
 }
+
+// ── Missions ──────────────────────────────────────────────────────────────────
+export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
+
+// POST /api/missions — creates a Mission and its linked execution Campaign.
+export interface CreateMissionRequest {
+  workspaceId: string
+  name: string
+  goalType: string
+  targetCustomer?: string
+  offer?: string
+  playbookId?: string | null
+}
+
+// PATCH /api/missions/:id
+export interface UpdateMissionRequest {
+  name?: string
+  status?: MissionStatus
+}
