@@ -315,3 +315,30 @@ campaignsRouter.delete(
     res.json({ ok: true })
   })
 )
+
+// Operator escape hatch for the fail-closed outbox: clear FAILED send rows so the
+// affected leads become re-sendable on the next launch (which re-runs all the
+// deliverability/approval gates). FAILED rows are otherwise terminal.
+campaignsRouter.post(
+  '/:id/retry-failed',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const campaignId = req.params.id as string
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } })
+    if (!campaign) throw new ApiError(404, 'Campaign not found')
+
+    const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const result = await prisma.outreachSent.deleteMany({
+      where: { campaignId: campaign.id, status: 'FAILED' },
+    })
+    if (result.count > 0) {
+      void recordAudit({
+        workspaceId: campaign.workspaceId, actorUserId: user.id, type: 'campaign.retry_failed',
+        entityType: 'campaign', entityId: campaign.id, metadata: { cleared: result.count },
+      })
+    }
+    res.json({ cleared: result.count })
+  })
+)
