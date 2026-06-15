@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import type { Workspace, Prospect, Signal, Recommendation } from '../types.js'
+import React, { useEffect, useState, useCallback } from 'react'
+import type { Workspace, Prospect, Signal, Recommendation, DiscoveryRun } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
   SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, TIER_COLOR
@@ -340,6 +340,8 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [importing, setImporting] = useState(false)
   const [discovering, setDiscovering] = useState(false)
   const [discoverSources, setDiscoverSources] = useState<{ name: string; label: string }[]>([])
+  const [runs, setRuns] = useState<DiscoveryRun[]>([])
+  const [showRuns, setShowRuns] = useState(false)
 
   useEffect(() => {
     api<{ sources: { name: string; label: string; isConfigured: boolean }[] }>('/api/prospects/sources')
@@ -348,6 +350,15 @@ export function ProspectsView({ api, workspace, toast }: Props) {
       ))
       .catch(() => {})
   }, [])
+
+  const loadRuns = useCallback(() => {
+    if (!workspace) return
+    api<{ runs: DiscoveryRun[] }>(`/api/prospects/discovery-runs?workspaceId=${workspace.id}`)
+      .then(d => setRuns(d.runs || []))
+      .catch(() => {})
+  }, [api, workspace?.id])
+
+  useEffect(() => { loadRuns() }, [workspace?.id])
 
   const load = () => {
     if (!workspace) return
@@ -396,7 +407,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
         if (res.discovered > 0) load()
       }
     } catch (e: unknown) { toast.error((e as Error).message) }
-    finally { setDiscovering(false) }
+    finally { setDiscovering(false); loadRuns() }
   }
 
   const handleImportCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -477,6 +488,36 @@ export function ProspectsView({ api, workspace, toast }: Props) {
           <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
         </div>
       </div>
+
+      {/* Discovery run history — lets users see provider failures vs. "no results" */}
+      {runs.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <button
+            onClick={() => setShowRuns(v => !v)}
+            style={{ background: 'none', border: 'none', color: colors.textMuted, cursor: 'pointer', fontSize: 12, padding: 0 }}
+          >
+            {showRuns ? '▾' : '▸'} Discovery history ({runs.length})
+            {runs.some(r => r.status === 'FAILED') && <span style={{ color: colors.red, marginLeft: 6 }}>· has failures</span>}
+          </button>
+          {showRuns && (
+            <div style={{ ...s.card, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {runs.map(r => {
+                const color = r.status === 'SUCCEEDED' ? colors.green : r.status === 'FAILED' ? colors.red : colors.amber
+                return (
+                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, borderBottom: `1px solid ${colors.border}`, paddingBottom: 6 }}>
+                    <span style={{ color, fontWeight: 700, minWidth: 76 }}>{r.status}</span>
+                    <span style={{ color: colors.textMuted, minWidth: 90 }}>{r.source}</span>
+                    {r.status === 'FAILED'
+                      ? <span style={{ color: colors.red, flex: 1 }}>{r.errorMessage || r.errorCode || 'provider error'}</span>
+                      : <span style={{ color: colors.textFaint, flex: 1 }}>{r.importedCount} imported · {r.skippedCount} skipped · {r.resultCount} found</span>}
+                    <span style={{ color: colors.textFaint }}>{new Date(r.startedAt).toLocaleString()}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add form */}
       {showAdd && (
