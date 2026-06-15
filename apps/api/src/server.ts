@@ -22,6 +22,8 @@ import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
+import { metricsMiddleware } from './middleware/metrics.js'
+import { renderMetrics, METRICS_CONTENT_TYPE } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
@@ -38,6 +40,7 @@ app.set('trust proxy', 1)
 app.use(compression())
 app.use(securityHeaders)
 app.use(requestContext)
+app.use(metricsMiddleware)
 
 app.use(cors({
   // In production, allow only explicitly configured origins. In dev, reflect
@@ -52,6 +55,21 @@ app.use(cors({
 
 app.use('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }))
 app.use(express.json({ limit: '1mb' }))
+
+// Prometheus scrape endpoint. Registered before the rate limiter so frequent
+// scrapes aren't throttled. When METRICS_TOKEN is set it must be presented as a
+// bearer token (scrapers usually reach this over a private network, but the token
+// closes it off on public ingresses); when unset, the endpoint is open (dev).
+app.get('/metrics', (req, res) => {
+  const token = process.env.METRICS_TOKEN?.trim()
+  if (token && req.headers.authorization !== `Bearer ${token}`) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+  res.setHeader('Content-Type', METRICS_CONTENT_TYPE)
+  res.send(renderMetrics())
+})
+
 app.use(generalRateLimit)
 
 // Liveness: cheap, never touches the database — safe for frequent probes.
