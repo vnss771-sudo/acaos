@@ -49,6 +49,23 @@ export function decayedStrength(signal: RawSignal): number {
   return signal.strength * Math.exp(-rate * ageDays)
 }
 
+// User-facing freshness state for a signal, derived from the same per-type
+// exponential decay used in scoring (so the label always agrees with the score).
+// `remaining` is the fraction of original strength still left after age decay.
+export type Freshness = 'LIVE' | 'RECENT' | 'STALE' | 'EXPIRED'
+export function freshnessState(
+  signal: Pick<RawSignal, 'type' | 'detectedAt'>,
+  now: number = Date.now()
+): Freshness {
+  const ageDays = Math.max(0, (now - signal.detectedAt.getTime()) / 86_400_000)
+  const rate = SIGNAL_DECAY_RATES[signal.type] ?? 0.01
+  const remaining = Math.exp(-rate * ageDays) // 1.0 (just observed) → 0 (ancient)
+  if (remaining >= 0.85) return 'LIVE'
+  if (remaining >= 0.5) return 'RECENT'
+  if (remaining >= 0.2) return 'STALE'
+  return 'EXPIRED'
+}
+
 // Intent score: how strongly this company is showing buying intent
 function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights): number {
   if (signals.length === 0) return 0

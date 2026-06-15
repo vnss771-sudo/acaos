@@ -12,6 +12,7 @@ import {
   getOpportunityTier,
   predictBuyingIntent,
   toRawSignal,
+  freshnessState,
   type ICPConfig,
   type SignalType,
 } from '../lib/signalEngine.js'
@@ -233,6 +234,7 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
     title: s.title,
     contribution: s.weight ?? null,
     detectedAt: s.detectedAt,
+    freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
   })) ?? []
 
   res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown })

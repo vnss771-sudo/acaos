@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { calculateOpportunityScores, detectBuyingStage, calcWinProbability } from '../lib/signalEngine.js'
+import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { buildSignalFingerprint } from './prospects.js'
@@ -38,7 +38,14 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
     include: { prospect: { select: { id: true, companyName: true } } }
   })
 
-  res.json({ signals })
+  // Attach the user-facing freshness state (decay-derived) so the UI can show
+  // LIVE/RECENT/STALE/EXPIRED without recomputing decay client-side.
+  const withFreshness = signals.map((s) => ({
+    ...s,
+    freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
+  }))
+
+  res.json({ signals: withFreshness })
 }))
 
 // POST /api/signals — add a manual signal
