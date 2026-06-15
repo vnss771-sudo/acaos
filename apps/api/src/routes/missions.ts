@@ -48,6 +48,22 @@ missionsRouter.get(
       include: { campaign: { include: { _count: { select: { leads: true } } } } },
     })
 
+    // Per-mission discovery activity: how many runs sourced prospects for this
+    // mission and how many prospects they imported in total.
+    const missionIds = missions.map(m => m.id)
+    const discoveryByMission = new Map<string, { runs: number; discovered: number }>()
+    if (missionIds.length > 0) {
+      const grouped = await prisma.discoveryRun.groupBy({
+        by: ['missionId'],
+        where: { missionId: { in: missionIds } },
+        _count: { _all: true },
+        _sum: { importedCount: true },
+      })
+      for (const g of grouped as Array<{ missionId: string | null; _count: { _all: number }; _sum: { importedCount: number | null } }>) {
+        if (g.missionId) discoveryByMission.set(g.missionId, { runs: g._count._all, discovered: g._sum.importedCount ?? 0 })
+      }
+    }
+
     // Per-mission execution outcomes from the linked campaign's outbox — the
     // mission as a control plane shows what actually happened, not just leads.
     const campaignIds = missions.map(m => m.campaignId).filter((id): id is string => Boolean(id))
@@ -80,9 +96,11 @@ missionsRouter.get(
       }
     }
     const zero = { sent: 0, replied: 0, failed: 0, bounced: 0, pendingDrafts: 0 }
+    const zeroDiscovery = { runs: 0, discovered: 0 }
     const withStats = missions.map(m => ({
       ...m,
       stats: m.campaignId ? (statsByCampaign.get(m.campaignId) ?? zero) : zero,
+      discovery: discoveryByMission.get(m.id) ?? zeroDiscovery,
     }))
 
     res.json({ missions: withStats })

@@ -30,6 +30,24 @@ test('GET /discovery-runs lists runs newest-first (not shadowed by /:id)', async
   assert.equal(res.body.runs[1].errorCode, 'QUOTA')  // failures are visible
 })
 
+test('POST /discover rejects a missionId from another workspace', async () => {
+  const a = await seedUserWithWorkspace('a@x.test')
+  const b = await seedUserWithWorkspace('b@x.test')
+  // /discover requires a verified email; the cross-workspace check is what we test.
+  await prisma.user.update({ where: { id: a.user.id }, data: { emailVerified: true } })
+  // A mission that belongs to workspace B, used while discovering into workspace A.
+  const foreignMission = await prisma.mission.create({
+    data: { workspaceId: b.workspace.id, name: 'B mission', goalType: 'BOOK_CALL' },
+  })
+  const res = await server.request('/api/prospects/discover', {
+    method: 'POST',
+    headers: { Authorization: bearer(a.user.id), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceId: a.workspace.id, missionId: foreignMission.id }),
+  })
+  // The cross-workspace mission is rejected before any provider work happens.
+  assert.equal(res.status, 404)
+})
+
 test('GET /discovery-runs denies a non-member', async () => {
   const a = await seedUserWithWorkspace('a@x.test')
   const b = await seedUserWithWorkspace('b@x.test')

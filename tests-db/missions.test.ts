@@ -71,6 +71,25 @@ test('GET /missions includes per-mission deliverability stats from the linked ca
   assert.equal(stats.pendingDrafts, 1)
 })
 
+test('GET /missions reports per-mission discovery activity (runs + prospects imported)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const created = await server.request('/api/missions', {
+    method: 'POST', headers: jsonAuth(user.id),
+    body: JSON.stringify({ workspaceId: workspace.id, name: 'M', goalType: 'BOOK_CALL' }),
+  })
+  const missionId = created.body.mission.id as string
+  // Two runs scoped to this mission (7 + 3 imported) plus a workspace-level run
+  // that is NOT scoped to the mission and must not be counted.
+  await prisma.discoveryRun.create({ data: { workspaceId: workspace.id, missionId, source: 'apollo', status: 'SUCCEEDED', importedCount: 7 } })
+  await prisma.discoveryRun.create({ data: { workspaceId: workspace.id, missionId, source: 'apollo', status: 'SUCCEEDED', importedCount: 3 } })
+  await prisma.discoveryRun.create({ data: { workspaceId: workspace.id, source: 'apollo', status: 'SUCCEEDED', importedCount: 99 } })
+
+  const res = await server.request(`/api/missions?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
+  const discovery = res.body.missions[0].discovery
+  assert.equal(discovery.runs, 2)
+  assert.equal(discovery.discovered, 10)
+})
+
 test('PATCH /missions/:id updates status', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const created = await server.request('/api/missions', {

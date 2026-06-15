@@ -72,6 +72,7 @@ export type Mission = {
   createdAt: string
   campaign?: Campaign | null
   stats?: { sent: number; replied: number; failed: number; bounced: number; pendingDrafts: number }
+  discovery?: { runs: number; discovered: number }
 }
 
 export type Lead = {

@@ -31,6 +31,7 @@ model AuditEvent {
 model DiscoveryRun {
   id            String    @id @default(cuid())
   workspaceId   String
+  missionId     String?
   source        String
   status        DiscoveryRunStatus @default(RUNNING)
   query         Json?
@@ -42,8 +43,10 @@ model DiscoveryRun {
   startedAt     DateTime  @default(now())
   finishedAt    DateTime?
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  mission       Mission?  @relation(fields: [missionId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, startedAt])
+  @@index([missionId])
 }
 
 model User {
@@ -142,6 +145,7 @@ model Mission {
   updatedAt      DateTime  @updatedAt
   workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign       Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  discoveryRuns  DiscoveryRun[]
 
   @@index([workspaceId, status])
 }

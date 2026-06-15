@@ -249,6 +249,16 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
+  // Optionally scope the run to a mission so the mission control plane can show
+  // its own discovery activity. The mission must belong to the same workspace.
+  const missionId = typeof req.body.missionId === 'string' && req.body.missionId.trim()
+    ? req.body.missionId.trim()
+    : null
+  if (missionId) {
+    const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true } })
+    if (!mission || mission.workspaceId !== workspaceId) throw new ApiError(404, 'Mission not found')
+  }
+
   const sourceName = String(req.body.source ?? 'apollo')
   const source = getSource(sourceName)
   if (!source) throw new ApiError(400, `Unknown source: ${sourceName}`)
@@ -279,7 +289,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
   // Audit the run so users can distinguish "no prospects" from a provider
   // failure / quota / misconfiguration.
   const run = await prisma.discoveryRun.create({
-    data: { workspaceId, source: sourceName, status: 'RUNNING', query },
+    data: { workspaceId, missionId, source: sourceName, status: 'RUNNING', query },
     select: { id: true },
   })
 
