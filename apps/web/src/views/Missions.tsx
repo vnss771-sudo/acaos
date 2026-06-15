@@ -95,6 +95,15 @@ export function MissionsView({ api, workspace, toast }: Props) {
                     <strong style={{ color: colors.textFaint }}>Offer:</strong> {m.offer}
                   </div>
                 )}
+                {m.stats && (m.stats.sent > 0 || m.stats.failed > 0) && (
+                  <div style={{ display: 'flex', gap: 14, fontSize: 12, color: colors.textMuted }}>
+                    <span>{m.stats.sent} sent</span>
+                    <span style={{ color: colors.green }}>{m.stats.replied} replied</span>
+                    {(m.stats.failed + m.stats.bounced) > 0 && (
+                      <span style={{ color: colors.red }}>{m.stats.failed + m.stats.bounced} failed/bounced</span>
+                    )}
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <span style={{ color: colors.textFaint, fontSize: 12 }}>{leads} lead{leads !== 1 ? 's' : ''} enrolled</span>
                   <div style={{ display: 'flex', gap: 8 }}>

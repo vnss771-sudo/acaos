@@ -47,7 +47,34 @@ missionsRouter.get(
       orderBy: { createdAt: 'desc' },
       include: { campaign: { include: { _count: { select: { leads: true } } } } },
     })
-    res.json({ missions })
+
+    // Per-mission execution outcomes from the linked campaign's outbox — the
+    // mission as a control plane shows what actually happened, not just leads.
+    const campaignIds = missions.map(m => m.campaignId).filter((id): id is string => Boolean(id))
+    const statsByCampaign = new Map<string, { sent: number; replied: number; failed: number; bounced: number }>()
+    if (campaignIds.length > 0) {
+      const grouped = await prisma.outreachSent.groupBy({
+        by: ['campaignId', 'status'],
+        where: { campaignId: { in: campaignIds } },
+        _count: true,
+      })
+      for (const g of grouped as Array<{ campaignId: string | null; status: string; _count: number }>) {
+        if (!g.campaignId) continue
+        const s = statsByCampaign.get(g.campaignId) ?? { sent: 0, replied: 0, failed: 0, bounced: 0 }
+        if (g.status === 'SENT' || g.status === 'REPLIED' || g.status === 'BOUNCED') s.sent += g._count
+        if (g.status === 'REPLIED') s.replied += g._count
+        if (g.status === 'FAILED') s.failed += g._count
+        if (g.status === 'BOUNCED') s.bounced += g._count
+        statsByCampaign.set(g.campaignId, s)
+      }
+    }
+    const zero = { sent: 0, replied: 0, failed: 0, bounced: 0 }
+    const withStats = missions.map(m => ({
+      ...m,
+      stats: m.campaignId ? (statsByCampaign.get(m.campaignId) ?? zero) : zero,
+    }))
+
+    res.json({ missions: withStats })
   })
 )
 
