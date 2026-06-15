@@ -85,11 +85,11 @@ These are open items from the engineering release-gate review. Fixed items are n
 
 ### High priority (fix before onboarding paying users)
 
-**1. Mission Builder is a thin campaign creator**
-The UI says "Mission Builder" but the backend just creates a campaign with a text description. A real mission should link ICP criteria, a playbook, a discovery run, generated recommendations, and a draft approval queue into one connected workflow. Needs a `Mission` database model and end-to-end wiring.
+**1. Mission Builder — now first-class (deepening continues)**
+A `Mission` model + `/api/missions` API + Missions view now exist; creating a mission provisions its linked execution campaign. Still to wire directly into the mission control plane: ICP/playbook selection, discovery runs, and recommendations.
 
-**2. Approval workflow is not first-class**
-Campaign sends can be gated by an approval flag, but there is no approval queue. The correct flow is: recommendation → draft → approval queue → send attempt → outcome. Each draft should have a status (`DRAFTED | APPROVED | SENT | SKIPPED | REJECTED`) so the team can review before anything goes out.
+**2. Approval workflow — now first-class**
+Drafts have a status (`DRAFTED | APPROVED | REJECTED | SENT | SKIPPED`), and a **Review Queue** (`/api/leads/approvals/pending` + the Approvals view) lets the team edit copy and approve/reject before anything sends; `approvalMode` gates campaign sends to `APPROVED` drafts. Approvals/edits are audit-logged.
 
 **3. Example data not excluded from all intelligence endpoints**
 Example/seed prospects are hidden from the opportunities list when real prospects exist. But the forecast, stats, and learning/calibration endpoints do not all apply the same `isExample` filter consistently. Example data could skew intelligence reports.

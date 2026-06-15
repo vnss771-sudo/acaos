@@ -121,7 +121,7 @@ export type StatsData = {
   usage: UsageData
 }
 
-export type View = 'dashboard' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
+export type View = 'dashboard' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'approvals' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
 
 export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
 export type Stage = typeof STAGES[number]
