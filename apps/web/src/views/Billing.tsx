@@ -52,7 +52,6 @@ const STATUS_COLOR: Record<string, string> = {
 export function Billing({ api, workspace, toast }: Props) {
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null)
   const [loading, setLoading] = useState(false)
-  const [checkoutLoading, setCheckoutLoading] = useState('')
   const [portalLoading, setPortalLoading] = useState(false)
 
   useEffect(() => {
@@ -64,20 +63,16 @@ export function Billing({ api, workspace, toast }: Props) {
       .finally(() => setLoading(false))
   }, [workspace?.id])
 
-  async function startCheckout(priceKey: string) {
+  function startCheckout(priceKey: string) {
     if (!workspace) return
-    setCheckoutLoading(priceKey)
-    try {
-      const priceId = priceKey === 'starter'
-        ? import.meta.env.VITE_STRIPE_PRICE_STARTER
-        : import.meta.env.VITE_STRIPE_PRICE_GROWTH
-      const d = await api<{ url: string }>('/api/billing/checkout', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, priceId })
-      })
-      window.location.href = d.url
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Checkout failed') }
-    finally { setCheckoutLoading('') }
+    // Direct Stripe Payment Links. These env vars hold full https://buy.stripe.com/... URLs.
+    const link = priceKey === 'starter'
+      ? import.meta.env.VITE_STRIPE_PRICE_STARTER
+      : import.meta.env.VITE_STRIPE_PRICE_GROWTH
+    if (!link) { toast.error('Checkout link not configured'); return }
+    // Pass workspace id so the payment can be reconciled back to the account.
+    const sep = link.includes('?') ? '&' : '?'
+    window.location.href = `${link}${sep}client_reference_id=${encodeURIComponent(workspace.id)}`
   }
 
   async function openPortal() {
@@ -171,13 +166,11 @@ export function Billing({ api, workspace, toast }: Props) {
                   style={{
                     ...s.btn,
                     width: '100%',
-                    background: plan === 'growth' ? colors.purple : colors.blue,
-                    opacity: checkoutLoading === plan ? 0.7 : 1
+                    background: plan === 'growth' ? colors.purple : colors.blue
                   }}
-                  disabled={!!checkoutLoading}
                   onClick={() => startCheckout(plan)}
                 >
-                  {checkoutLoading === plan ? <><Spinner size={14} color="#fff" /> Loading…</> : `Upgrade to ${PLAN_LABELS[plan]} →`}
+                  {`Upgrade to ${PLAN_LABELS[plan]} →`}
                 </button>
               </div>
             ))}
