@@ -342,6 +342,9 @@ export function ProspectsView({ api, workspace, toast }: Props) {
   const [discoverSources, setDiscoverSources] = useState<{ name: string; label: string }[]>([])
   const [runs, setRuns] = useState<DiscoveryRun[]>([])
   const [showRuns, setShowRuns] = useState(false)
+  const [missions, setMissions] = useState<{ id: string; name: string }[]>([])
+  // Optionally attribute discovered prospects to a mission (empty = unscoped).
+  const [discoverMissionId, setDiscoverMissionId] = useState('')
 
   useEffect(() => {
     api<{ sources: { name: string; label: string; isConfigured: boolean }[] }>('/api/prospects/sources')
@@ -350,6 +353,13 @@ export function ProspectsView({ api, workspace, toast }: Props) {
       ))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!workspace) return
+    api<{ missions: { id: string; name: string; status: string }[] }>(`/api/missions?workspaceId=${workspace.id}`)
+      .then(d => setMissions((d.missions || []).filter(m => m.status !== 'COMPLETE').map(m => ({ id: m.id, name: m.name }))))
+      .catch(() => {})
+  }, [workspace?.id])
 
   const loadRuns = useCallback(() => {
     if (!workspace) return
@@ -395,7 +405,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
     try {
       const res = await api<{ discovered: number; skipped: number; total: number }>(
         '/api/prospects/discover',
-        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, source: sourceName }) }
+        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, source: sourceName, ...(discoverMissionId ? { missionId: discoverMissionId } : {}) }) }
       )
       if (res.discovered === 0 && res.total === 0) {
         toast.error('No results — try broadening your ICP settings')
@@ -470,6 +480,18 @@ export function ProspectsView({ api, workspace, toast }: Props) {
               onChange={handleImportCsv} disabled={importing}
             />
           </label>
+          {discoverSources.length > 0 && missions.length > 0 && (
+            <select
+              value={discoverMissionId}
+              onChange={e => setDiscoverMissionId(e.target.value)}
+              disabled={discovering}
+              style={{ ...s.input, width: 180 }}
+              title="Attribute discovered prospects to a mission"
+            >
+              <option value="">No mission</option>
+              {missions.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          )}
           {discoverSources.map(src => (
             <button
               key={src.name}
