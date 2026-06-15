@@ -32,7 +32,7 @@ model DiscoveryRun {
   id            String    @id @default(cuid())
   workspaceId   String
   source        String
-  status        String    @default("RUNNING") // RUNNING | SUCCEEDED | PARTIAL | FAILED
+  status        DiscoveryRunStatus @default(RUNNING)
   query         Json?
   resultCount   Int       @default(0)
   importedCount Int       @default(0)
@@ -136,7 +136,7 @@ model Mission {
   targetCustomer String?
   offer          String?
   playbookId     String?
-  status         String    @default("ACTIVE") // DRAFT | DISCOVERING | REVIEWING | ACTIVE | PAUSED | COMPLETE
+  status         MissionStatus @default(ACTIVE)
   campaignId     String?   @unique
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -211,7 +211,7 @@ model OutreachSent {
   // Outbox lifecycle: SENDING (claimed, pre-dispatch) -> SENT, or -> FAILED on a
   // known SMTP rejection. A crash after dispatch leaves the row SENDING
   // (fail-closed: never auto-resend). PENDING reserved for future pre-stage.
-  status           String    @default("SENT")  // PENDING | SENDING | SENT | FAILED | BOUNCED | REPLIED
+  status           SendStatus @default(SENT)
   lastError        String?
   repliedAt        DateTime?
   replyIntent      String?
@@ -418,6 +418,32 @@ enum DraftStatus {
   REJECTED
   SENT
   SKIPPED
+}
+
+enum MissionStatus {
+  DRAFT
+  DISCOVERING
+  REVIEWING
+  ACTIVE
+  PAUSED
+  COMPLETE
+}
+
+enum DiscoveryRunStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+// Outbox send lifecycle for OutreachSent.
+enum SendStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  BOUNCED
+  REPLIED
 }
 
 // Lead pipeline stage (was a free-form String — now DB-enforced).
