@@ -31,16 +31,19 @@ const defaultJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 500
 // breaker's resetAfterMs (30s) — prevents burning all attempts while OPEN.
 const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 } } as const
 
-export async function enqueueResearchLead(leadId: string, userId: string) {
-  return getQueue('research-lead').add('research-lead', { leadId, userId }, aiJobOpts)
+// Job payloads are scoped by workspaceId (authoritative for polling/auth) plus an
+// optional initiatedByUserId. Object params prevent the positional confusion that
+// previously let ingest pass a workspaceId into a `userId` field.
+export async function enqueueResearchLead(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
+  return getQueue('research-lead').add('research-lead', opts, aiJobOpts)
 }
 
-export async function enqueueGenerateOutreach(leadId: string, userId: string) {
-  return getQueue('generate-outreach').add('generate-outreach', { leadId, userId }, aiJobOpts)
+export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
+  return getQueue('generate-outreach').add('generate-outreach', opts, aiJobOpts)
 }
 
-export async function enqueueAnalyzeReply(replyBody: string, leadId?: string, userId?: string) {
-  return getQueue('analyze-reply').add('analyze-reply', { replyBody, leadId, userId }, aiJobOpts)
+export async function enqueueAnalyzeReply(opts: { replyBody: string; workspaceId: string; leadId?: string; initiatedByUserId?: string }) {
+  return getQueue('analyze-reply').add('analyze-reply', opts, aiJobOpts)
 }
 
 export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {

@@ -139,7 +139,7 @@ ingestRouter.post(
           break
         }
         try {
-          await enqueueResearchLead(lead.id, workspace.id)
+          await enqueueResearchLead({ leadId: lead.id, workspaceId: workspace.id })
           queued++
         } catch {
           // Queue failures are non-fatal — leads are already saved.

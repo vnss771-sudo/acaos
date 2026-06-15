@@ -40,8 +40,8 @@ test('issuing a ticket requires authentication', async () => {
 })
 
 test('a valid ticket opens the stream, and is single-use', async () => {
-  const { user } = await seedUserWithWorkspace()
-  const job = await enqueueResearchLead('lead-1', user.id)
+  const { user, workspace } = await seedUserWithWorkspace()
+  const job = await enqueueResearchLead({ leadId: 'lead-1', workspaceId: workspace.id, initiatedByUserId: user.id })
   const ticket = await issueTicket(user.id)
 
   // First use: stream opens (200, text/event-stream).
@@ -54,8 +54,8 @@ test('a valid ticket opens the stream, and is single-use', async () => {
 })
 
 test('the stream rejects a missing or invalid ticket', async () => {
-  const { user } = await seedUserWithWorkspace()
-  const job = await enqueueResearchLead('lead-1', user.id)
+  const { user, workspace } = await seedUserWithWorkspace()
+  const job = await enqueueResearchLead({ leadId: 'lead-1', workspaceId: workspace.id, initiatedByUserId: user.id })
 
   assert.equal(await openStream(`/api/jobs/events/research-lead/${job.id}`), 401)
   assert.equal(await openStream(`/api/jobs/events/research-lead/${job.id}?ticket=bogus`), 401)
@@ -70,7 +70,8 @@ test('the stream rejects an unknown queue (before consuming anything)', async ()
 test('a ticket cannot stream another user\'s job', async () => {
   const a = await seedUserWithWorkspace('a@acme.test')
   const b = await seedUserWithWorkspace('b@acme.test')
-  const bsJob = await enqueueResearchLead('lead-b', b.user.id) // owned by user b
+  // owned by user b's workspace — user a is not a member, so polling is denied
+  const bsJob = await enqueueResearchLead({ leadId: 'lead-b', workspaceId: b.workspace.id, initiatedByUserId: b.user.id })
   const aTicket = await issueTicket(a.user.id)
 
   assert.equal(await openStream(`/api/jobs/events/research-lead/${bsJob.id}?ticket=${aTicket}`), 403)
