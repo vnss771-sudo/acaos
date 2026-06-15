@@ -1,0 +1,74 @@
+# Prometheus alerting rules for ACAOS. PromQL references the exact series the
+# app exposes (see docs/OPERATIONS.md). Thresholds are starting points — tune to
+# your traffic and SLOs.
+groups:
+  - name: acaos-api
+    rules:
+      - alert: ApiTargetDown
+        expr: up{job="acaos-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "ACAOS API target down"
+          description: "Prometheus cannot scrape the API for >2m."
+
+      - alert: ApiHigh5xxRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "API 5xx rate >5%"
+          description: "More than 5% of API responses are 5xx over 5m."
+
+      - alert: ApiHighLatencyP99
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 1.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API p99 latency >1.5s"
+          description: "API p99 request latency has exceeded 1.5s for 10m."
+
+      - alert: ApiSaturation
+        expr: avg_over_time(http_requests_in_flight[10m]) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API sustained in-flight requests high"
+          description: "In-flight requests have averaged >100 for 10m — consider scaling out or raising the DB pool."
+
+  - name: acaos-worker
+    rules:
+      - alert: WorkerTargetDown
+        expr: up{job="acaos-worker"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "ACAOS worker target down"
+          description: "Prometheus cannot scrape the worker for >2m."
+
+      - alert: SendCampaignBacklog
+        expr: bullmq_queue_jobs{queue="send-campaign",state="waiting"} > 100
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "send-campaign queue backing up"
+          description: "Waiting jobs on send-campaign >100 for 10m — outreach is delayed."
+
+      - alert: WorkerJobFailures
+        expr: sum(rate(worker_jobs_total{result="failed"}[15m])) by (queue) > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Background jobs failing on {{ $labels.queue }}"
+          description: "Jobs are failing after exhausting retries on {{ $labels.queue }}."
+
+      - alert: QueueDeadLetterGrowing
+        expr: increase(bullmq_queue_jobs{state="failed"}[1h]) > 50
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Failed-job count growing on {{ $labels.queue }}"
+          description: "More than 50 jobs entered the failed state in the last hour on {{ $labels.queue }}."
