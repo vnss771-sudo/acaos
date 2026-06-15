@@ -31,6 +31,21 @@ describe('AiTools', () => {
     expect(screen.getByText(/Write personalised cold email sequences/i)).toBeInTheDocument()
   })
 
+  test('sync Run includes workspaceId in the AI request body (regression)', async () => {
+    // Backend /api/ai/* rejects with 400 "workspaceId required" if the body
+    // omits workspaceId. The default (sync) mode must always include it.
+    const api = vi.fn()
+      .mockResolvedValueOnce({ leads: [lead] }) // mount fetch
+      .mockResolvedValue({ result: 'done' })
+    render(<AiTools api={api as never} workspace={workspace} toast={toast as never} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run Lead Research/ }))
+
+    const call = api.mock.calls.find(c => c[0] === '/api/ai/research')
+    expect(call).toBeTruthy()
+    expect(JSON.parse((call![1] as { body: string }).body)).toMatchObject({ workspaceId: 'ws1' })
+  })
+
   test('async (Queue) mode reveals the lead selector', async () => {
     const api = vi.fn().mockResolvedValue({ leads: [lead] })
     render(<AiTools api={api as never} workspace={workspace} toast={toast as never} />)

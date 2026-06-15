@@ -47,6 +47,31 @@ describe('Campaigns', () => {
     expect(toast.success).toHaveBeenCalledWith('Campaign created')
   })
 
+  test('launching a campaign sends { approved: true } (regression)', async () => {
+    // approvalMode defaults to true for new workspaces; the backend 403s the
+    // send unless the body carries { approved: true }. The confirmation modal
+    // the user accepts IS that approval, so confirmLaunch must include the flag.
+    const api = vi.fn((path: string, init?: { method?: string }) => {
+      if (path.startsWith('/api/campaigns?')) return Promise.resolve({ campaigns: [campaign] })
+      if (path === '/api/campaigns/c1/stats') return Promise.resolve({ stats: { eligible: 5, sent: 0 } })
+      if (path.startsWith('/api/workspaces/ws1/email-config')) return Promise.resolve({ config: { smtpFrom: 'hi@acme.com' } })
+      if (path.startsWith('/api/mailbox/check-domain')) return Promise.resolve({ hasSPF: true, hasDKIM: true })
+      if (path === '/api/campaigns/c1/send' && init?.method === 'POST') return Promise.resolve({ jobId: 'j1', eligible: 5, message: 'queued' })
+      return Promise.resolve({})
+    })
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
+
+    await screen.findByText('Q3 Brisbane Outreach')
+    const launchBtn = await screen.findByRole('button', { name: /Launch Campaign/i })
+    await waitFor(() => expect(launchBtn).not.toBeDisabled())
+    await userEvent.click(launchBtn)
+    await userEvent.click(await screen.findByRole('button', { name: /Approve & Send/i }))
+
+    const sendCall = api.mock.calls.find(c => c[0] === '/api/campaigns/c1/send')
+    expect(sendCall).toBeTruthy()
+    expect(JSON.parse((sendCall![1] as { body: string }).body)).toMatchObject({ approved: true })
+  })
+
   test('deleting a campaign (confirmed) removes it from the list', async () => {
     vi.stubGlobal('confirm', () => true)
     const api = vi.fn((path: string, init?: { method?: string }) => {

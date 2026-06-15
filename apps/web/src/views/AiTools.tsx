@@ -87,6 +87,7 @@ export function AiTools({ api, workspace, toast }: Props) {
   }
 
   async function runSync() {
+    if (!workspace) { toast.error('No workspace selected'); return }
     setLoading(true)
     setResult(null)
     try {
@@ -94,17 +95,17 @@ export function AiTools({ api, workspace, toast }: Props) {
       if (tab === 'research') {
         data = await api<{ result: string }>('/api/ai/research', {
           method: 'POST',
-          body: JSON.stringify({ businessName: inputs.businessName, website: inputs.website, notes: inputs.notes })
+          body: JSON.stringify({ workspaceId: workspace.id, businessName: inputs.businessName, website: inputs.website, notes: inputs.notes })
         })
       } else if (tab === 'outreach') {
         data = await api<{ result: string }>('/api/ai/outreach', {
           method: 'POST',
-          body: JSON.stringify({ businessName: inputs.businessName, category: inputs.category })
+          body: JSON.stringify({ workspaceId: workspace.id, businessName: inputs.businessName, category: inputs.category })
         })
       } else {
         data = await api<{ result: string }>('/api/ai/reply-analysis', {
           method: 'POST',
-          body: JSON.stringify({ replyBody: inputs.replyBody })
+          body: JSON.stringify({ workspaceId: workspace.id, replyBody: inputs.replyBody })
         })
       }
       setResult(typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2))
