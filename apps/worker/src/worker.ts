@@ -280,7 +280,7 @@ const mailboxWorker = new Worker(
     }
     const result = await syncMailboxOnce(cfg as any, workspaceId)
     await job.updateProgress(100)
-    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued}`)
+    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued} bounced=${result.bounced}`)
     return result
   },
   { connection, concurrency: 1 }
