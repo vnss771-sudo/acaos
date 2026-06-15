@@ -33,6 +33,29 @@ test('stats buckets prospects into HOT/WARM/COLD by opportunity score', async ()
   assert.deepEqual(res.body.tierDistribution, { HOT: 2, WARM: 3, COLD: 1 })
 })
 
+test('stats signal breakdown hides example-prospect signals once real prospects exist', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  // One real and one example prospect, each with a HIRING signal. Signals carry
+  // no isExample column, so the breakdown must filter through the prospect.
+  const real = await prisma.prospect.create({
+    data: { workspaceId: workspace.id, companyName: 'Real Co', opportunityScore: 80, isExample: false },
+  })
+  const example = await prisma.prospect.create({
+    data: { workspaceId: workspace.id, companyName: 'Example Co', opportunityScore: 80, isExample: true },
+  })
+  await prisma.signal.create({ data: { workspaceId: workspace.id, prospectId: real.id, type: 'HIRING', strength: 70 } })
+  await prisma.signal.create({ data: { workspaceId: workspace.id, prospectId: example.id, type: 'HIRING', strength: 70 } })
+
+  const res = await server.request(`/api/intelligence/stats?workspaceId=${workspace.id}`, {
+    headers: { Authorization: bearer(user.id) },
+  })
+  assert.equal(res.status, 200)
+  // Only the real prospect's signal is counted; the example signal is excluded.
+  assert.equal(res.body.signalBreakdown.HIRING, 1)
+  // And it stays consistent with the example-filtered prospect total.
+  assert.equal(res.body.totalProspects, 1)
+})
+
 test('stats tier counts are scoped to the workspace', async () => {
   const a = await seedUserWithWorkspace('a@acme.test')
   const b = await seedUserWithWorkspace('b@acme.test')

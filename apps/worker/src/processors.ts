@@ -129,7 +129,9 @@ export async function calibrateScoring(
   await progress?.(10)
 
   const rawOutcomes = await prisma.prospectOutcome.findMany({
-    where: { workspaceId, stage: { in: ['WON', 'LOST'] } },
+    // Never learn signal weights / ICP from example prospects — that would poison
+    // the real model with demo data.
+    where: { workspaceId, stage: { in: ['WON', 'LOST'] }, prospect: { isExample: false } },
     include: { prospect: { include: { signals: true } } },
     orderBy: { recordedAt: 'desc' },
     take: 100,

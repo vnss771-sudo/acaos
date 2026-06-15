@@ -562,6 +562,10 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
+  // Example prospects are fictional — recording outcomes against them would feed
+  // demo data into the forecast and the scoring calibration loop.
+  if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot have outcomes — add real prospects first')
+
   if (!req.body.stage) throw new ApiError(400, 'stage required')
 
   const [outcome, updated] = await prisma.$transaction([

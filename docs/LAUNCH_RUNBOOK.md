@@ -39,6 +39,39 @@
 - Smoke test auth, lead create, queue create, send, reply analyze
 - Watch logs for 60 minutes
 
+## 4b. Pre-launch blockers (config traps that pass dev but break prod)
+
+These are the "works perfectly locally, completely dead in production" failure
+modes. Each has been verified against the code; confirm all four before
+onboarding any paying user.
+
+- [ ] **`VITE_API_BASE_URL` is set at BUILD time on the web host.** The frontend
+  reads `import.meta.env.VITE_API_BASE_URL` and falls back to `''` (same origin).
+  Vite inlines env vars at build, not runtime — if it is unset when the static
+  bundle is built (e.g. on Vercel), every `/api/*` call hits the static host and
+  404s, so the whole app appears broken after login. Set it to the public API
+  origin (e.g. `https://api.acaos.app`) before `vite build`.
+- [ ] **Web and API are same-site, or cookies are configured for cross-site.**
+  The refresh token is an HttpOnly cookie scoped to `/api/auth` with
+  `SameSite=Lax` by default. If the web app (`acaos.app`) and API
+  (`*.up.railway.app`) are on different sites, the browser won't send the cookie,
+  so `/api/auth/refresh` fails and users are logged out on every reload. Fix:
+  put the API on a subdomain of the web domain (e.g. `api.acaos.app`), or set
+  `COOKIE_SAMESITE=none` (which forces `Secure`) — but `none` requires both sides
+  on HTTPS and is increasingly restricted by browsers, so same-site is preferred.
+- [ ] **`ALLOWED_ORIGINS` lists the exact web origin(s).** In production CORS
+  only allows origins in `ALLOWED_ORIGINS` (falls back to `WEB_URL`). Wildcards
+  are intentionally not honored. If unset/wrong, the browser blocks every API
+  call cross-origin.
+- [ ] **SMTP is live BEFORE onboarding users — or AI is unusable.** AI routes
+  (`/api/ai/*`) require a verified email (`requireVerifiedEmail`). Verification
+  links are sent via SMTP; if SMTP is not configured, signup still succeeds but
+  the verification email is silently skipped in production (`auth.ts`
+  `sendVerificationEmail`), so the user can NEVER verify and is permanently
+  locked out of AI. Either have SMTP live at launch, or add an admin/manual
+  verification path first. (`/api/auth/resend-verification` only helps once SMTP
+  works.)
+
 ## 5. First week metrics
 - Signup conversion
 - Workspace creation rate

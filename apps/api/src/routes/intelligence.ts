@@ -140,7 +140,9 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
   }) as ForecastProspectRow[]
 
   const won = await prisma.prospectOutcome.findMany({
-    where: { workspaceId, stage: 'WON' },
+    // Exclude outcomes recorded against example prospects once real data exists,
+    // so won revenue/count isn't inflated by demo records.
+    where: { workspaceId, stage: 'WON', ...(realCount > 0 ? { prospect: { isExample: false } } : {}) },
     select: { dealValue: true, recordedAt: true }
   }) as WonOutcomeRow[]
 
@@ -215,7 +217,9 @@ intelligenceRouter.get('/stats', asyncHandler(async (req, res) => {
   // every prospect into memory and bucketing in JS (which grows unbounded).
   const [totalProspects, rawSignalCounts, rawStageDist, hot, warm, cold] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId, ...exampleFilter } }),
-    prisma.signal.groupBy({ by: ['type'], where: { workspaceId }, _count: true }),
+    // Signals have no isExample column; filter through the prospect relation so
+    // the breakdown stays consistent with the example-filtered prospect counts.
+    prisma.signal.groupBy({ by: ['type'], where: { workspaceId, ...(realCount > 0 ? { prospect: { isExample: false } } : {}) }, _count: true }),
     prisma.prospect.groupBy({ by: ['buyingStage'], where: { workspaceId, ...exampleFilter }, _count: true }),
     prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 72 }, ...exampleFilter } }),
     prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 45, lt: 72 }, ...exampleFilter } }),
