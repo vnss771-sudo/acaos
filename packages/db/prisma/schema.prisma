@@ -208,7 +208,11 @@ model OutreachSent {
   subject          String
   body             String
   messageId        String?   @unique  // SMTP Message-ID for reply correlation
-  status           String    @default("SENT")  // SENT | BOUNCED | REPLIED
+  // Outbox lifecycle: SENDING (claimed, pre-dispatch) -> SENT, or -> FAILED on a
+  // known SMTP rejection. A crash after dispatch leaves the row SENDING
+  // (fail-closed: never auto-resend). PENDING reserved for future pre-stage.
+  status           String    @default("SENT")  // PENDING | SENDING | SENT | FAILED | BOUNCED | REPLIED
+  lastError        String?
   repliedAt        DateTime?
   replyIntent      String?
   unsubscribeToken String?   @unique

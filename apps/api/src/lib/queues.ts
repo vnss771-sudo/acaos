@@ -1,5 +1,6 @@
 import { Redis as IORedis } from 'ioredis'
 import { Queue } from 'bullmq'
+import { createHash } from 'node:crypto'
 
 let _connection: IORedis | null = null
 
@@ -72,9 +73,23 @@ export async function enqueueCalibrate(workspaceId: string) {
 }
 
 export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
+  // Deterministic jobId so repeated "launch" clicks within the same minute collapse
+  // to a single send job (BullMQ ignores an add with an existing jobId). The
+  // minute bucket still allows a legitimate re-launch later; the lead set is part
+  // of the key so "send all" and "send subset" are distinct operations.
+  const leadKey = leadIds?.length ? [...leadIds].sort().join(',') : 'all'
+  const leadHash = createHash('sha256').update(leadKey).digest('hex').slice(0, 16)
+  const minuteBucket = Math.floor(Date.now() / 60_000)
+  // NOTE: BullMQ forbids ':' in custom job IDs (it's the internal Redis key
+  // separator), so use '-'. cuids/hex/number segments contain no '-'.
+  const dedupJobId = `send-campaign-${workspaceId}-${campaignId}-${leadHash}-${minuteBucket}`
+
   return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds }, {
+    jobId: dedupJobId,
     attempts: 2,
-    backoff: { type: 'exponential', delay: 10_000 }
+    backoff: { type: 'exponential', delay: 10_000 },
+    removeOnComplete: 200,
+    removeOnFail: 200
   })
 }
 
