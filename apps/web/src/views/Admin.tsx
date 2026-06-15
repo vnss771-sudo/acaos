@@ -4,6 +4,7 @@ import { Spinner } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { PLAN_LABELS } from '../types.js'
+import type { AuditEvent } from '../types.js'
 
 type WorkspaceSummary = {
   id: string
@@ -61,6 +62,7 @@ export function AdminView({ api, toast }: Props) {
   const [data, setData] = useState<AdminOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [queues, setQueues] = useState<QueueStat[]>([])
+  const [audit, setAudit] = useState<AuditEvent[]>([])
 
   useEffect(() => {
     api<AdminOverview>('/api/admin/overview')
@@ -69,6 +71,9 @@ export function AdminView({ api, toast }: Props) {
       .finally(() => setLoading(false))
     api<{ queues: QueueStat[] }>('/api/admin/queue-stats')
       .then(d => setQueues(d.queues))
+      .catch(() => {})
+    api<{ events: AuditEvent[] }>('/api/admin/audit?limit=50')
+      .then(d => setAudit(d.events))
       .catch(() => {})
   }, [])
 
@@ -181,6 +186,40 @@ export function AdminView({ api, toast }: Props) {
                     <td style={{ padding: '8px 12px', color: q.failed > 0 ? colors.red : colors.textFaint, fontWeight: q.failed > 0 ? 700 : 400 }}>{q.failed}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {audit.length > 0 && (
+        <div style={{ ...s.card, marginTop: 24 }}>
+          <div style={{ ...s.sectionHeader, marginBottom: 16 }}>Recent Activity (Audit Log)</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  {['When', 'Event', 'Entity', 'Detail'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: colors.textFaint, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {audit.map((e, i) => {
+                  const isFailure = /fail|bounce/i.test(e.type)
+                  return (
+                    <tr key={e.id} style={{ borderBottom: `1px solid ${colors.border}`, background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                      <td style={{ padding: '8px 12px', color: colors.textFaint, whiteSpace: 'nowrap' }}>{new Date(e.createdAt).toLocaleString()}</td>
+                      <td style={{ padding: '8px 12px', color: isFailure ? colors.red : colors.text, fontFamily: 'monospace', fontSize: 12, fontWeight: isFailure ? 700 : 400 }}>{e.type}</td>
+                      <td style={{ padding: '8px 12px', color: colors.textMuted, fontSize: 12 }}>{e.entityType ?? '—'}</td>
+                      <td style={{ padding: '8px 12px', color: colors.textFaint, fontSize: 12, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {e.metadata ? JSON.stringify(e.metadata) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

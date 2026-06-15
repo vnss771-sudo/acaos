@@ -114,7 +114,7 @@ Apollo, Google Places, and Hunter keys are set once for the whole platform, but 
 `Mission` is now a first-class model and API (`/api/missions`) with a Missions view; creating a mission also provisions its linked execution `Campaign`. Still to deepen: wiring discovery runs, recommendations, and an approval queue directly into the mission control plane (status lifecycle exists: DRAFT→…→COMPLETE).
 
 **9. Observability is incomplete**
-Request IDs and structured request logging exist, and an `AuditEvent` log records significant actions (campaign sends, mission status changes, discovery failures) — viewable at `GET /api/admin/audit`. Missing: frontend error reporting (Sentry-style), uptime checks, and richer failure dashboards.
+Request IDs and structured request logging exist; an `AuditEvent` log records significant actions (campaign sends, mission status changes, draft approvals, discovery/bounce failures) and is surfaced in the **Admin panel's Recent Activity view** (plus `GET /api/admin/audit`). Remaining: frontend error reporting (Sentry-style) and external uptime checks.
 
 ---
 
