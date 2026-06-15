@@ -16,6 +16,8 @@ import {
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
+import { captureError } from '../../api/src/lib/observability.js'
+import { isFinalAttempt } from './lib/failureReporting.js'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
@@ -394,9 +396,15 @@ for (const [name, worker] of [
 ] as [string, Worker][]) {
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
+    // Only report once the job has exhausted its retries — transient failures that
+    // BullMQ will retry are noise, not faults.
+    if (isFinalAttempt(job)) {
+      captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade })
+    }
   })
   worker.on('error', (err) => {
     log(name, `Worker error: ${err.message}`)
+    captureError(err, { source: 'worker.error', queue: name })
   })
 }
 
@@ -435,5 +443,17 @@ async function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT',  () => shutdown('SIGINT'))
+
+// Last-resort safety net: an escaped rejection/exception would otherwise crash
+// the worker silently. Log and forward to the error transport (BullMQ keeps
+// in-flight jobs durable, so a restart re-processes them).
+process.on('unhandledRejection', (reason) => {
+  console.error('[worker] Unhandled promise rejection:', reason)
+  captureError(reason, { source: 'worker.unhandledRejection' })
+})
+process.on('uncaughtException', (err) => {
+  console.error('[worker] Uncaught exception:', err)
+  captureError(err, { source: 'worker.uncaughtException' })
+})
 
 console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')
