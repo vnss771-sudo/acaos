@@ -1,0 +1,82 @@
+# One-command local stack that builds the REAL production Docker images (the same
+# ones Railway deploys), so "works here" means "will deploy". Brings up Postgres,
+# Redis, the API, the worker, and the web frontend (served by nginx).
+#
+#   docker compose up --build
+#
+# Then open http://localhost:8080. The secrets below are LOCAL-ONLY throwaways —
+# never reuse them in a real deployment.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: acaos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d acaos']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: Dockerfile.api }
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: local-dev-cbc563b01877fb2524a2bd56b245e392fd4b10f336cd7c45
+      EMAIL_ENCRYPTION_KEY: cdd7e29638fe486fa78590ccb2a4605425883f51fa697af202b31900561fae53
+      ALLOWED_ORIGINS: http://localhost:8080
+      APP_URL: http://localhost:8080
+    ports:
+      - '4000:4000'
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+
+  worker:
+    build: { context: ., dockerfile: Dockerfile.worker }
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
+      REDIS_URL: redis://redis:6379
+      EMAIL_ENCRYPTION_KEY: cdd7e29638fe486fa78590ccb2a4605425883f51fa697af202b31900561fae53
+      WORKER_HEALTH_PORT: 9090
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VITE_API_BASE_URL: http://localhost:4000
+    ports:
+      - '8080:80'
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  postgres_data:

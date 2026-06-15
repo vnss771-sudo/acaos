@@ -43,11 +43,18 @@ npm run dev:worker
 npm run dev:web             # http://localhost:5173
 ```
 
-### Docker
+### Docker (one command — full stack)
+
+Builds the real production images (the same Dockerfiles Railway deploys) and runs
+Postgres, Redis, the API, the worker, and the web frontend together:
 
 ```bash
-docker compose -f docker-compose.local.yml up --build
+docker compose up --build       # then open http://localhost:8080
 ```
+
+(Requires internet access to pull the `postgres`/`redis`/`node` base images.)
+The bundled secrets are local-only throwaways. For a hot-reloading dev loop
+(source bind-mounted, no rebuild) use `docker compose -f docker-compose.local.yml up`.
 
 ### Useful commands
 
