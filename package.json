@@ -28,6 +28,7 @@
     "test:web": "npm test -w @acaos/web",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
+    "loadtest": "tsx scripts/loadtest.ts",
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {
