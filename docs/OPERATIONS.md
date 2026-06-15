@@ -69,6 +69,13 @@ by the same optional `METRICS_TOKEN`:
 Suggested alert: sustained `bullmq_queue_jobs{state="waiting"}` on `send-campaign`
 (a stuck send queue = unsent outreach), and any growth in `{state="failed"}`.
 
+### Ready-to-use monitoring assets
+
+[`ops/monitoring/`](../ops/monitoring/) ships an importable Grafana dashboard,
+Prometheus alert rules (5xx rate, p99 latency, saturation, send-campaign backlog,
+job failures, target down), and a scrape config wired to these exact series — see
+[`ops/monitoring/README.md`](../ops/monitoring/README.md).
+
 ## Error reporting (Sentry — optional)
 
 Unhandled errors flow through a single `captureError` seam, wired in both the API

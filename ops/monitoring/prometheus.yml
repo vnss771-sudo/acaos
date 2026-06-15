@@ -1,0 +1,27 @@
+# Prometheus scrape config for ACAOS. The API and worker both expose the
+# Prometheus text format at /metrics, gated by METRICS_TOKEN (sent as a bearer).
+# Substitute the token and targets for your environment (env-var expansion shown).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: acaos-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "${METRICS_TOKEN}"
+    static_configs:
+      - targets: ["acaos-api:4000"]
+
+  - job_name: acaos-worker
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "${METRICS_TOKEN}"
+    static_configs:
+      # Worker metrics are served on WORKER_HEALTH_PORT (default 9090).
+      - targets: ["acaos-worker:9090"]
