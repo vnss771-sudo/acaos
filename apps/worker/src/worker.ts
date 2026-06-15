@@ -1,7 +1,8 @@
 import 'dotenv/config'
 import { Worker, Queue } from 'bullmq'
-import { connection } from './lib/queue.js'
+import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
+import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
 import { prisma } from '../../api/src/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
@@ -384,8 +385,8 @@ const calibrateWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
-// ── Error handlers ─────────────────────────────────────────────────────────────
-for (const [name, worker] of [
+// ── Error handlers + job metrics ───────────────────────────────────────────────
+const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
   ['generate-outreach',       outreachWorker],
   ['analyze-reply',           replyWorker],
@@ -394,12 +395,18 @@ for (const [name, worker] of [
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
-] as [string, Worker][]) {
+]
+for (const [name, worker] of WORKER_QUEUES) {
+  worker.on('completed', (job) => {
+    incJob(name, 'completed')
+    if (job?.processedOn && job?.finishedOn) observeJobDuration(name, (job.finishedOn - job.processedOn) / 1000)
+  })
   worker.on('failed', (job, err) => {
     log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
-    // Only report once the job has exhausted its retries — transient failures that
-    // BullMQ will retry are noise, not faults.
+    // Only count/report once the job has exhausted its retries — transient
+    // failures that BullMQ will retry are noise, not faults.
     if (isFinalAttempt(job)) {
+      incJob(name, 'failed')
       captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade })
     }
   })
@@ -407,6 +414,15 @@ for (const [name, worker] of [
     log(name, `Worker error: ${err.message}`)
     captureError(err, { source: 'worker.error', queue: name })
   })
+}
+
+// Live queue-depth gauges for /metrics — counts pulled on scrape via BullMQ.
+const DEPTH_STATES = ['waiting', 'active', 'completed', 'failed', 'delayed', 'paused'] as const
+async function collectQueueDepths(): Promise<QueueDepth[]> {
+  return Promise.all(WORKER_QUEUES.map(async ([name]) => ({
+    queue: name,
+    counts: await getQueue(name).getJobCounts(...DEPTH_STATES),
+  })))
 }
 
 // ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
@@ -424,8 +440,8 @@ for (const [name, worker] of [
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
 
-// ── Liveness probe ──────────────────────────────────────────────────────────────
-const healthServer = startHealthServer(Number(process.env.WORKER_HEALTH_PORT || 9090))
+// ── Liveness probe + metrics ─────────────────────────────────────────────────────
+const healthServer = startHealthServer(Number(process.env.WORKER_HEALTH_PORT || 9090), { collectQueueDepths })
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
