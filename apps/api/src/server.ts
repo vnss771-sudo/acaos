@@ -26,6 +26,7 @@ import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
+import { captureError } from './lib/observability.js'
 
 // Fail fast on a misconfigured deploy rather than surfacing it as a runtime 503.
 validateConfig()
@@ -141,7 +142,9 @@ process.on('SIGINT', () => shutdown('SIGINT'))
 // by the error middleware, so this is a last-resort safety net.
 process.on('unhandledRejection', (reason) => {
   console.error('[api] Unhandled promise rejection:', reason)
+  captureError(reason, { source: 'unhandledRejection' })
 })
 process.on('uncaughtException', (err) => {
   console.error('[api] Uncaught exception:', err)
+  captureError(err, { source: 'uncaughtException' })
 })

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response, RequestHandler } from 'express'
 import { verboseErrors } from './config.js'
 import { logger } from './logger.js'
 import { CircuitOpenError } from './circuit.js'
+import { captureError } from './observability.js'
 
 export class ApiError extends Error {
   statusCode: number
@@ -45,9 +46,12 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
   }
 
   // Log the full error (with request id for correlation); never leak it to the
-  // client unless explicitly in development.
+  // client unless explicitly in development. Only unexpected errors reach here
+  // (ApiError / CircuitOpenError returned above), so this is the right place to
+  // forward to an error-reporting transport.
   const log = req.log ?? logger
   log.error('unhandled error', { err: error, path: req.originalUrl })
+  captureError(error, { path: req.originalUrl, method: req.method, requestId: req.id })
 
   const message =
     verboseErrors() && error instanceof Error && error.message
