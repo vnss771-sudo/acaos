@@ -34,6 +34,19 @@ export type Campaign = {
   _count?: { leads: number }
 }
 
+export type DiscoveryRun = {
+  id: string
+  source: string
+  status: string // RUNNING | SUCCEEDED | FAILED
+  resultCount: number
+  importedCount: number
+  skippedCount: number
+  errorCode?: string | null
+  errorMessage?: string | null
+  startedAt: string
+  finishedAt?: string | null
+}
+
 export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
 
 export type Mission = {

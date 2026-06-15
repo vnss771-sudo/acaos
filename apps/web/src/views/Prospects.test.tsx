@@ -62,4 +62,19 @@ describe('ProspectsView', () => {
       expect(api).toHaveBeenCalledWith(expect.stringContaining('search=acme')),
     )
   })
+
+  test('surfaces discovery run history including provider failures', async () => {
+    const api = makeApi((path) => {
+      if (path.includes('/discovery-runs')) return Promise.resolve({ runs: [
+        { id: 'r1', source: 'apollo', status: 'FAILED', resultCount: 0, importedCount: 0, skippedCount: 0, errorMessage: 'quota exceeded', startedAt: new Date().toISOString() },
+      ] })
+      return undefined
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+
+    const toggle = await screen.findByText(/Discovery history \(1\)/)
+    await userEvent.click(toggle)
+    // The failure reason is shown so users can tell "provider failed" from "no results".
+    expect(await screen.findByText(/quota exceeded/)).toBeInTheDocument()
+  })
 })
