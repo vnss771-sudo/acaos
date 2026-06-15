@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { recordAudit } from '../lib/audit.js'
 import { prisma } from '../lib/prisma.js'
 import {
   calculateOpportunityScores,
@@ -286,6 +287,10 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
     await prisma.discoveryRun.update({
       where: { id: run.id },
       data: { status: 'FAILED', errorCode: code, errorMessage: message.slice(0, 500), finishedAt: new Date() },
+    })
+    void recordAudit({
+      workspaceId, actorUserId: userId, type: 'discovery.failed',
+      entityType: 'discoveryRun', entityId: run.id, metadata: { source: sourceName, errorCode: code },
     })
     throw new ApiError(502, `Discovery via ${source.label} failed: ${message}`)
   }

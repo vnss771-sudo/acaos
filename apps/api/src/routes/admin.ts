@@ -103,3 +103,20 @@ adminRouter.get(
     res.json({ queues: stats })
   })
 )
+
+// Recent audit events (optionally filtered by workspace or type) for operational
+// visibility: sends, mission status changes, discovery failures, etc.
+adminRouter.get(
+  '/audit',
+  asyncHandler(async (req, res) => {
+    const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : undefined
+    const type = typeof req.query.type === 'string' ? req.query.type.trim() : undefined
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
+    const events = await prisma.auditEvent.findMany({
+      where: { ...(workspaceId ? { workspaceId } : {}), ...(type ? { type } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    })
+    res.json({ events })
+  })
+)

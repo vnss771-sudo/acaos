@@ -8,6 +8,7 @@ import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import { isProduction } from '../lib/config.js'
 import { isMailConfigured } from '../services/mail.js'
+import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { Assert, Extends, CreateCampaignRequest } from '@acaos/shared'
 
@@ -273,6 +274,15 @@ campaignsRouter.post(
       campaign.workspaceId,
       requestedIds
     )
+
+    void recordAudit({
+      workspaceId: campaign.workspaceId,
+      actorUserId: user.id,
+      type: 'campaign.send',
+      entityType: 'campaign',
+      entityId: campaign.id,
+      metadata: { eligible: cappedEligible, jobId: job.id },
+    })
 
     res.status(202).json({
       jobId: job.id,
