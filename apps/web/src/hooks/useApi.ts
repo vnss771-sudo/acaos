@@ -1,19 +1,37 @@
 import { useCallback } from 'react'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+const DEFAULT_TIMEOUT_MS = 30_000
 
-export type ApiOptions = RequestInit & { skipContentType?: boolean }
+export type ApiOptions = RequestInit & { skipContentType?: boolean; timeoutMs?: number }
+
+// fetch with a hard timeout so a slow/hung provider or API response can never pin
+// a UI action indefinitely. Aborts via AbortController and surfaces a clear error.
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out — please try again.')
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function tryRefresh(): Promise<string | null> {
   // The refresh token lives in an HttpOnly cookie (sent automatically with
   // credentials: 'include'); JS never sees it. A custom header satisfies the
   // server's CSRF guard. The new access token comes back in the body.
   try {
-    const res = await fetch(`${API}/api/auth/refresh`, {
+    const res = await fetchWithTimeout(`${API}/api/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'X-CSRF-Protection': '1' }
-    })
+    }, 15_000)
     if (!res.ok) return null
     const data = await res.json()
     return data.token as string
@@ -25,7 +43,7 @@ async function tryRefresh(): Promise<string | null> {
 export function useApi(token: string | null, onUnauth: () => void, onTokenRefresh?: (t: string) => void) {
   return useCallback(
     async <T = unknown>(path: string, init: ApiOptions = {}): Promise<T> => {
-      const { skipContentType, ...fetchInit } = init
+      const { skipContentType, timeoutMs, ...fetchInit } = init
       const headers = new Headers(fetchInit.headers || {})
 
       if (!skipContentType && !headers.has('Content-Type') && fetchInit.body) {
@@ -35,7 +53,7 @@ export function useApi(token: string | null, onUnauth: () => void, onTokenRefres
 
       // credentials: 'include' so the HttpOnly refresh cookie is sent to the
       // auth endpoints; harmless for the rest (they authenticate via the header).
-      const res = await fetch(`${API}${path}`, { ...fetchInit, headers, credentials: 'include' })
+      const res = await fetchWithTimeout(`${API}${path}`, { ...fetchInit, headers, credentials: 'include' }, timeoutMs)
 
       if (res.status === 401) {
         const newToken = await tryRefresh()
@@ -49,7 +67,7 @@ export function useApi(token: string | null, onUnauth: () => void, onTokenRefres
             retryHeaders.set('Content-Type', 'application/json')
           }
           retryHeaders.set('Authorization', `Bearer ${newToken}`)
-          const retryRes = await fetch(`${API}${path}`, { ...fetchInit, headers: retryHeaders, credentials: 'include' })
+          const retryRes = await fetchWithTimeout(`${API}${path}`, { ...fetchInit, headers: retryHeaders, credentials: 'include' }, timeoutMs)
           const retryData = await retryRes.json().catch(() => ({}))
           if (!retryRes.ok) {
             throw new Error(typeof retryData.error === 'string' ? retryData.error : `Request failed (${retryRes.status})`)
