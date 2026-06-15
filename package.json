@@ -24,9 +24,12 @@
     "test:redis": "tsx --test --test-concurrency=1 --test-force-exit tests-redis/**/*.test.ts",
     "test:redis:local": "bash scripts/test-redis-local.sh",
     "test:web": "npm test -w @acaos/web",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
     "@types/express": "^5.0.1",

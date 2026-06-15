@@ -55,6 +55,7 @@ docker compose -f docker-compose.local.yml up --build
 npm run build          # compile api + worker + web
 npm run test           # full API test suite (740+ tests)
 npm test -w @acaos/web # frontend test suite (51 tests)
+npm run test:e2e       # Playwright browser smoke tests (see e2e/README.md)
 npm run typecheck      # TypeScript check (web + api)
 npm run prisma:generate
 npm run prisma:migrate

@@ -32,3 +32,9 @@ packages/db/prisma/dev.db
 
 # Redis (local test/dev persistence dump)
 dump.rdb
+
+# Playwright (e2e)
+test-results/
+playwright-report/
+.playwright/
+e2e/.auth/
