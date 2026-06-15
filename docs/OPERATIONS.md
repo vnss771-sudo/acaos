@@ -55,6 +55,20 @@ so cardinality stays bounded. The endpoint is registered before the rate limiter
 Suggested alerts: 5xx rate (`http_requests_total{status=~"5.."}`), p99 latency
 (histogram quantile), and sustained `http_requests_in_flight` (saturation).
 
+### Worker metrics
+
+The worker serves its own `/metrics` on `WORKER_HEALTH_PORT` (default 9090), gated
+by the same optional `METRICS_TOKEN`:
+
+- `worker_jobs_total{queue,result}` — jobs completed/failed (failures counted after
+  retries are exhausted)
+- `worker_job_duration_seconds{queue}` — processing-time histogram
+- `bullmq_queue_jobs{queue,state}` — live queue depth per state (waiting, active,
+  delayed, failed, …), pulled on scrape
+
+Suggested alert: sustained `bullmq_queue_jobs{state="waiting"}` on `send-campaign`
+(a stuck send queue = unsent outreach), and any growth in `{state="failed"}`.
+
 ## Error reporting (Sentry — optional)
 
 Unhandled errors flow through a single `captureError` seam, wired in both the API
@@ -109,7 +123,9 @@ Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
 | Concern | Where |
 |---|---|
 | Liveness / readiness | `GET /api/live` · `/api/ready` · `/api/health` |
-| Metrics | `GET /metrics` (+ `METRICS_TOKEN`) |
+| Metrics (API) | `GET /metrics` (+ `METRICS_TOKEN`) |
+| Metrics (worker) | `GET :WORKER_HEALTH_PORT/metrics` |
+| Security policy | [`SECURITY.md`](../SECURITY.md) |
 | Error transport | `SENTRY_DSN` + `npm i @sentry/node` |
 | Load test | `npm run loadtest` |
 | Pool sizing | `DATABASE_URL?connection_limit=…` |
