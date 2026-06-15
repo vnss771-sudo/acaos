@@ -154,7 +154,9 @@ export function Campaigns({ api, workspace, toast }: Props) {
     try {
       const d = await api<{ jobId: string; eligible: number; message: string }>(
         `/api/campaigns/${id}/send`,
-        { method: 'POST', body: JSON.stringify({}) }
+        // approvalMode workspaces (the default) require an explicit opt-in flag;
+        // the confirmation modal the user just accepted IS that approval.
+        { method: 'POST', body: JSON.stringify({ approved: true }) }
       )
       toast.success(`Approved — sending to ${d.eligible} leads (job ${d.jobId})`)
       setTimeout(() => loadStats(id), 3000)
