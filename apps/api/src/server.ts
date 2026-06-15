@@ -25,6 +25,7 @@ import { requestContext } from './middleware/requestContext.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
+import { pingDatabase, pingRedis } from './lib/health.js'
 
 // Fail fast on a misconfigured deploy rather than surfacing it as a runtime 503.
 validateConfig()
@@ -58,36 +59,27 @@ app.get('/api/live', (_req, res) => {
 })
 
 // Readiness: checks required config + DB connectivity. Suitable for deployment
-// gates (e.g. Kubernetes readinessProbe or Render healthcheck).
+// gates (e.g. Kubernetes readinessProbe or Render healthcheck). Redis is probed
+// and reported for operator visibility, but is non-fatal: the rate limiter
+// degrades to an in-process fallback, so a cache blip must not pull a serving
+// pod out of rotation.
 app.get('/api/ready', async (_req, res) => {
   const report = getReadinessReport()
-  let dbOk = false
-  try {
-    await Promise.race([
-      prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-    ])
-    dbOk = true
-  } catch { /* leave false */ }
+  const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
 
   const ok = report.ready && dbOk
-  res.status(ok ? 200 : 503).json({ ok, db: dbOk, config: report })
+  res.status(ok ? 200 : 503).json({ ok, db: dbOk, redis: redisOk, config: report })
 })
 
-// Readiness / health: verifies the database is reachable.
+// Readiness / health: verifies the database is reachable; reports Redis too.
 app.get('/api/health', async (_req, res) => {
-  let dbOk = false
-  try {
-    await Promise.race([
-      prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-    ])
-    dbOk = true
-  } catch { /* leave false */ }
+  const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
 
   const status = dbOk ? 200 : 503
   res.status(status).json({
     ok: dbOk,
+    db: dbOk,
+    redis: redisOk,
     service: 'acaos-api',
     version: process.env.npm_package_version || '1.3.0',
     env: process.env.NODE_ENV || 'development',
