@@ -17,6 +17,7 @@ import {
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
 import { captureError } from '../../api/src/lib/observability.js'
+import { initErrorReporting } from '../../api/src/lib/errorReporting.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
 
 function log(queue: string, msg: string) {
@@ -418,6 +419,10 @@ for (const [name, worker] of [
     { name: 'auto-imap-sync', data: { autoSync: true }, opts: { attempts: 1, removeOnComplete: { count: 5 } } }
   ).catch(err => console.warn('[worker] Failed to schedule IMAP auto-sync:', err.message))
 }
+
+// Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
+// so background-job failures (worker.ts handlers) reach the same transport as API errors.
+void initErrorReporting()
 
 // ── Liveness probe ──────────────────────────────────────────────────────────────
 const healthServer = startHealthServer(Number(process.env.WORKER_HEALTH_PORT || 9090))

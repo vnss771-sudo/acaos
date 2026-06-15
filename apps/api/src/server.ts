@@ -134,6 +134,10 @@ getRedis().connect().catch((err: Error) => {
   console.warn('[redis] Initial connection failed — rate limiting will use in-process fallback:', err.message)
 })
 
+// Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise).
+import { initErrorReporting } from './lib/errorReporting.js'
+void initErrorReporting()
+
 const port = Number(process.env.PORT || 4000)
 const server = app.listen(port, () => {
   console.log(`[api] Running on http://localhost:${port} (${process.env.NODE_ENV || 'development'})`)
