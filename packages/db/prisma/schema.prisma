@@ -8,6 +8,27 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// Audit log for prospect-discovery runs so users can tell "no prospects" apart
+// from "the provider failed / quota exceeded / not configured", and see what was
+// searched, returned, imported, and skipped per run.
+model DiscoveryRun {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  source        String
+  status        String    @default("RUNNING") // RUNNING | SUCCEEDED | PARTIAL | FAILED
+  query         Json?
+  resultCount   Int       @default(0)
+  importedCount Int       @default(0)
+  skippedCount  Int       @default(0)
+  errorCode     String?
+  errorMessage  String?
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, startedAt])
+}
+
 model User {
   id                  String                  @id @default(cuid())
   email               String                  @unique
@@ -52,6 +73,7 @@ model Workspace {
   invites              WorkspaceInvite[]
   suppressions         Suppression[]
   processedEmails      ProcessedEmail[]
+  discoveryRuns        DiscoveryRun[]
 }
 
 model Membership {
