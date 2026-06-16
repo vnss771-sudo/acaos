@@ -6,7 +6,10 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/shared/package.json ./packages/shared/
 COPY apps/api/package.json ./apps/api/
 
-RUN npm ci
+# Force dev deps even when the platform injects NODE_ENV=production into the
+# build env (Railway does): typescript, @types/*, and the prisma CLI live in
+# devDependencies and are required to generate the client and compile.
+RUN npm ci --include=dev
 
 COPY packages/db ./packages/db
 COPY packages/shared ./packages/shared

@@ -5,7 +5,9 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY apps/web/package.json ./apps/web/
 
-RUN npm ci --ignore-optional
+# --include=dev so vite/typescript (devDependencies) are present for the build
+# even when NODE_ENV=production is injected into the build env (Railway).
+RUN npm ci --include=dev --ignore-optional
 
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
