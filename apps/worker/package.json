@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/worker.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
     "start": "node dist/apps/worker/src/worker.js",
     "start:dev": "tsx src/worker.ts"
   },
