@@ -28,6 +28,9 @@ function spec() {
       update: async (a: any) => ({ id: a?.where?.id, ...a.data }),
       delete: async () => ({ id: 'c1' }),
     },
+    // Defaults for send-readiness: nothing configured.
+    workspaceEmailConfig: { findUnique: async () => null },
+    workspace: { findUnique: async () => ({ senderBusinessName: null, senderPostalAddress: null }) },
   }
 }
 
@@ -91,4 +94,29 @@ test('DELETE removes a member campaign but denies another workspace', async () =
   assert.equal(prisma.callsTo('campaign', 'delete').length, 0)
   assert.equal((await server.request('/api/campaigns/c1', { method: 'DELETE', headers: auth() })).status, 200)
   assert.equal(prisma.callsTo('campaign', 'delete').length, 1)
+})
+
+test('GET /send-readiness requires workspaceId and membership', async () => {
+  assert.equal((await server.request('/api/campaigns/send-readiness', { headers: auth() })).status, 400)
+  assert.equal((await server.request(`/api/campaigns/send-readiness?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
+})
+
+test('GET /send-readiness reports not-ready with actionable checks when unconfigured', async () => {
+  const res = await server.request(`/api/campaigns/send-readiness?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.ready, false)
+  const names = res.body.checks.map((c: any) => c.name).sort()
+  assert.deepEqual(names, ['senderBusinessName', 'senderPostalAddress', 'smtpConfigured'])
+  for (const c of res.body.checks) assert.ok(c.label && c.hint, 'each check has a label + hint')
+})
+
+test('GET /send-readiness reports ready when SMTP + sender identity are set', async () => {
+  const s = spec()
+  s.workspaceEmailConfig = { findUnique: async () => ({ smtpHost: 'smtp.test', smtpFrom: 'a@test' }) } as any
+  s.workspace = { findUnique: async () => ({ senderBusinessName: 'Acme', senderPostalAddress: '1 St' }) } as any
+  installPrisma(createFakePrisma(s))
+  const res = await server.request(`/api/campaigns/send-readiness?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.ready, true)
+  assert.ok(res.body.checks.every((c: any) => c.ok))
 })
