@@ -15,6 +15,7 @@ import { jobsRouter } from './routes/jobs.js'
 import { ingestRouter } from './routes/ingest.js'
 import { outcomesRouter } from './routes/outcomes.js'
 import { prospectsRouter } from './routes/prospects.js'
+import { packsRouter } from './routes/packs.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
 import { adminRouter } from './routes/admin.js'
@@ -119,6 +120,7 @@ app.use('/api/jobs', jobsRouter)
 app.use('/api/ingest', ingestRouter)
 app.use('/api/outcomes', outcomesRouter)
 app.use('/api/prospects', prospectsRouter)
+app.use('/api/packs', packsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
 app.use('/api/admin', adminRouter)
