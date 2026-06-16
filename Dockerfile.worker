@@ -7,7 +7,9 @@ COPY packages/shared/package.json ./packages/shared/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
 
-RUN npm ci
+# Force dev deps even when NODE_ENV=production is injected into the build env
+# (Railway): typescript, @types/*, and the prisma CLI are devDependencies.
+RUN npm ci --include=dev
 
 COPY packages/db ./packages/db
 COPY packages/shared ./packages/shared
