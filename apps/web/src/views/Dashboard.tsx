@@ -3,6 +3,7 @@ import type { Workspace, StatsData, View, ScoringModel, Signal, Prospect } from 
 import { STAGE_COLOR, TIER_COLOR, SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { GettingStarted } from '../components/GettingStarted.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -327,6 +328,9 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {/* Onboarding: shows send-readiness steps; hides itself once ready */}
+      <GettingStarted api={api} workspaceId={workspace.id} toast={toast} setView={setView} />
+
       {/* Hot accounts + signal feed — only shown when data exists */}
       {!loading && (hotProspects.length > 0 || recentSignals.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: recentSignals.length > 0 ? '1.4fr 1fr' : '1fr', gap: 16 }}>
