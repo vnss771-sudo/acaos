@@ -7,7 +7,7 @@ import { enqueueSendCampaign, getJobById } from '../lib/queues.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import { isProduction } from '../lib/config.js'
-import { isMailConfigured } from '../services/mail.js'
+import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { LeadStage } from '@prisma/client'
@@ -48,6 +48,19 @@ campaignsRouter.get(
     })
 
     res.json({ campaigns })
+  })
+)
+
+// Send-readiness for a workspace — what's configured vs. missing before any send.
+// Registered before /:id so "send-readiness" isn't matched as a campaign id.
+campaignsRouter.get(
+  '/send-readiness',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.query.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
+    res.json(await getSendReadiness(workspaceId))
   })
 )
 
@@ -211,24 +224,14 @@ campaignsRouter.post(
     // Production send-readiness / compliance gate. The frontend checks SPF/DKIM
     // and sender setup before launch, but a direct API caller must not be able to
     // bypass it. Enforced only in production so local/dev/test stays frictionless.
+    // Same getSendReadiness() that powers the onboarding panel — one source of truth.
     if (isProduction()) {
-      const [emailCfg, ws] = await Promise.all([
-        prisma.workspaceEmailConfig.findUnique({ where: { workspaceId: campaign.workspaceId } }),
-        prisma.workspace.findUnique({
-          where: { id: campaign.workspaceId },
-          select: { senderBusinessName: true, senderPostalAddress: true },
-        }),
-      ])
-      const checks = [
-        { name: 'smtpConfigured', ok: isMailConfigured(emailCfg ?? undefined) },
-        { name: 'senderBusinessName', ok: Boolean(ws?.senderBusinessName?.trim()) },
-        { name: 'senderPostalAddress', ok: Boolean(ws?.senderPostalAddress?.trim()) },
-      ]
-      if (checks.some((c) => !c.ok)) {
+      const readiness = await getSendReadiness(campaign.workspaceId)
+      if (!readiness.ready) {
         return res.status(422).json({
           error: 'DELIVERABILITY_BLOCKED',
           message: 'Sending is blocked until SMTP and CAN-SPAM sender identity (business name + postal address) are configured.',
-          checks,
+          checks: readiness.checks,
         })
       }
     }
