@@ -120,3 +120,58 @@ test('GET /send-readiness reports ready when SMTP + sender identity are set', as
   assert.equal(res.body.ready, true)
   assert.ok(res.body.checks.every((c: any) => c.ok))
 })
+
+// ── Send safety gates (mission stop, approval truthfulness, daily cap) ─────────
+const verifiedUser = { findUnique: async () => ({ id: MEMBER, email: 'u1@a.test', name: null, emailVerified: true }) }
+
+test('POST /:id/send blocks a paused linked mission before enqueue (409)', async () => {
+  const s = spec()
+  s.user = verifiedUser as any
+  s.lead = { count: async () => 1 } as any
+  s.workspaceICP = { findUnique: async () => ({ approvalMode: false, dailySendLimit: 0 }) } as any
+  s.mission = { findUnique: async () => ({ status: 'PAUSED' }) } as any
+  installPrisma(createFakePrisma(s))
+
+  const res = await server.request('/api/campaigns/c1/send', {
+    method: 'POST', headers: jsonAuth(), body: JSON.stringify({ approved: true }),
+  })
+  assert.equal(res.status, 409)
+  assert.match(String(res.body.error), /paused/)
+})
+
+test('POST /:id/send daily cap counts delivered SENT rows only (429)', async () => {
+  const s = spec()
+  s.user = verifiedUser as any
+  s.lead = { count: async () => 1 } as any
+  s.workspaceICP = { findUnique: async () => ({ approvalMode: false, dailySendLimit: 1 }) } as any
+  s.mission = { findUnique: async () => ({ status: 'ACTIVE' }) } as any
+  s.outreachSent = { count: async () => 1 } as any
+  const fake = createFakePrisma(s)
+  installPrisma(fake)
+
+  const res = await server.request('/api/campaigns/c1/send', {
+    method: 'POST', headers: jsonAuth(), body: JSON.stringify({ approved: true }),
+  })
+  assert.equal(res.status, 429)
+  const countArg = fake.callsTo('outreachSent', 'count')[0].args[0] as any
+  assert.equal(countArg.where.status, 'SENT')
+})
+
+test('POST /:id/send in approval mode requires leads with approved drafts (400)', async () => {
+  const s = spec()
+  s.user = verifiedUser as any
+  let n = 0
+  s.lead = { count: async () => (++n === 1 ? 2 : 0) } as any // 2 eligible, 0 approved
+  s.workspaceICP = { findUnique: async () => ({ approvalMode: true, dailySendLimit: 0 }) } as any
+  s.mission = { findUnique: async () => ({ status: 'ACTIVE' }) } as any
+  const fake = createFakePrisma(s)
+  installPrisma(fake)
+
+  const res = await server.request('/api/campaigns/c1/send', {
+    method: 'POST', headers: jsonAuth(), body: JSON.stringify({ approved: true }),
+  })
+  assert.equal(res.status, 400)
+  assert.match(String(res.body.error), /approved outreach drafts/)
+  const approvedCountArg = fake.callsTo('lead', 'count')[1].args[0] as any
+  assert.deepEqual(approvedCountArg.where.outreachDrafts, { some: { status: 'APPROVED' } })
+})

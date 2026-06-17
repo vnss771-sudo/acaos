@@ -74,3 +74,40 @@ test('operational chaos: messageId is unique for reply correlation', () => {
   const outreach = modelBlock('OutreachSent')
   assert.match(outreach, /messageId\s+String\?\s+@unique/, 'messageId must remain unique for reply correlation')
 })
+
+// ── Send safety gates: enforced server-side before enqueue/dispatch ────────────
+test('operational chaos: paused/complete mission blocks send before enqueue', () => {
+  const route = campaignsRoute.slice(campaignsRoute.indexOf("'/:id/send'"))
+  const missionIdx = route.indexOf('prisma.mission.findUnique')
+  const pausedIdx = route.indexOf("mission?.status === 'PAUSED'")
+  const completeIdx = route.indexOf("mission?.status === 'COMPLETE'")
+  const enqueueIdx = route.indexOf('enqueueSendCampaign')
+  assert.ok(missionIdx !== -1 && pausedIdx !== -1 && completeIdx !== -1 && enqueueIdx !== -1, 'mission stop gate missing')
+  assert.ok(missionIdx < enqueueIdx && pausedIdx < enqueueIdx && completeIdx < enqueueIdx, 'mission gate must run before enqueue')
+})
+
+test('operational chaos: daily send cap counts delivered SENT rows only', () => {
+  const route = campaignsRoute.slice(campaignsRoute.indexOf("'/:id/send'"))
+  const dailyIdx = route.indexOf('dailySendLimit')
+  const statusIdx = route.indexOf("status: 'SENT'")
+  const enqueueIdx = route.indexOf('enqueueSendCampaign')
+  assert.ok(dailyIdx !== -1 && statusIdx !== -1 && enqueueIdx !== -1, 'daily cap sent-only guard missing')
+  assert.ok(statusIdx < enqueueIdx, 'daily cap must filter status SENT before enqueue')
+})
+
+test('operational chaos: approval mode requires leads with approved drafts', () => {
+  const route = campaignsRoute.slice(campaignsRoute.indexOf("'/:id/send'"))
+  const approvalIdx = route.indexOf('approvalMode')
+  const draftIdx = route.indexOf("outreachDrafts: { some: { status: 'APPROVED' } }")
+  const enqueueIdx = route.indexOf('enqueueSendCampaign')
+  assert.ok(approvalIdx !== -1 && draftIdx !== -1 && enqueueIdx !== -1, 'approved-draft eligibility guard missing')
+  assert.ok(draftIdx < enqueueIdx, 'approved-draft eligibility must run before enqueue')
+})
+
+test('operational chaos: worker re-checks mission stop before SMTP dispatch', () => {
+  const loopIdx = processors.indexOf('for (let i = 0; i < leads.length; i++)')
+  const blockIdx = processors.indexOf('await getMissionSendBlockReason(campaignId)', loopIdx)
+  const sendMailIdx = processors.indexOf('await sendMail(', loopIdx)
+  assert.ok(loopIdx !== -1 && blockIdx !== -1 && sendMailIdx !== -1, 'worker mission stop check missing')
+  assert.ok(blockIdx < sendMailIdx, 'worker must check mission status before SMTP dispatch')
+})
