@@ -20,6 +20,7 @@ import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
 import { ingestSignal } from '../lib/signalIngest.js'
+import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
@@ -697,11 +698,16 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
     rawSignals
   )
 
+  // Evidence-first gate: high-confidence priority requires provable, fresh
+  // evidence on a signal — otherwise it's capped below the high-confidence line.
+  const priority = evidenceGatedPriority(rec.priority, prospect.signals)
+
   const recommendation = await prisma.recommendation.create({
     data: {
       workspaceId: prospect.workspaceId,
       prospectId:  prospect.id,
       ...rec,
+      priority,
       expiresAt: new Date(Date.now() + 7 * 86_400_000),
     },
   })

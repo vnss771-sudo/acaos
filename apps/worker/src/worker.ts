@@ -17,6 +17,8 @@ import {
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
+import { enqueueGenerateRecommendations } from '../../api/src/lib/queues.js'
+import { evidenceGatedPriority } from '../../api/src/lib/recommendationPolicy.js'
 import { captureError } from '../../api/src/lib/observability.js'
 import { initErrorReporting } from '../../api/src/lib/errorReporting.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
@@ -299,6 +301,13 @@ const scoreProspectsWorker = new Worker(
     log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
     const result = await scoreProspects(workspaceId, (n) => job.updateProgress(n))
     log('score-prospects', `Done: ${result.updated} prospects rescored`)
+    // Auto-advance the spine: prospects that cleared the threshold get a
+    // recommendation generated. The generate-recommendations worker dedupes, so
+    // repeated rescoring won't spam recommendations.
+    for (const prospectId of result.toRecommend) {
+      await enqueueGenerateRecommendations(prospectId, workspaceId).catch((e) =>
+        log('score-prospects', `enqueue recommendation failed for ${prospectId}: ${(e as Error).message}`))
+    }
     return result
   },
   { connection, concurrency: 1 }
@@ -316,6 +325,17 @@ const recommendWorker = new Worker(
       include: { signals: true }
     })
     if (!prospect) throw new Error(`Prospect ${prospectId} not found`)
+
+    // Dedupe: skip if there's a recent, un-acted recommendation. Lets scoring
+    // safely enqueue on every rescore without spamming the radar.
+    const recent = await prisma.recommendation.findFirst({
+      where: { prospectId, actedAt: null, createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) } },
+      select: { id: true },
+    })
+    if (recent) {
+      log('generate-recommendations', `Skip prospectId=${prospectId}: recent recommendation exists`)
+      return { prospectId, skipped: true }
+    }
 
     await job.updateProgress(20)
 
@@ -335,18 +355,23 @@ const recommendWorker = new Worker(
       rawSignals
     )
 
+    // Evidence-first gate: a "high confidence / contact now" priority requires
+    // provable, fresh evidence; otherwise cap it below the high-confidence line.
+    const priority = evidenceGatedPriority(rec.priority, prospect.signals)
+
     await prisma.recommendation.create({
       data: {
         workspaceId,
         prospectId,
         ...rec,
+        priority,
         expiresAt: new Date(Date.now() + 7 * 86_400_000)
       }
     })
 
     await job.updateProgress(100)
-    log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel}`)
-    return { prospectId, ...rec }
+    log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel} priority=${priority}`)
+    return { prospectId, ...rec, priority }
   },
   { connection, concurrency: 3 }
 )
