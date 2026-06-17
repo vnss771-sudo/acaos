@@ -48,6 +48,7 @@ export interface AiOutreachRequest {
   contactName?: string
   aiSummary?: string
   outreachAngle?: string
+  notes?: string
 }
 
 export interface AiReplyAnalysisRequest {

@@ -83,6 +83,7 @@ aiRouter.post(
       contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() : undefined,
       aiSummary: typeof req.body?.aiSummary === 'string' ? req.body.aiSummary.trim() : undefined,
       outreachAngle: typeof req.body?.outreachAngle === 'string' ? req.body.outreachAngle.trim() : undefined,
+      notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() : undefined,
       icp
     })
 

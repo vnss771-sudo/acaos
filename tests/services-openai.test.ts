@@ -113,3 +113,14 @@ test('buildOutreachUserPrompt: includes contact first name only when provided', 
   assert.match(buildOutreachUserPrompt({ businessName: 'X', contactName: 'Gary Malone' }), /first name: Gary/)
   assert.doesNotMatch(buildOutreachUserPrompt({ businessName: 'X' }), /first name/)
 })
+
+test('buildOutreachUserPrompt: opens with the real personal hook when notes are provided', () => {
+  const prompt = buildOutreachUserPrompt({ businessName: 'Acme Plumbing', notes: 'Met at BNI last week' })
+  assert.match(prompt, /Met at BNI last week/)
+  assert.match(prompt, /OPEN the email with a brief, specific, natural reference/i)
+})
+
+test('buildOutreachUserPrompt: never fabricates a relationship when no notes given', () => {
+  const prompt = buildOutreachUserPrompt({ businessName: 'Acme Plumbing' })
+  assert.match(prompt, /genuinely cold email; do NOT fabricate a prior relationship/i)
+})

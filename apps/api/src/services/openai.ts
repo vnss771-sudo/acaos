@@ -101,6 +101,7 @@ export type OutreachInput = {
   contactName?: string
   aiSummary?: string
   outreachAngle?: string
+  notes?: string
   icp?: IcpContext
 }
 
@@ -110,6 +111,7 @@ export type OutreachInput = {
 // industry once produced "Acme Plumbing … scaling in the manufacturing sector".
 export function buildOutreachUserPrompt(input: OutreachInput): string {
   const firstName = input.contactName?.split(' ')[0] ?? null
+  const notes = input.notes?.trim()
   return `Write a cold outreach email for this prospect:
 
 Business: ${input.businessName}
@@ -118,7 +120,8 @@ Location: ${input.city || 'their area'}
 ${firstName ? `Contact first name: ${firstName}` : ''}
 Research summary: ${input.aiSummary || '(no research available — base the email only on the business name and a clearly-hypothetical, relevant question; do not invent specifics)'}
 Best hook: ${input.outreachAngle || `(none provided — derive a hook from what "${input.businessName}" actually does; keep it specific to that business)`}
-
+Personal connection / how the sender knows them: ${notes || '(none — this is a genuinely cold email; do NOT fabricate a prior relationship)'}
+${notes ? `\nIMPORTANT: the personal connection above is REAL and is your single strongest line. OPEN the email with a brief, specific, natural reference to it, THEN move into the relevant question. Do not invent any detail beyond what is stated.` : ''}
 Make the email feel like it was written specifically for ${input.businessName}, not from a template. The recipient's real industry comes from their business name and the research summary — NOT from the seller's target market.`
 }
 
@@ -142,6 +145,7 @@ Your emails achieve 15–30% reply rates because they:
 3. Open with a crisp, relevant observation — never "I hope this email finds you well"
 4. Make ONE clear ask: a simple yes/no or a low-friction question (never "book a 30-min demo")
 5. Sound like a thoughtful human, not a marketing department
+6. Name a CONCRETE outcome in the recipient's own language — never vague filler. BANNED phrases: "streamline operations", "improve efficiency", "optimise", "leverage", "solutions", "synergy", "drive growth". Instead say the real thing a tradesperson feels: e.g. "so jobs stop slipping through the cracks as you add crews", "quotes out the same day instead of after hours", "no double-booked vans", "without putting on another office admin".
 
 NEVER state a fact about the recipient you weren't given. Infer their industry from the business NAME (e.g. "Acme Plumbing" = plumbing, "Smith Electrical" = electrical) — never assume it from the seller's target market. If a detail is uncertain, frame it as a question ("how are you handling scheduling as you grow?"), not a claim. Stating something false — like calling a plumbing company a "manufacturer" — instantly destroys credibility and is worse than saying nothing.
 
