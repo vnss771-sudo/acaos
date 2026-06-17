@@ -808,9 +808,16 @@ prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, 
   if (intent.status !== 'DRAFTED') {
     throw new ApiError(409, `Cannot approve an intent that is ${intent.status.toLowerCase()} — generate a draft first`)
   }
+  // Optionally link the intent to a lead so the send path can stamp its
+  // provenance onto the resulting OutreachSent (Stage 5).
+  const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() : undefined
+  if (leadId) {
+    const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { workspaceId: true } })
+    if (!lead || lead.workspaceId !== intent.workspaceId) throw new ApiError(400, 'leadId does not belong to this workspace')
+  }
   const updated = await prisma.outreachIntent.update({
     where: { id: intent.id },
-    data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() },
+    data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date(), ...(leadId ? { leadId } : {}) },
   })
   void recordAudit({
     workspaceId: intent.workspaceId, actorUserId: userId,

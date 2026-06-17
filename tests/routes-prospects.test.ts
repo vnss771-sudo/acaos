@@ -250,3 +250,26 @@ test('POST /:id/intents/:intentId/approve 404 when the intent is missing', async
   const res = await server.request('/api/prospects/p1/intents/missing/approve', { method: 'POST', headers: auth(MEMBER) })
   assert.equal(res.status, 404)
 })
+
+test('approve links a valid leadId to the intent (Stage 5)', async () => {
+  const s = intentSpec('DRAFTED')
+  ;(s as any).lead = { findUnique: async () => ({ workspaceId: OWNED_WS }) }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents/oi1/approve', {
+    method: 'POST', headers: { Authorization: bearer(MEMBER), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leadId: 'l1' }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.leadId, 'l1')
+})
+
+test('approve rejects a leadId from another workspace (400)', async () => {
+  const s = intentSpec('DRAFTED')
+  ;(s as any).lead = { findUnique: async () => ({ workspaceId: OTHER_WS }) }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents/oi1/approve', {
+    method: 'POST', headers: { Authorization: bearer(MEMBER), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leadId: 'l-other' }),
+  })
+  assert.equal(res.status, 400)
+})

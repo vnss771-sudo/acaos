@@ -413,6 +413,13 @@ export async function sendCampaignBatch(
     // (campaignId, leadId) constraint guarantees at-most-once delivery — a racing
     // attempt or a retry after a crash that happened post-send cannot create a
     // second claim, so the email is never sent twice.
+    // Bridge (Stage 5): if an APPROVED OutreachIntent is linked to this lead,
+    // stamp its provenance onto the send so the record is self-auditable, and
+    // mark the intent SENT on success. Best-effort lookup — never blocks a send.
+    const linkedIntent = await prisma.outreachIntent
+      .findFirst({ where: { leadId: lead.id, status: 'APPROVED' }, select: { id: true, recommendationId: true, evidenceSnapshot: true } })
+      .catch(() => null)
+
     let claimId: string
     try {
       const claim = await prisma.outreachSent.create({
@@ -420,6 +427,11 @@ export async function sendCampaignBatch(
           workspaceId, campaignId, leadId: lead.id,
           toEmail: lead.email!, subject, body,
           unsubscribeToken, status: 'SENDING',
+          ...(linkedIntent ? {
+            outreachIntentId: linkedIntent.id,
+            recommendationId: linkedIntent.recommendationId,
+            evidenceSnapshot: linkedIntent.evidenceSnapshot ?? undefined,
+          } : {}),
         },
         select: { id: true },
       })
@@ -442,7 +454,9 @@ export async function sendCampaignBatch(
         prisma.lead.update({
           where: { id: lead.id },
           data: { stage: 'OUTREACH_SENT', lastContactedAt: new Date() }
-        })
+        }),
+        // Advance the linked intent to SENT in the same transaction as the send.
+        ...(linkedIntent ? [prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' } })] : []),
       ])
 
       sent++
