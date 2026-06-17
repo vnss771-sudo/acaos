@@ -111,3 +111,13 @@ test('operational chaos: approval mode requires an approved draft before enqueue
   assert.ok(approvalIdx !== -1 && draftIdx !== -1 && enqueueIdx !== -1, 'approved-draft gate missing')
   assert.ok(draftIdx < enqueueIdx, 'approved-draft gate must run before enqueue')
 })
+
+// ── OutreachIntent bridge (Stage 1: schema) ────────────────────────────────────
+test('schema: OutreachIntent bridge exists with recommendation link + evidence snapshot', () => {
+  const m = modelBlock('OutreachIntent')
+  assert.match(m, /recommendationId\s+String\?\s+@unique/, 'one intent per recommendation')
+  assert.match(m, /status\s+OutreachIntentStatus/, 'has lifecycle status')
+  assert.match(m, /evidenceSnapshot\s+Json\?/, 'carries an evidence snapshot')
+  assert.match(m, /prospectId/, 'links to the prospect')
+  assert.match(schema, /enum OutreachIntentStatus/, 'status enum defined')
+})
