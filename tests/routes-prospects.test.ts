@@ -201,3 +201,52 @@ test('POST /:id/intents/:intentId/draft returns 503 when AI is unconfigured', as
     if (saved !== undefined) process.env.OPENAI_API_KEY = saved
   }
 })
+
+function intentSpec(status: string) {
+  const s = spec()
+  ;(s as any).outreachIntent = {
+    findUnique: async () => ({ id: 'oi1', prospectId: 'p1', workspaceId: OWNED_WS, status }),
+    update: async (a: any) => ({ id: 'oi1', prospectId: 'p1', workspaceId: OWNED_WS, status, ...a.data }),
+  }
+  return s
+}
+
+test('POST /:id/intents/:intentId/approve transitions DRAFTED → APPROVED', async () => {
+  installPrisma(createFakePrisma(intentSpec('DRAFTED')))
+  const res = await server.request('/api/prospects/p1/intents/oi1/approve', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.status, 'APPROVED')
+  assert.equal(res.body.approvedBy, MEMBER)
+})
+
+test('POST /:id/intents/:intentId/approve 409 when not yet drafted', async () => {
+  installPrisma(createFakePrisma(intentSpec('PROPOSED')))
+  const res = await server.request('/api/prospects/p1/intents/oi1/approve', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 409)
+  assert.match(String(res.body.error), /generate a draft first/)
+})
+
+test('POST /:id/intents/:intentId/reject transitions to REJECTED', async () => {
+  installPrisma(createFakePrisma(intentSpec('DRAFTED')))
+  const res = await server.request('/api/prospects/p1/intents/oi1/reject', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.status, 'REJECTED')
+})
+
+test('POST /:id/intents/:intentId/reject 409 for an already-sent intent', async () => {
+  installPrisma(createFakePrisma(intentSpec('SENT')))
+  const res = await server.request('/api/prospects/p1/intents/oi1/reject', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 409)
+})
+
+test('POST /:id/intents/:intentId/approve denies another workspace', async () => {
+  const res = await server.request('/api/prospects/p-other/intents/oi1/approve', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 403)
+})
+
+test('POST /:id/intents/:intentId/approve 404 when the intent is missing', async () => {
+  const s = spec(); (s as any).outreachIntent = { findUnique: async () => null }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents/missing/approve', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 404)
+})
