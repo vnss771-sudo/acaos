@@ -14,6 +14,7 @@ import {
 } from '../../api/src/lib/signalEngine.js'
 import type { SignalType, SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { calibrate } from '../../api/src/lib/learningLoop.js'
+import { AUTO_RECOMMEND_THRESHOLD } from '../../api/src/lib/recommendationPolicy.js'
 import { generateOutreach } from '../../api/src/services/openai.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '../../api/src/services/mail.js'
 import { checkAndIncrementAiUsage } from '../../api/src/lib/limits.js'
@@ -38,6 +39,7 @@ type ScoreProspectRow = {
   contactName: string | null
   domain: string | null
   location: string | null
+  isExample: boolean
   signals: DbSignalRow[]
 }
 
@@ -66,7 +68,7 @@ type CampaignLeadRow = {
 export async function scoreProspects(
   workspaceId: string,
   progress?: Progress
-): Promise<{ workspaceId: string; updated: number }> {
+): Promise<{ workspaceId: string; updated: number; toRecommend: string[] }> {
   const prospects = await prisma.prospect.findMany({
     where: { workspaceId },
     include: { signals: true },
@@ -90,7 +92,11 @@ export async function scoreProspects(
       }
     : undefined
 
-  // Compute all score updates in memory first (pure CPU — no DB)
+  // Compute all score updates in memory first (pure CPU — no DB). Collect the
+  // real (non-example) prospects that clear the auto-recommend threshold so the
+  // worker layer can enqueue recommendation generation (kept out of here to keep
+  // this processor Redis-free and unit-testable).
+  const toRecommend: string[] = []
   const updates = prospects.map((prospect: ScoreProspectRow) => {
     const rawSignals = prospect.signals.map(toRawSignal)
     const scores = calculateOpportunityScores(rawSignals, {
@@ -103,6 +109,9 @@ export async function scoreProspects(
     }, icpConfig, signalWeights ?? undefined)
     const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
     const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+    if (!prospect.isExample && scores.opportunityScore >= AUTO_RECOMMEND_THRESHOLD) {
+      toRecommend.push(prospect.id)
+    }
     return prisma.prospect.update({
       where: { id: prospect.id },
       data: { ...scores, buyingStage, winProbability },
@@ -116,7 +125,7 @@ export async function scoreProspects(
   }
 
   await progress?.(100)
-  return { workspaceId, updated: prospects.length }
+  return { workspaceId, updated: prospects.length, toRecommend }
 }
 
 /**
