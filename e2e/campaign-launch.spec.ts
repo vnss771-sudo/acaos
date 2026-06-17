@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signUp, skipOnboarding, uniqueEmail, apiLogin, getWorkspaceId, verifyEmailInDb, PASSWORD, closeDb } from './helpers.js'
+import { signUp, skipOnboarding, uniqueEmail, apiLogin, getWorkspaceId, verifyEmailInDb, approveDraftForLead, PASSWORD, closeDb } from './helpers.js'
 
 test.afterAll(closeDb)
 
@@ -60,6 +60,11 @@ test('Launching an approval-mode campaign sends { approved: true } and is accept
     },
   })
   expect(importRes.ok()).toBeTruthy()
+
+  // Approval mode only sends leads with an APPROVED draft (the Review Queue flow).
+  // Seed one so the launch has something to dispatch — otherwise the backend
+  // correctly rejects it as "nothing approved to send".
+  await approveDraftForLead(workspaceId, 'one@example.com')
 
   // Drive the real UI.
   await page.getByRole('button', { name: /Campaigns/ }).click()

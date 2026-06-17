@@ -194,3 +194,22 @@ test('GET /outbox-issues surfaces failed and stuck sends with hasIssues', async 
   assert.equal(res.body.failed[0].lastError, 'SMTP 550')
   assert.equal(res.body.stuck[0].status, 'SENDING')
 })
+
+test('POST /:id/send in approval mode requires an approved draft (400)', async () => {
+  const s = spec()
+  s.user = verifiedUser as any
+  let n = 0
+  s.lead = { count: async () => (++n === 1 ? 2 : 0) } as any // 2 eligible, 0 approved
+  s.workspaceICP = { findUnique: async () => ({ approvalMode: true, dailySendLimit: 0 }) } as any
+  s.mission = { findUnique: async () => ({ status: 'ACTIVE' }) } as any
+  const fake = createFakePrisma(s)
+  installPrisma(fake)
+
+  const res = await server.request('/api/campaigns/c1/send', {
+    method: 'POST', headers: jsonAuth(), body: JSON.stringify({ approved: true }),
+  })
+  assert.equal(res.status, 400)
+  assert.match(String(res.body.error), /approve outreach in the Review Queue/i)
+  const approvedArg = fake.callsTo('lead', 'count')[1].args[0] as any
+  assert.deepEqual(approvedArg.where.outreachDrafts, { some: { status: 'APPROVED' } })
+})
