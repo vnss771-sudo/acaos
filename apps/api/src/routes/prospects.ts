@@ -37,6 +37,17 @@ export function normalizeDomain(domain: string | null | undefined): string | nul
   return domain.toLowerCase().replace(/^www\./, '')
 }
 
+// Load an OutreachIntent for a write action: verifies the prospect exists, the
+// caller has workspace access, and the intent belongs to that prospect.
+async function loadIntentForWrite(prospectId: string, intentId: string, userId: string) {
+  const prospect = await prisma.prospect.findUnique({ where: { id: prospectId }, select: { id: true, workspaceId: true } })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+  const intent = await prisma.outreachIntent.findUnique({ where: { id: intentId } })
+  if (!intent || intent.prospectId !== prospect.id) throw new ApiError(404, 'Outreach intent not found')
+  return intent
+}
+
 
 // Money is stored as integer cents; expose whole-unit amounts at the API edge.
 function withDollars<T extends Record<string, unknown>>(p: T): T {
@@ -785,6 +796,41 @@ prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, re
       draftGeneratedAt: new Date(),
       status: 'DRAFTED',
     },
+  })
+  res.json(updated)
+}))
+
+// Stage 4: approve/reject an intent's drafted outreach. Approval locks the
+// evidence + text already captured on the intent (the auditable snapshot).
+prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, res) => {
+  const userId = (req as AuthedRequest).user.id
+  const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
+  if (intent.status !== 'DRAFTED') {
+    throw new ApiError(409, `Cannot approve an intent that is ${intent.status.toLowerCase()} — generate a draft first`)
+  }
+  const updated = await prisma.outreachIntent.update({
+    where: { id: intent.id },
+    data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() },
+  })
+  void recordAudit({
+    workspaceId: intent.workspaceId, actorUserId: userId,
+    type: 'outreachIntent.approve', entityType: 'outreachIntent', entityId: intent.id,
+    metadata: { prospectId: intent.prospectId },
+  })
+  res.json(updated)
+}))
+
+prospectsRouter.post('/:id/intents/:intentId/reject', asyncHandler(async (req, res) => {
+  const userId = (req as AuthedRequest).user.id
+  const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
+  if (['SENT', 'WON', 'LOST'].includes(intent.status)) {
+    throw new ApiError(409, `Cannot reject a ${intent.status.toLowerCase()} intent`)
+  }
+  const updated = await prisma.outreachIntent.update({ where: { id: intent.id }, data: { status: 'REJECTED' } })
+  void recordAudit({
+    workspaceId: intent.workspaceId, actorUserId: userId,
+    type: 'outreachIntent.reject', entityType: 'outreachIntent', entityId: intent.id,
+    metadata: { prospectId: intent.prospectId },
   })
   res.json(updated)
 }))
