@@ -162,3 +162,17 @@ test('POST /:id/enrich still enforces workspace access before anything else', as
   const res = await server.request('/api/prospects/p-other/enrich', { method: 'POST', headers: auth(MEMBER) })
   assert.equal(res.status, 403)
 })
+
+test('GET /:id/intents returns the prospect bridge intents for a member', async () => {
+  const s = spec()
+  ;(s as any).outreachIntent = { findMany: async () => [{ id: 'oi1', status: 'PROPOSED', recommendationId: 'r1' }] }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents', { headers: auth(MEMBER) })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.intents[0].status, 'PROPOSED')
+})
+
+test('GET /:id/intents denies a prospect in another workspace', async () => {
+  const res = await server.request('/api/prospects/p-other/intents', { headers: auth(MEMBER) })
+  assert.equal(res.status, 403)
+})
