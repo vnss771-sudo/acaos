@@ -513,6 +513,93 @@ prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, r
   res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20) })
 }))
 
+// POST /api/prospects/import-signals — bulk feed signal-backed prospects (the
+// pilot enabler): each row becomes a prospect + an evidence-backed Signal via the
+// unified ingest spine, then scoring runs (which auto-generates recommendations
+// and intents). Evidence is mandatory — this is the evidence-first front door.
+const IMPORT_SIGNAL_TYPES = new Set<SignalType>([
+  'HIRING', 'FUNDING', 'EXPANSION', 'TECH_ADOPTION', 'LEADERSHIP_CHANGE',
+  'NEWS_MENTION', 'PROCUREMENT', 'BUSINESS_REGISTRATION', 'WEBSITE_CHANGE',
+])
+
+prospectsRouter.post('/import-signals', requireVerifiedEmail, asyncHandler(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || '').trim()
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const rows: Record<string, unknown>[] = req.body?.rows
+  if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
+  if (rows.length > 500) throw new ApiError(400, 'Maximum 500 rows per import')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  let prospectsCreated = 0
+  let prospectsReused = 0
+  let signalsIngested = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
+    const signalType = String(row.signalType ?? row.type ?? '').trim().toUpperCase()
+    try {
+      if (!companyName) throw new Error('companyName required')
+      if (!IMPORT_SIGNAL_TYPES.has(signalType as SignalType)) throw new Error(`invalid signalType "${signalType}"`)
+      const provider = String(row.provider ?? row.evidenceProvider ?? '').trim()
+      const sourceType = String(row.sourceType ?? row.evidenceType ?? '').trim()
+      if (!provider || !sourceType) throw new Error('evidence requires provider and sourceType')
+
+      const domain = row.domain ? String(row.domain) : null
+      const domainKey = normalizeDomain(domain)
+      const sourceUrl = row.sourceUrl ? String(row.sourceUrl) : null
+      const observedAt = row.observedAt ? new Date(String(row.observedAt)) : undefined
+
+      let prospect = domainKey
+        ? await prisma.prospect.findFirst({ where: { workspaceId, domainKey }, select: { id: true } })
+        : await prisma.prospect.findFirst({ where: { workspaceId, companyName }, select: { id: true } })
+      if (prospect) {
+        prospectsReused++
+      } else {
+        prospect = await prisma.prospect.create({
+          data: {
+            workspaceId, companyName, domain, domainKey,
+            industry: row.industry ? String(row.industry) : null,
+            location: row.location ? String(row.location) : null,
+            contactEmail: row.contactEmail ? String(row.contactEmail) : null,
+            contactName: row.contactName ? String(row.contactName) : null,
+            sourceTag: 'signal_import',
+          },
+          select: { id: true },
+        })
+        prospectsCreated++
+      }
+
+      await ingestSignal({
+        workspaceId, prospectId: prospect.id,
+        type: signalType as SignalType,
+        strength: row.strength !== undefined ? Number(row.strength) : 70,
+        source: row.signalSource ? String(row.signalSource) : provider,
+        title: row.signalTitle ? String(row.signalTitle) : null,
+        sourceUrl,
+        detectedAt: observedAt,
+        evidence: {
+          provider, sourceType, sourceUrl,
+          confidence: row.confidence !== undefined ? Number(row.confidence) : 0.7,
+          observedAt,
+          rawText: row.rawText ? String(row.rawText) : null,
+        },
+      })
+      signalsIngested++
+    } catch (err) {
+      errors.push(`Row ${i + 1} (${companyName || '?'}): ${(err as Error).message}`)
+    }
+  }
+
+  // Score the workspace once — this cascades into auto-recommendations + intents.
+  if (signalsIngested > 0) enqueueScoreProspects(workspaceId).catch(() => {})
+
+  res.status(201).json({ prospectsCreated, prospectsReused, signalsIngested, failed: errors.length, errors: errors.slice(0, 20) })
+}))
+
 // POST /api/prospects
 prospectsRouter.post('/', asyncHandler(async (req, res) => {
   const workspaceId = req.body.workspaceId as string
