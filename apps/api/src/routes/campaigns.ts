@@ -252,8 +252,17 @@ campaignsRouter.post(
     const eligible = await prisma.lead.count({ where })
     if (eligible === 0) throw new ApiError(400, 'No eligible leads with email addresses in this campaign')
 
-    // Enforce daily send limit and approval mode from workspace ICP
-    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: campaign.workspaceId } })
+    // Enforce mission stop-control, approval mode, and daily send limit before
+    // enqueue, so a direct API caller can't bypass the controls the UI presents.
+    const [icp, mission] = await Promise.all([
+      prisma.workspaceICP.findUnique({ where: { workspaceId: campaign.workspaceId } }),
+      prisma.mission.findUnique({ where: { campaignId: campaign.id }, select: { status: true } }).catch(() => null),
+    ])
+
+    // A paused/completed mission is an operator stop button — honour it before sending.
+    if (mission?.status === 'PAUSED' || mission?.status === 'COMPLETE') {
+      throw new ApiError(409, `Mission is ${mission.status.toLowerCase()} — resume or create a new mission before sending`)
+    }
 
     if (icp?.approvalMode) {
       // Approval mode: require explicit opt-in flag in the request body.
@@ -268,7 +277,9 @@ campaignsRouter.post(
       const startOfToday = new Date()
       startOfToday.setHours(0, 0, 0, 0)
       const sentToday = await prisma.outreachSent.count({
-        where: { workspaceId: campaign.workspaceId, sentAt: { gte: startOfToday } }
+        // Count delivered sends only — in-flight (SENDING) / FAILED outbox claims
+        // are fail-closed safety rows and must not consume the daily send cap.
+        where: { workspaceId: campaign.workspaceId, status: 'SENT', sentAt: { gte: startOfToday } }
       })
       const remaining = Math.max(0, icp.dailySendLimit - sentToday)
       if (remaining === 0) {

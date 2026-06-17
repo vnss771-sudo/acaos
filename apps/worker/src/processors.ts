@@ -208,6 +208,18 @@ type SendCampaignResult = {
   failed: number
 }
 
+// Mission pause/complete is the operator stop button. Returns a human-readable
+// reason when sending must halt, else null. Best-effort: a missing or unlinked
+// mission never blocks sending.
+async function getMissionSendBlockReason(campaignId: string): Promise<string | null> {
+  const mission = await prisma.mission
+    .findUnique({ where: { campaignId }, select: { status: true } })
+    .catch(() => null)
+  if (mission?.status === 'PAUSED') return 'mission paused'
+  if (mission?.status === 'COMPLETE') return 'mission complete'
+  return null
+}
+
 /**
  * Execute a campaign: generate personalised outreach for each eligible lead
  * (or reuse an existing draft), send via SMTP, and record in OutreachSent for
@@ -229,6 +241,13 @@ export async function sendCampaignBatch(
   ])
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
+
+  // Don't even start a batch for a paused/completed mission.
+  const initialBlock = await getMissionSendBlockReason(campaignId)
+  if (initialBlock) {
+    console.log(`[send-campaign] Skipping campaign ${campaignId}: ${initialBlock}`)
+    return { campaignId, sent: 0, skipped: 0, failed: 0 }
+  }
 
   await progress?.(5)
 
@@ -286,6 +305,17 @@ export async function sendCampaignBatch(
 
     // Progress: 10% → 90% across the lead batch
     await progress?.(10 + Math.floor((i / total) * 80))
+
+    // Mission pause/complete is an operator stop button: re-check before each lead
+    // so a pause issued mid-run halts the rest of the batch before any further AI
+    // generation, outbox claim, or SMTP dispatch.
+    const blockReason = await getMissionSendBlockReason(campaignId)
+    if (blockReason) {
+      const remaining = leads.length - i
+      console.log(`[send-campaign] Stopping campaign ${campaignId}: ${blockReason}; skipped remaining=${remaining}`)
+      skipped += remaining
+      break
+    }
 
     // Cheap pre-check before any AI work: skip leads already sent to, in-flight,
     // or terminally failed for this campaign. The unique (campaignId, leadId)
