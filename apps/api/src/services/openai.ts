@@ -94,7 +94,7 @@ Key question to answer: Are they large enough to have real coordination problems
   )
 }
 
-export async function generateOutreach(input: {
+export type OutreachInput = {
   businessName: string
   category?: string
   city?: string
@@ -102,8 +102,27 @@ export async function generateOutreach(input: {
   aiSummary?: string
   outreachAngle?: string
   icp?: IcpContext
-}): Promise<string> {
+}
+
+// Built as a pure, exported function so the prospect-context wiring is unit
+// testable. Critically, the prospect's Industry must come from THEIR business
+// (name/research), never the seller's ICP target market — defaulting to the ICP
+// industry once produced "Acme Plumbing … scaling in the manufacturing sector".
+export function buildOutreachUserPrompt(input: OutreachInput): string {
   const firstName = input.contactName?.split(' ')[0] ?? null
+  return `Write a cold outreach email for this prospect:
+
+Business: ${input.businessName}
+Industry: ${input.category || `(not provided — infer it from the business name "${input.businessName}"; do NOT assume the seller's target industry)`}
+Location: ${input.city || 'their area'}
+${firstName ? `Contact first name: ${firstName}` : ''}
+Research summary: ${input.aiSummary || '(no research available — base the email only on the business name and a clearly-hypothetical, relevant question; do not invent specifics)'}
+Best hook: ${input.outreachAngle || `(none provided — derive a hook from what "${input.businessName}" actually does; keep it specific to that business)`}
+
+Make the email feel like it was written specifically for ${input.businessName}, not from a template. The recipient's real industry comes from their business name and the research summary — NOT from the seller's target market.`
+}
+
+export async function generateOutreach(input: OutreachInput): Promise<string> {
   const vertical = buildVerticalDesc(input.icp)
   const product = buildProductDesc(input.icp)
   const toneNote = input.icp?.outreachTone === 'casual'
@@ -124,21 +143,14 @@ Your emails achieve 15–30% reply rates because they:
 4. Make ONE clear ask: a simple yes/no or a low-friction question (never "book a 30-min demo")
 5. Sound like a thoughtful human, not a marketing department
 
+NEVER state a fact about the recipient you weren't given. Infer their industry from the business NAME (e.g. "Acme Plumbing" = plumbing, "Smith Electrical" = electrical) — never assume it from the seller's target market. If a detail is uncertain, frame it as a question ("how are you handling scheduling as you grow?"), not a claim. Stating something false — like calling a plumbing company a "manufacturer" — instantly destroys credibility and is worse than saying nothing.
+
 Return ONLY a valid JSON object with these exact keys:
 - subject (string): Under 8 words. No "Intro:", no emoji. Feels like an internal forward, not a campaign email. Example: "scheduling for ${input.businessName || 'your team'}".
 - email (string): The full email body. No subject line, no sign-off — body only. Under 90 words. Personalised opener referencing their specific business. One clear question CTA at the end.
 - followup (string): A 2-sentence follow-up for 4–5 days later if no reply. Acknowledge the first email, offer a slightly different angle or value point. Still ends with a question.`,
 
-    `Write a cold outreach email for this prospect:
-
-Business: ${input.businessName}
-Industry: ${input.category || vertical.split(',')[0].trim()}
-Location: ${input.city || 'their area'}
-${firstName ? `Contact first name: ${firstName}` : ''}
-Research summary: ${input.aiSummary || `Growing ${vertical.split(',')[0].trim()} business needing better coordination tools`}
-Best hook: ${input.outreachAngle || 'streamlining team coordination as they scale'}
-
-Make the email feel like it was written specifically for ${input.businessName}, not from a template.`
+    buildOutreachUserPrompt(input)
   )
 }
 
