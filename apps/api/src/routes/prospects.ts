@@ -21,6 +21,7 @@ import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
 import { ingestSignal } from '../lib/signalIngest.js'
 import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
+import { createOutreachIntentForRecommendation } from '../lib/outreachIntent.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
@@ -712,7 +713,37 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
     },
   })
 
+  // Bridge (Stage 2): carry this recommendation into the outreach spine as an
+  // OutreachIntent with an evidence snapshot. Best-effort — additive.
+  await createOutreachIntentForRecommendation({
+    workspaceId: prospect.workspaceId,
+    prospectId:  prospect.id,
+    recommendationId: recommendation.id,
+    messageAngle: rec.messageAngle,
+    channel: rec.bestChannel,
+    signals: prospect.signals,
+  }).catch(() => {})
+
   res.status(201).json(recommendation)
+}))
+
+// GET /api/prospects/:id/intents — read-only view of the bridge records for a
+// prospect (Stage 2): recommendation → outreach intent with evidence snapshot.
+prospectsRouter.get('/:id/intents', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({
+    where: { id: req.params.id as string },
+    select: { id: true, workspaceId: true },
+  })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const intents = await prisma.outreachIntent.findMany({
+    where: { prospectId: prospect.id },
+    orderBy: { createdAt: 'desc' },
+  })
+  res.json({ intents })
 }))
 
 // POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore

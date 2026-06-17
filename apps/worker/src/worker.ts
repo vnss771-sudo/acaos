@@ -19,6 +19,7 @@ import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
 import { enqueueGenerateRecommendations } from '../../api/src/lib/queues.js'
 import { evidenceGatedPriority } from '../../api/src/lib/recommendationPolicy.js'
+import { createOutreachIntentForRecommendation } from '../../api/src/lib/outreachIntent.js'
 import { captureError } from '../../api/src/lib/observability.js'
 import { initErrorReporting } from '../../api/src/lib/errorReporting.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
@@ -359,7 +360,7 @@ const recommendWorker = new Worker(
     // provable, fresh evidence; otherwise cap it below the high-confidence line.
     const priority = evidenceGatedPriority(rec.priority, prospect.signals)
 
-    await prisma.recommendation.create({
+    const recommendation = await prisma.recommendation.create({
       data: {
         workspaceId,
         prospectId,
@@ -368,6 +369,17 @@ const recommendWorker = new Worker(
         expiresAt: new Date(Date.now() + 7 * 86_400_000)
       }
     })
+
+    // Bridge (Stage 2): create the OutreachIntent that will carry this through
+    // draft → approval → send. Best-effort — never break recommendation creation.
+    await createOutreachIntentForRecommendation({
+      workspaceId,
+      prospectId,
+      recommendationId: recommendation.id,
+      messageAngle: rec.messageAngle,
+      channel: rec.bestChannel,
+      signals: prospect.signals,
+    }).catch((e) => log('generate-recommendations', `intent create failed for ${prospectId}: ${(e as Error).message}`))
 
     await job.updateProgress(100)
     log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel} priority=${priority}`)
