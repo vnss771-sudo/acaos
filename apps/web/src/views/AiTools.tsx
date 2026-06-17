@@ -55,6 +55,26 @@ export function AiTools({ api, workspace, toast }: Props) {
   const [activeJob, setActiveJob] = useState<JobStatus | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Persisted research (keyed by business name) so the Outreach tab can ground
+  // the email in the prospect's own intelligence instead of generic workspace
+  // defaults. Survives tab switches (only the visible `result` is cleared).
+  const [research, setResearch] = useState<{ businessName: string; aiSummary?: string; outreachAngle?: string } | null>(null)
+
+  function captureResearch(raw: string, businessName: string) {
+    try {
+      const j = JSON.parse(raw)
+      const aiSummary = typeof j.aiSummary === 'string' ? j.aiSummary : undefined
+      const outreachAngle = typeof j.outreachAngle === 'string' ? j.outreachAngle : undefined
+      if (aiSummary || outreachAngle) setResearch({ businessName: businessName.trim(), aiSummary, outreachAngle })
+    } catch { /* result wasn't JSON — nothing to capture */ }
+  }
+
+  // Returns the stored research only if it matches the business being emailed.
+  function researchFor(businessName: string) {
+    const name = businessName.trim().toLowerCase()
+    return research && name && research.businessName.toLowerCase() === name ? research : null
+  }
+
   useEffect(() => {
     if (!workspace) return
     api<{ leads: Lead[] }>(`/api/leads?workspaceId=${workspace.id}&limit=100`)
@@ -77,7 +97,9 @@ export function AiTools({ api, workspace, toast }: Props) {
         setActiveJob(status)
         if (status.state === 'completed') {
           stopPolling()
-          setResult(typeof status.result === 'string' ? status.result : JSON.stringify(status.result, null, 2))
+          const resStr = typeof status.result === 'string' ? status.result : JSON.stringify(status.result, null, 2)
+          setResult(resStr)
+          captureResearch(resStr, leads.find(l => l.id === selectedLeadId)?.businessName ?? '')
           toast.success('AI job completed')
         } else if (status.state === 'failed') {
           stopPolling()
@@ -98,13 +120,24 @@ export function AiTools({ api, workspace, toast }: Props) {
         const body: AiResearchRequest = { workspaceId: workspace.id, businessName: inputs.businessName, website: inputs.website, notes: inputs.notes }
         data = await api<{ result: string }>('/api/ai/research', { method: 'POST', body: JSON.stringify(body) })
       } else if (tab === 'outreach') {
-        const body: AiOutreachRequest = { workspaceId: workspace.id, businessName: inputs.businessName, category: inputs.category }
+        // Carry the prospect's own research (summary + angle) into the email so
+        // it uses the real hook — not generic workspace defaults.
+        const ctx = researchFor(inputs.businessName)
+        const body: AiOutreachRequest = {
+          workspaceId: workspace.id,
+          businessName: inputs.businessName,
+          category: inputs.category || undefined,
+          aiSummary: ctx?.aiSummary,
+          outreachAngle: ctx?.outreachAngle,
+        }
         data = await api<{ result: string }>('/api/ai/outreach', { method: 'POST', body: JSON.stringify(body) })
       } else {
         const body: AiReplyAnalysisRequest = { workspaceId: workspace.id, replyBody: inputs.replyBody }
         data = await api<{ result: string }>('/api/ai/reply-analysis', { method: 'POST', body: JSON.stringify(body) })
       }
-      setResult(typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2))
+      const resStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)
+      setResult(resStr)
+      if (tab === 'research') captureResearch(resStr, inputs.businessName)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'AI request failed') }
     finally { setLoading(false) }
   }
@@ -212,6 +245,11 @@ export function AiTools({ api, workspace, toast }: Props) {
 
         {tab === 'outreach' && (
           <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+            {researchFor(inputs.businessName) && (
+              <div style={{ fontSize: 12, color: colors.green, background: colors.green + '14', border: `1px solid ${colors.green}40`, borderRadius: 6, padding: '8px 10px' }}>
+                ✓ Using your research for {research!.businessName} — the email will draw on its summary and angle.
+              </div>
+            )}
             <div>
               <label style={s.label}>Business Name *</label>
               <input style={s.input} value={inputs.businessName} onChange={set('businessName')} />
