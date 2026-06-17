@@ -19,6 +19,7 @@ import {
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
+import { ingestSignal } from '../lib/signalIngest.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
@@ -33,11 +34,6 @@ export function normalizeDomain(domain: string | null | undefined): string | nul
   return domain.toLowerCase().replace(/^www\./, '')
 }
 
-export function buildSignalFingerprint(source: string, type: string, title: string | null, date: Date): string {
-  const slug = (title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
-  const month = date.toISOString().slice(0, 7)
-  return `${source}:${type}:${slug}:${month}`
-}
 
 // Money is stored as integer cents; expose whole-unit amounts at the API edge.
 function withDollars<T extends Record<string, unknown>>(p: T): T {
@@ -393,30 +389,22 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
     const now = new Date()
     if (c.hiringCount && c.hiringCount > 0) {
       const title = `${c.hiringCount} open position${c.hiringCount !== 1 ? 's' : ''} detected`
-      const fp = buildSignalFingerprint(sourceName, 'HIRING', title, now)
-      await prisma.signal.upsert({
-        where: { prospectId_fingerprint: { prospectId: created.id, fingerprint: fp } },
-        create: {
-          workspaceId, prospectId: created.id, type: 'HIRING',
-          strength: Math.min(95, 50 + c.hiringCount * 4),
-          sourceReliability: 80, industryRelevance: 75,
-          title, source: sourceName, fingerprint: fp, detectedAt: now,
-        },
-        update: { strength: Math.min(95, 50 + c.hiringCount * 4), detectedAt: now },
+      await ingestSignal({
+        workspaceId, prospectId: created.id, type: 'HIRING',
+        strength: Math.min(95, 50 + c.hiringCount * 4),
+        sourceReliability: 80, industryRelevance: 75,
+        title, source: sourceName, detectedAt: now,
+        evidence: { provider: sourceName, sourceType: 'discovery', confidence: 0.8, observedAt: now },
       }).catch((err: unknown) => console.warn(`[discover] HIRING signal upsert failed: ${(err as Error).message}`))
     }
     if (c.fundingStage && c.totalFunding && c.totalFunding > 0) {
       const amt = `$${(c.totalFunding / 1_000_000).toFixed(1)}M`
       const title = `${c.fundingStage} · ${amt} total funding`
-      const fp = buildSignalFingerprint(sourceName, 'FUNDING', title, now)
-      await prisma.signal.upsert({
-        where: { prospectId_fingerprint: { prospectId: created.id, fingerprint: fp } },
-        create: {
-          workspaceId, prospectId: created.id, type: 'FUNDING',
-          strength: 85, sourceReliability: 90, industryRelevance: 80,
-          title, source: sourceName, fingerprint: fp, detectedAt: now,
-        },
-        update: { detectedAt: now },
+      await ingestSignal({
+        workspaceId, prospectId: created.id, type: 'FUNDING',
+        strength: 85, sourceReliability: 90, industryRelevance: 80,
+        title, source: sourceName, detectedAt: now,
+        evidence: { provider: sourceName, sourceType: 'discovery', confidence: 0.9, observedAt: now },
       }).catch((err: unknown) => console.warn(`[discover] FUNDING signal upsert failed: ${(err as Error).message}`))
     }
 
@@ -735,23 +723,25 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
 
   const created: string[] = []
   for (const sig of result.signals) {
-    const fp = buildSignalFingerprint(sig.source, sig.type, sig.title, sig.detectedAt)
-    const s = await prisma.signal.upsert({
-      where: { prospectId_fingerprint: { prospectId: prospect.id, fingerprint: fp } },
-      create: {
-        workspaceId:       prospect.workspaceId,
-        prospectId:        prospect.id,
-        type:              sig.type as SignalType,
-        strength:          sig.strength,
-        sourceReliability: sig.sourceReliability,
-        industryRelevance: sig.industryRelevance,
-        title:             sig.title,
-        description:       sig.description,
-        source:            sig.source,
-        fingerprint:       fp,
-        detectedAt:        sig.detectedAt,
+    // Apollo-detected signals now carry provenance (EvidenceSource) so they get
+    // the same "where from / how fresh" treatment as manually-added ones.
+    const s = await ingestSignal({
+      workspaceId:       prospect.workspaceId,
+      prospectId:        prospect.id,
+      type:              sig.type as SignalType,
+      strength:          sig.strength,
+      sourceReliability: sig.sourceReliability,
+      industryRelevance: sig.industryRelevance,
+      title:             sig.title,
+      description:       sig.description,
+      source:            sig.source,
+      detectedAt:        sig.detectedAt,
+      evidence: {
+        provider: sig.source,
+        sourceType: 'enrichment',
+        confidence: Math.max(0, Math.min(1, sig.sourceReliability / 100)),
+        observedAt: sig.detectedAt,
       },
-      update: { strength: sig.strength, detectedAt: sig.detectedAt },
     })
     created.push(s.id)
   }

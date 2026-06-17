@@ -5,7 +5,7 @@ import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { buildSignalFingerprint } from './prospects.js'
+import { ingestSignal } from '../lib/signalIngest.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const signalsRouter = Router()
@@ -70,57 +70,39 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
 
   const resolvedSource = source ?? 'manual'
   const resolvedDetectedAt = detectedAt ? new Date(detectedAt) : new Date()
-  const fp = buildSignalFingerprint(resolvedSource, type, title ?? null, resolvedDetectedAt)
 
-  // Optionally record provenance for this signal. When an `evidence` object is
-  // supplied, create an EvidenceSource and link the signal to it, so the signal
-  // can answer "where did this come from?".
-  let evidenceSourceId: string | null = null
+  // Optionally record provenance. When an `evidence` object is supplied, the
+  // ingest service creates an EvidenceSource and links the signal to it.
+  let evidenceInput
   const evidence = req.body?.evidence
   if (evidence && typeof evidence === 'object') {
     const provider = typeof evidence.provider === 'string' ? evidence.provider.trim() : ''
     const sourceType = typeof evidence.sourceType === 'string' ? evidence.sourceType.trim() : ''
     if (!provider || !sourceType) throw new ApiError(400, 'evidence requires provider and sourceType')
-    const conf = Number(evidence.confidence)
-    const created = await prisma.evidenceSource.create({
-      data: {
-        workspaceId,
-        prospectId,
-        provider,
-        sourceType,
-        sourceUrl: typeof evidence.sourceUrl === 'string' ? evidence.sourceUrl : sourceUrl ?? null,
-        observedAt: evidence.observedAt ? new Date(evidence.observedAt) : resolvedDetectedAt,
-        expiresAt: evidence.expiresAt ? new Date(evidence.expiresAt) : null,
-        confidence: Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0.5,
-        rawText: typeof evidence.rawText === 'string' ? evidence.rawText.slice(0, 5000) : null,
-      },
-      select: { id: true },
-    })
-    evidenceSourceId = created.id
+    evidenceInput = {
+      provider,
+      sourceType,
+      sourceUrl: typeof evidence.sourceUrl === 'string' ? evidence.sourceUrl : sourceUrl ?? null,
+      observedAt: evidence.observedAt ? new Date(evidence.observedAt) : resolvedDetectedAt,
+      expiresAt: evidence.expiresAt ? new Date(evidence.expiresAt) : null,
+      confidence: Number(evidence.confidence),
+      rawText: typeof evidence.rawText === 'string' ? evidence.rawText.slice(0, 5000) : null,
+    }
   }
 
-  const signal = await prisma.signal.upsert({
-    where: { prospectId_fingerprint: { prospectId, fingerprint: fp } },
-    create: {
-      workspaceId,
-      prospectId,
-      evidenceSourceId,
-      type,
-      strength: Number(strength),
-      sourceReliability: sourceReliability !== undefined ? Number(sourceReliability) : 70,
-      industryRelevance: industryRelevance !== undefined ? Number(industryRelevance) : 50,
-      title: title ?? null,
-      description: description ?? null,
-      sourceUrl: sourceUrl ?? null,
-      source: resolvedSource,
-      fingerprint: fp,
-      detectedAt: resolvedDetectedAt,
-    },
-    update: {
-      strength: Number(strength),
-      detectedAt: resolvedDetectedAt,
-      ...(evidenceSourceId ? { evidenceSourceId } : {}),
-    }
+  const signal = await ingestSignal({
+    workspaceId,
+    prospectId,
+    type,
+    strength: Number(strength),
+    source: resolvedSource,
+    title: title ?? null,
+    description: description ?? null,
+    sourceUrl: sourceUrl ?? null,
+    sourceReliability: sourceReliability !== undefined ? Number(sourceReliability) : undefined,
+    industryRelevance: industryRelevance !== undefined ? Number(industryRelevance) : undefined,
+    detectedAt: resolvedDetectedAt,
+    evidence: evidenceInput,
   })
 
   // Rescore the prospect
