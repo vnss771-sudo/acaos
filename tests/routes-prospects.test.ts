@@ -303,3 +303,49 @@ test('POST /:id/intents/:intentId/materialize 201 materialises an approved inten
   assert.equal(res.body.leadId, 'lead1')
   assert.equal(res.body.campaignId, 'camp1')
 })
+
+const verifiedUserPS = { findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null, emailVerified: true }) }
+function importSignalsSpec() {
+  const s = spec()
+  ;(s as any).user = verifiedUserPS
+  ;(s as any).prospect = { findFirst: async () => null, create: async () => ({ id: 'np1' }) }
+  ;(s as any).evidenceSource = { create: async () => ({ id: 'ev1' }) }
+  ;(s as any).signal = { upsert: async (a: any) => ({ id: 'sig1', ...a.create }) }
+  return s
+}
+const jsonHeaders = { Authorization: bearer(MEMBER), 'Content-Type': 'application/json' }
+
+// The live-enqueue happy-path (a successful ingest triggers scoreProspects →
+// Redis) is integration territory — it would leave an open Redis handle and hang
+// the fast runner, matching the repo convention in routes-jobs.test.ts. The
+// successful ingest path is covered by the golden DB test (real Postgres).
+test('POST /import-signals rejects rows missing evidence or with a bad signal type', async () => {
+  installPrisma(createFakePrisma(importSignalsSpec()))
+  const res = await server.request('/api/prospects/import-signals', {
+    method: 'POST', headers: jsonHeaders,
+    body: JSON.stringify({ workspaceId: OWNED_WS, rows: [
+      { companyName: 'NoEvidence Co', signalType: 'HIRING' },
+      { companyName: 'BadType Co', signalType: 'NONSENSE', provider: 'x', sourceType: 'y' },
+    ] }),
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.signalsIngested, 0)
+  assert.equal(res.body.failed, 2)
+})
+
+test('POST /import-signals denies a non-member workspace', async () => {
+  installPrisma(createFakePrisma(importSignalsSpec()))
+  const res = await server.request('/api/prospects/import-signals', {
+    method: 'POST', headers: jsonHeaders,
+    body: JSON.stringify({ workspaceId: OTHER_WS, rows: [{ companyName: 'X', signalType: 'HIRING', provider: 'p', sourceType: 't' }] }),
+  })
+  assert.equal(res.status, 403)
+})
+
+test('POST /import-signals 400 without rows', async () => {
+  installPrisma(createFakePrisma(importSignalsSpec()))
+  const res = await server.request('/api/prospects/import-signals', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ workspaceId: OWNED_WS }),
+  })
+  assert.equal(res.status, 400)
+})
