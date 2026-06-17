@@ -129,6 +129,7 @@ export function AiTools({ api, workspace, toast }: Props) {
           category: inputs.category || undefined,
           aiSummary: ctx?.aiSummary,
           outreachAngle: ctx?.outreachAngle,
+          notes: inputs.notes || undefined,
         }
         data = await api<{ result: string }>('/api/ai/outreach', { method: 'POST', body: JSON.stringify(body) })
       } else {
@@ -257,6 +258,13 @@ export function AiTools({ api, workspace, toast }: Props) {
             <div>
               <label style={s.label}>Category / Industry</label>
               <input style={s.input} value={inputs.category} onChange={set('category')} placeholder="Plumbing, Real Estate, Accounting…" />
+            </div>
+            <div>
+              <label style={s.label}>Personal hook / how you know them (optional)</label>
+              <input style={s.input} value={inputs.notes} onChange={set('notes')} placeholder="e.g. Met at BNI last week" />
+              <div style={{ fontSize: 11, color: colors.textFaint, marginTop: 4 }}>
+                If you have a real connection, the email will open with it — turns a cold email warm.
+              </div>
             </div>
           </div>
         )}

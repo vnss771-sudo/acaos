@@ -61,6 +61,7 @@ describe('AiTools', () => {
     render(<AiTools api={api as never} workspace={workspace} toast={toast as never} />)
 
     await userEvent.type(await screen.findByPlaceholderText('Acme Plumbing Brisbane'), 'Acme Plumbing')
+    await userEvent.type(screen.getByPlaceholderText('Saw them at BNI, growing fast'), 'Met at BNI')
     await userEvent.click(screen.getByRole('button', { name: /Run Lead Research/ }))
 
     await userEvent.click(screen.getByRole('button', { name: /Outreach Copy/i }))
@@ -74,6 +75,7 @@ describe('AiTools', () => {
       businessName: 'Acme Plumbing',
       aiSummary: 'Acme is a growing plumbing business.',
       outreachAngle: 'Scheduling across crews',
+      notes: 'Met at BNI', // the real personal hook flows into the email
     })
   })
 
