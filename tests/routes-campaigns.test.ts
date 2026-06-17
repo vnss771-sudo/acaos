@@ -171,3 +171,26 @@ test('POST /:id/send in approval mode still requires the { approved: true } flag
   assert.equal(res.status, 403)
   assert.match(String(res.body.error), /Approval required/)
 })
+
+// ── Outbox health (operator delivery visibility) ──────────────────────────────
+test('GET /outbox-issues requires workspaceId and membership', async () => {
+  assert.equal((await server.request('/api/campaigns/outbox-issues', { headers: auth() })).status, 400)
+  assert.equal((await server.request(`/api/campaigns/outbox-issues?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
+})
+
+test('GET /outbox-issues surfaces failed and stuck sends with hasIssues', async () => {
+  const s = spec()
+  s.outreachSent = {
+    findMany: async (a: any) => a?.where?.status === 'FAILED'
+      ? [{ id: 'o1', toEmail: 'a@x.com', subject: 's', status: 'FAILED', lastError: 'SMTP 550', sentAt: new Date().toISOString(), campaignId: 'c1' }]
+      : [{ id: 'o2', toEmail: 'b@x.com', subject: 's', status: 'SENDING', lastError: null, sentAt: new Date(0).toISOString(), campaignId: 'c1' }],
+    count: async () => 1,
+  } as any
+  installPrisma(createFakePrisma(s))
+
+  const res = await server.request(`/api/campaigns/outbox-issues?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.hasIssues, true)
+  assert.equal(res.body.failed[0].lastError, 'SMTP 550')
+  assert.equal(res.body.stuck[0].status, 'SENDING')
+})
