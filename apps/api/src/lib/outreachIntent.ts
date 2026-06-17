@@ -4,6 +4,7 @@
 // callers wrap it so a bridge write never breaks the primary recommendation path.
 import { prisma } from './prisma.js'
 import { freshnessState, type SignalType } from './signalEngine.js'
+import type { OutreachInput, IcpContext } from '../services/openai.js'
 
 export type SnapshotSignal = {
   type: SignalType
@@ -52,4 +53,27 @@ export async function createOutreachIntentForRecommendation(input: {
       campaignId: input.campaignId ?? null,
     },
   })
+}
+
+/**
+ * Build the outreach-generation input from an intent's evidence context — the
+ * "draft from evidence" path. The recommendation's reasoning becomes the
+ * research summary; the intent's angle (or the recommendation's) is the hook;
+ * industry comes from the prospect, never the seller's ICP.
+ */
+export function buildIntentDraftInput(args: {
+  prospect: { companyName: string; industry?: string | null; contactName?: string | null; location?: string | null }
+  recommendation?: { reasoning?: string | null; messageAngle?: string | null } | null
+  intent: { messageAngle?: string | null }
+  icp?: IcpContext
+}): OutreachInput {
+  return {
+    businessName: args.prospect.companyName,
+    category: args.prospect.industry ?? undefined,
+    city: args.prospect.location ?? undefined,
+    contactName: args.prospect.contactName ?? undefined,
+    aiSummary: args.recommendation?.reasoning ?? undefined,
+    outreachAngle: args.intent.messageAngle ?? args.recommendation?.messageAngle ?? undefined,
+    icp: args.icp,
+  }
 }

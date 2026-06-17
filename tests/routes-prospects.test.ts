@@ -176,3 +176,28 @@ test('GET /:id/intents denies a prospect in another workspace', async () => {
   const res = await server.request('/api/prospects/p-other/intents', { headers: auth(MEMBER) })
   assert.equal(res.status, 403)
 })
+
+test('POST /:id/intents/:intentId/draft denies another workspace', async () => {
+  const res = await server.request('/api/prospects/p-other/intents/oi1/draft', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 403)
+})
+
+test('POST /:id/intents/:intentId/draft 404 when the intent is missing', async () => {
+  const s = spec(); (s as any).outreachIntent = { findUnique: async () => null }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents/missing/draft', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 404)
+})
+
+test('POST /:id/intents/:intentId/draft returns 503 when AI is unconfigured', async () => {
+  const saved = process.env.OPENAI_API_KEY
+  delete process.env.OPENAI_API_KEY
+  try {
+    const s = spec(); (s as any).outreachIntent = { findUnique: async () => ({ id: 'oi1', prospectId: 'p1', recommendationId: null, messageAngle: 'x' }) }
+    installPrisma(createFakePrisma(s))
+    const res = await server.request('/api/prospects/p1/intents/oi1/draft', { method: 'POST', headers: auth(MEMBER) })
+    assert.equal(res.status, 503)
+  } finally {
+    if (saved !== undefined) process.env.OPENAI_API_KEY = saved
+  }
+})

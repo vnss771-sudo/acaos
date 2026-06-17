@@ -34,3 +34,25 @@ test('createOutreachIntentForRecommendation writes a PROPOSED intent with snapsh
   assert.equal(arg.data.evidenceSnapshot.signalCount, 1)
   assert.equal((intent as any).status, 'PROPOSED')
 })
+
+import { buildIntentDraftInput } from '../apps/api/src/lib/outreachIntent.ts'
+
+test('buildIntentDraftInput maps evidence context; intent angle wins over recommendation', () => {
+  const input = buildIntentDraftInput({
+    prospect: { companyName: 'Acme Plumbing', industry: 'Plumbing', contactName: 'Mark Lee', location: 'Brisbane' },
+    recommendation: { reasoning: 'Hiring + new depot', messageAngle: 'rec angle' },
+    intent: { messageAngle: 'scheduling across crews' },
+    icp: { targetIndustries: ['Plumbing'], outreachTone: 'direct' },
+  })
+  assert.equal(input.businessName, 'Acme Plumbing')
+  assert.equal(input.category, 'Plumbing')
+  assert.equal(input.contactName, 'Mark Lee')
+  assert.equal(input.city, 'Brisbane')
+  assert.equal(input.aiSummary, 'Hiring + new depot')
+  assert.equal(input.outreachAngle, 'scheduling across crews')
+})
+
+test('buildIntentDraftInput falls back to recommendation angle when intent has none', () => {
+  const input = buildIntentDraftInput({ prospect: { companyName: 'X' }, recommendation: { messageAngle: 'rec angle' }, intent: {} })
+  assert.equal(input.outreachAngle, 'rec angle')
+})

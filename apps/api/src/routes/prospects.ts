@@ -21,7 +21,8 @@ import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
 import { ingestSignal } from '../lib/signalIngest.js'
 import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
-import { createOutreachIntentForRecommendation } from '../lib/outreachIntent.js'
+import { createOutreachIntentForRecommendation, buildIntentDraftInput } from '../lib/outreachIntent.js'
+import { generateOutreach } from '../services/openai.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
@@ -744,6 +745,48 @@ prospectsRouter.get('/:id/intents', asyncHandler(async (req, res) => {
     orderBy: { createdAt: 'desc' },
   })
   res.json({ intents })
+}))
+
+// POST /api/prospects/:id/intents/:intentId/draft — Stage 3: generate the
+// outreach draft FROM the intent's evidence context and store it on the intent.
+prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, res) => {
+  const prospect = await prisma.prospect.findUnique({
+    where: { id: req.params.id as string },
+    select: { id: true, workspaceId: true, companyName: true, industry: true, contactName: true, location: true },
+  })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const intent = await prisma.outreachIntent.findUnique({ where: { id: req.params.intentId as string } })
+  if (!intent || intent.prospectId !== prospect.id) throw new ApiError(404, 'Outreach intent not found')
+
+  const [recommendation, icpRow] = await Promise.all([
+    intent.recommendationId
+      ? prisma.recommendation.findUnique({ where: { id: intent.recommendationId }, select: { reasoning: true, messageAngle: true } })
+      : Promise.resolve(null),
+    prisma.workspaceICP.findUnique({ where: { workspaceId: prospect.workspaceId }, select: { targetIndustries: true, businessType: true, outreachTone: true } }),
+  ])
+  const icp = icpRow
+    ? { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+    : undefined
+
+  const raw = await generateOutreach(buildIntentDraftInput({ prospect, recommendation, intent, icp }))
+  let parsed: { subject?: string; email?: string; followup?: string }
+  try { parsed = JSON.parse(raw) } catch { throw new ApiError(502, 'AI returned an invalid draft') }
+
+  const updated = await prisma.outreachIntent.update({
+    where: { id: intent.id },
+    data: {
+      draftSubject: parsed.subject ?? null,
+      draftBody: parsed.email ?? null,
+      draftFollowup: parsed.followup ?? null,
+      draftGeneratedAt: new Date(),
+      status: 'DRAFTED',
+    },
+  })
+  res.json(updated)
 }))
 
 // POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore
