@@ -30,6 +30,7 @@
     "test:e2e:install": "playwright install chromium",
     "loadtest": "tsx scripts/loadtest.ts",
     "eval:outreach": "tsx scripts/eval-outreach.ts",
+    "start:prod": "node scripts/start-with-migrations.mjs",
     "smoke:api": "node scripts/smoke-api-health.mjs"
   },
   "devDependencies": {
