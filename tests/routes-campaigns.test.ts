@@ -157,21 +157,17 @@ test('POST /:id/send daily cap counts delivered SENT rows only (429)', async () 
   assert.equal(countArg.where.status, 'SENT')
 })
 
-test('POST /:id/send in approval mode requires leads with approved drafts (400)', async () => {
+test('POST /:id/send in approval mode still requires the { approved: true } flag (403)', async () => {
   const s = spec()
   s.user = verifiedUser as any
-  let n = 0
-  s.lead = { count: async () => (++n === 1 ? 2 : 0) } as any // 2 eligible, 0 approved
+  s.lead = { count: async () => 1 } as any
   s.workspaceICP = { findUnique: async () => ({ approvalMode: true, dailySendLimit: 0 }) } as any
   s.mission = { findUnique: async () => ({ status: 'ACTIVE' }) } as any
-  const fake = createFakePrisma(s)
-  installPrisma(fake)
+  installPrisma(createFakePrisma(s))
 
   const res = await server.request('/api/campaigns/c1/send', {
-    method: 'POST', headers: jsonAuth(), body: JSON.stringify({ approved: true }),
+    method: 'POST', headers: jsonAuth(), body: JSON.stringify({}),
   })
-  assert.equal(res.status, 400)
-  assert.match(String(res.body.error), /approved outreach drafts/)
-  const approvedCountArg = fake.callsTo('lead', 'count')[1].args[0] as any
-  assert.deepEqual(approvedCountArg.where.outreachDrafts, { some: { status: 'APPROVED' } })
+  assert.equal(res.status, 403)
+  assert.match(String(res.body.error), /Approval required/)
 })

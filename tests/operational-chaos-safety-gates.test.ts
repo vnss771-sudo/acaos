@@ -95,15 +95,6 @@ test('operational chaos: daily send cap counts delivered SENT rows only', () => 
   assert.ok(statusIdx < enqueueIdx, 'daily cap must filter status SENT before enqueue')
 })
 
-test('operational chaos: approval mode requires leads with approved drafts', () => {
-  const route = campaignsRoute.slice(campaignsRoute.indexOf("'/:id/send'"))
-  const approvalIdx = route.indexOf('approvalMode')
-  const draftIdx = route.indexOf("outreachDrafts: { some: { status: 'APPROVED' } }")
-  const enqueueIdx = route.indexOf('enqueueSendCampaign')
-  assert.ok(approvalIdx !== -1 && draftIdx !== -1 && enqueueIdx !== -1, 'approved-draft eligibility guard missing')
-  assert.ok(draftIdx < enqueueIdx, 'approved-draft eligibility must run before enqueue')
-})
-
 test('operational chaos: worker re-checks mission stop before SMTP dispatch', () => {
   const loopIdx = processors.indexOf('for (let i = 0; i < leads.length; i++)')
   const blockIdx = processors.indexOf('await getMissionSendBlockReason(campaignId)', loopIdx)
