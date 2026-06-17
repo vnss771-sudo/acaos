@@ -46,6 +46,37 @@ describe('AiTools', () => {
     expect(JSON.parse((call![1] as { body: string }).body)).toMatchObject({ workspaceId: 'ws1' })
   })
 
+  test('outreach reuses the prospect research — passes aiSummary + outreachAngle', async () => {
+    // Run research → switch to outreach (business name persists) → the outreach
+    // request must carry the research so the email uses the real angle, not
+    // generic workspace defaults.
+    const researchJson = JSON.stringify({
+      aiSummary: 'Acme is a growing plumbing business.',
+      outreachAngle: 'Scheduling across crews',
+    })
+    const api = vi.fn()
+      .mockResolvedValueOnce({ leads: [] })            // mount fetch
+      .mockResolvedValueOnce({ result: researchJson }) // research run
+      .mockResolvedValueOnce({ result: '{"subject":"s","email":"e","followup":"f"}' }) // outreach run
+    render(<AiTools api={api as never} workspace={workspace} toast={toast as never} />)
+
+    await userEvent.type(await screen.findByPlaceholderText('Acme Plumbing Brisbane'), 'Acme Plumbing')
+    await userEvent.click(screen.getByRole('button', { name: /Run Lead Research/ }))
+
+    await userEvent.click(screen.getByRole('button', { name: /Outreach Copy/i }))
+    expect(await screen.findByText(/Using your research for Acme Plumbing/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Run Outreach Copy/ }))
+
+    const call = api.mock.calls.find(c => c[0] === '/api/ai/outreach')
+    expect(call).toBeTruthy()
+    expect(JSON.parse((call![1] as { body: string }).body)).toMatchObject({
+      workspaceId: 'ws1',
+      businessName: 'Acme Plumbing',
+      aiSummary: 'Acme is a growing plumbing business.',
+      outreachAngle: 'Scheduling across crews',
+    })
+  })
+
   test('async (Queue) mode reveals the lead selector', async () => {
     const api = vi.fn().mockResolvedValue({ leads: [lead] })
     render(<AiTools api={api as never} workspace={workspace} toast={toast as never} />)
