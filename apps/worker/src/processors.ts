@@ -328,6 +328,13 @@ export async function sendCampaignBatch(
           contactName:   lead.contactName ?? undefined,
           aiSummary:     lead.aiSummary   ?? undefined,
           outreachAngle: lead.outreachAngle ?? undefined,
+          // Pass the workspace ICP so campaign sends honour the seller's
+          // configured tone + product description (matches the AI Tools path).
+          icp: icp ? {
+            targetIndustries: icp.targetIndustries,
+            businessType: icp.businessType ?? undefined,
+            outreachTone: icp.outreachTone ?? undefined,
+          } : undefined,
         })
         const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }
         if (!parsed.subject || !parsed.email) { skipped++; continue }
