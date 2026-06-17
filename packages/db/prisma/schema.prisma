@@ -639,6 +639,12 @@ model OutreachIntent {
   messageAngle     String?
   channel          String?
   evidenceSnapshot Json?
+  // Draft generated from the intent's evidence (Stage 3). Held on the intent so
+  // it stays self-contained until an approved intent is materialised for sending.
+  draftSubject     String?
+  draftBody        String?
+  draftFollowup    String?
+  draftGeneratedAt DateTime?
   approvedBy       String?
   approvedAt       DateTime?
   createdAt        DateTime @default(now())
