@@ -7,6 +7,7 @@ import {
   calcWinProbability,
   getOpportunityTier,
   generateRuleBasedRecommendation,
+  corroborationLevel,
   EVENT_BASE_WEIGHTS
 } from '../apps/api/src/lib/signalEngine.js'
 import type { RawSignal, ProspectMeta, BuyingStage } from '../apps/api/src/lib/signalEngine.js'
@@ -416,5 +417,35 @@ describe('full scoring pipeline integration', () => {
 
     assert.ok(expectedRevenue > 0, 'Expected revenue should be positive')
     assert.ok(expectedRevenue <= dealValue, 'Expected revenue should not exceed deal value')
+  })
+})
+
+describe('corroboration (distinct-type convergence)', () => {
+  it('levels: none/single/promising/urgent by distinct type count', () => {
+    assert.equal(corroborationLevel([]).level, 'none')
+    assert.equal(corroborationLevel([makeSignal('HIRING')]).level, 'single')
+    assert.equal(corroborationLevel([makeSignal('HIRING'), makeSignal('FUNDING')]).level, 'promising')
+    assert.equal(corroborationLevel([makeSignal('HIRING'), makeSignal('FUNDING'), makeSignal('EXPANSION')]).level, 'urgent')
+  })
+
+  it('counts DISTINCT types, not raw signal count', () => {
+    const threeSame = corroborationLevel([makeSignal('HIRING'), makeSignal('HIRING'), makeSignal('HIRING')])
+    assert.equal(threeSame.distinctTypes, 1)
+    assert.equal(threeSame.level, 'single')
+  })
+
+  it('distinct types boost intent more than repeats of one type', () => {
+    const sameType = calculateOpportunityScores(
+      [makeSignal('HIRING', 0, 80), makeSignal('HIRING', 0, 80), makeSignal('HIRING', 0, 80)], ICPMeta)
+    const distinct = calculateOpportunityScores(
+      [makeSignal('HIRING', 0, 80), makeSignal('FUNDING', 0, 80), makeSignal('EXPANSION', 0, 80)], ICPMeta)
+    assert.ok(distinct.intentScore > sameType.intentScore,
+      `distinct-type intent (${distinct.intentScore}) should beat same-type (${sameType.intentScore})`)
+  })
+
+  it('corroboration is a multiplier — does not resurrect a zero intent', () => {
+    // Two distinct types but both sourceReliability 0 → intent stays 0.
+    const sigs = [makeSignal('HIRING', 0, 80), makeSignal('FUNDING', 0, 80)].map(s => ({ ...s, sourceReliability: 0 }))
+    assert.equal(calculateOpportunityScores(sigs, ICPMeta).intentScore, 0)
   })
 })

@@ -66,6 +66,35 @@ export function freshnessState(
   return 'EXPIRED'
 }
 
+export type CorroborationLevel = 'none' | 'single' | 'promising' | 'urgent'
+
+/** Count of DISTINCT signal types on a company (repeats of one type don't corroborate). */
+export function distinctSignalTypes(signals: RawSignal[]): number {
+  return new Set(signals.map((s) => s.type)).size
+}
+
+/**
+ * Corroboration: multiple *different* signals pointing at the same company are
+ * far stronger evidence than repeats of one. 1 type = interesting, 2 = promising,
+ * 3+ = urgent. Used to label opportunities and to boost intent.
+ */
+export function corroborationLevel(signals: RawSignal[]): { distinctTypes: number; level: CorroborationLevel } {
+  const distinctTypes = distinctSignalTypes(signals)
+  const level: CorroborationLevel =
+    distinctTypes === 0 ? 'none' : distinctTypes === 1 ? 'single' : distinctTypes === 2 ? 'promising' : 'urgent'
+  return { distinctTypes, level }
+}
+
+// Multiplier applied to intent — bounded, and a multiplier (not additive) so a
+// zero intent (e.g. sourceReliability 0) stays zero.
+function corroborationMultiplier(signals: RawSignal[]): number {
+  const n = distinctSignalTypes(signals)
+  if (n >= 4) return 1.3
+  if (n === 3) return 1.22
+  if (n === 2) return 1.12
+  return 1.0
+}
+
 // Intent score: how strongly this company is showing buying intent
 function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights): number {
   if (signals.length === 0) return 0
@@ -77,7 +106,7 @@ function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights): n
   scores.sort((a, b) => b - a)
   const primary = scores[0]
   const bonus = scores.slice(1).reduce((acc, s) => acc + s * 0.25, 0)
-  return Math.min(100, primary + bonus)
+  return Math.min(100, (primary + bonus) * corroborationMultiplier(signals))
 }
 
 // Timing score: freshness of signals
