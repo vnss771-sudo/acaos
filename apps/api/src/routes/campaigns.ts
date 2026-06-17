@@ -64,6 +64,35 @@ campaignsRouter.get(
   })
 )
 
+// Workspace outbox health — surfaces sends that need operator attention:
+// FAILED rows (with the SMTP error) and SENDING rows stuck past a threshold
+// (a crash after dispatch leaves them SENDING; fail-closed = never auto-resent).
+// Makes delivery trust visible instead of silently swallowing problems.
+// Registered before /:id so "outbox-issues" isn't matched as a campaign id.
+campaignsRouter.get(
+  '/outbox-issues',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const workspaceId = String(req.query.workspaceId || '').trim()
+    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
+
+    // SENDING older than this is "unknown delivery" — claimed but never confirmed.
+    const stuckMinutes = 10
+    const stuckBefore = new Date(Date.now() - stuckMinutes * 60_000)
+
+    const select = { id: true, toEmail: true, subject: true, status: true, lastError: true, sentAt: true, campaignId: true } as const
+    const [failed, stuck, failedCount, stuckCount] = await Promise.all([
+      prisma.outreachSent.findMany({ where: { workspaceId, status: 'FAILED' }, orderBy: { sentAt: 'desc' }, take: 50, select }),
+      prisma.outreachSent.findMany({ where: { workspaceId, status: 'SENDING', sentAt: { lt: stuckBefore } }, orderBy: { sentAt: 'desc' }, take: 50, select }),
+      prisma.outreachSent.count({ where: { workspaceId, status: 'FAILED' } }),
+      prisma.outreachSent.count({ where: { workspaceId, status: 'SENDING', sentAt: { lt: stuckBefore } } }),
+    ])
+
+    res.json({ failed, stuck, failedCount, stuckCount, stuckMinutes, hasIssues: failedCount + stuckCount > 0 })
+  })
+)
+
 // Create campaign
 campaignsRouter.post(
   '/',

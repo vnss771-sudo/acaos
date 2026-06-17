@@ -4,6 +4,7 @@ import { STAGE_COLOR, TIER_COLOR, SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { GettingStarted } from '../components/GettingStarted.js'
+import { OutboxHealth } from '../components/OutboxHealth.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -330,6 +331,9 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
     <div style={s.stack}>
       {/* Onboarding: shows send-readiness steps; hides itself once ready */}
       <GettingStarted api={api} workspaceId={workspace.id} toast={toast} setView={setView} />
+
+      {/* Delivery health: shows failed/stuck sends; hides itself when clean */}
+      <OutboxHealth api={api} workspaceId={workspace.id} />
 
       {/* Hot accounts + signal feed — only shown when data exists */}
       {!loading && (hotProspects.length > 0 || recentSignals.length > 0) && (
