@@ -102,3 +102,12 @@ test('operational chaos: worker re-checks mission stop before SMTP dispatch', ()
   assert.ok(loopIdx !== -1 && blockIdx !== -1 && sendMailIdx !== -1, 'worker mission stop check missing')
   assert.ok(blockIdx < sendMailIdx, 'worker must check mission status before SMTP dispatch')
 })
+
+test('operational chaos: approval mode requires an approved draft before enqueue', () => {
+  const route = campaignsRoute.slice(campaignsRoute.indexOf("'/:id/send'"))
+  const approvalIdx = route.indexOf('approvalMode')
+  const draftIdx = route.indexOf("outreachDrafts: { some: { status: 'APPROVED' } }")
+  const enqueueIdx = route.indexOf('enqueueSendCampaign')
+  assert.ok(approvalIdx !== -1 && draftIdx !== -1 && enqueueIdx !== -1, 'approved-draft gate missing')
+  assert.ok(draftIdx < enqueueIdx, 'approved-draft gate must run before enqueue')
+})

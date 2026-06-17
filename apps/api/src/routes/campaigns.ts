@@ -278,7 +278,7 @@ campaignsRouter.post(
       ...(requestedIds ? { id: { in: requestedIds } } : {})
     }
 
-    const eligible = await prisma.lead.count({ where })
+    let eligible = await prisma.lead.count({ where })
     if (eligible === 0) throw new ApiError(400, 'No eligible leads with email addresses in this campaign')
 
     // Enforce mission stop-control, approval mode, and daily send limit before
@@ -299,6 +299,17 @@ campaignsRouter.post(
       if (!req.body?.approved) {
         throw new ApiError(403, 'Approval required — send { approved: true } to confirm dispatch')
       }
+      // This product reviews drafts per-lead (Review Queue → APPROVED) and the
+      // worker only sends APPROVED drafts in approval mode. So require at least
+      // one lead with an approved draft, otherwise we'd accept a launch the
+      // worker silently sends nothing for.
+      const approvedEligible = await prisma.lead.count({
+        where: { ...where, outreachDrafts: { some: { status: 'APPROVED' } } },
+      })
+      if (approvedEligible === 0) {
+        throw new ApiError(400, 'No approved drafts to send — approve outreach in the Review Queue first')
+      }
+      eligible = approvedEligible
     }
 
     let cappedEligible = eligible

@@ -62,3 +62,22 @@ export async function getWorkspaceId(request: APIRequestContext, token: string):
 export async function closeDb(): Promise<void> {
   if (prisma) { await prisma.$disconnect(); prisma = null }
 }
+
+/**
+ * Seed an APPROVED outreach draft for a lead (by email) — mirrors the real
+ * Review Queue approval so an approval-mode campaign has something to send.
+ */
+export async function approveDraftForLead(workspaceId: string, leadEmail: string): Promise<void> {
+  const lead = await db().lead.findFirst({ where: { workspaceId, email: leadEmail } })
+  if (!lead) throw new Error(`approveDraftForLead: no lead found for ${leadEmail}`)
+  await db().outreachDraft.create({
+    data: {
+      leadId: lead.id,
+      workspaceId,
+      subject: 'Approved subject',
+      emailBody: 'Approved body',
+      status: 'APPROVED',
+      reviewedAt: new Date(),
+    },
+  })
+}
