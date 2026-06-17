@@ -273,3 +273,33 @@ test('approve rejects a leadId from another workspace (400)', async () => {
   })
   assert.equal(res.status, 400)
 })
+
+test('POST /:id/intents/:intentId/materialize 409 when intent not approved', async () => {
+  installPrisma(createFakePrisma(intentSpec('DRAFTED')))
+  const res = await server.request('/api/prospects/p1/intents/oi1/materialize', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 409)
+})
+
+test('POST /:id/intents/:intentId/materialize 400 when prospect has no contact email', async () => {
+  const s = intentSpec('APPROVED')
+  ;(s as any).outreachIntent.findUnique = async () => ({ id: 'oi1', prospectId: 'p1', workspaceId: OWNED_WS, status: 'APPROVED', draftSubject: 'S', draftBody: 'B', draftFollowup: null, leadId: null })
+  ;(s as any).prospect = { findUnique: async () => ({ id: 'p1', workspaceId: OWNED_WS, companyName: 'X', contactEmail: null, contactName: null, domain: null, location: null, industry: null }) }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents/oi1/materialize', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 400)
+})
+
+test('POST /:id/intents/:intentId/materialize 201 materialises an approved intent', async () => {
+  const s = intentSpec('APPROVED')
+  ;(s as any).outreachIntent.findUnique = async () => ({ id: 'oi1', prospectId: 'p1', workspaceId: OWNED_WS, status: 'APPROVED', draftSubject: 'S', draftBody: 'B', draftFollowup: null, leadId: null })
+  ;(s as any).outreachIntent.update = async (a: any) => ({ id: 'oi1', ...a.data })
+  ;(s as any).prospect = { findUnique: async () => ({ id: 'p1', workspaceId: OWNED_WS, companyName: 'Acme', contactEmail: 'c@acme.test', contactName: 'C', domain: 'acme.test', location: 'Bne', industry: 'Plumbing' }) }
+  ;(s as any).campaign = { findFirst: async () => null, create: async () => ({ id: 'camp1' }) }
+  ;(s as any).lead = { findFirst: async () => null, create: async () => ({ id: 'lead1' }) }
+  ;(s as any).outreachDraft = { create: async () => ({ id: 'draft1' }) }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/prospects/p1/intents/oi1/materialize', { method: 'POST', headers: auth(MEMBER) })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.leadId, 'lead1')
+  assert.equal(res.body.campaignId, 'camp1')
+})

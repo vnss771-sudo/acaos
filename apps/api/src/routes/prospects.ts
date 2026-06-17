@@ -22,6 +22,7 @@ import { enrichProspect } from '../services/apollo.js'
 import { ingestSignal } from '../lib/signalIngest.js'
 import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation, buildIntentDraftInput } from '../lib/outreachIntent.js'
+import { materializeOutreachIntent } from '../lib/materializeIntent.js'
 import { generateOutreach } from '../services/openai.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
@@ -840,6 +841,39 @@ prospectsRouter.post('/:id/intents/:intentId/reject', asyncHandler(async (req, r
     metadata: { prospectId: intent.prospectId },
   })
   res.json(updated)
+}))
+
+// Stage 5 / Option A: materialise an APPROVED intent into a sendable Lead +
+// APPROVED draft in a campaign, linked back to the intent. After this, launch
+// the campaign via the normal send path (which stamps provenance + flips SENT).
+prospectsRouter.post('/:id/intents/:intentId/materialize', asyncHandler(async (req, res) => {
+  const userId = (req as AuthedRequest).user.id
+  const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
+  if (intent.status !== 'APPROVED') {
+    throw new ApiError(409, `Intent must be approved before sending — it is ${intent.status.toLowerCase()}`)
+  }
+  if (!intent.draftBody) throw new ApiError(409, 'Intent has no drafted message to send')
+
+  const prospect = await prisma.prospect.findUnique({
+    where: { id: intent.prospectId },
+    select: { companyName: true, contactEmail: true, contactName: true, domain: true, location: true, industry: true },
+  })
+  if (!prospect) throw new ApiError(404, 'Prospect not found')
+  if (!prospect.contactEmail) throw new ApiError(400, 'Prospect has no contact email — cannot create a sendable lead')
+
+  const campaignId = typeof req.body?.campaignId === 'string' ? req.body.campaignId.trim() : undefined
+  if (campaignId) {
+    const c = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { workspaceId: true } })
+    if (!c || c.workspaceId !== intent.workspaceId) throw new ApiError(400, 'campaignId does not belong to this workspace')
+  }
+
+  const result = await materializeOutreachIntent({ intent, prospect, campaignId })
+  void recordAudit({
+    workspaceId: intent.workspaceId, actorUserId: userId,
+    type: 'outreachIntent.materialize', entityType: 'outreachIntent', entityId: intent.id,
+    metadata: result,
+  })
+  res.status(201).json({ ...result, message: `Intent materialised — launch campaign ${result.campaignId} to send (approval-mode safe).` })
 }))
 
 // POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore
