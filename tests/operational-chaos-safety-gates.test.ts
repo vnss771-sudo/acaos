@@ -121,3 +121,17 @@ test('schema: OutreachIntent bridge exists with recommendation link + evidence s
   assert.match(m, /prospectId/, 'links to the prospect')
   assert.match(schema, /enum OutreachIntentStatus/, 'status enum defined')
 })
+
+test('schema: OutreachSent carries intelligence provenance (Stage 5)', () => {
+  const m = modelBlock('OutreachSent')
+  assert.match(m, /outreachIntentId\s+String\?/, 'send links to its intent')
+  assert.match(m, /evidenceSnapshot\s+Json\?/, 'send snapshots the evidence')
+})
+
+test('worker: send stamps a linked approved intent and advances it to SENT', () => {
+  assert.ok(processors.includes("leadId: lead.id, status: 'APPROVED'"), 'looks up the approved intent for the lead')
+  assert.ok(processors.includes('outreachIntentId: linkedIntent.id'), 'stamps intent provenance on the send')
+  const flipIdx = processors.indexOf("prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' }")
+  const createIdx = processors.indexOf('prisma.outreachSent.create')
+  assert.ok(flipIdx !== -1 && createIdx !== -1 && createIdx < flipIdx, 'intent flips to SENT after the send claim')
+})

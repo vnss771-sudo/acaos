@@ -225,6 +225,11 @@ model OutreachSent {
   repliedAt        DateTime?
   replyIntent      String?
   unsubscribeToken String?   @unique
+  // Intelligence provenance (Stage 5): what intent/recommendation + evidence this
+  // send was based on, snapshotted at send time so the record is self-auditable.
+  outreachIntentId String?
+  recommendationId String?
+  evidenceSnapshot Json?
   sentAt           DateTime  @default(now())
   workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign         Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
@@ -234,6 +239,7 @@ model OutreachSent {
   @@index([campaignId])
   @@index([leadId])
   @@index([toEmail])
+  @@index([outreachIntentId])
   // Outbox idempotency: at most one send row per (campaign, lead). Postgres
   // treats NULLs as distinct, so non-campaign/non-lead sends are unaffected.
   @@unique([campaignId, leadId])
