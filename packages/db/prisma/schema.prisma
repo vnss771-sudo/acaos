@@ -86,6 +86,7 @@ model Workspace {
   prospects            Prospect[]
   signals              Signal[]
   recommendations      Recommendation[]
+  outreachIntents      OutreachIntent[]
   prospectOutcomes     ProspectOutcome[]
   workspaceICP         WorkspaceICP?
   outreachSent         OutreachSent[]
@@ -521,6 +522,7 @@ model Prospect {
   recommendations  Recommendation[]
   outcomes         ProspectOutcome[]
   evidenceSources  EvidenceSource[]
+  outreachIntents  OutreachIntent[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
@@ -601,9 +603,52 @@ model Recommendation {
   actedAt      DateTime?
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect     Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  outreachIntent OutreachIntent?
   createdAt    DateTime  @default(now())
 
   @@index([workspaceId])
+  @@index([prospectId])
+}
+
+// Bridge between the prospect-intelligence track (Recommendation) and the
+// outreach/send track (Lead/Campaign/OutreachSent). Carries a recommendation +
+// an evidence snapshot through the draft → approval → send → outcome lifecycle
+// as one auditable record. Stage 1: schema only (not yet wired).
+enum OutreachIntentStatus {
+  PROPOSED
+  DRAFTED
+  APPROVED
+  QUEUED
+  SENT
+  WON
+  LOST
+  REJECTED
+}
+
+model OutreachIntent {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  prospectId       String
+  recommendationId String?  @unique
+  // Plain scalar links into the send track (no FK yet) — set when an approved
+  // intent is materialised for sending; kept loose to avoid coupling Stage 1.
+  leadId           String?
+  campaignId       String?
+  missionId        String?
+  status           OutreachIntentStatus @default(PROPOSED)
+  messageAngle     String?
+  channel          String?
+  evidenceSnapshot Json?
+  approvedBy       String?
+  approvedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect       Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  recommendation Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
   @@index([prospectId])
 }
 
