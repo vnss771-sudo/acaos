@@ -72,6 +72,18 @@ export async function enqueueCalibrate(workspaceId: string) {
   return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, defaultJobOpts)
 }
 
+// Batch prospect enrichment (Apollo firmographics + Hunter verified contact).
+// attempts:1 — every attempt spends Apollo/Hunter credits, so we never auto-retry
+// the whole batch; the processor isolates per-prospect faults with allSettled, so
+// a single bad prospect doesn't need a batch-level retry anyway.
+export async function enqueueEnrichProspects(opts: { workspaceId: string; prospectIds: string[]; initiatedByUserId?: string }) {
+  return getQueue('enrich-prospects').add('enrich-prospects', opts, {
+    attempts: 1,
+    removeOnComplete: 50,
+    removeOnFail: 100,
+  })
+}
+
 export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
   // Deterministic jobId so repeated "launch" clicks within the same minute collapse
   // to a single send job (BullMQ ignores an add with an existing jobId). The
@@ -95,7 +107,8 @@ export async function enqueueSendCampaign(campaignId: string, workspaceId: strin
 
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
-  'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations'
+  'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
+  'enrich-prospects'
 ]
 
 export async function getQueueStats() {
