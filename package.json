@@ -12,7 +12,7 @@
     "dev": "echo Run dev:web, dev:api and dev:worker in separate terminals",
     "prisma:generate": "npm --workspace @acaos/db run prisma:generate",
     "prisma:migrate": "npm --workspace @acaos/db run prisma:migrate",
-    "build": "npm run build -w @acaos/backend-core && npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
+    "build": "npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "typecheck:shared": "tsc --noEmit -p packages/shared/tsconfig.json",
     "typecheck:backend-core": "tsc --noEmit -p packages/backend-core/tsconfig.json",
