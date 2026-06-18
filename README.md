@@ -56,6 +56,21 @@ docker compose up --build       # then open http://localhost:8080
 The bundled secrets are local-only throwaways. For a hot-reloading dev loop
 (source bind-mounted, no rebuild) use `docker compose -f docker-compose.local.yml up`.
 
+### Distributable zip bundles
+
+Generate self-contained `.zip` archives anyone can download and load up without
+cloning the repo:
+
+```bash
+npm run pack          # builds both, into dist-pack/
+npm run pack:source   # acaos-source.zip — clean git-archive of HEAD (unzip → npm install → run)
+npm run pack:pilot    # acaos-pilot-pack.zip — operator bundle (run-sheet, DNS guide,
+                      #   signals template, import/results scripts, QUICKSTART)
+```
+
+`dist-pack/` is git-ignored — the bundles are reproducible build artifacts, not
+checked-in binaries. See [`scripts/make-zips.mjs`](scripts/make-zips.mjs).
+
 ### Useful commands
 
 ```bash

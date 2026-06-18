@@ -31,7 +31,10 @@
     "loadtest": "tsx scripts/loadtest.ts",
     "eval:outreach": "tsx scripts/eval-outreach.ts",
     "start:prod": "node scripts/start-with-migrations.mjs",
-    "smoke:api": "node scripts/smoke-api-health.mjs"
+    "smoke:api": "node scripts/smoke-api-health.mjs",
+    "pack": "node scripts/make-zips.mjs",
+    "pack:source": "node scripts/make-zips.mjs source",
+    "pack:pilot": "node scripts/make-zips.mjs pilot"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
