@@ -84,6 +84,25 @@ test('validateConfig passes in production when fully configured', () => {
   assert.doesNotThrow(() => validateConfig())
 })
 
+const PROD_OK = {
+  NODE_ENV: 'production',
+  DATABASE_URL: 'postgresql://x',
+  JWT_SECRET: 'a-strong-production-secret-value',
+  EMAIL_ENCRYPTION_KEY: 'a-valid-encryption-key-for-testing',
+  REDIS_URL: 'redis://localhost:6379',
+  ALLOWED_ORIGINS: 'https://app.acme.com',
+}
+
+test('validateConfig refuses to boot in production when rate limiting is disabled', () => {
+  setEnv({ ...PROD_OK, RATE_LIMIT_DISABLED: 'true' })
+  assert.throws(() => validateConfig(), /RATE_LIMIT_DISABLED must not be "true" in production/)
+})
+
+test('RATE_LIMIT_DISABLED is allowed outside production', () => {
+  setEnv({ NODE_ENV: 'development', JWT_SECRET: 'a-strong-production-secret-value', RATE_LIMIT_DISABLED: 'true' })
+  assert.doesNotThrow(() => validateConfig())
+})
+
 // --- security headers ---
 
 function runHeaders(production: boolean) {

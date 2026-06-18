@@ -63,7 +63,14 @@ app.use(express.json({ limit: '1mb' }))
 // closes it off on public ingresses); when unset, the endpoint is open (dev).
 app.get('/metrics', (req, res) => {
   const token = process.env.METRICS_TOKEN?.trim()
-  if (token && req.headers.authorization !== `Bearer ${token}`) {
+  // Fail closed in production when no token is configured — an open /metrics on a
+  // public ingress leaks internal counters (queue depth, volumes). Dev stays open.
+  if (!token) {
+    if (isProduction()) {
+      res.status(404).json({ error: 'Not found' })
+      return
+    }
+  } else if (req.headers.authorization !== `Bearer ${token}`) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
