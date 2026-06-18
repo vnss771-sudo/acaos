@@ -33,7 +33,8 @@
     "loadtest": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/loadtest.ts",
     "eval:outreach": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/eval-outreach.ts",
     "start:prod": "node scripts/start-with-migrations.mjs",
-    "smoke:api": "node scripts/smoke-api-health.mjs"
+    "smoke:api": "node scripts/smoke-api-health.mjs",
+    "pack": "node scripts/make-zips.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
