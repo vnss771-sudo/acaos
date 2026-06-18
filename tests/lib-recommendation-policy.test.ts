@@ -5,7 +5,7 @@ import {
   evidenceGatedPriority,
   AUTO_RECOMMEND_THRESHOLD,
   HIGH_CONFIDENCE_PRIORITY,
-} from '../apps/api/src/lib/recommendationPolicy.ts'
+} from '../packages/backend-core/src/lib/recommendationPolicy.ts'
 
 const fresh = () => new Date()
 const ancient = () => new Date(Date.now() - 800 * 86_400_000) // ~2+ years → EXPIRED for any type

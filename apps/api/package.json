@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
+    "dev": "NODE_OPTIONS=--conditions=acaos-src tsx watch src/server.ts",
+    "build": "npm run build -w @acaos/backend-core && npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
     "migrate": "npx prisma migrate deploy --schema ../../packages/db/prisma/schema.prisma",
     "start": "node dist/server.js",
-    "start:dev": "tsx src/server.ts"
+    "start:dev": "NODE_OPTIONS=--conditions=acaos-src tsx src/server.ts"
   },
   "dependencies": {
     "@acaos/shared": "*",
@@ -25,7 +25,8 @@
     "openai": "^6.0.0",
     "prisma": "^5.18.0",
     "stripe": "^16.8.0",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@acaos/backend-core": "*"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -3,7 +3,7 @@
 
 import { test, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAndIncrementDiscoveryUsage, checkAndIncrementAiUsage, getMonthlyUsage } from '../apps/api/src/lib/limits.ts'
+import { checkAndIncrementDiscoveryUsage, checkAndIncrementAiUsage, getMonthlyUsage } from '../packages/backend-core/src/lib/limits.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 test('getMonthlyUsage reports discovery + lead usage with plan limits', async () => {

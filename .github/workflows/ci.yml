@@ -22,12 +22,17 @@ jobs:
       - name: Security audit
         run: npm audit --omit=dev --audit-level=high
 
+      # Architectural boundary: the worker must not import apps/api (shared code
+      # lives in @acaos/backend-core). Cheap, no Prisma needed — run it first.
+      - name: Check package boundaries
+        run: npm run check:boundaries
+
       # The Prisma client must be generated before typecheck — the route and
       # worker layers depend on its generated types.
       - name: Generate Prisma client
         run: npm run prisma:generate
 
-      - name: Typecheck (api + web + worker)
+      - name: Typecheck (shared + backend-core + api + web + worker)
         run: npm run typecheck
 
       - name: Test (with coverage gate)

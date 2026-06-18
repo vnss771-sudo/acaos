@@ -1,0 +1,22 @@
+import { prisma } from './prisma.js';
+export async function isSuppressed(workspaceId, email) {
+    const hit = await prisma.suppression.findUnique({
+        where: { workspaceId_email: { workspaceId, email: email.toLowerCase().trim() } }
+    });
+    return hit !== null;
+}
+export async function suppress(workspaceId, email, reason = 'UNSUBSCRIBED') {
+    await prisma.suppression.upsert({
+        where: { workspaceId_email: { workspaceId, email: email.toLowerCase().trim() } },
+        create: { workspaceId, email: email.toLowerCase().trim(), reason },
+        update: { reason }
+    });
+}
+export async function bulkCheckSuppression(workspaceId, emails) {
+    const normalised = emails.map(e => e.toLowerCase().trim());
+    const hits = await prisma.suppression.findMany({
+        where: { workspaceId, email: { in: normalised } },
+        select: { email: true }
+    });
+    return new Set(hits.map((h) => h.email));
+}

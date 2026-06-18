@@ -1,26 +1,4 @@
-import { PrismaClient } from '@prisma/client'
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __acaosPrisma__: PrismaClient | undefined
-}
-
-function createPrismaClient() {
-  return new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error']
-  })
-}
-
-function getClient() {
-  if (!globalThis.__acaosPrisma__) {
-    globalThis.__acaosPrisma__ = createPrismaClient()
-  }
-  return globalThis.__acaosPrisma__
-}
-
-export const prisma = new Proxy({} as PrismaClient, {
-  get(_target, property, receiver) {
-    const client = getClient()
-    return Reflect.get(client as object, property, receiver)
-  }
-})
+// Re-export shim: the implementation lives in @acaos/backend-core so the worker
+// can share it without importing apps/api. Kept here so existing api imports of
+// `../lib/prisma.js` keep resolving.
+export * from '@acaos/backend-core/lib/prisma.js'

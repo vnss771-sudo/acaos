@@ -3,10 +3,10 @@ import { Worker, Queue } from 'bullmq'
 import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
-import { generateLeadResearch, generateOutreach, analyzeReply } from '../../api/src/services/openai.js'
-import { prisma } from '../../api/src/lib/prisma.js'
-import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
-import type { ScoringWeights } from '../../api/src/lib/scoring.js'
+import { generateLeadResearch, generateOutreach, analyzeReply } from '@acaos/backend-core/services/openai.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
+import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import type { LeadStage } from '@prisma/client'
 import {
   calculateOpportunityScores,
@@ -14,14 +14,14 @@ import {
   calcWinProbability,
   generateRuleBasedRecommendation,
   toRawSignal,
-} from '../../api/src/lib/signalEngine.js'
-import type { SignalWeights } from '../../api/src/lib/signalEngine.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
+import type { SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
-import { enqueueGenerateRecommendations } from '../../api/src/lib/queues.js'
-import { evidenceGatedPriority } from '../../api/src/lib/recommendationPolicy.js'
-import { createOutreachIntentForRecommendation } from '../../api/src/lib/outreachIntent.js'
-import { captureError } from '../../api/src/lib/observability.js'
-import { initErrorReporting } from '../../api/src/lib/errorReporting.js'
+import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
+import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
+import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
+import { captureError } from '@acaos/backend-core/lib/observability.js'
+import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
 
 function log(queue: string, msg: string) {
@@ -255,7 +255,7 @@ const mailboxWorker = new Worker(
   'sync-mailbox',
   async (job) => {
     const { workspaceId, autoSync } = job.data as { workspaceId?: string; autoSync?: boolean }
-    const { syncMailboxOnce, isMailboxConfigured } = await import('../../api/src/services/mail.js')
+    const { syncMailboxOnce, isMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
 
     if (autoSync) {
       log('sync-mailbox', 'Auto-scanning all workspace mailboxes')

@@ -3,7 +3,7 @@
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { adminRouter } from '../apps/api/src/routes/admin.ts'
-import { recordAudit } from '../apps/api/src/lib/audit.ts'
+import { recordAudit } from '../packages/backend-core/src/lib/audit.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
 let server: TestServer

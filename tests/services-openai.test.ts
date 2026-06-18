@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { generateLeadResearch, generateOutreach, analyzeReply, buildOutreachUserPrompt } from '../apps/api/src/services/openai.ts'
+import { generateLeadResearch, generateOutreach, analyzeReply, buildOutreachUserPrompt } from '../packages/backend-core/src/services/openai.ts'
 import { ApiError } from '../apps/api/src/lib/http.ts'
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => void | Promise<void>) {

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeLeadScore, getScoreTier, DEFAULT_SCORING_WEIGHTS } from '../apps/api/src/lib/scoring.js'
+import { computeLeadScore, getScoreTier, DEFAULT_SCORING_WEIGHTS } from '../packages/backend-core/src/lib/scoring.js'
 
 function lead(overrides: Partial<Parameters<typeof computeLeadScore>[0]> = {}): Parameters<typeof computeLeadScore>[0] {
   return {

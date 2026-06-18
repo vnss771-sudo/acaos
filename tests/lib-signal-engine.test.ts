@@ -9,8 +9,8 @@ import {
   generateRuleBasedRecommendation,
   corroborationLevel,
   EVENT_BASE_WEIGHTS
-} from '../apps/api/src/lib/signalEngine.js'
-import type { RawSignal, ProspectMeta, BuyingStage } from '../apps/api/src/lib/signalEngine.js'
+} from '../packages/backend-core/src/lib/signalEngine.js'
+import type { RawSignal, ProspectMeta, BuyingStage } from '../packages/backend-core/src/lib/signalEngine.js'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 

@@ -31,9 +31,9 @@ import { leadsRouter } from '../apps/api/src/routes/leads.ts'
 import { campaignsRouter } from '../apps/api/src/routes/campaigns.ts'
 import { authRouter } from '../apps/api/src/routes/auth.ts'
 import { escCsv } from '../apps/api/src/lib/csv.ts'
-import { isOriginAllowed } from '../apps/api/src/lib/config.ts'
+import { isOriginAllowed } from '../packages/backend-core/src/lib/config.ts'
 import { securityHeaders } from '../apps/api/src/middleware/securityHeaders.ts'
-import { signJwt } from '../apps/api/src/lib/jwt.ts'
+import { signJwt } from '../packages/backend-core/src/lib/jwt.ts'
 import type { Request, Response } from 'express'
 
 // ── env ────────────────────────────────────────────────────────────────────────

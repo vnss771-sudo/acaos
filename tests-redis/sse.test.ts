@@ -5,7 +5,7 @@
 import { test, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { jobsRouter } from '../apps/api/src/routes/jobs.ts'
-import { enqueueResearchLead } from '../apps/api/src/lib/queues.ts'
+import { enqueueResearchLead } from '../packages/backend-core/src/lib/queues.ts'
 import {
   resetAll, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer,
 } from './helpers/env.ts'

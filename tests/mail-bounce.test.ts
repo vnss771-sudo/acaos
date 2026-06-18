@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { detectBounceRecipients } from '../apps/api/src/services/mail.ts'
+import { detectBounceRecipients } from '../packages/backend-core/src/services/mail.ts'
 
 test('detects a DSN bounce and extracts the Final-Recipient', () => {
   const body = [

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { encryptSecret, decryptSecret, isEncrypted } from '../apps/api/src/lib/encrypt.ts'
+import { encryptSecret, decryptSecret, isEncrypted } from '../packages/backend-core/src/lib/encrypt.ts'
 
 test('encrypt/decrypt round-trips with the dev fallback key', () => {
   const secret = 'hunter2-smtp-password'

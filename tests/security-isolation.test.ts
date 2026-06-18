@@ -21,7 +21,7 @@ import { leadsRouter } from '../apps/api/src/routes/leads.ts'
 import { prospectsRouter } from '../apps/api/src/routes/prospects.ts'
 import { campaignsRouter } from '../apps/api/src/routes/campaigns.ts'
 import { workspaceRouter } from '../apps/api/src/routes/workspaces.ts'
-import { signJwt } from '../apps/api/src/lib/jwt.ts'
+import { signJwt } from '../packages/backend-core/src/lib/jwt.ts'
 
 // ── env ────────────────────────────────────────────────────────────────────────
 process.env.JWT_SECRET = 'test-security-isolation-secret-32ch'

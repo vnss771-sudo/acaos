@@ -2,7 +2,7 @@
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { logger } from '../apps/api/src/lib/logger.ts'
+import { logger } from '../packages/backend-core/src/lib/logger.ts'
 import { requestContext } from '../apps/api/src/middleware/requestContext.ts'
 import type { Request, Response } from 'express'
 

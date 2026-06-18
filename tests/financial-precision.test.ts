@@ -12,7 +12,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { dollarsToCents, centsToDollars } from '../apps/api/src/lib/money.ts'
-import { getPlanInfo } from '../apps/api/src/lib/limits.ts'
+import { getPlanInfo } from '../packages/backend-core/src/lib/limits.ts'
 
 // ── dollarsToCents ─────────────────────────────────────────────────────────────
 

@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/worker.ts",
-    "build": "npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
-    "start": "node dist/apps/worker/src/worker.js",
-    "start:dev": "tsx src/worker.ts"
+    "dev": "NODE_OPTIONS=--conditions=acaos-src tsx watch src/worker.ts",
+    "build": "npm run build -w @acaos/backend-core && npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
+    "start": "node dist/worker.js",
+    "start:dev": "NODE_OPTIONS=--conditions=acaos-src tsx src/worker.ts"
   },
   "dependencies": {
+    "@acaos/backend-core": "*",
     "bullmq": "^5.12.12",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1"

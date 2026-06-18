@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isMailConfigured, isMailboxConfigured, buildTransport } from '../apps/api/src/services/mail.ts'
+import { isMailConfigured, isMailboxConfigured, buildTransport } from '../packages/backend-core/src/services/mail.ts'
 import { ApiError } from '../apps/api/src/lib/http.ts'
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => void | Promise<void>) {

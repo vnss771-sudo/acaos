@@ -13,13 +13,13 @@
       "ES2020"
     ],
     "resolveJsonModule": true,
+    "customConditions": ["acaos-src"],
     "outDir": "dist",
-    "rootDir": "../.."
+    "rootDir": "src"
   },
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
-    "src/**/*.d.ts",
-    "../../apps/api/src/**/*.ts"
+    "src/**/*.d.ts"
   ]
 }

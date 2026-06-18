@@ -16,8 +16,8 @@ import {
   getOpportunityTier,
   generateRuleBasedRecommendation,
   EVENT_BASE_WEIGHTS,
-} from '../apps/api/src/lib/signalEngine.ts'
-import type { RawSignal, ProspectMeta, ICPConfig } from '../apps/api/src/lib/signalEngine.ts'
+} from '../packages/backend-core/src/lib/signalEngine.ts'
+import type { RawSignal, ProspectMeta, ICPConfig } from '../packages/backend-core/src/lib/signalEngine.ts'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 

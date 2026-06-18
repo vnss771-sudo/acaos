@@ -9,8 +9,8 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { calibrate } from '../apps/api/src/lib/learningLoop.ts'
-import { EVENT_BASE_WEIGHTS } from '../apps/api/src/lib/signalEngine.ts'
+import { calibrate } from '../packages/backend-core/src/lib/learningLoop.ts'
+import { EVENT_BASE_WEIGHTS } from '../packages/backend-core/src/lib/signalEngine.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

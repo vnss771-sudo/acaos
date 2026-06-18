@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   signJwt, verifyJwt, generateRefreshToken, hashRefreshToken, refreshTokenExpiresAt, getJwtSecret,
-} from '../apps/api/src/lib/jwt.ts'
+} from '../packages/backend-core/src/lib/jwt.ts'
 
 test('signJwt / verifyJwt round-trips the payload', () => {
   const token = signJwt({ userId: 'user-123' })

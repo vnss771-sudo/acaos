@@ -3,22 +3,22 @@
 // Redis on construction). worker.ts wires these into Workers; tests call them
 // directly.
 
-import { prisma } from '../../api/src/lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import type { LeadStage } from '@prisma/client'
-import { DEFAULT_SCORING_WEIGHTS } from '../../api/src/lib/scoring.js'
+import { DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
   calcWinProbability,
   toRawSignal,
-} from '../../api/src/lib/signalEngine.js'
-import type { SignalType, SignalWeights } from '../../api/src/lib/signalEngine.js'
-import { calibrate } from '../../api/src/lib/learningLoop.js'
-import { AUTO_RECOMMEND_THRESHOLD } from '../../api/src/lib/recommendationPolicy.js'
-import { generateOutreach } from '../../api/src/services/openai.js'
-import { sendMail, isMailConfigured, type SmtpConfig } from '../../api/src/services/mail.js'
-import { checkAndIncrementAiUsage } from '../../api/src/lib/limits.js'
-import { bulkCheckSuppression } from '../../api/src/lib/suppressions.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
+import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
+import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
+import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
+import { generateOutreach } from '@acaos/backend-core/services/openai.js'
+import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
+import { checkAndIncrementAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { randomBytes } from 'crypto'
 
 type Progress = (n: number) => unknown
