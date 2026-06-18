@@ -349,3 +349,21 @@ test('POST /import-signals 400 without rows', async () => {
   })
   assert.equal(res.status, 400)
 })
+
+test('GET /intents returns workspace actionable intents sorted by opportunity score', async () => {
+  const s = spec()
+  ;(s as any).outreachIntent = { findMany: async () => [
+    { id: 'i1', status: 'PROPOSED', prospect: { opportunityScore: 50, companyName: 'Low' } },
+    { id: 'i2', status: 'APPROVED', prospect: { opportunityScore: 90, companyName: 'High' } },
+  ] }
+  installPrisma(createFakePrisma(s))
+  const res = await server.request(`/api/prospects/intents?workspaceId=${OWNED_WS}`, { headers: auth(MEMBER) })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.intents[0].prospect.companyName, 'High')
+})
+
+test('GET /intents 400 without workspaceId, 403 for a non-member workspace', async () => {
+  installPrisma(createFakePrisma(spec()))
+  assert.equal((await server.request('/api/prospects/intents', { headers: auth(MEMBER) })).status, 400)
+  assert.equal((await server.request(`/api/prospects/intents?workspaceId=${OTHER_WS}`, { headers: auth(MEMBER) })).status, 403)
+})

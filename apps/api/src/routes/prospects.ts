@@ -222,6 +222,31 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
   res.end()
 }))
 
+// GET /api/prospects/intents?workspaceId= — workspace-level "this week's
+// outreach": actionable intents (not yet sent/closed) joined with their prospect,
+// ordered by opportunity score. Powers the Top-opportunities dashboard.
+// Registered before /:id so "intents" isn't matched as a prospect id.
+prospectsRouter.get('/intents', asyncHandler(async (req, res) => {
+  const workspaceId = String(req.query.workspaceId || '').trim()
+  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const userId = (req as AuthedRequest).user.id
+  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+
+  const limit = Math.min(Number(req.query.limit ?? 25), 100)
+  const intents = await prisma.outreachIntent.findMany({
+    where: { workspaceId, status: { in: ['PROPOSED', 'DRAFTED', 'APPROVED'] } },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    include: {
+      prospect: { select: { id: true, companyName: true, industry: true, location: true, opportunityScore: true, buyingStage: true } },
+      recommendation: { select: { reasoning: true, actionText: true, urgency: true, priority: true } },
+    },
+  })
+  // Surface the strongest opportunities first.
+  intents.sort((a, b) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
+  res.json({ intents })
+}))
+
 // GET /api/prospects/:id
 prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({
