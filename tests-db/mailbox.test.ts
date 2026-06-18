@@ -4,7 +4,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { recordProcessedReply } from '../apps/api/src/services/mail.ts'
+import { recordProcessedReply } from '../packages/backend-core/src/services/mail.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })

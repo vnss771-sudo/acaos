@@ -10,7 +10,7 @@
 // the `verify-db` CI job for CI). The server/auth helpers are reused from the
 // fake-Prisma harness — they do not touch the database layer.
 
-import { prisma } from '../../apps/api/src/lib/prisma.ts'
+import { prisma } from '../../packages/backend-core/src/lib/prisma.ts'
 
 export { prisma }
 export { startTestServer, bearer, type TestServer } from '../../tests/helpers/integration.ts'

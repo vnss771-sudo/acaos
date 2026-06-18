@@ -19,7 +19,7 @@ const root = process.cwd()
 const schema = fs.readFileSync(path.join(root, 'packages/db/prisma/schema.prisma'), 'utf8')
 const processors = fs.readFileSync(path.join(root, 'apps/worker/src/processors.ts'), 'utf8')
 const campaignsRoute = fs.readFileSync(path.join(root, 'apps/api/src/routes/campaigns.ts'), 'utf8')
-const queues = fs.readFileSync(path.join(root, 'apps/api/src/lib/queues.ts'), 'utf8')
+const queues = fs.readFileSync(path.join(root, 'packages/backend-core/src/lib/queues.ts'), 'utf8')
 
 function modelBlock(name: string) {
   const re = new RegExp(`model\\s+${name}\\s+\\{([\\s\\S]*?)\\n\\}`, 'm')

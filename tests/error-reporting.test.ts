@@ -4,8 +4,8 @@
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { initErrorReporting, _resetErrorReportingForTest } from '../apps/api/src/lib/errorReporting.ts'
-import { hasErrorReporter, setErrorReporter } from '../apps/api/src/lib/observability.ts'
+import { initErrorReporting, _resetErrorReportingForTest } from '../packages/backend-core/src/lib/errorReporting.ts'
+import { hasErrorReporter, setErrorReporter } from '../packages/backend-core/src/lib/observability.ts'
 
 const savedDsn = process.env.SENTRY_DSN
 afterEach(() => {

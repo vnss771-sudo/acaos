@@ -3,7 +3,7 @@
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { isProduction, verboseErrors, getAllowedOrigins, isOriginAllowed, validateConfig } from '../apps/api/src/lib/config.ts'
+import { isProduction, verboseErrors, getAllowedOrigins, isOriginAllowed, validateConfig } from '../packages/backend-core/src/lib/config.ts'
 import { securityHeaders } from '../apps/api/src/middleware/securityHeaders.ts'
 import type { Request, Response } from 'express'
 

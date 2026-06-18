@@ -11,8 +11,8 @@ import assert from 'node:assert/strict'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 import { scoreProspects } from '../apps/worker/src/processors.ts'
 import { ingestSignal } from '../apps/api/src/lib/signalIngest.ts'
-import { generateRuleBasedRecommendation, toRawSignal } from '../apps/api/src/lib/signalEngine.ts'
-import { createOutreachIntentForRecommendation } from '../apps/api/src/lib/outreachIntent.ts'
+import { generateRuleBasedRecommendation, toRawSignal } from '../packages/backend-core/src/lib/signalEngine.ts'
+import { createOutreachIntentForRecommendation } from '../packages/backend-core/src/lib/outreachIntent.ts'
 import { materializeOutreachIntent } from '../apps/api/src/lib/materializeIntent.ts'
 
 after(async () => { await disconnect() })

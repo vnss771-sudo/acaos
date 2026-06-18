@@ -3,7 +3,7 @@
 
 import { test, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
-import { setErrorReporter, hasErrorReporter, captureError } from '../apps/api/src/lib/observability.ts'
+import { setErrorReporter, hasErrorReporter, captureError } from '../packages/backend-core/src/lib/observability.ts'
 import { ApiError, errorHandler } from '../apps/api/src/lib/http.ts'
 import type { Request, Response, NextFunction } from 'express'
 

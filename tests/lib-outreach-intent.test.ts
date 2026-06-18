@@ -1,7 +1,7 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
-import { buildEvidenceSnapshot, createOutreachIntentForRecommendation } from '../apps/api/src/lib/outreachIntent.ts'
+import { buildEvidenceSnapshot, createOutreachIntentForRecommendation } from '../packages/backend-core/src/lib/outreachIntent.ts'
 
 afterEach(() => resetPrisma())
 
@@ -64,7 +64,7 @@ test('createOutreachIntentForRecommendation defaults mission/campaign to null', 
   assert.equal(arg.data.campaignId, null)
 })
 
-import { buildIntentDraftInput } from '../apps/api/src/lib/outreachIntent.ts'
+import { buildIntentDraftInput } from '../packages/backend-core/src/lib/outreachIntent.ts'
 
 test('buildIntentDraftInput maps evidence context; intent angle wins over recommendation', () => {
   const input = buildIntentDraftInput({

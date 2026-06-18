@@ -5,7 +5,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { reserveLeadCapacity } from '../apps/api/src/lib/limits.ts'
+import { reserveLeadCapacity } from '../packages/backend-core/src/lib/limits.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })

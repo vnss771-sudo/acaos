@@ -8,7 +8,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import { authRouter } from '../apps/api/src/routes/auth.ts'
-import { hashRefreshToken } from '../apps/api/src/lib/jwt.ts'
+import { hashRefreshToken } from '../packages/backend-core/src/lib/jwt.ts'
 import {
   createFakePrisma,
   installPrisma,

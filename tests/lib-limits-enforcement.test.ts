@@ -12,7 +12,7 @@ import {
   checkLeadLimit,
   getMonthlyUsage,
   getPlanInfo,
-} from '../apps/api/src/lib/limits.ts'
+} from '../packages/backend-core/src/lib/limits.ts'
 import { createFakePrisma, installPrisma, resetPrisma, type FakePrisma } from './helpers/integration.ts'
 
 type WsRow = { plan: string; subscriptionStatus: string | null }

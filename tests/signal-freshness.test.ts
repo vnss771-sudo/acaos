@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { freshnessState } from '../apps/api/src/lib/signalEngine.ts'
+import { freshnessState } from '../packages/backend-core/src/lib/signalEngine.ts'
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000)
 

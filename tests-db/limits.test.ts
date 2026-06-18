@@ -3,7 +3,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAndIncrementAiUsage } from '../apps/api/src/lib/limits.ts'
+import { checkAndIncrementAiUsage } from '../packages/backend-core/src/lib/limits.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })

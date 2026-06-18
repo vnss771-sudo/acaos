@@ -3,16 +3,12 @@ import { verboseErrors } from './config.js'
 import { logger } from './logger.js'
 import { CircuitOpenError } from './circuit.js'
 import { captureError } from './observability.js'
+import { ApiError } from '@acaos/backend-core/lib/errors.js'
 
-export class ApiError extends Error {
-  statusCode: number
-
-  constructor(statusCode: number, message: string) {
-    super(message)
-    this.name = 'ApiError'
-    this.statusCode = statusCode
-  }
-}
+// ApiError is defined framework-agnostically in backend-core so shared services
+// can throw it; re-exported here so the rest of the API keeps importing it from
+// '../lib/http.js'.
+export { ApiError }
 
 export function asyncHandler(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>

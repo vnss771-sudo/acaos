@@ -14,7 +14,10 @@
     ],
     "resolveJsonModule": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "customConditions": [
+      "acaos-src"
+    ]
   },
   "include": [
     "src/**/*.ts",

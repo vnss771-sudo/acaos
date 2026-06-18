@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
 import { requireAuth } from '../apps/api/src/middleware/auth.ts'
-import { signJwt } from '../apps/api/src/lib/jwt.ts'
+import { signJwt } from '../packages/backend-core/src/lib/jwt.ts'
 import type { Request, Response, NextFunction } from 'express'
 
 // ---------------------------------------------------------------------------

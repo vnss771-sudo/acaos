@@ -13,7 +13,7 @@
 import express, { type Router } from 'express'
 import type { Server } from 'node:http'
 import { errorHandler, notFoundHandler } from '../../apps/api/src/lib/http.ts'
-import { signJwt } from '../../apps/api/src/lib/jwt.ts'
+import { signJwt } from '../../packages/backend-core/src/lib/jwt.ts'
 
 export type PrismaMethod = (...args: any[]) => unknown
 export type FakeModel = Record<string, PrismaMethod>

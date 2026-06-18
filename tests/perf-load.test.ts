@@ -16,7 +16,7 @@ import {
   setCachedWorkspace,
   evictCachedWorkspace,
 } from '../apps/api/src/lib/ingestCache.ts'
-import { CircuitBreaker, CircuitOpenError } from '../apps/api/src/lib/circuit.ts'
+import { CircuitBreaker, CircuitOpenError } from '../packages/backend-core/src/lib/circuit.ts'
 import { escCsv } from '../apps/api/src/lib/csv.ts'
 import {
   createFakePrisma,

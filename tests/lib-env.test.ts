@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { requireEnv, hasEnv } from '../apps/api/src/lib/env.ts'
+import { requireEnv, hasEnv } from '../packages/backend-core/src/lib/env.ts'
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => void) {
   const saved: Record<string, string | undefined> = {}

@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isPrivateIp, assertPublicMailHost } from '../apps/api/src/lib/ssrf.ts'
+import { isPrivateIp, assertPublicMailHost } from '../packages/backend-core/src/lib/ssrf.ts'
 
 test('isPrivateIp flags private, loopback, link-local, CGNAT and metadata IPv4', () => {
   for (const ip of [

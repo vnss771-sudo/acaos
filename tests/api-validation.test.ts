@@ -10,7 +10,7 @@ import {
   sanitizeWorkspaceSlug,
   validatePassword
 } from '../apps/api/src/lib/validation.ts'
-import { getJwtSecret, signJwt, verifyJwt, generateRefreshToken, hashRefreshToken } from '../apps/api/src/lib/jwt.ts'
+import { getJwtSecret, signJwt, verifyJwt, generateRefreshToken, hashRefreshToken } from '../packages/backend-core/src/lib/jwt.ts'
 
 // ── Email ─────────────────────────────────────────────────────────────────────
 test('normalizeEmail trims and lowercases', () => {
