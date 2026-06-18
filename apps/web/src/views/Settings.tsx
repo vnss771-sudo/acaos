@@ -43,9 +43,10 @@ type Props = {
   toast: ToastHook
   onUserUpdate: (u: User) => void
   onWorkspaceUpdate: (w: Workspace) => void
+  canManage?: boolean
 }
 
-export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate }: Props) {
+export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate, canManage = false }: Props) {
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
   const [wsForm, setWsForm] = useState({ name: workspace?.name ?? '', slug: workspace?.slug ?? '', senderBusinessName: workspace?.senderBusinessName ?? '', senderPostalAddress: workspace?.senderPostalAddress ?? '' })
@@ -346,8 +347,10 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     })
   }
 
+  // Prefer the role threaded from the workspace (canManage); fall back to the
+  // membership list once it loads. Either source gates the admin-only sections.
   const myMembership = members.find(m => m.user.id === user.id)
-  const isOwnerOrAdmin = myMembership?.role === 'owner' || myMembership?.role === 'admin'
+  const isOwnerOrAdmin = canManage || myMembership?.role === 'owner' || myMembership?.role === 'admin'
 
   return (
     <div style={s.stack}>

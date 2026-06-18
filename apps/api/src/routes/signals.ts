@@ -4,7 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
 import type { AuthedRequest } from '../types/auth.js'
 
@@ -58,9 +58,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   if (strength === undefined || strength < 0 || strength > 100) throw new ApiError(400, 'strength must be 0-100')
 
   const user = (req as AuthedRequest).user
-  if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
-    throw new ApiError(403, 'Workspace access denied')
-  }
+  await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
@@ -133,9 +131,7 @@ signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   if (!signal) throw new ApiError(404, 'Signal not found')
 
   const user = (req as AuthedRequest).user
-  if (!(await userBelongsToWorkspace(user.id, signal.workspaceId))) {
-    throw new ApiError(403, 'Workspace access denied')
-  }
+  await assertMinimumWorkspaceRole(user.id, signal.workspaceId, 'admin')
 
   await prisma.signal.delete({ where: { id: signalId } })
   res.json({ ok: true })

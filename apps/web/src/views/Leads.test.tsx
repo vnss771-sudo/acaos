@@ -21,21 +21,30 @@ afterEach(() => vi.restoreAllMocks())
 describe('Leads', () => {
   test('fetches and renders leads in the table', async () => {
     const api = apiFor([lead])
-    render(<Leads api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     expect(await screen.findByText('Acme Plumbing')).toBeInTheDocument()
     expect(api).toHaveBeenCalledWith(expect.stringContaining('/api/leads?'))
   })
 
+  test('a member (canManage=false) sees leads but no import/export/add controls', async () => {
+    const api = apiFor([lead])
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage={false} />)
+    expect(await screen.findByText('Acme Plumbing')).toBeInTheDocument() // read access intact
+    expect(screen.queryByRole('button', { name: /Import CSV/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Export CSV/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Add Lead/i })).not.toBeInTheDocument()
+  })
+
   test('shows the empty state when there are no leads', async () => {
     const api = apiFor([])
-    render(<Leads api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
     expect(await screen.findByText(/No leads found/i)).toBeInTheDocument()
   })
 
   test('changing the stage filter refetches with the stage query', async () => {
     const api = apiFor([lead])
-    render(<Leads api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
     await screen.findByText('Acme Plumbing')
 
     const stageSelect = screen.getAllByRole('combobox').find(el => within(el).queryByText('All stages'))!
@@ -46,7 +55,7 @@ describe('Leads', () => {
 
   test('the Add Lead button reveals the new-lead form', async () => {
     const api = apiFor([lead])
-    render(<Leads api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
     await screen.findByText('Acme Plumbing')
 
     expect(screen.queryByText('New Lead')).not.toBeInTheDocument()

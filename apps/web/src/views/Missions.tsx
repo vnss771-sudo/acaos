@@ -7,7 +7,7 @@ import { MissionBuilder } from '../components/MissionBuilder.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
-type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
 const STATUS_COLOR: Record<MissionStatus, string> = {
   DRAFT: colors.textFaint,
@@ -29,7 +29,7 @@ function StatusBadge({ status }: { status: MissionStatus }) {
   )
 }
 
-export function MissionsView({ api, workspace, toast }: Props) {
+export function MissionsView({ api, workspace, toast, canManage = false }: Props) {
   const [missions, setMissions] = useState<Mission[]>([])
   const [loading, setLoading] = useState(true)
   const [showBuilder, setShowBuilder] = useState(false)
@@ -82,7 +82,7 @@ export function MissionsView({ api, workspace, toast }: Props) {
         <p style={{ color: colors.textMuted, fontSize: 13, margin: 0 }}>
           A mission ties your target, offer, and outreach into one tracked workflow.
         </p>
-        <button style={s.btn} onClick={() => setShowBuilder(true)}>+ New Mission</button>
+        {canManage && <button style={s.btn} onClick={() => setShowBuilder(true)}>+ New Mission</button>}
       </div>
 
       {missions.length === 0 ? (
@@ -141,15 +141,17 @@ export function MissionsView({ api, workspace, toast }: Props) {
                     >
                       {expanded[m.id] ? 'Hide details' : 'Details'}
                     </button>
-                    <button style={s.btnSm} disabled={isBusy} onClick={() => discover(m.id)}>
-                      {isBusy ? 'Discovering…' : 'Discover prospects'}
-                    </button>
-                    {m.status === 'PAUSED' || m.status === 'DRAFT' ? (
+                    {canManage && (
+                      <button style={s.btnSm} disabled={isBusy} onClick={() => discover(m.id)}>
+                        {isBusy ? 'Discovering…' : 'Discover prospects'}
+                      </button>
+                    )}
+                    {canManage && (m.status === 'PAUSED' || m.status === 'DRAFT' ? (
                       <button style={s.btnSm} disabled={isBusy} onClick={() => setStatus(m.id, 'ACTIVE')}>Activate</button>
                     ) : m.status !== 'COMPLETE' ? (
                       <button style={s.btnSm} disabled={isBusy} onClick={() => setStatus(m.id, 'PAUSED')}>Pause</button>
-                    ) : null}
-                    {m.status !== 'COMPLETE' && (
+                    ) : null)}
+                    {canManage && m.status !== 'COMPLETE' && (
                       <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} disabled={isBusy} onClick={() => setStatus(m.id, 'COMPLETE')}>
                         Complete
                       </button>

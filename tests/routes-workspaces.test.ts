@@ -27,7 +27,7 @@ function spec(extra: Record<string, any> = {}) {
       { id: 'm1', role: 'owner', createdAt: new Date(), user: { id: USER, email: 'u1@a.test', name: null } },
     ] },
     workspace: {
-      findMany: async () => [{ id: WS, name: 'Acme', slug: 'acme', plan: 'free', _count: { leads: 2, campaigns: 1 } }],
+      findMany: async () => [{ id: WS, name: 'Acme', slug: 'acme', plan: 'free', _count: { leads: 2, campaigns: 1 }, memberships: [{ role: 'owner' }] }],
       create: async (a: any) => ({ id: 'ws-new', ...a.data }),
       findUnique: async (a: any) => a?.where?.id === WS
         ? { id: WS, name: 'Acme', slug: 'acme', plan: 'free', stripeCustomerId: null, _count: { leads: 2, campaigns: 1 } }
@@ -53,6 +53,7 @@ test('GET / lists the user\'s workspaces with counts', async () => {
   const res = await server.request('/api/workspaces', { headers: auth })
   assert.equal(res.status, 200)
   assert.equal(res.body.workspaces[0]._count.campaigns, 1)
+  assert.equal(res.body.workspaces[0].role, 'owner') // role is surfaced for role-aware UI
 })
 
 test('POST / requires a name', async () => {

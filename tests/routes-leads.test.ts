@@ -12,7 +12,7 @@ import {
 const USER = 'u1'
 const OWNED = 'ws1'
 const OTHER = 'ws2'
-const member = (uid: string, wid: string) => (uid === USER && wid === OWNED ? { id: 'm1' } : null)
+const member = (uid: string, wid: string) => (uid === USER && wid === OWNED ? { id: 'm1', role: 'admin' } : null)
 
 function spec() {
   return {

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import type { User, Workspace, View } from './types.js'
+import { canManageWorkspace } from './types.js'
 import { useApi } from './hooks/useApi.js'
 import { useToast } from './hooks/useToast.js'
 import { ToastContainer } from './components/Toast.js'
@@ -198,6 +199,9 @@ export function App() {
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
+  // Role-aware UI: members get a read-mostly view; admin-only controls are hidden
+  // (the backend enforces the same gate, so this is UX, not the security boundary).
+  const canManage = canManageWorkspace(activeWorkspace)
 
   return (
     <div style={{
@@ -267,16 +271,17 @@ export function App() {
           <ErrorBoundary>
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
             {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
-            {view === 'prospects' && <ProspectsView {...commonProps} />}
-            {view === 'missions' && <MissionsView {...commonProps} />}
-            {view === 'campaigns' && <Campaigns {...commonProps} />}
-            {view === 'approvals' && <ApprovalsView {...commonProps} />}
-            {view === 'leads' && <Leads {...commonProps} />}
+            {view === 'prospects' && <ProspectsView {...commonProps} canManage={canManage} />}
+            {view === 'missions' && <MissionsView {...commonProps} canManage={canManage} />}
+            {view === 'campaigns' && <Campaigns {...commonProps} canManage={canManage} />}
+            {view === 'approvals' && <ApprovalsView {...commonProps} canManage={canManage} />}
+            {view === 'leads' && <Leads {...commonProps} canManage={canManage} />}
             {view === 'ai' && <AiTools {...commonProps} />}
             {view === 'billing' && <Billing {...commonProps} />}
             {view === 'settings' && (
               <Settings
                 {...commonProps}
+                canManage={canManage}
                 user={user}
                 onUserUpdate={setUser}
                 onWorkspaceUpdate={handleWorkspaceUpdate}
@@ -287,8 +292,9 @@ export function App() {
         </main>
       </div>
 
-      {/* Onboarding wizard — shown once per workspace until dismissed */}
-      {activeWorkspace && !activeWorkspace.onboardingCompleted && (
+      {/* Onboarding wizard — shown once per workspace until dismissed. Hidden for
+          members: it performs workspace seed/ICP writes that require admin. */}
+      {activeWorkspace && !activeWorkspace.onboardingCompleted && canManage && (
         <OnboardingWizard
           workspace={activeWorkspace}
           api={api}

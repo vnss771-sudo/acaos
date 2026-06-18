@@ -17,17 +17,27 @@ afterEach(() => vi.restoreAllMocks())
 describe('Campaigns', () => {
   test('shows the empty state when there are no campaigns', async () => {
     const api = vi.fn().mockResolvedValue({ campaigns: [] })
-    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
     expect(await screen.findByText(/No campaigns yet/i)).toBeInTheDocument()
     expect(api).toHaveBeenCalledWith('/api/campaigns?workspaceId=ws1')
   })
 
   test('renders the campaign list with goal and lead count', async () => {
     const api = vi.fn().mockResolvedValue({ campaigns: [campaign] })
-    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
     expect(await screen.findByText('Q3 Brisbane Outreach')).toBeInTheDocument()
     expect(screen.getByText('12')).toBeInTheDocument()       // leads
     expect(screen.getByText('BOOK CALL')).toBeInTheDocument() // goal type, underscores stripped
+  })
+
+  test('a member (canManage=false) sees the list but no admin controls', async () => {
+    const api = vi.fn().mockResolvedValue({ campaigns: [campaign] })
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage={false} />)
+    expect(await screen.findByText('Q3 Brisbane Outreach')).toBeInTheDocument() // read access intact
+    expect(screen.queryByRole('button', { name: /New Mission/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Advanced/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Launch Campaign/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Edit/i })).not.toBeInTheDocument()
   })
 
   test('creating a campaign posts it and prepends it to the list', async () => {
@@ -36,7 +46,7 @@ describe('Campaigns', () => {
       if (init?.method === 'POST') return Promise.resolve({ campaign: created })
       return Promise.resolve({ campaigns: [] })
     })
-    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     await userEvent.click(screen.getByRole('button', { name: /Advanced/i }))
     await userEvent.type(screen.getByPlaceholderText('Q3 Brisbane Outreach'), 'New Pilot')
@@ -59,7 +69,7 @@ describe('Campaigns', () => {
       if (path === '/api/campaigns/c1/send' && init?.method === 'POST') return Promise.resolve({ jobId: 'j1', eligible: 5, message: 'queued' })
       return Promise.resolve({})
     })
-    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     await screen.findByText('Q3 Brisbane Outreach')
     const launchBtn = await screen.findByRole('button', { name: /Launch Campaign/i })
@@ -78,7 +88,7 @@ describe('Campaigns', () => {
       if (init?.method === 'DELETE') return Promise.resolve({})
       return Promise.resolve({ campaigns: [campaign] })
     })
-    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     await screen.findByText('Q3 Brisbane Outreach')
     await userEvent.click(screen.getByRole('button', { name: '✕' }))

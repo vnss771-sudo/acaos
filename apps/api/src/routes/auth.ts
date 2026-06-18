@@ -13,7 +13,7 @@ import { authRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/validation.js'
-import { resolveUniqueWorkspaceSlug } from '../lib/workspaces.js'
+import { resolveUniqueWorkspaceSlug, normalizeWorkspaceRole } from '../lib/workspaces.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import { validate, emailField, passwordField } from '../lib/validate.js'
 import { z } from 'zod'
@@ -191,12 +191,19 @@ authRouter.get(
         select: {
           id: true, name: true, slug: true, plan: true,
           subscriptionStatus: true, createdAt: true, onboardingCompleted: true,
-          _count: { select: { leads: true, campaigns: true } }
+          _count: { select: { leads: true, campaigns: true } },
+          // The caller's own membership row — surfaces their role so the client
+          // can make role-aware UI decisions without a second request.
+          memberships: { where: { userId: authedUser.id }, select: { role: true }, take: 1 },
         },
         orderBy: { createdAt: 'asc' }
       })
     ])
-    res.json({ user: dbUser ?? authedUser, workspaces })
+    const withRole = workspaces.map((w) => {
+      const { memberships, ...rest } = w as typeof w & { memberships?: Array<{ role: string }> }
+      return { ...rest, role: normalizeWorkspaceRole(memberships?.[0]?.role) }
+    })
+    res.json({ user: dbUser ?? authedUser, workspaces: withRole })
   })
 )
 

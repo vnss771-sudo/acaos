@@ -10,7 +10,7 @@ import { Spinner, EmptyState } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
-type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -107,8 +107,8 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
   )
 }
 
-function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
-  prospect: Prospect; api: ApiHook; toast: ToastHook; onClose: () => void; onRefresh: () => void
+function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = false }: {
+  prospect: Prospect; api: ApiHook; toast: ToastHook; onClose: () => void; onRefresh: () => void; canManage?: boolean
 }) {
   const [detail, setDetail] = useState<Prospect | null>(null)
   const [showAddSignal, setShowAddSignal] = useState(false)
@@ -232,7 +232,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
                 <div style={s.sectionHeader}>Signals ({p.signals?.length ?? 0})</div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
-                  <button style={s.btnSm} onClick={() => setShowAddSignal(true)}>+ Signal</button>
+                  {canManage && <button style={s.btnSm} onClick={() => setShowAddSignal(true)}>+ Signal</button>}
                 </div>
               </div>
               {showAddSignal && (
@@ -280,9 +280,11 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh }: {
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
-              <button style={{ ...s.btnSm, background: '#1d4ed8', color: '#fff' }} onClick={handleEnrich} title="Pull signals from Apollo.io">
-                ⚡ Enrich with Apollo
-              </button>
+              {canManage && (
+                <button style={{ ...s.btnSm, background: '#1d4ed8', color: '#fff' }} onClick={handleEnrich} title="Pull signals from Apollo.io">
+                  ⚡ Enrich with Apollo
+                </button>
+              )}
               <button style={s.btnGhost} onClick={onClose}>Close</button>
             </div>
           </>
@@ -329,7 +331,7 @@ function parseCsv(text: string): Record<string, string>[] {
   }).filter(row => Object.values(row).some(v => v !== ''))
 }
 
-export function ProspectsView({ api, workspace, toast }: Props) {
+export function ProspectsView({ api, workspace, toast, canManage = false }: Props) {
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<Prospect | null>(null)
@@ -457,6 +459,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
           />
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {canManage && (<>
           <button style={s.btnSm} onClick={() => {
             const url = `${API_BASE}/api/prospects/export?workspaceId=${workspace.id}`
             const link = document.createElement('a')
@@ -508,6 +511,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
             </button>
           ))}
           <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
+          </>)}
         </div>
       </div>
 
@@ -662,6 +666,7 @@ export function ProspectsView({ api, workspace, toast }: Props) {
           api={api} toast={toast}
           onClose={() => setSelected(null)}
           onRefresh={load}
+          canManage={canManage}
         />
       )}
     </div>

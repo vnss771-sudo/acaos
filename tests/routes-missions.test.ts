@@ -22,7 +22,7 @@ const OWNED_WS = 'ws1'
 const OTHER_WS = 'ws2'
 
 function membershipFor(userId: string, workspaceId: string) {
-  return userId === MEMBER && workspaceId === OWNED_WS ? { id: 'm1' } : null
+  return userId === MEMBER && workspaceId === OWNED_WS ? { id: 'm1', role: 'admin' } : null
 }
 
 function missionRow(workspaceId: string, id = 'm1', playbookId: string | null = null) {

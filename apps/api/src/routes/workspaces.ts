@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { ensureWorkspaceSlug, userCanManageWorkspaceBilling } from '../lib/workspaces.js'
+import { ensureWorkspaceSlug, userCanManageWorkspaceBilling, normalizeWorkspaceRole } from '../lib/workspaces.js'
 import { normalizeOptionalString } from '../lib/validation.js'
 import { validate, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
@@ -38,14 +38,19 @@ workspaceRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaces = await prisma.workspace.findMany({
+    const rows = await prisma.workspace.findMany({
       where: { memberships: { some: { userId: user.id } } },
       select: {
         id: true, name: true, slug: true, plan: true,
         subscriptionStatus: true, createdAt: true,
-        _count: { select: { leads: true, campaigns: true } }
+        _count: { select: { leads: true, campaigns: true } },
+        memberships: { where: { userId: user.id }, select: { role: true }, take: 1 },
       },
       orderBy: { createdAt: 'asc' }
+    })
+    const workspaces = rows.map((w) => {
+      const { memberships, ...rest } = w as typeof w & { memberships?: Array<{ role: string }> }
+      return { ...rest, role: normalizeWorkspaceRole(memberships?.[0]?.role) }
     })
     res.json({ workspaces })
   })
