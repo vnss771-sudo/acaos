@@ -5,6 +5,7 @@ import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { GettingStarted } from '../components/GettingStarted.js'
 import { OutboxHealth } from '../components/OutboxHealth.js'
+import { OutreachIntents } from '../components/OutreachIntents.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -334,6 +335,9 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
       {/* Delivery health: shows failed/stuck sends; hides itself when clean */}
       <OutboxHealth api={api} workspaceId={workspace.id} />
+
+      {/* This week's outreach: actionable evidence-backed intents; hides when empty */}
+      <OutreachIntents api={api} workspaceId={workspace.id} toast={toast} />
 
       {/* Hot accounts + signal feed — only shown when data exists */}
       {!loading && (hotProspects.length > 0 || recentSignals.length > 0) && (
