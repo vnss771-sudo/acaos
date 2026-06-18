@@ -41,6 +41,22 @@ jobs:
       - name: Frontend tests (Vitest)
         run: npm run test:web
 
+  # Mirror the production deploy exactly: a clean `npm run build` with NO prior
+  # `prisma generate`, so build-ordering bugs (e.g. backend-core compiling before
+  # the Prisma client exists) fail here instead of in Railway.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Production build (backend-core → api → worker → web)
+        run: npm run build
+
   # Database-backed integration tests against a real PostgreSQL service.
   verify-db:
     runs-on: ubuntu-latest
