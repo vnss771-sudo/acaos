@@ -25,13 +25,36 @@ import { createOutreachIntentForRecommendation, buildIntentDraftInput } from '..
 import { materializeOutreachIntent } from '../lib/materializeIntent.js'
 import { generateOutreach } from '../services/openai.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
+import { getPack } from '../lib/packs/index.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import { escCsv } from '../lib/csv.js'
+import { validate, workspaceIdField } from '../lib/validate.js'
+import { z } from 'zod'
 import type { AuthedRequest } from '../types/auth.js'
+import type { Assert, Extends, DiscoverProspectsRequest } from '@acaos/shared'
 
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
+
+// Request contract for POST /discover, pinned to the shared type so they can't drift.
+const discoverSchema = z.object({
+  workspaceId: workspaceIdField,
+  source: z.string().optional(),
+  missionId: z.string().nullish(),
+  industries: z.array(z.string()).optional(),
+  locations: z.array(z.string()).optional(),
+  keywords: z.array(z.string()).optional(),
+  minEmployees: z.number().int().optional(),
+  maxEmployees: z.number().int().optional(),
+  limit: z.number().int().optional(),
+})
+type _DiscoverConforms = Assert<Extends<z.infer<typeof discoverSchema>, DiscoverProspectsRequest>>
+
+/** An array, or undefined when it's missing/empty — for layered ICP fallbacks. */
+function nonEmpty<T>(arr: T[] | null | undefined): T[] | undefined {
+  return arr && arr.length > 0 ? arr : undefined
+}
 
 export function normalizeDomain(domain: string | null | undefined): string | null {
   if (!domain) return null
@@ -285,25 +308,26 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown })
 }))
 
-// POST /api/prospects/discover — pull companies from Apollo using workspace ICP
-prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req, res) => {
-  const workspaceId = req.body.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+// POST /api/prospects/discover — pull companies from a source using the workspace
+// ICP, falling back to the mission's playbook preset when scoped to a mission.
+prospectsRouter.post('/discover', requireVerifiedEmail, validate(discoverSchema), asyncHandler(async (req, res) => {
+  const body = req.body as z.infer<typeof discoverSchema>
+  const workspaceId = body.workspaceId
 
   const userId = (req as AuthedRequest).user.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-  // Optionally scope the run to a mission so the mission control plane can show
-  // its own discovery activity. The mission must belong to the same workspace.
-  const missionId = typeof req.body.missionId === 'string' && req.body.missionId.trim()
-    ? req.body.missionId.trim()
-    : null
+  // Optionally scope the run to a mission so the mission control plane owns its
+  // discovered prospects + activity. The mission must belong to the same workspace.
+  const missionId = typeof body.missionId === 'string' && body.missionId.trim() ? body.missionId.trim() : null
+  let missionPlaybookId: string | null = null
   if (missionId) {
-    const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true } })
+    const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true, playbookId: true } })
     if (!mission || mission.workspaceId !== workspaceId) throw new ApiError(404, 'Mission not found')
+    missionPlaybookId = mission.playbookId
   }
 
-  const sourceName = String(req.body.source ?? 'apollo')
+  const sourceName = String(body.source ?? 'apollo')
   const source = getSource(sourceName)
   if (!source) throw new ApiError(400, `Unknown source: ${sourceName}`)
   if (!source.isConfigured) {
@@ -319,14 +343,16 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
   await checkAndIncrementDiscoveryUsage(workspaceId)
 
   const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
-  const limit = Math.min(Number(req.body.limit ?? 25), 50)
+  const limit = Math.min(Number(body.limit ?? 25), 50)
 
+  // Layered targeting: explicit request → workspace ICP → mission playbook preset.
+  const pack = missionPlaybookId ? getPack(missionPlaybookId) : undefined
   const query = {
-    industries: req.body.industries ?? icp?.targetIndustries ?? [],
-    locations:  req.body.locations  ?? icp?.targetGeos       ?? [],
-    keywords:   req.body.keywords   ?? [],
-    minEmployees: icp?.minEmployees  ?? req.body.minEmployees,
-    maxEmployees: icp?.maxEmployees  ?? req.body.maxEmployees,
+    industries: body.industries ?? nonEmpty(icp?.targetIndustries) ?? pack?.icp.targetIndustries ?? [],
+    locations:  body.locations  ?? nonEmpty(icp?.targetGeos)       ?? pack?.icp.targetGeos       ?? [],
+    keywords:   body.keywords   ?? [],
+    minEmployees: icp?.minEmployees ?? body.minEmployees ?? pack?.icp.minEmployees,
+    maxEmployees: icp?.maxEmployees ?? body.maxEmployees ?? pack?.icp.maxEmployees,
     limit,
   }
 
@@ -419,6 +445,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, asyncHandler(async (req,
         contactEmail: meta.contactEmail,
         contactTitle: c.contactTitle  ?? null,
         sourceTag:    sourceName,
+        missionId,
         ...scores,
         buyingStage,
         winProbability,
@@ -847,6 +874,7 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
     messageAngle: rec.messageAngle,
     channel: rec.bestChannel,
     signals: prospect.signals,
+    missionId: prospect.missionId,
   }).catch(() => {})
 
   res.status(201).json(recommendation)

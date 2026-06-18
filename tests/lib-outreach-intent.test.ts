@@ -35,6 +35,35 @@ test('createOutreachIntentForRecommendation writes a PROPOSED intent with snapsh
   assert.equal((intent as any).status, 'PROPOSED')
 })
 
+test('createOutreachIntentForRecommendation carries the mission/campaign scope through', async () => {
+  const fake = createFakePrisma({ outreachIntent: { create: async (a: any) => ({ id: 'oi2', ...a.data }) } })
+  installPrisma(fake)
+
+  await createOutreachIntentForRecommendation({
+    workspaceId: 'w', prospectId: 'p', recommendationId: 'r2',
+    signals: [{ type: 'FUNDING', detectedAt: new Date(), evidenceSourceId: 'ev1' }],
+    missionId: 'm1', campaignId: 'c1',
+  })
+
+  const arg = fake.callsTo('outreachIntent', 'create')[0].args[0] as any
+  assert.equal(arg.data.missionId, 'm1')
+  assert.equal(arg.data.campaignId, 'c1')
+})
+
+test('createOutreachIntentForRecommendation defaults mission/campaign to null', async () => {
+  const fake = createFakePrisma({ outreachIntent: { create: async (a: any) => ({ id: 'oi3', ...a.data }) } })
+  installPrisma(fake)
+
+  await createOutreachIntentForRecommendation({
+    workspaceId: 'w', prospectId: 'p', recommendationId: 'r3',
+    signals: [],
+  })
+
+  const arg = fake.callsTo('outreachIntent', 'create')[0].args[0] as any
+  assert.equal(arg.data.missionId, null)
+  assert.equal(arg.data.campaignId, null)
+})
+
 import { buildIntentDraftInput } from '../apps/api/src/lib/outreachIntent.ts'
 
 test('buildIntentDraftInput maps evidence context; intent angle wins over recommendation', () => {

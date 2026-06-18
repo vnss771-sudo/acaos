@@ -6,6 +6,7 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import { recordAudit } from '../lib/audit.js'
+import { getPack } from '../lib/packs/index.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { Assert, Extends, CreateMissionRequest, UpdateMissionRequest } from '@acaos/shared'
 
@@ -107,6 +108,8 @@ missionsRouter.get(
   })
 )
 
+// Mission control plane: the mission + its playbook, recent discovery activity,
+// the prospects it owns, and the actionable outreach queue scoped to it.
 missionsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -117,7 +120,41 @@ missionsRouter.get(
     })
     if (!mission) throw new ApiError(404, 'Mission not found')
     if (!(await userBelongsToWorkspace(user.id, mission.workspaceId))) throw new ApiError(403, 'Access denied')
-    res.json({ mission })
+
+    const pack = mission.playbookId ? getPack(mission.playbookId) : undefined
+    const playbook = pack ? { id: pack.id, label: pack.label, description: pack.description } : null
+
+    const [discoveryRuns, prospects, intents] = await Promise.all([
+      prisma.discoveryRun.findMany({
+        where: { missionId: mission.id },
+        orderBy: { startedAt: 'desc' },
+        take: 10,
+        select: {
+          id: true, source: true, status: true, resultCount: true, importedCount: true,
+          skippedCount: true, errorCode: true, errorMessage: true, startedAt: true, finishedAt: true,
+        },
+      }),
+      prisma.prospect.findMany({
+        where: { missionId: mission.id },
+        orderBy: { opportunityScore: 'desc' },
+        take: 10,
+        select: { id: true, companyName: true, industry: true, opportunityScore: true, buyingStage: true },
+      }),
+      // The mission's action queue: outreach not yet sent/closed, joined to its
+      // prospect + recommendation, strongest opportunity first.
+      prisma.outreachIntent.findMany({
+        where: { missionId: mission.id, status: { in: ['PROPOSED', 'DRAFTED', 'APPROVED'] } },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+        include: {
+          prospect: { select: { id: true, companyName: true, industry: true, opportunityScore: true, buyingStage: true } },
+          recommendation: { select: { reasoning: true, actionText: true, urgency: true, priority: true } },
+        },
+      }),
+    ])
+    intents.sort((a, b) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
+
+    res.json({ mission, playbook, discoveryRuns, prospects, intents })
   })
 )
 

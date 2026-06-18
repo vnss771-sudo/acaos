@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import type { UpdateMissionRequest } from '@acaos/shared'
-import type { Mission, MissionStatus, Workspace } from '../types.js'
+import type { UpdateMissionRequest, DiscoverProspectsRequest } from '@acaos/shared'
+import type { Mission, MissionDetail, MissionStatus, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
@@ -46,6 +46,8 @@ export function MissionsView({ api, workspace, toast }: Props) {
 
   useEffect(() => { load() }, [workspace?.id])
 
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+
   async function setStatus(id: string, status: MissionStatus) {
     setBusy(prev => ({ ...prev, [id]: true }))
     try {
@@ -54,6 +56,20 @@ export function MissionsView({ api, workspace, toast }: Props) {
       setMissions(prev => prev.map(m => m.id === id ? d.mission : m))
       toast.success(`Mission ${status.toLowerCase()}`)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
+    finally { setBusy(prev => ({ ...prev, [id]: false })) }
+  }
+
+  async function discover(id: string) {
+    if (!workspace) return
+    setBusy(prev => ({ ...prev, [id]: true }))
+    try {
+      const body: DiscoverProspectsRequest = { workspaceId: workspace.id, missionId: id }
+      const d = await api<{ discovered: number; skipped: number; total: number }>('/api/prospects/discover', {
+        method: 'POST', body: JSON.stringify(body),
+      })
+      toast.success(`Discovered ${d.discovered} new prospect${d.discovered !== 1 ? 's' : ''} (${d.skipped} skipped)`)
+      load()
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Discovery failed') }
     finally { setBusy(prev => ({ ...prev, [id]: false })) }
   }
 
@@ -118,6 +134,16 @@ export function MissionsView({ api, workspace, toast }: Props) {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <span style={{ color: colors.textFaint, fontSize: 12 }}>{leads} lead{leads !== 1 ? 's' : ''} enrolled</span>
                   <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      style={{ ...s.btnSm, border: `1px solid ${colors.border}` }}
+                      disabled={isBusy}
+                      onClick={() => setExpanded(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
+                    >
+                      {expanded[m.id] ? 'Hide details' : 'Details'}
+                    </button>
+                    <button style={s.btnSm} disabled={isBusy} onClick={() => discover(m.id)}>
+                      {isBusy ? 'Discovering…' : 'Discover prospects'}
+                    </button>
                     {m.status === 'PAUSED' || m.status === 'DRAFT' ? (
                       <button style={s.btnSm} disabled={isBusy} onClick={() => setStatus(m.id, 'ACTIVE')}>Activate</button>
                     ) : m.status !== 'COMPLETE' ? (
@@ -130,6 +156,7 @@ export function MissionsView({ api, workspace, toast }: Props) {
                     )}
                   </div>
                 </div>
+                {expanded[m.id] && <MissionDetailPanel api={api} missionId={m.id} toast={toast} />}
               </div>
             )
           })}
@@ -145,6 +172,92 @@ export function MissionsView({ api, workspace, toast }: Props) {
           onClose={() => setShowBuilder(false)}
         />
       )}
+    </div>
+  )
+}
+
+// The mission control plane: playbook, discovery history, owned prospects, and
+// the actionable outreach queue scoped to this mission. Lazy-loaded on expand.
+function MissionDetailPanel({ api, missionId, toast }: { api: ApiHook; missionId: string; toast: ToastHook }) {
+  const [detail, setDetail] = useState<MissionDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    api<MissionDetail>(`/api/missions/${missionId}`)
+      .then(setDetail)
+      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load mission detail'))
+      .finally(() => setLoading(false))
+  }, [api, missionId])
+
+  const panel: React.CSSProperties = { borderTop: `1px solid ${colors.border}`, marginTop: 8, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }
+  const heading: React.CSSProperties = { color: colors.textFaint, fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }
+
+  if (loading) return <div style={panel}><span style={{ color: colors.textMuted, fontSize: 12 }}>Loading details…</span></div>
+  if (!detail) return null
+
+  return (
+    <div style={panel}>
+      <div>
+        <div style={heading}>Playbook</div>
+        <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
+          {detail.playbook ? detail.playbook.label : 'No playbook — uses workspace ICP'}
+        </div>
+      </div>
+
+      <div>
+        <div style={heading}>Action queue</div>
+        {detail.intents.length === 0 ? (
+          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — discover and score prospects to populate it.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+            {detail.intents.map(i => (
+              <div key={i.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                <span style={{ color: colors.text }}>{i.prospect?.companyName ?? 'Unknown'}</span>
+                <span style={{ color: colors.textMuted }}>
+                  {i.status}{i.prospect ? ` · score ${i.prospect.opportunityScore}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div style={heading}>Top prospects</div>
+        {detail.prospects.length === 0 ? (
+          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>None discovered for this mission yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+            {detail.prospects.map(p => (
+              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                <span style={{ color: colors.text }}>{p.companyName}{p.industry ? ` · ${p.industry}` : ''}</span>
+                <span style={{ color: colors.textMuted }}>score {p.opportunityScore}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div style={heading}>Discovery history</div>
+        {detail.discoveryRuns.length === 0 ? (
+          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No discovery runs yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+            {detail.discoveryRuns.map(r => (
+              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+                <span style={{ color: colors.textMuted }}>{r.source}</span>
+                <span style={{ color: r.status === 'FAILED' ? colors.red : colors.textMuted }}>
+                  {r.status === 'FAILED'
+                    ? `failed${r.errorMessage ? ` — ${r.errorMessage}` : ''}`
+                    : `${r.importedCount} imported · ${r.skippedCount} skipped`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

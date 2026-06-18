@@ -75,6 +75,34 @@ export type Mission = {
   discovery?: { runs: number; discovered: number }
 }
 
+export type Pack = { id: string; label: string; description: string }
+
+export type MissionProspect = {
+  id: string
+  companyName: string
+  industry?: string | null
+  opportunityScore: number
+  buyingStage: string
+}
+
+export type MissionIntent = {
+  id: string
+  status: string
+  messageAngle?: string | null
+  channel?: string | null
+  prospect?: MissionProspect | null
+  recommendation?: { reasoning?: string | null; actionText?: string | null; urgency?: string | null; priority?: number | null } | null
+}
+
+// GET /api/missions/:id — the mission control plane.
+export type MissionDetail = {
+  mission: Mission
+  playbook: Pack | null
+  discoveryRuns: DiscoveryRun[]
+  prospects: MissionProspect[]
+  intents: MissionIntent[]
+}
+
 export type Lead = {
   id: string
   businessName: string

@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { CreateMissionRequest } from '@acaos/shared'
 import { colors, s } from '../styles.js'
-import type { Workspace } from '../types.js'
+import type { Pack, Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -64,6 +64,16 @@ export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Pr
   const [goalType, setGoalType] = useState<GoalType>('BOOK_CALL')
   const [missionName, setMissionName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [packs, setPacks] = useState<Pack[]>([])
+  const [playbookId, setPlaybookId] = useState('')
+
+  // Playbooks tailor discovery + outreach to a vertical. Optional — a mission
+  // without one falls back to the workspace ICP.
+  useEffect(() => {
+    api<{ packs: Pack[] }>('/api/packs')
+      .then(d => setPacks(d.packs || []))
+      .catch(() => { /* non-fatal: the picker just stays empty */ })
+  }, [api])
 
   const totalSteps = 4
 
@@ -92,6 +102,7 @@ export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Pr
         goalType,
         targetCustomer: answer1.trim(),
         offer: answer2.trim(),
+        playbookId: playbookId || null,
       }
       const d = await api<{ mission: { id: string; name: string }; campaign: { id: string; name: string } }>('/api/missions', {
         method: 'POST',
@@ -162,6 +173,9 @@ export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Pr
             onChange={setAnswer1}
             onNext={handleNext}
             canNext={canProceed1}
+            packs={packs}
+            playbookId={playbookId}
+            onPlaybook={setPlaybookId}
           />
         )}
 
@@ -204,13 +218,20 @@ function Step1({
   value,
   onChange,
   onNext,
-  canNext
+  canNext,
+  packs,
+  playbookId,
+  onPlaybook
 }: {
   value: string
   onChange: (v: string) => void
   onNext: () => void
   canNext: boolean
+  packs: Pack[]
+  playbookId: string
+  onPlaybook: (v: string) => void
 }) {
+  const selected = packs.find(p => p.id === playbookId)
   return (
     <div>
       <h2 style={{ color: colors.text, fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>
@@ -226,6 +247,26 @@ function Step1({
         onChange={e => onChange(e.target.value)}
         autoFocus
       />
+      {packs.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <label style={{ display: 'block', color: colors.textFaint, fontSize: 12, marginBottom: 6 }}>
+            Playbook (optional) — tailors discovery + outreach to a vertical
+          </label>
+          <select
+            style={{ ...s.input }}
+            value={playbookId}
+            onChange={e => onPlaybook(e.target.value)}
+          >
+            <option value="">No playbook — use workspace ICP</option>
+            {packs.map(p => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+          {selected && (
+            <p style={{ color: colors.textFaint, fontSize: 12, margin: '6px 0 0' }}>{selected.description}</p>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
         <button
           style={{ ...s.btn, opacity: canNext ? 1 : 0.5, cursor: canNext ? 'pointer' : 'not-allowed' }}
