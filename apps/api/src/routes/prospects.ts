@@ -17,16 +17,15 @@ import {
   type SignalType,
 } from '../lib/signalEngine.js'
 import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
-import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
-import { enrichProspect } from '../services/apollo.js'
+import { enqueueScoreProspects, enqueueCalibrate, enqueueEnrichProspects } from '../lib/queues.js'
 import { ingestSignal } from '../lib/signalIngest.js'
+import { enrichProspectCore } from '../lib/enrichProspectCore.js'
 import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation, buildIntentDraftInput } from '../lib/outreachIntent.js'
 import { materializeOutreachIntent } from '../lib/materializeIntent.js'
 import { generateOutreach } from '../services/openai.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { getPack } from '../lib/packs/index.js'
-import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
 import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import { escCsv } from '../lib/csv.js'
 import { validate, workspaceIdField } from '../lib/validate.js'
@@ -496,6 +495,56 @@ prospectsRouter.post('/discover', requireVerifiedEmail, validate(discoverSchema)
   })
 
   res.json({ discovered, skipped, total: candidates.length, runId: run.id })
+}))
+
+// POST /api/prospects/enrich-batch — enqueue background enrichment for many
+// prospects at once (Apollo firmographics + Hunter verified contact). Closes the
+// gap where Google-Places-discovered prospects land with a domain but no contact
+// email and therefore aren't sendable. Registered before any `/:id` route so
+// Express doesn't treat "enrich-batch" as a prospect id.
+const enrichManySchema = z.object({
+  workspaceId: workspaceIdField,
+  // Omit to enrich every un-enriched prospect (domain present, no contact email).
+  prospectIds: z.array(z.string()).max(200).optional(),
+})
+
+prospectsRouter.post('/enrich-batch', requireVerifiedEmail, validate(enrichManySchema), asyncHandler(async (req, res) => {
+  const { workspaceId, prospectIds } = req.body as z.infer<typeof enrichManySchema>
+
+  const userId = (req as AuthedRequest).user.id
+  await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+
+  // Resolve targets, always scoped to this workspace and excluding example rows.
+  // When ids are given we intersect with the workspace (defence against pushing
+  // another tenant's ids); otherwise we select prospects that have a domain to
+  // enrich from but no contact email yet — the "un-enriched / not sendable" set.
+  const targets = await prisma.prospect.findMany({
+    where: prospectIds
+      ? { id: { in: prospectIds }, workspaceId, isExample: false }
+      : { workspaceId, isExample: false, domain: { not: null }, contactEmail: null },
+    select: { id: true },
+    take: 200,
+  })
+  const ids = (targets as Array<{ id: string }>).map(t => t.id)
+
+  // Nothing to do — don't spend discovery/provider quota on an empty batch.
+  if (ids.length === 0) {
+    return res.status(202).json({ queued: 0, jobId: null })
+  }
+
+  // Enrichment spends Apollo/Hunter credits like discovery does, so it draws from
+  // the same per-workspace monthly quota (throws 429 when exhausted).
+  await checkAndIncrementDiscoveryUsage(workspaceId)
+
+  const job = await enqueueEnrichProspects({ workspaceId, prospectIds: ids, initiatedByUserId: userId })
+
+  void recordAudit({
+    workspaceId, actorUserId: userId,
+    type: 'prospect.enrichBatch.queued', entityType: 'workspace', entityId: workspaceId,
+    metadata: { count: ids.length, jobId: job.id, explicitIds: Boolean(prospectIds) },
+  })
+
+  res.status(202).json({ queued: ids.length, jobId: job.id })
 }))
 
 // POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
@@ -1016,9 +1065,12 @@ prospectsRouter.post('/:id/intents/:intentId/materialize', asyncHandler(async (r
   res.status(201).json({ ...result, message: `Intent materialised — launch campaign ${result.campaignId} to send (approval-mode safe).` })
 }))
 
-// POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore
+// POST /api/prospects/:id/enrich — Apollo.io + Hunter enrichment → auto signals →
+// rescore. The pipeline itself lives in @acaos/backend-core (enrichProspectCore)
+// so it is shared verbatim with the batch worker job; this route owns only the
+// HTTP concerns (auth, 404, example-prospect rejection, response shaping).
 prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
-  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+  const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string }, select: { workspaceId: true, isExample: true } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
@@ -1026,85 +1078,14 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
 
   if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot be enriched — add real prospects first')
 
-  const result = await enrichProspect(prospect)
+  const result = await enrichProspectCore(req.params.id as string)
 
-  const created: string[] = []
-  for (const sig of result.signals) {
-    // Apollo-detected signals now carry provenance (EvidenceSource) so they get
-    // the same "where from / how fresh" treatment as manually-added ones.
-    const s = await ingestSignal({
-      workspaceId:       prospect.workspaceId,
-      prospectId:        prospect.id,
-      type:              sig.type as SignalType,
-      strength:          sig.strength,
-      sourceReliability: sig.sourceReliability,
-      industryRelevance: sig.industryRelevance,
-      title:             sig.title,
-      description:       sig.description,
-      source:            sig.source,
-      detectedAt:        sig.detectedAt,
-      evidence: {
-        provider: sig.source,
-        sourceType: 'enrichment',
-        confidence: Math.max(0, Math.min(1, sig.sourceReliability / 100)),
-        observedAt: sig.detectedAt,
-      },
-    })
-    created.push(s.id)
-  }
-
-  const [allSignals, icp] = await Promise.all([
-    prisma.signal.findMany({ where: { prospectId: prospect.id } }),
-    getICP(prospect.workspaceId)
-  ])
-  const rawSignals = allSignals.map(toRawSignal)
-  const u          = result.updates
-  const scores     = calculateOpportunityScores(rawSignals, {
-    industry:      (u.industry      as string | null | undefined) ?? prospect.industry,
-    employeeCount: (u.employeeCount as number | null | undefined) ?? prospect.employeeCount,
-    contactEmail:  (u.contactEmail  as string | null | undefined) ?? prospect.contactEmail,
-    contactName:   (u.contactName   as string | null | undefined) ?? prospect.contactName,
-    domain:        (u.domain        as string | null | undefined) ?? prospect.domain,
-    location:      prospect.location,
-  }, icp)
-  const buyingStage    = detectBuyingStage(rawSignals, scores.opportunityScore)
-  const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-
-  // Most recent signal detectedAt — use as lastSignalAt
-  const latestSignalAt = (allSignals as Array<{ detectedAt: Date }>).reduce((max: Date | null, s: { detectedAt: Date }) => {
-    return !max || s.detectedAt > max ? s.detectedAt : max
-  }, null)
-
-  // Hunter email finder — if prospect has domain but no contact email, try Hunter
-  if (prospect.domain && !prospect.contactEmail && !result.updates.contactEmail && isHunterConfigured()) {
-    try {
-      const contact = await findContactEmail(prospect.domain)
-      if (contact) {
-        result.updates.contactEmail = contact.email
-        if (contact.firstName && !prospect.contactName) {
-          result.updates.contactName = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
-        }
-        if (contact.position && !prospect.contactTitle) {
-          result.updates.contactTitle = contact.position
-        }
-      }
-    } catch { /* non-fatal */ }
-  }
-
-  const updated = await prisma.prospect.update({
-    where: { id: prospect.id },
-    data: {
-      ...scores,
-      buyingStage,
-      winProbability,
-      ...(latestSignalAt && { lastSignalAt: latestSignalAt }),
-      ...(Object.keys(u).length > 0 && u),
-    }
-  })
+  const updated = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+  if (!updated) throw new ApiError(404, 'Prospect not found')
 
   res.json({
     prospect:       withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }),
-    signalsCreated: created.length,
-    signalIds:      created
+    signalsCreated: result.signalsCreated,
+    signalIds:      result.signalIds
   })
 }))

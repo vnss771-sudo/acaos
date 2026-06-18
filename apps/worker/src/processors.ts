@@ -19,6 +19,7 @@ import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
+import { enrichProspectCore } from '@acaos/backend-core/lib/enrichProspectCore.js'
 import { randomBytes } from 'crypto'
 
 type Progress = (n: number) => unknown
@@ -126,6 +127,54 @@ export async function scoreProspects(
 
   await progress?.(100)
   return { workspaceId, updated: prospects.length, toRecommend }
+}
+
+/**
+ * Enrich a batch of prospects (Apollo firmographics + Hunter verified contact),
+ * isolating per-prospect faults so one failure can't sink the batch. Each prospect
+ * is processed by the shared enrichProspectCore; we run them in small chunks
+ * (provider-friendly concurrency, matching the research/outreach queues) via
+ * Promise.allSettled and tally the outcomes. Never throws.
+ */
+export async function enrichProspectsBatch(
+  workspaceId: string,
+  prospectIds: string[],
+  progress?: Progress
+): Promise<{ workspaceId: string; enriched: number; skipped: number; failed: number }> {
+  await progress?.(5)
+
+  // Only enrich prospects that actually belong to this workspace (defence in depth
+  // — the enqueuing route validates ownership too) and aren't example/demo rows.
+  const rows = await prisma.prospect.findMany({
+    where: { id: { in: prospectIds }, workspaceId },
+    select: { id: true, isExample: true },
+  }) as Array<{ id: string; isExample: boolean }>
+
+  const targets = rows.filter(r => !r.isExample).map(r => r.id)
+  let skipped = rows.length - targets.length  // example/demo prospects
+  let enriched = 0
+  let failed = 0
+
+  const CHUNK = 3
+  const total = targets.length
+  for (let i = 0; i < targets.length; i += CHUNK) {
+    const chunk = targets.slice(i, i + CHUNK)
+    const results = await Promise.allSettled(chunk.map(id => enrichProspectCore(id)))
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j]
+      if (r.status === 'fulfilled') {
+        if (r.value.skipped) skipped++
+        else enriched++
+      } else {
+        failed++
+        console.error(`[enrich-prospects] prospect ${chunk[j]} failed: ${(r.reason as Error)?.message ?? r.reason}`)
+      }
+    }
+    await progress?.(5 + Math.floor(((i + chunk.length) / Math.max(total, 1)) * 90))
+  }
+
+  await progress?.(100)
+  return { workspaceId, enriched, skipped, failed }
 }
 
 /**

@@ -16,8 +16,8 @@ import {
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import type { SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
-import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, enrichProspectsBatch } from './processors.js'
+import { enqueueGenerateRecommendations, enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
@@ -423,6 +423,25 @@ const calibrateWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── enrich-prospects ──────────────────────────────────────────────────────────
+const enrichProspectsWorker = new Worker(
+  'enrich-prospects',
+  async (job) => {
+    const { workspaceId, prospectIds } = job.data as { workspaceId: string; prospectIds: string[] }
+    log('enrich-prospects', `Enriching ${prospectIds.length} prospect(s) for workspaceId=${workspaceId}`)
+    const result = await enrichProspectsBatch(workspaceId, prospectIds, (n) => job.updateProgress(n))
+    log('enrich-prospects', `Done: enriched=${result.enriched} skipped=${result.skipped} failed=${result.failed}`)
+    // Newly-enriched prospects gained signals/firmographics — rescore the
+    // workspace so the radar + recommendations reflect them (mirrors discover).
+    if (result.enriched > 0) {
+      await enqueueScoreProspects(workspaceId).catch((e) =>
+        log('enrich-prospects', `enqueue rescore failed: ${(e as Error).message}`))
+    }
+    return result
+  },
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers + job metrics ───────────────────────────────────────────────
 const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
@@ -433,6 +452,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
+  ['enrich-prospects',        enrichProspectsWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
   worker.on('completed', (job) => {
@@ -494,6 +514,7 @@ async function shutdown(signal: string) {
     recommendWorker.close(),
     calibrateWorker.close(),
     sendCampaignWorker.close(),
+    enrichProspectsWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -515,4 +536,4 @@ process.on('uncaughtException', (err) => {
   captureError(err, { source: 'worker.uncaughtException' })
 })
 
-console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')
+console.log('[worker] Started — listening on 9 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign, enrich-prospects)')
