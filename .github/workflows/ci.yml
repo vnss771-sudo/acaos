@@ -56,6 +56,15 @@ jobs:
         run: npm ci
       - name: Production build (backend-core → api → worker → web)
         run: npm run build
+      # Railway builds each service from its own directory, not the repo root, so
+      # per-app build scripts must not rely on `-w`/root workspace context.
+      # Build api and worker standalone to catch that class of deploy failure.
+      - name: Build api standalone (mirrors per-service deploy)
+        working-directory: apps/api
+        run: npm run build
+      - name: Build worker standalone (mirrors per-service deploy)
+        working-directory: apps/worker
+        run: npm run build
 
   # Database-backed integration tests against a real PostgreSQL service.
   verify-db:

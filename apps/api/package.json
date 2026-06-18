@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "NODE_OPTIONS=--conditions=acaos-src tsx watch src/server.ts",
-    "build": "npm run build -w @acaos/backend-core && npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
+    "build": "npx prisma generate --schema ../../packages/db/prisma/schema.prisma && tsc -p ../../packages/backend-core/tsconfig.json && tsc -p tsconfig.json",
     "migrate": "npx prisma migrate deploy --schema ../../packages/db/prisma/schema.prisma",
     "start": "node dist/server.js",
     "start:dev": "NODE_OPTIONS=--conditions=acaos-src tsx src/server.ts"
