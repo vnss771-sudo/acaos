@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { enqueueSendCampaign, getJobById } from '../lib/queues.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
@@ -101,8 +101,7 @@ campaignsRouter.post(
     const user = (req as AuthedRequest).user
     const { workspaceId, name, goalType, description } = req.body as z.infer<typeof createCampaignSchema>
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     const campaign = await prisma.campaign.create({
       data: { workspaceId, name, goalType, description }
@@ -140,8 +139,7 @@ campaignsRouter.patch(
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
-    const member = await userBelongsToWorkspace(user.id, existing.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
 
     const updates: { name?: string; goalType?: string; description?: string } = {}
     if (typeof req.body?.name === 'string' && req.body.name.trim()) {
@@ -247,8 +245,7 @@ campaignsRouter.post(
     })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
-    const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, campaign.workspaceId, 'admin')
 
     // Production send-readiness / compliance gate. The frontend checks SPF/DKIM
     // and sender setup before launch, but a direct API caller must not be able to
@@ -362,8 +359,7 @@ campaignsRouter.delete(
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
-    const member = await userBelongsToWorkspace(user.id, existing.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
 
     await prisma.campaign.delete({ where: { id: campaignId } })
     res.json({ ok: true })
@@ -381,8 +377,7 @@ campaignsRouter.post(
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
-    const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, campaign.workspaceId, 'admin')
 
     const result = await prisma.outreachSent.deleteMany({
       where: { campaignId: campaign.id, status: 'FAILED' },

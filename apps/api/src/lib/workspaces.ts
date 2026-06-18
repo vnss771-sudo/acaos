@@ -1,5 +1,6 @@
 import { prisma } from './prisma.js'
 import { appendSlugSuffix, buildWorkspaceSlugSeed, sanitizeWorkspaceSlug } from './validation.js'
+import { ApiError } from './http.js'
 
 export async function resolveUniqueWorkspaceSlug(name: string | undefined, email: string) {
   const base = buildWorkspaceSlugSeed(name, email)
@@ -63,4 +64,44 @@ export async function userCanManageWorkspaceBilling(userId: string, workspaceId:
   })
 
   return Boolean(membership)
+}
+
+// ── Workspace RBAC ────────────────────────────────────────────────────────────
+// "admin" means owner OR admin; "member" is the least-privileged role. High-risk
+// actions (bulk import/export, destructive deletes, campaign/mission control,
+// discovery/enrichment that spends provider quota) require at least admin.
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member'
+
+const ROLE_RANK: Record<WorkspaceRole, number> = { member: 1, admin: 2, owner: 3 }
+
+/** Map an arbitrary stored/fake role to a known role; unknown/missing → member. */
+export function normalizeWorkspaceRole(role: string | null | undefined): WorkspaceRole {
+  return role === 'owner' || role === 'admin' ? role : 'member'
+}
+
+/** The caller's normalized role in a workspace, or null if not a member. */
+export async function getWorkspaceRole(userId: string, workspaceId: string): Promise<WorkspaceRole | null> {
+  const membership = await prisma.membership.findFirst({
+    where: { userId, workspaceId },
+    select: { role: true }
+  })
+  return membership ? normalizeWorkspaceRole(membership.role) : null
+}
+
+/**
+ * Authorize a workspace action by minimum role. Verifies membership AND role in
+ * one check — use it in place of `userHasWorkspaceAccess` on privileged routes.
+ * Throws 403 when the caller is not a member or is below `min`. Returns the role.
+ */
+export async function assertMinimumWorkspaceRole(
+  userId: string,
+  workspaceId: string,
+  min: WorkspaceRole
+): Promise<WorkspaceRole> {
+  const role = await getWorkspaceRole(userId, workspaceId)
+  if (!role || ROLE_RANK[role] < ROLE_RANK[min]) {
+    throw new ApiError(403, 'Admin role required')
+  }
+  return role
 }

@@ -7,7 +7,7 @@ import { Spinner, EmptyState } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
-type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
 const BLANK_FORM = {
   businessName: '', contactName: '', email: '', phone: '',
@@ -347,7 +347,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
   )
 }
 
-export function Leads({ api, workspace, toast }: Props) {
+export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const [leads, setLeads] = useState<Lead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -534,7 +534,7 @@ export function Leads({ api, workspace, toast }: Props) {
         <span style={{ color: colors.textFaint, fontSize: 13 }}>{total} leads</span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {selectedIds.size > 0 && (
+          {canManage && selectedIds.size > 0 && (
             <div style={{ position: 'relative' }}>
               <button
                 style={{ ...s.btnSm, background: '#1e3a5f', color: colors.blueLight }}
@@ -568,11 +568,13 @@ export function Leads({ api, workspace, toast }: Props) {
               )}
             </div>
           )}
-          <button style={s.btnSm} onClick={() => fileRef.current?.click()} disabled={importing}>
-            {importing ? <><Spinner size={12} /> Importing…</> : '↑ Import CSV'}
-          </button>
+          {canManage && (
+            <button style={s.btnSm} onClick={() => fileRef.current?.click()} disabled={importing}>
+              {importing ? <><Spinner size={12} /> Importing…</> : '↑ Import CSV'}
+            </button>
+          )}
           <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importCsv} />
-          {workspace && (
+          {canManage && workspace && (
             <button style={s.btnSm} onClick={() => {
               const url = `${API_BASE}/api/leads/export?workspaceId=${workspace.id}`
               const link = document.createElement('a')
@@ -585,7 +587,7 @@ export function Leads({ api, workspace, toast }: Props) {
               ↓ Export CSV
             </button>
           )}
-          <button style={s.btn} onClick={() => setAdding(v => !v)}>+ Add Lead</button>
+          {canManage && <button style={s.btn} onClick={() => setAdding(v => !v)}>+ Add Lead</button>}
         </div>
       </div>
 
@@ -665,7 +667,7 @@ export function Leads({ api, workspace, toast }: Props) {
                     <ScorePill score={lead.score} />
                   </td>
                   <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
-                    <button style={s.btnDanger} onClick={() => deleteLead(lead.id)}>✕</button>
+                    {canManage && <button style={s.btnDanger} onClick={() => deleteLead(lead.id)}>✕</button>}
                   </td>
                 </tr>
               ))}

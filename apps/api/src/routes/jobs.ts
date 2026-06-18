@@ -3,7 +3,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import {
   enqueueResearchLead,
@@ -206,8 +206,7 @@ jobsRouter.post(
     const workspaceId = String(req.body?.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     const leads = await prisma.lead.findMany({
       where: { workspaceId, stage: 'NEW' },

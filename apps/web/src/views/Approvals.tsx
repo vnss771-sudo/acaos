@@ -6,14 +6,14 @@ import { Spinner, EmptyState } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
-type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
 type PendingDraft = OutreachDraft & {
   leadId?: string
   lead: { id: string; businessName: string; email?: string | null; city?: string | null; category?: string | null }
 }
 
-export function ApprovalsView({ api, workspace, toast }: Props) {
+export function ApprovalsView({ api, workspace, toast, canManage = false }: Props) {
   const [drafts, setDrafts] = useState<PendingDraft[]>([])
   const [loading, setLoading] = useState(true)
   const [edits, setEdits] = useState<Record<string, { subject: string; emailBody: string }>>({})
@@ -90,7 +90,7 @@ export function ApprovalsView({ api, workspace, toast }: Props) {
                   <input
                     style={s.input}
                     value={e.subject}
-                    disabled={isBusy}
+                    disabled={isBusy || !canManage}
                     onChange={ev => setEdits(prev => ({ ...prev, [d.id]: { ...e, subject: ev.target.value } }))}
                   />
                 </div>
@@ -99,19 +99,21 @@ export function ApprovalsView({ api, workspace, toast }: Props) {
                   <textarea
                     style={{ ...s.textarea, minHeight: 120 }}
                     value={e.emailBody}
-                    disabled={isBusy}
+                    disabled={isBusy || !canManage}
                     onChange={ev => setEdits(prev => ({ ...prev, [d.id]: { ...e, emailBody: ev.target.value } }))}
                   />
                 </div>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  {edited(d) && (
-                    <button style={s.btnSecondary} disabled={isBusy} onClick={() => save(d)}>Save edits</button>
-                  )}
-                  <button style={{ ...s.btnSm, background: '#7f1d1d' }} disabled={isBusy} onClick={() => decide(d, 'reject')}>Reject</button>
-                  <button style={{ ...s.btn, background: '#16a34a' }} disabled={isBusy} onClick={() => decide(d, 'approve')}>
-                    {edited(d) ? 'Save & Approve' : 'Approve'}
-                  </button>
-                </div>
+                {canManage && (
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    {edited(d) && (
+                      <button style={s.btnSecondary} disabled={isBusy} onClick={() => save(d)}>Save edits</button>
+                    )}
+                    <button style={{ ...s.btnSm, background: '#7f1d1d' }} disabled={isBusy} onClick={() => decide(d, 'reject')}>Reject</button>
+                    <button style={{ ...s.btn, background: '#16a34a' }} disabled={isBusy} onClick={() => decide(d, 'approve')}>
+                      {edited(d) ? 'Save & Approve' : 'Approve'}
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}

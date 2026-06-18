@@ -12,7 +12,7 @@ import {
 
 const USER = 'u1'
 const WS = 'ws1'
-const member = (uid: string, wid: string) => (uid === USER && wid === WS ? { id: 'm1' } : null)
+const member = (uid: string, wid: string) => (uid === USER && wid === WS ? { id: 'm1', role: 'admin' } : null)
 
 function row(id = 'p1') {
   return {

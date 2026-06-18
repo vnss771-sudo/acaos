@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import { recordAudit } from '../lib/audit.js'
@@ -166,7 +166,7 @@ missionsRouter.post(
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const { workspaceId, name, goalType, targetCustomer, offer, playbookId } = req.body as z.infer<typeof createMissionSchema>
-    if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     const description = [targetCustomer && `Target: ${targetCustomer}`, offer && `Offer: ${offer}`]
       .filter(Boolean)
@@ -204,7 +204,7 @@ missionsRouter.patch(
     const user = (req as AuthedRequest).user
     const existing = await prisma.mission.findUnique({ where: { id: req.params.id as string } })
     if (!existing) throw new ApiError(404, 'Mission not found')
-    if (!(await userBelongsToWorkspace(user.id, existing.workspaceId))) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
 
     const { name, status } = req.body as z.infer<typeof updateMissionSchema>
     const mission = await prisma.mission.update({

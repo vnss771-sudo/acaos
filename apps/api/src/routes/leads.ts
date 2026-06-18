@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
@@ -130,8 +130,7 @@ leadsRouter.post(
     if (!Array.isArray(leads) || leads.length === 0) throw new ApiError(400, 'leads array required')
     if (leads.length > 500) throw new ApiError(400, 'Maximum 500 leads per import')
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     const weights = await getWorkspaceWeights(workspaceId)
 
@@ -180,8 +179,7 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
   const workspaceId = String(req.query.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-  const member = await userBelongsToWorkspace(user.id, workspaceId)
-  if (!member) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
   const HEADERS = ['id','businessName','contactName','email','phone','website','city','category','score','stage','sourceTag','notes','aiSummary','outreachAngle','createdAt','updatedAt']
 
@@ -312,8 +310,7 @@ leadsRouter.delete(
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
-    const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, lead.workspaceId, 'admin')
 
     await prisma.lead.delete({ where: { id: leadId } })
     res.json({ ok: true })
@@ -332,8 +329,7 @@ leadsRouter.post(
     if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
     if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk delete')
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     const result = await prisma.lead.deleteMany({
       where: { id: { in: ids }, workspaceId }
@@ -356,8 +352,7 @@ leadsRouter.post(
     if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk update')
     if (!VALID_STAGES.includes(stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     const result = await prisma.lead.updateMany({
       where: { id: { in: ids }, workspaceId },
@@ -380,8 +375,7 @@ leadsRouter.post(
     if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
     if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk update')
 
-    const member = await userBelongsToWorkspace(user.id, workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
     if (campaignId) {
       const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId } })
@@ -447,8 +441,7 @@ leadsRouter.post(
     const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
 
-    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, draft.workspaceId, 'admin')
 
     const updated = await prisma.outreachDraft.update({
       where: { id: draftId },
@@ -471,8 +464,7 @@ leadsRouter.post(
     const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
 
-    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, draft.workspaceId, 'admin')
 
     const updated = await prisma.outreachDraft.update({
       where: { id: draftId },
@@ -496,8 +488,7 @@ leadsRouter.patch(
     const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
 
-    const member = await userBelongsToWorkspace(user.id, draft.workspaceId)
-    if (!member) throw new ApiError(403, 'Access denied')
+    await assertMinimumWorkspaceRole(user.id, draft.workspaceId, 'admin')
     if (draft.status !== 'DRAFTED') throw new ApiError(409, `Cannot edit a ${draft.status.toLowerCase()} draft`)
 
     const body = req.body as UpdateDraftRequest

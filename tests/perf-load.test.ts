@@ -359,7 +359,7 @@ describe('C. Cursor-based export pagination correctness', () => {
       },
       membership: {
         findFirst: async (a: any) =>
-          a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1' } : null,
+          a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1', role: 'admin' } : null,
       },
       scoringModel: { findUnique: async () => null },
       lead: {
@@ -500,7 +500,7 @@ describe('C. Cursor-based export pagination correctness', () => {
       },
       membership: {
         findFirst: async (a: any) =>
-          a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1' } : null,
+          a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1', role: 'admin' } : null,
       },
       scoringModel: { findUnique: async () => null },
       lead: {
@@ -631,7 +631,7 @@ describe('D. Campaign stats under concurrent load', () => {
       user: { findUnique: async () => ({ id: USER, email: 'u@s.test', name: null }) },
       membership: {
         findFirst: async (a: any) =>
-          a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1' } : null,
+          a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1', role: 'admin' } : null,
       },
       campaign: {
         findUnique: async (a: any) =>

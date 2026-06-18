@@ -5,6 +5,8 @@ export type User = {
   emailVerified?: boolean
 }
 
+export type WorkspaceRole = 'owner' | 'admin' | 'member'
+
 export type Workspace = {
   id: string
   name: string
@@ -16,6 +18,7 @@ export type Workspace = {
   onboardingCompleted?: boolean
   senderBusinessName?: string | null
   senderPostalAddress?: string | null
+  role?: WorkspaceRole
   _count?: { leads: number; campaigns: number }
 }
 
@@ -23,6 +26,13 @@ export type WorkspaceMember = {
   id: string
   role: string
   user: { id: string; email: string; name?: string | null }
+}
+
+// Admin = owner or admin. High-risk actions (bulk import/export, deletes,
+// campaign/mission control, discovery/enrichment) are admin-only, mirroring the
+// backend RBAC gate; members get a read-mostly UI.
+export function canManageWorkspace(workspace: Workspace | null | undefined): boolean {
+  return workspace?.role === 'owner' || workspace?.role === 'admin'
 }
 
 export type Campaign = {

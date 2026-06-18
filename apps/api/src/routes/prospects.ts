@@ -16,7 +16,7 @@ import {
   type ICPConfig,
   type SignalType,
 } from '../lib/signalEngine.js'
-import { userHasWorkspaceAccess } from '../lib/workspaces.js'
+import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '../lib/queues.js'
 import { enrichProspect } from '../services/apollo.js'
 import { ingestSignal } from '../lib/signalIngest.js'
@@ -66,7 +66,7 @@ export function normalizeDomain(domain: string | null | undefined): string | nul
 async function loadIntentForWrite(prospectId: string, intentId: string, userId: string) {
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId }, select: { id: true, workspaceId: true } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
-  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
   const intent = await prisma.outreachIntent.findUnique({ where: { id: intentId } })
   if (!intent || intent.prospectId !== prospect.id) throw new ApiError(404, 'Outreach intent not found')
   return intent
@@ -201,7 +201,7 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
   const workspaceId = String(req.query.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-  if (!await userHasWorkspaceAccess(user.id, workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
   const HEADERS = ['id','companyName','domain','industry','employeeCount','location','contactName','contactEmail','contactPhone','contactTitle','linkedinUrl','opportunityScore','intentScore','fitScore','buyingStage','outcomeStage','winProbability','expectedDealValue','estimatedRevenue','sourceTag','createdAt','updatedAt']
 
@@ -315,7 +315,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, validate(discoverSchema)
   const workspaceId = body.workspaceId
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   // Optionally scope the run to a mission so the mission control plane owns its
   // discovered prospects + activity. The mission must belong to the same workspace.
@@ -507,7 +507,7 @@ prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, r
   if (rows.length > 1000) throw new ApiError(400, 'Maximum 1000 rows per import')
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   const icp = await getICP(workspaceId)
 
@@ -582,7 +582,7 @@ prospectsRouter.post('/import-signals', requireVerifiedEmail, asyncHandler(async
   if (rows.length > 500) throw new ApiError(400, 'Maximum 500 rows per import')
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   let prospectsCreated = 0
   let prospectsReused = 0
@@ -659,7 +659,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
   if (!req.body.companyName) throw new ApiError(400, 'companyName required')
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   const meta = {
     industry:      req.body.industry      ?? null,
@@ -742,7 +742,7 @@ prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, existing.workspaceId, 'admin')
 
   await prisma.prospect.delete({ where: { id: req.params.id as string } })
   res.json({ ok: true })
@@ -909,7 +909,7 @@ prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, re
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
 
   const intent = await prisma.outreachIntent.findUnique({ where: { id: req.params.intentId as string } })
   if (!intent || intent.prospectId !== prospect.id) throw new ApiError(404, 'Outreach intent not found')
@@ -1022,7 +1022,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
   const userId = (req as AuthedRequest).user.id
-  if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
 
   if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot be enriched — add real prospects first')
 

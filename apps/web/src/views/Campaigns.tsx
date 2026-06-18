@@ -31,7 +31,7 @@ type OutreachRecord = {
   leadId?: string
 }
 
-type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
 const GOAL_COLORS: Record<string, string> = {
   BOOK_CALL: colors.blue, GET_REPLY: colors.purple,
@@ -42,7 +42,7 @@ const STATUS_COLOR: Record<string, string> = {
   SENDING: colors.amber, SENT: colors.blue, REPLIED: '#22c55e', BOUNCED: '#ef4444', FAILED: '#ef4444'
 }
 
-export function Campaigns({ api, workspace, toast }: Props) {
+export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   const [campaigns, setCampaigns]   = useState<Campaign[]>([])
   const [loading, setLoading]       = useState(false)
   const [adding, setAdding]         = useState(false)
@@ -305,8 +305,8 @@ export function Campaigns({ api, workspace, toast }: Props) {
       {/* Header */}
       <div style={{ ...s.flexBetween }}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button style={s.btn} onClick={() => setShowMissionBuilder(true)}>+ New Mission</button>
-          <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} onClick={startAdd} title="Advanced: create campaign manually">Advanced</button>
+          {canManage && <button style={s.btn} onClick={() => setShowMissionBuilder(true)}>+ New Mission</button>}
+          {canManage && <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} onClick={startAdd} title="Advanced: create campaign manually">Advanced</button>}
         </div>
       </div>
 
@@ -360,8 +360,8 @@ export function Campaigns({ api, workspace, toast }: Props) {
                 <div style={{ ...s.flexBetween, marginBottom: 12 }}>
                   <div style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{c.name}</div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button style={s.btnSm} onClick={() => startEdit(c)}>Edit</button>
-                    <button style={s.btnDanger} onClick={() => deleteCampaign(c.id)}>✕</button>
+                    {canManage && <button style={s.btnSm} onClick={() => startEdit(c)}>Edit</button>}
+                    {canManage && <button style={s.btnDanger} onClick={() => deleteCampaign(c.id)}>✕</button>}
                   </div>
                 </div>
 
@@ -393,20 +393,22 @@ export function Campaigns({ api, workspace, toast }: Props) {
 
                 {/* Action row */}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button
-                    style={{
-                      ...s.btn,
-                      background: isLaunching ? '#374151' : '#16a34a',
-                      opacity: isLaunching || !st?.eligible ? 0.6 : 1,
-                      cursor: isLaunching || !st?.eligible ? 'not-allowed' : 'pointer',
-                    }}
-                    disabled={isLaunching || !st?.eligible}
-                    onClick={() => st && requestLaunch(c.id, c.name, st.eligible)}
-                  >
-                    {isLaunching ? '⏳ Sending…' : '🚀 Launch Campaign'}
-                  </button>
+                  {canManage && (
+                    <button
+                      style={{
+                        ...s.btn,
+                        background: isLaunching ? '#374151' : '#16a34a',
+                        opacity: isLaunching || !st?.eligible ? 0.6 : 1,
+                        cursor: isLaunching || !st?.eligible ? 'not-allowed' : 'pointer',
+                      }}
+                      disabled={isLaunching || !st?.eligible}
+                      onClick={() => st && requestLaunch(c.id, c.name, st.eligible)}
+                    >
+                      {isLaunching ? '⏳ Sending…' : '🚀 Launch Campaign'}
+                    </button>
+                  )}
 
-                  {(st?.failed ?? 0) > 0 && (
+                  {canManage && (st?.failed ?? 0) > 0 && (
                     <button
                       style={{ ...s.btnSm, border: '1px solid #ef4444', color: '#ef4444' }}
                       disabled={isLaunching}

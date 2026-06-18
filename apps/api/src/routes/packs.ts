@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { listPacks, getPack } from '../lib/packs/index.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -28,7 +28,7 @@ packsRouter.post('/:id/apply', asyncHandler(async (req, res) => {
   const user = (req as AuthedRequest).user
   const workspaceId = String(req.body?.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-  if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
+  await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
   const pack = getPack(req.params.id as string)
   if (!pack) throw new ApiError(404, 'Pack not found')

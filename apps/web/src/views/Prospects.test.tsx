@@ -29,7 +29,7 @@ function makeApi(overrides?: (path: string) => unknown) {
 describe('ProspectsView', () => {
   test('shows an empty state when no workspace is selected', () => {
     const api = makeApi()
-    render(<ProspectsView api={api as never} workspace={null} toast={toast as never} />)
+    render(<ProspectsView api={api as never} workspace={null} toast={toast as never} canManage />)
     expect(screen.getByText('No workspace selected')).toBeInTheDocument()
     // sources endpoint is fetched regardless of workspace; prospects endpoint is not
     expect(api).not.toHaveBeenCalledWith(expect.stringContaining('/api/prospects?workspaceId'))
@@ -40,22 +40,35 @@ describe('ProspectsView', () => {
       if (path.includes('/sources')) return Promise.resolve({ sources: [] })
       if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect], total: 1 })
     })
-    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument()
     expect(screen.getByText('84')).toBeInTheDocument()
     expect(api).toHaveBeenCalledWith('/api/prospects?workspaceId=ws1&limit=100')
   })
 
+  test('a member (canManage=false) sees prospects but no import/export/discover/add controls', async () => {
+    const api = makeApi((path) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [{ name: 'apollo', label: 'Apollo' }] })
+      if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect], total: 1 })
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage={false} />)
+    expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument() // read access intact
+    expect(screen.queryByRole('button', { name: /Import CSV/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Export CSV/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Add Prospect/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Apollo/i })).not.toBeInTheDocument()
+  })
+
   test('shows the empty state when the workspace has no prospects', async () => {
     const api = makeApi()
-    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
     expect(await screen.findByText(/No prospects yet/i)).toBeInTheDocument()
   })
 
   test('typing in search refetches with the search query', async () => {
     const api = makeApi()
-    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     await userEvent.type(screen.getByPlaceholderText('Search prospects…'), 'acme')
     await waitFor(() =>
@@ -70,7 +83,7 @@ describe('ProspectsView', () => {
       if (path === '/api/prospects/discover') return Promise.resolve({ discovered: 2, skipped: 0, total: 2 })
       return undefined
     })
-    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     // Pick the mission, then trigger discovery.
     const select = await screen.findByTitle('Attribute discovered prospects to a mission')
@@ -90,7 +103,7 @@ describe('ProspectsView', () => {
       ] })
       return undefined
     })
-    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} />)
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     const toggle = await screen.findByText(/Discovery history \(1\)/)
     await userEvent.click(toggle)
