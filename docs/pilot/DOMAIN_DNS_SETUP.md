@@ -57,8 +57,15 @@ In the **API** and **worker** services on Railway → Variables:
 
 Redeploy after changing variables.
 
-> Separately (not strictly a sending blocker, but flagged): set the Railway **start
-> command** to `node scripts/start-with-migrations.mjs` so migrations apply on deploy.
+> **Production gate (must do before any real schema change ships):** the Railway
+> **start command** must be `node scripts/start-with-migrations.mjs`, which runs
+> `prisma migrate deploy` (applies only pending, reviewed migrations). It exists to
+> **replace the dangerous `prisma db push --accept-data-loss`** start command —
+> `db push` can silently DROP columns/constraints on a schema change, destroying
+> data. The switch from `db push` → `migrate deploy` is the production gate: do not
+> deploy schema changes until the start command is the migrate-deploy script. If
+> migrations can't apply, the script exits non-zero and refuses to start (a
+> half-migrated API is worse than a failed deploy).
 
 ## 4. Smoke-test deliverability before the pilot
 
