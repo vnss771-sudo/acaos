@@ -12,36 +12,17 @@ import { generateRefreshToken, hashRefreshToken } from '../lib/jwt.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import { escapeHtml } from '../lib/html.js'
 import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
+import { assertPublicMailHost } from '../lib/ssrf.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { SignalType } from '../lib/signalEngine.js'
 import { evictCachedWorkspace } from '../lib/ingestCache.js'
 
 // ── F-04: SSRF protection helpers ────────────────────────────────────────────
-
-function validateMailHost(host: string | undefined | null, field: string): void {
-  if (!host) return
-  const lower = host.toLowerCase().trim()
-  // Block localhost variants
-  if (['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(lower)) {
-    throw new ApiError(400, `${field}: localhost not permitted`)
-  }
-  // Block private/link-local/metadata IPv4 ranges (simple prefix check)
-  const privatePatterns = [
-    /^10\./,
-    /^172\.(1[6-9]|2\d|3[01])\./,
-    /^192\.168\./,
-    /^169\.254\./,         // link-local
-    /^100\.(6[4-9]|[7-9]\d|1([01]\d|2[0-7]))\./,  // CGNAT
-  ]
-  if (privatePatterns.some(p => p.test(lower))) {
-    throw new ApiError(400, `${field}: private IP ranges not permitted`)
-  }
-  // Block AWS/GCP/Azure metadata endpoints
-  if (lower.includes('169.254.169.254') || lower.includes('metadata.google') || lower.includes('metadata.azure')) {
-    throw new ApiError(400, `${field}: metadata endpoints not permitted`)
-  }
-}
+// Host validation lives in lib/ssrf.ts (`assertPublicMailHost`), which resolves
+// the hostname and rejects every address that points at private/reserved space —
+// closing the DNS-resolves-to-private and IPv6/mapped bypasses that a literal
+// string-prefix check cannot. Only port allow-listing remains local here.
 
 function validateMailPort(port: number | undefined | null, allowed: number[], field: string): void {
   if (!port) return
@@ -463,9 +444,10 @@ workspaceRouter.put(
       imapPass:   rawImapPass ? encryptSecret(rawImapPass) : null,
     }
 
-    // F-04: SSRF validation — reject private/metadata hosts and non-standard ports
-    validateMailHost(data.smtpHost, 'smtpHost')
-    validateMailHost(data.imapHost, 'imapHost')
+    // F-04: SSRF validation — reject hosts that are, or resolve to, private/
+    // reserved/metadata addresses, plus non-standard ports.
+    await assertPublicMailHost(data.smtpHost, 'smtpHost')
+    await assertPublicMailHost(data.imapHost, 'imapHost')
     validateMailPort(data.smtpPort, [25, 465, 587, 2525], 'smtpPort')
     validateMailPort(data.imapPort, [143, 993], 'imapPort')
 

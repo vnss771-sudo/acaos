@@ -110,3 +110,40 @@ test('GET /:id/members lists members for a member', async () => {
   assert.equal(res.status, 200)
   assert.equal(res.body.members[0].user.email, 'u1@a.test')
 })
+
+// ── email-config SSRF guard (F-04): hosts are run through assertPublicMailHost ──
+
+const emailConfigSpec = () => spec({
+  workspaceEmailConfig: { findUnique: async () => null, upsert: async (a: any) => ({ workspaceId: WS, ...a.update }) },
+})
+
+test('PUT /:id/email-config rejects an smtpHost on the cloud-metadata IP', async () => {
+  prisma = createFakePrisma(emailConfigSpec()); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/email-config`, {
+    method: 'PUT', headers: jsonAuth,
+    body: JSON.stringify({ smtpHost: '169.254.169.254', smtpPort: 587 }),
+  })
+  assert.equal(res.status, 400)
+  assert.equal(prisma.callsTo('workspaceEmailConfig', 'upsert').length, 0)
+})
+
+test('PUT /:id/email-config rejects an imapHost in a private range', async () => {
+  prisma = createFakePrisma(emailConfigSpec()); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/email-config`, {
+    method: 'PUT', headers: jsonAuth,
+    body: JSON.stringify({ imapHost: '10.0.0.5', imapPort: 993 }),
+  })
+  assert.equal(res.status, 400)
+  assert.equal(prisma.callsTo('workspaceEmailConfig', 'upsert').length, 0)
+})
+
+test('PUT /:id/email-config accepts a public host', async () => {
+  prisma = createFakePrisma(emailConfigSpec()); installPrisma(prisma)
+  // Literal public IP avoids a real DNS lookup in the test.
+  const res = await server.request(`/api/workspaces/${WS}/email-config`, {
+    method: 'PUT', headers: jsonAuth,
+    body: JSON.stringify({ smtpHost: '8.8.8.8', smtpPort: 587 }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(prisma.callsTo('workspaceEmailConfig', 'upsert').length, 1)
+})
