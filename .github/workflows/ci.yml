@@ -66,6 +66,18 @@ jobs:
         working-directory: apps/worker
         run: npm run build
 
+  # Build the real production Docker images (what Railway deploys). Each
+  # Dockerfile COPYs only a subset of the monorepo, so a missing workspace COPY
+  # (e.g. packages/backend-core) fails here instead of in production.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f Dockerfile.api -t acaos-api .
+      - name: Build worker image
+        run: docker build -f Dockerfile.worker -t acaos-worker .
+
   # Database-backed integration tests against a real PostgreSQL service.
   verify-db:
     runs-on: ubuntu-latest

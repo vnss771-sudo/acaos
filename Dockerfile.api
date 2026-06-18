@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend-core/package.json ./packages/backend-core/
 COPY apps/api/package.json ./apps/api/
 
 # Force dev deps even when the platform injects NODE_ENV=production into the
@@ -13,6 +14,9 @@ RUN npm ci --include=dev
 
 COPY packages/db ./packages/db
 COPY packages/shared ./packages/shared
+# Shared backend runtime — the API re-exports it (lib/services shims) and
+# compiles it during its build, and resolves it from dist at runtime.
+COPY packages/backend-core ./packages/backend-core
 COPY apps/api ./apps/api
 COPY scripts ./scripts
 
