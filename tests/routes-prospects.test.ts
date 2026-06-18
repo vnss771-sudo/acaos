@@ -367,3 +367,40 @@ test('GET /intents 400 without workspaceId, 403 for a non-member workspace', asy
   assert.equal((await server.request('/api/prospects/intents', { headers: auth(MEMBER) })).status, 400)
   assert.equal((await server.request(`/api/prospects/intents?workspaceId=${OTHER_WS}`, { headers: auth(MEMBER) })).status, 403)
 })
+
+// --- discover (mission-scoped) ---
+
+function discoverSpec(missionWorkspaceId: string | null) {
+  const s = spec()
+  ;(s as any).user = verifiedUserPS
+  ;(s as any).mission = {
+    findUnique: async () => (missionWorkspaceId ? { workspaceId: missionWorkspaceId, playbookId: null } : null),
+  }
+  return s
+}
+
+test('POST /discover rejects a body violating the shared contract (400)', async () => {
+  installPrisma(createFakePrisma(discoverSpec(OWNED_WS)))
+  // Missing workspaceId — zod validation fails before any work.
+  const res = await server.request('/api/prospects/discover', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ source: 'apollo' }),
+  })
+  assert.equal(res.status, 400)
+})
+
+test('POST /discover rejects a missionId outside the workspace (404)', async () => {
+  installPrisma(createFakePrisma(discoverSpec(OTHER_WS)))
+  const res = await server.request('/api/prospects/discover', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ workspaceId: OWNED_WS, missionId: 'm-other' }),
+  })
+  assert.equal(res.status, 404)
+})
+
+test('POST /discover accepts a valid mission then 503 when no source is configured', async () => {
+  delete process.env.APOLLO_API_KEY
+  installPrisma(createFakePrisma(discoverSpec(OWNED_WS)))
+  const res = await server.request('/api/prospects/discover', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ workspaceId: OWNED_WS, missionId: 'm1' }),
+  })
+  assert.equal(res.status, 503)
+})

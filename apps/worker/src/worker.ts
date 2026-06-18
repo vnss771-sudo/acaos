@@ -379,6 +379,7 @@ const recommendWorker = new Worker(
       messageAngle: rec.messageAngle,
       channel: rec.bestChannel,
       signals: prospect.signals,
+      missionId: prospect.missionId,
     }).catch((e) => log('generate-recommendations', `intent create failed for ${prospectId}: ${(e as Error).message}`))
 
     await job.updateProgress(100)

@@ -104,6 +104,21 @@ export interface RecordProspectOutcomeRequest {
   dealValue?: number
 }
 
+// POST /api/prospects/discover — pull companies from a discovery source. The
+// query defaults from the workspace ICP (and, when scoped to a mission, that
+// mission's playbook preset); explicit fields here override those defaults.
+export interface DiscoverProspectsRequest {
+  workspaceId: string
+  source?: string
+  missionId?: string | null
+  industries?: string[]
+  locations?: string[]
+  keywords?: string[]
+  minEmployees?: number
+  maxEmployees?: number
+  limit?: number
+}
+
 // ── Workspaces ────────────────────────────────────────────────────────────────
 // PUT /api/workspaces/:id/icp
 export interface UpdateIcpRequest {

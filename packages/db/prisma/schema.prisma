@@ -148,6 +148,7 @@ model Mission {
   workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign       Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   discoveryRuns  DiscoveryRun[]
+  prospects      Prospect[]
 
   @@index([workspaceId, status])
 }
@@ -523,7 +524,11 @@ model Prospect {
   aiSummary        String?
   sourceTag        String?
   isExample        Boolean      @default(false)
+  // The mission this prospect was discovered for (if any). Lets the mission
+  // control plane own its prospects, and carries through to recommendations.
+  missionId        String?
   workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  mission          Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
   signals          Signal[]
   recommendations  Recommendation[]
   outcomes         ProspectOutcome[]
@@ -537,6 +542,7 @@ model Prospect {
   @@index([workspaceId, buyingStage])
   @@index([workspaceId, outcomeStage])
   @@index([workspaceId, domainKey])
+  @@index([missionId])
 }
 
 model Signal {
@@ -662,6 +668,7 @@ model OutreachIntent {
 
   @@index([workspaceId, status])
   @@index([prospectId])
+  @@index([missionId])
 }
 
 model ProspectOutcome {
