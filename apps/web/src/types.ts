@@ -120,6 +120,30 @@ export type MissionFunnel = {
 export type ReadinessCheck = { name: string; label: string; ok: boolean; hint: string }
 export type SendReadiness = { ready: boolean; checks: ReadinessCheck[] }
 
+export type MissionEngagement = {
+  sent: number
+  replied: number
+  bounced: number
+  failed: number
+  replyRate: number // 0..1
+}
+
+export type MissionSend = {
+  id: string
+  toEmail: string
+  subject: string
+  status: string
+  replyIntent?: string | null
+  sentAt: string
+  repliedAt?: string | null
+}
+
+export type MissionLearning = {
+  updateCount: number
+  lastWeightUpdate?: string | null
+  totalOutcomes: number
+}
+
 // GET /api/missions/:id — the mission control plane.
 export type MissionDetail = {
   mission: Mission
@@ -129,6 +153,9 @@ export type MissionDetail = {
   intents: MissionIntent[]
   funnel: MissionFunnel
   sendReadiness: SendReadiness
+  engagement: MissionEngagement
+  recentSends: MissionSend[]
+  learning: MissionLearning
 }
 
 export type Lead = {

@@ -126,7 +126,11 @@ missionsRouter.get(
     const pack = mission.playbookId ? getPack(mission.playbookId) : undefined
     const playbook = pack ? { id: pack.id, label: pack.label, description: pack.description } : null
 
-    const [discoveryRuns, prospects, intents, prospectTotal, intentStatusCounts, sendReadiness] = await Promise.all([
+    const cid = mission.campaignId
+    const [
+      discoveryRuns, prospects, intents, prospectTotal, intentStatusCounts, sendReadiness,
+      sendStatusCounts, recentSends, scoringModel, outcomeTotal,
+    ] = await Promise.all([
       prisma.discoveryRun.findMany({
         where: { missionId: mission.id },
         orderBy: { startedAt: 'desc' },
@@ -159,6 +163,18 @@ missionsRouter.get(
       prisma.outreachIntent.groupBy({ by: ['status'], where: { missionId: mission.id }, _count: true }),
       // Whether this workspace can actually send yet (SMTP + compliance footer).
       getSendReadiness(mission.workspaceId),
+      // Engagement (loop tail): deliverability + replies from the linked
+      // campaign's outbox. campaignId is unique per mission, so it scopes cleanly.
+      cid ? prisma.outreachSent.groupBy({ by: ['status'], where: { campaignId: cid }, _count: true }) : Promise.resolve([]),
+      cid ? prisma.outreachSent.findMany({
+        where: { campaignId: cid },
+        orderBy: { sentAt: 'desc' },
+        take: 8,
+        select: { id: true, toEmail: true, subject: true, status: true, replyIntent: true, sentAt: true, repliedAt: true },
+      }) : Promise.resolve([]),
+      // Learning: how much the workspace scoring model has adapted from outcomes.
+      prisma.scoringModel.findUnique({ where: { workspaceId: mission.workspaceId }, select: { updateCount: true, lastWeightUpdate: true } }),
+      prisma.scoringOutcome.count({ where: { workspaceId: mission.workspaceId } }),
     ])
     intents.sort((a, b) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
 
@@ -175,7 +191,29 @@ missionsRouter.get(
       sent: byStatus.get('SENT') ?? 0,
     }
 
-    res.json({ mission, playbook, discoveryRuns, prospects, intents, funnel, sendReadiness })
+    // Engagement (loop tail): an email counts as "sent" once it leaves the outbox
+    // (SENT, or its post-dispatch states REPLIED/BOUNCED). FAILED = pre-delivery
+    // rejection; SENDING = in flight.
+    const sendBy = new Map<string, number>(
+      (sendStatusCounts as Array<{ status: string; _count: number }>).map((r) => [r.status, r._count])
+    )
+    const delivered = (sendBy.get('SENT') ?? 0) + (sendBy.get('REPLIED') ?? 0) + (sendBy.get('BOUNCED') ?? 0)
+    const replied = sendBy.get('REPLIED') ?? 0
+    const engagement = {
+      sent: delivered,
+      replied,
+      bounced: sendBy.get('BOUNCED') ?? 0,
+      failed: sendBy.get('FAILED') ?? 0,
+      replyRate: delivered > 0 ? replied / delivered : 0,
+    }
+
+    const learning = {
+      updateCount: scoringModel?.updateCount ?? 0,
+      lastWeightUpdate: scoringModel?.lastWeightUpdate ?? null,
+      totalOutcomes: outcomeTotal,
+    }
+
+    res.json({ mission, playbook, discoveryRuns, prospects, intents, funnel, sendReadiness, engagement, recentSends, learning })
   })
 )
 
