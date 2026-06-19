@@ -1,0 +1,1338 @@
+--- a/apps/api/src/routes/auth.ts
++++ b/apps/api/src/routes/auth.ts
+@@ -18,6 +18,7 @@
+ import { validate, emailField, passwordField } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
++import type { Assert, Extends, ForgotPasswordRequest, LoginRequest, ResetPasswordRequest, SignupRequest, UpdateProfileRequest } from '@acaos/shared'
+ 
+ export const authRouter = Router()
+ 
+@@ -42,6 +43,8 @@
+   password: passwordField,
+   name: z.string().trim().max(100).optional(),
+ })
++
++type _SignupConforms = Assert<Extends<z.infer<typeof signupSchema>, SignupRequest>>
+ 
+ authRouter.post(
+   '/signup',
+@@ -93,6 +96,8 @@
+   email: emailField,
+   password: z.string().min(1, 'Password required').max(128),
+ })
++
++type _LoginConforms = Assert<Extends<z.infer<typeof loginSchema>, LoginRequest>>
+ 
+ authRouter.post(
+   '/login',
+@@ -208,6 +213,7 @@
+ )
+ 
+ const forgotPasswordSchema = z.object({ email: emailField })
++type _ForgotPasswordConforms = Assert<Extends<z.infer<typeof forgotPasswordSchema>, ForgotPasswordRequest>>
+ 
+ authRouter.post(
+   '/forgot-password',
+@@ -251,6 +257,8 @@
+   password: passwordField,
+ })
+ 
++type _ResetPasswordConforms = Assert<Extends<z.infer<typeof resetPasswordSchema>, ResetPasswordRequest>>
++
+ authRouter.post(
+   '/reset-password',
+   authRateLimit,
+@@ -302,6 +310,8 @@
+   (body) => (!body.currentPassword && !body.newPassword) || Boolean(body.currentPassword && body.newPassword),
+   { message: 'currentPassword and newPassword are both required to change password', path: ['currentPassword'] }
+ )
++
++type _ProfileUpdateConforms = Assert<Extends<z.infer<typeof profileUpdateSchema>, UpdateProfileRequest>>
+ 
+ authRouter.patch(
+   '/profile',
+--- a/apps/api/src/routes/billing.ts
++++ b/apps/api/src/routes/billing.ts
+@@ -10,6 +10,7 @@
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { BillingPlan } from '@prisma/client'
++import type { Assert, Extends, BillingCheckoutRequest, BillingPortalRequest } from '@acaos/shared'
+ 
+ export const billingRouter = Router()
+ 
+@@ -22,9 +23,13 @@
+   plan: z.enum(['starter', 'growth']),
+ })
+ 
++type _CheckoutConforms = Assert<Extends<z.infer<typeof checkoutSchema>, BillingCheckoutRequest>>
++
+ const billingPortalSchema = z.object({
+   workspaceId: workspaceIdField,
+ })
++
++type _BillingPortalConforms = Assert<Extends<z.infer<typeof billingPortalSchema>, BillingPortalRequest>>
+ 
+ billingRouter.post(
+   '/checkout',
+--- a/apps/api/src/routes/campaigns.ts
++++ b/apps/api/src/routes/campaigns.ts
+@@ -11,7 +11,7 @@
+ import { recordAudit } from '../lib/audit.js'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { LeadStage } from '@prisma/client'
+-import type { Assert, Extends, CreateCampaignRequest, SendCampaignRequest } from '@acaos/shared'
++import type { Assert, Extends, CreateCampaignRequest, SendCampaignRequest, UpdateCampaignRequest } from '@acaos/shared'
+ 
+ export const campaignsRouter = Router()
+ campaignsRouter.use(requireAuth)
+@@ -34,6 +34,8 @@
+   goalType: z.enum(GOAL_TYPES).optional(),
+   description: z.string().trim().max(1000).nullable().optional(),
+ }).refine((body) => Object.keys(body).length > 0, 'No updatable fields provided')
++
++type _UpdateCampaignConforms = Assert<Extends<z.infer<typeof updateCampaignSchema>, UpdateCampaignRequest>>
+ 
+ const sendCampaignSchema = z.preprocess(
+   (body) => body ?? {},
+--- a/apps/api/src/routes/jobs.ts
++++ b/apps/api/src/routes/jobs.ts
+@@ -16,6 +16,7 @@
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { Job } from 'bullmq'
++import type { AnalyzeReplyJobRequest, Assert, Extends, LeadJobRequest, ResearchBulkJobRequest } from '@acaos/shared'
+ 
+ async function assertCanReadJob(userId: string, job: Job): Promise<void> {
+   const data = job.data as Record<string, unknown>
+@@ -45,6 +46,7 @@
+ const jobIdParamSchema = z.string().trim().min(1, 'jobId required').max(300, 'jobId must be at most 300 characters')
+   .regex(/^[A-Za-z0-9_.-]+$/, 'jobId contains unsupported characters')
+ const leadJobSchema = z.object({ leadId: idField })
++type _LeadJobConforms = Assert<Extends<z.infer<typeof leadJobSchema>, LeadJobRequest>>
+ const analyzeReplyJobSchema = z.object({
+   replyBody: nonEmptyString.max(MAX_REPLY_BODY, `replyBody must be at most ${MAX_REPLY_BODY} characters`),
+   leadId: optionalIdField,
+@@ -56,7 +58,9 @@
+   message: 'leadId or workspaceId required',
+   path: ['leadId'],
+ })
++type _AnalyzeReplyJobConforms = Assert<Extends<z.infer<typeof analyzeReplyJobSchema>, AnalyzeReplyJobRequest>>
+ const researchBulkSchema = z.object({ workspaceId: workspaceIdField })
++type _ResearchBulkConforms = Assert<Extends<z.infer<typeof researchBulkSchema>, ResearchBulkJobRequest>>
+ 
+ function parseQueueParam(value: string): (typeof QUEUE_NAMES)[number] {
+   return queueNameSchema.parse(value)
+--- a/apps/api/src/routes/leads.ts
++++ b/apps/api/src/routes/leads.ts
+@@ -11,7 +11,7 @@
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { LeadStage } from '@prisma/client'
+-import type { Assert, Extends, CreateLeadRequest, ImportLeadsRequest, UpdateDraftRequest } from '@acaos/shared'
++import type { Assert, BulkLeadAssignRequest, BulkLeadIdsRequest, BulkLeadStageRequest, Extends, CreateLeadRequest, ImportLeadsRequest, UpdateDraftRequest, UpdateLeadRequest } from '@acaos/shared'
+ 
+ export const leadsRouter = Router()
+ leadsRouter.use(requireAuth)
+@@ -85,18 +85,26 @@
+   score: z.number().min(0).max(100).optional(),
+ }).refine((body) => Object.keys(body).length > 0, 'At least one field required')
+ 
++type _UpdateLeadConforms = Assert<Extends<z.infer<typeof updateLeadSchema>, UpdateLeadRequest>>
++
+ const bulkIdsSchema = z.object({
+   workspaceId: workspaceIdField,
+   ids: z.array(idField).min(1, 'ids array required').max(200, 'Maximum 200 leads per bulk update'),
+ })
+ 
+ const bulkDeleteSchema = bulkIdsSchema
++
++type _BulkDeleteConforms = Assert<Extends<z.infer<typeof bulkDeleteSchema>, BulkLeadIdsRequest>>
+ const bulkStageSchema = bulkIdsSchema.extend({
+   stage: z.enum(VALID_STAGES),
+ })
++
++type _BulkStageConforms = Assert<Extends<z.infer<typeof bulkStageSchema>, BulkLeadStageRequest>>
+ const bulkAssignSchema = bulkIdsSchema.extend({
+   campaignId: nullableIdField,
+ })
++
++type _BulkAssignConforms = Assert<Extends<z.infer<typeof bulkAssignSchema>, BulkLeadAssignRequest>>
+ 
+ const updateDraftSchema = z.object({
+   subject: nonEmptyString.max(300, 'subject must be at most 300 characters').optional(),
+--- a/apps/api/src/routes/mailbox.ts
++++ b/apps/api/src/routes/mailbox.ts
+@@ -8,6 +8,7 @@
+ import { promises as dns } from 'dns'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
++import type { Assert, Extends, SendTestEmailRequest, SyncMailboxRequest } from '@acaos/shared'
+ 
+ export const mailboxRouter = Router()
+ mailboxRouter.use(requireAuth)
+@@ -19,9 +20,13 @@
+   html: z.string().max(50_000).default('<p>Hello</p>'),
+ })
+ 
++type _SendTestConforms = Assert<Extends<z.infer<typeof sendTestSchema>, SendTestEmailRequest>>
++
+ const syncMailboxSchema = z.object({
+   workspaceId: workspaceIdField,
+ })
++
++type _SyncMailboxConforms = Assert<Extends<z.infer<typeof syncMailboxSchema>, SyncMailboxRequest>>
+ 
+ const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
+ 
+--- a/apps/api/src/routes/outcomes.ts
++++ b/apps/api/src/routes/outcomes.ts
+@@ -7,6 +7,7 @@
+ import { parseBody, validate, workspaceIdField, idField } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
++import type { Assert, Extends, RecordScoringOutcomeRequest } from '@acaos/shared'
+ 
+ export const outcomesRouter = Router()
+ 
+@@ -54,6 +55,8 @@
+   channelUsed: z.enum(['EMAIL', 'LINKEDIN']).default('EMAIL'),
+ })
+ const resetModelSchema = z.object({ workspaceId: workspaceIdField })
++
++type _RecordScoringOutcomeConforms = Assert<Extends<z.infer<typeof recordOutcomeSchema>, RecordScoringOutcomeRequest>>
+ 
+ 
+ // ---------------------------------------------------------------------------
+--- a/apps/api/src/routes/packs.ts
++++ b/apps/api/src/routes/packs.ts
+@@ -8,11 +8,13 @@
+ import { validate, workspaceIdField } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
++import type { ApplyPackRequest, Assert, Extends } from '@acaos/shared'
+ 
+ export const packsRouter = Router()
+ packsRouter.use(requireAuth)
+ 
+ const applyPackSchema = z.object({ workspaceId: workspaceIdField })
++type _ApplyPackConforms = Assert<Extends<z.infer<typeof applyPackSchema>, ApplyPackRequest>>
+ 
+ // List available industry packs (summaries).
+ packsRouter.get('/', asyncHandler(async (_req, res) => {
+--- a/apps/api/src/routes/prospects.ts
++++ b/apps/api/src/routes/prospects.ts
+@@ -32,7 +32,7 @@
+ import { validate, workspaceIdField, nonEmptyString, emailField, idField, parseBody } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+-import type { Assert, Extends, DiscoverProspectsRequest, RecordProspectOutcomeRequest } from '@acaos/shared'
++import type { Assert, Extends, ApproveOutreachIntentRequest, DiscoverProspectsRequest, ImportProspectSignalsRequest, ImportProspectsRequest, MaterializeOutreachIntentRequest, ProspectUpdateRequest, ProspectWriteRequest, RecordProspectOutcomeRequest } from '@acaos/shared'
+ 
+ export const prospectsRouter = Router()
+ prospectsRouter.use(requireAuth)
+@@ -90,12 +90,16 @@
+   sourceTag: nullableText(100),
+ })
+ 
++type _ProspectWriteConforms = Assert<Extends<z.infer<typeof prospectWriteSchema>, ProspectWriteRequest>>
++
+ const prospectUpdateSchema = prospectWriteSchema.omit({ workspaceId: true }).partial().extend({
+   lastContactedAt: z.string().datetime().nullable().optional(),
+   outcomeStage: z.enum(['DISCOVERED', 'CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST']).optional(),
+   buyingStage: z.string().trim().max(50).optional(),
+ }).refine((body) => Object.keys(body).length > 0, 'No updatable fields provided')
+ 
++type _ProspectUpdateConforms = Assert<Extends<z.infer<typeof prospectUpdateSchema>, ProspectUpdateRequest>>
++
+ const outcomeSchema = z.object({
+   stage: z.enum(['DISCOVERED', 'CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST']),
+   notes: z.string().trim().max(2_000).optional(),
+@@ -109,10 +113,14 @@
+   rows: z.array(z.record(z.string(), z.unknown())).min(1, 'rows array required').max(1000, 'Maximum 1000 rows per import'),
+ })
+ 
++type _ImportProspectsConforms = Assert<Extends<z.infer<typeof importRowsSchema>, ImportProspectsRequest>>
++
+ const importSignalRowsSchema = z.object({
+   workspaceId: workspaceIdField,
+   rows: z.array(z.record(z.string(), z.unknown())).min(1, 'rows array required').max(500, 'Maximum 500 rows per import'),
+ })
++
++type _ImportProspectSignalsConforms = Assert<Extends<z.infer<typeof importSignalRowsSchema>, ImportProspectSignalsRequest>>
+ 
+ const approveIntentSchema = z.object({
+   leadId: z.preprocess(
+@@ -121,12 +129,16 @@
+   ),
+ })
+ 
++type _ApproveIntentConforms = Assert<Extends<z.infer<typeof approveIntentSchema>, ApproveOutreachIntentRequest>>
++
+ const materializeIntentSchema = z.object({
+   campaignId: z.preprocess(
+     (value) => value === undefined || value === null || value === '' ? undefined : value,
+     idField.optional()
+   ),
+ })
++
++type _MaterializeIntentConforms = Assert<Extends<z.infer<typeof materializeIntentSchema>, MaterializeOutreachIntentRequest>>
+ 
+ function parseOptionalDateValue(value: unknown, field: string): Date | undefined {
+   if (value === undefined || value === null || value === '') return undefined
+--- a/apps/api/src/routes/signals.ts
++++ b/apps/api/src/routes/signals.ts
+@@ -9,6 +9,7 @@
+ import { parseBody, parseQuery, workspaceIdField, idField, positiveIntFromQuery } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
++import type { Assert, CreateSignalRequest, Extends } from '@acaos/shared'
+ 
+ export const signalsRouter = Router()
+ signalsRouter.use(requireAuth)
+@@ -75,6 +76,8 @@
+   detectedAt: optionalDate,
+   evidence: signalEvidenceSchema.optional(),
+ })
++
++type _CreateSignalConforms = Assert<Extends<z.infer<typeof createSignalSchema>, CreateSignalRequest>>
+ 
+ 
+ function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
+--- a/apps/api/src/routes/workspaces.ts
++++ b/apps/api/src/routes/workspaces.ts
+@@ -15,7 +15,7 @@
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { SignalType } from '../lib/signalEngine.js'
+ import { evictCachedWorkspace } from '../lib/ingestCache.js'
+-import type { Assert, Extends, SeedWorkspaceRequest, UpdateIcpRequest } from '@acaos/shared'
++import type { Assert, Extends, SeedWorkspaceRequest, UpdateIcpRequest, UpdateWorkspaceEmailConfigRequest, UpdateWorkspaceRequest, WorkspaceCreateRequest, WorkspaceMemberRequest } from '@acaos/shared'
+ 
+ // ── F-04: SSRF protection helpers ────────────────────────────────────────────
+ // Host validation lives in lib/ssrf.ts (`assertPublicMailHost`), which resolves
+@@ -35,12 +35,16 @@
+   slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens').optional(),
+ })
+ 
++type _WorkspaceCreateConforms = Assert<Extends<z.infer<typeof workspaceCreateSchema>, WorkspaceCreateRequest>>
++
+ const workspaceRoleField = z.enum(['admin', 'member']).default('member')
+ 
+ const addMemberSchema = z.object({
+   email: emailField,
+   role: workspaceRoleField,
+ })
++
++type _WorkspaceMemberConforms = Assert<Extends<z.infer<typeof addMemberSchema>, WorkspaceMemberRequest>>
+ 
+ const inviteMemberSchema = addMemberSchema
+ 
+@@ -73,6 +77,8 @@
+   imapUser: mailUserField,
+   imapPass: secretField,
+ })
++
++type _WorkspaceEmailConfigConforms = Assert<Extends<z.infer<typeof emailConfigSchema>, UpdateWorkspaceEmailConfigRequest>>
+ 
+ const boundedListField = z.array(z.string().trim().min(1).max(100)).max(50)
+ const nullableBoundedString = z.string().trim().max(200).nullable().optional()
+@@ -186,6 +192,8 @@
+   data => data.name !== undefined || data.slug !== undefined || data.senderBusinessName !== undefined || data.senderPostalAddress !== undefined,
+   { message: 'At least one field required' }
+ )
++
++type _UpdateWorkspaceConforms = Assert<Extends<z.infer<typeof updateWorkspaceSchema>, UpdateWorkspaceRequest>>
+ 
+ workspaceRouter.patch(
+   '/:id',
+--- a/apps/web/src/components/AuthScreen.tsx
++++ b/apps/web/src/components/AuthScreen.tsx
+@@ -1,5 +1,6 @@
+ import React, { useState } from 'react'
+ import { s } from '../styles.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+ 
+@@ -32,7 +33,7 @@
+         const res = await fetch(`${API}/api/auth/forgot-password`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+-          body: JSON.stringify({ email: email.trim().toLowerCase() })
++          body: jsonBody('POST /api/auth/forgot-password', { email: email.trim().toLowerCase() })
+         })
+         const data = await res.json()
+         if (!res.ok) throw new Error(data.error || 'Request failed')
+@@ -46,7 +47,7 @@
+         const res = await fetch(`${API}/api/auth/reset-password`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+-          body: JSON.stringify({ token: resetToken, password })
++          body: jsonBody('POST /api/auth/reset-password', { token: resetToken || '', password })
+         })
+         const data = await res.json()
+         if (!res.ok) throw new Error(data.error || 'Reset failed')
+@@ -59,17 +60,18 @@
+         return
+       }
+ 
+-      const body: Record<string, string> = {
++      const baseBody = {
+         email: email.trim().toLowerCase(),
+         password
+       }
+-      if (mode === 'signup' && name.trim()) body.name = name.trim()
+ 
+       const res = await fetch(`${API}/api/auth/${mode}`, {
+         method: 'POST',
+         credentials: 'include', // accept the HttpOnly refresh cookie the server sets
+         headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify(body)
++        body: mode === 'signup'
++          ? jsonBody('POST /api/auth/signup', { ...baseBody, ...(name.trim() ? { name: name.trim() } : {}) })
++          : jsonBody('POST /api/auth/login', baseBody)
+       })
+       const data = await res.json()
+       if (!res.ok) throw new Error(data.error || 'Authentication failed')
+--- a/apps/web/src/components/GettingStarted.tsx
++++ b/apps/web/src/components/GettingStarted.tsx
+@@ -3,6 +3,7 @@
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
+ import type { View } from '../types.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type ReadinessCheck = { name: string; label: string; ok: boolean; hint: string }
+ type Readiness = { ready: boolean; checks: ReadinessCheck[] }
+@@ -32,7 +33,7 @@
+   async function applyFieldOps() {
+     setApplying(true)
+     try {
+-      await api(`/api/packs/fieldops/apply`, { method: 'POST', body: JSON.stringify({ workspaceId }) })
++      await api(`/api/packs/fieldops/apply`, { method: 'POST', body: jsonBody('POST /api/packs/:id/apply', { workspaceId }) })
+       toast.success('FieldOps preset applied — your targeting is set for trades & field service')
+     } catch (e) {
+       toast.error(e instanceof Error ? e.message : 'Could not apply pack')
+--- a/apps/web/src/components/MissionBuilder.tsx
++++ b/apps/web/src/components/MissionBuilder.tsx
+@@ -4,6 +4,7 @@
+ import type { Pack, Workspace } from '../types.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = {
+   workspace: Workspace
+@@ -106,7 +107,7 @@
+       }
+       const d = await api<{ mission: { id: string; name: string }; campaign: { id: string; name: string } }>('/api/missions', {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/missions', body)
+       })
+       onCreated(d.campaign.id, d.campaign.name)
+     } catch (err) {
+--- a/apps/web/src/components/OnboardingWizard.tsx
++++ b/apps/web/src/components/OnboardingWizard.tsx
+@@ -5,6 +5,7 @@
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
+ import { PLAYBOOKS, type Playbook } from '../lib/playbooks.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = {
+   workspace: Workspace
+@@ -100,7 +101,7 @@
+       const body: SeedWorkspaceRequest = { playbookId: null, includeExamples: false }
+       await api(`/api/workspaces/${workspace.id}/seed`, {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/workspaces/:id/seed', body)
+       })
+       onComplete()
+     } catch (err) {
+@@ -128,7 +129,7 @@
+       }
+       await api(`/api/workspaces/${workspace.id}/icp`, {
+         method: 'PUT',
+-        body: JSON.stringify(icpBody)
++        body: jsonBody('PUT /api/workspaces/:id/icp', icpBody)
+       })
+       setStep(3)
+     } catch (err) {
+@@ -145,7 +146,7 @@
+       const body: SeedWorkspaceRequest = { playbookId: selectedPlaybook?.id ?? null, includeExamples: useExamples }
+       await api(`/api/workspaces/${workspace.id}/seed`, {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/workspaces/:id/seed', body)
+       })
+       setStep(4)
+     } catch (err) {
+--- a/apps/web/src/components/OutreachIntents.tsx
++++ b/apps/web/src/components/OutreachIntents.tsx
+@@ -2,6 +2,7 @@
+ import { s, colors } from '../styles.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type IntentRow = {
+   id: string
+@@ -33,7 +34,14 @@
+     if (!intent.prospect) return
+     setBusyId(intent.id)
+     try {
+-      await api(`/api/prospects/${intent.prospect.id}/intents/${intent.id}/${action}`, { method: 'POST', body: JSON.stringify({}) })
++      const route =
++        action === 'draft' ? 'POST /api/prospects/:id/intents/:intentId/draft' :
++        action === 'approve' ? 'POST /api/prospects/:id/intents/:intentId/approve' :
++        'POST /api/prospects/:id/intents/:intentId/materialize'
++      await api(`/api/prospects/${intent.prospect.id}/intents/${intent.id}/${action}`, {
++        method: 'POST',
++        body: jsonBody(route, {})
++      })
+       toast.success(
+         action === 'draft' ? 'Draft generated' :
+         action === 'approve' ? 'Approved' :
+--- /dev/null
++++ b/apps/web/src/lib/apiContract.ts
+@@ -0,0 +1,12 @@
++import type { ApiBody, ApiBodyRoute } from '@acaos/shared'
++
++/**
++ * Compile-time API body contract helper.
++ *
++ * The first argument is the backend route template. It is not sent over the
++ * network; it selects the request body type from @acaos/shared so the frontend
++ * cannot silently drift from backend validators.
++ */
++export function jsonBody<Route extends ApiBodyRoute>(_route: Route, body: ApiBody<Route>): string {
++  return JSON.stringify(body)
++}
+--- a/apps/web/src/views/AiTools.tsx
++++ b/apps/web/src/views/AiTools.tsx
+@@ -5,6 +5,7 @@
+ import { Spinner } from '../components/Spinner.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+ 
+@@ -118,7 +119,7 @@
+       if (tab === 'research') {
+         // Typed against the shared contract: omitting workspaceId is a compile error.
+         const body: AiResearchRequest = { workspaceId: workspace.id, businessName: inputs.businessName, website: inputs.website, notes: inputs.notes }
+-        data = await api<{ result: string }>('/api/ai/research', { method: 'POST', body: JSON.stringify(body) })
++        data = await api<{ result: string }>('/api/ai/research', { method: 'POST', body: jsonBody('POST /api/ai/research', body) })
+       } else if (tab === 'outreach') {
+         // Carry the prospect's own research (summary + angle) into the email so
+         // it uses the real hook — not generic workspace defaults.
+@@ -131,10 +132,10 @@
+           outreachAngle: ctx?.outreachAngle,
+           notes: inputs.notes || undefined,
+         }
+-        data = await api<{ result: string }>('/api/ai/outreach', { method: 'POST', body: JSON.stringify(body) })
++        data = await api<{ result: string }>('/api/ai/outreach', { method: 'POST', body: jsonBody('POST /api/ai/outreach', body) })
+       } else {
+         const body: AiReplyAnalysisRequest = { workspaceId: workspace.id, replyBody: inputs.replyBody }
+-        data = await api<{ result: string }>('/api/ai/reply-analysis', { method: 'POST', body: JSON.stringify(body) })
++        data = await api<{ result: string }>('/api/ai/reply-analysis', { method: 'POST', body: jsonBody('POST /api/ai/reply-analysis', body) })
+       }
+       const resStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)
+       setResult(resStr)
+@@ -151,13 +152,18 @@
+     try {
+       const endpointMap = { research: 'research', outreach: 'outreach', reply: 'analyze-reply' }
+       const queue = tab === 'reply' ? 'analyze-reply' : `${tab === 'research' ? 'research' : 'generate'}-lead`
+-      const body: Record<string, string> = { leadId: selectedLeadId }
+-      if (tab === 'reply') body.replyBody = inputs.replyBody
+-
+-      const data = await api<{ jobId: string; queue: string }>(`/api/jobs/${endpointMap[tab]}`, {
+-        method: 'POST',
+-        body: JSON.stringify(body)
+-      })
++
++      const data = tab === 'reply'
++        ? await api<{ jobId: string; queue: string }>('/api/jobs/analyze-reply', {
++            method: 'POST',
++            body: jsonBody('POST /api/jobs/analyze-reply', { leadId: selectedLeadId, replyBody: inputs.replyBody })
++          })
++        : await api<{ jobId: string; queue: string }>(`/api/jobs/${endpointMap[tab]}`, {
++            method: 'POST',
++            body: tab === 'research'
++              ? jsonBody('POST /api/jobs/research', { leadId: selectedLeadId })
++              : jsonBody('POST /api/jobs/outreach', { leadId: selectedLeadId })
++          })
+       setActiveJob({ jobId: data.jobId, queue: data.queue, state: 'waiting', progress: 0 })
+       toast.info('Job queued — polling for results…')
+       startPolling(data.queue, data.jobId)
+--- a/apps/web/src/views/Approvals.tsx
++++ b/apps/web/src/views/Approvals.tsx
+@@ -5,6 +5,7 @@
+ import { Spinner, EmptyState } from '../components/Spinner.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
+ 
+@@ -44,7 +45,7 @@
+     setBusyFor(d.id, true)
+     try {
+       const body: UpdateDraftRequest = { subject: e.subject, emailBody: e.emailBody }
+-      const r = await api<{ draft: OutreachDraft }>(`/api/leads/${d.lead.id}/drafts/${d.id}`, { method: 'PATCH', body: JSON.stringify(body) })
++      const r = await api<{ draft: OutreachDraft }>(`/api/leads/${d.lead.id}/drafts/${d.id}`, { method: 'PATCH', body: jsonBody('PATCH /api/leads/:id/drafts/:draftId', body) })
+       setDrafts(prev => prev.map(x => x.id === d.id ? { ...x, subject: r.draft.subject, emailBody: r.draft.emailBody } : x))
+       toast.success('Draft updated')
+     } catch (err) { toast.error(err instanceof Error ? err.message : 'Save failed') }
+--- a/apps/web/src/views/Billing.tsx
++++ b/apps/web/src/views/Billing.tsx
+@@ -5,6 +5,7 @@
+ import { Spinner } from '../components/Spinner.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+ 
+@@ -84,7 +85,7 @@
+       const plan = priceKey === 'growth' ? 'growth' : 'starter'
+       const d = await api<{ url: string }>('/api/billing/checkout', {
+         method: 'POST',
+-        body: JSON.stringify({ workspaceId: workspace.id, plan })
++        body: jsonBody('POST /api/billing/checkout', { workspaceId: workspace.id, plan })
+       })
+       window.location.href = d.url
+     } catch (e) { toast.error(e instanceof Error ? e.message : 'Checkout failed') }
+@@ -97,7 +98,7 @@
+     try {
+       const d = await api<{ url: string }>('/api/billing/portal', {
+         method: 'POST',
+-        body: JSON.stringify({ workspaceId: workspace.id })
++        body: jsonBody('POST /api/billing/portal', { workspaceId: workspace.id })
+       })
+       window.location.href = d.url
+     } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not open billing portal') }
+--- a/apps/web/src/views/Campaigns.tsx
++++ b/apps/web/src/views/Campaigns.tsx
+@@ -7,6 +7,7 @@
+ import { MissionBuilder } from '../components/MissionBuilder.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type CampaignStats = {
+   totalLeads: number
+@@ -112,7 +113,7 @@
+       const body: CreateCampaignRequest = { workspaceId: workspace.id, name: form.name, goalType: form.goalType, description: form.description }
+       const d = await api<{ campaign: Campaign }>('/api/campaigns', {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/campaigns', body)
+       })
+       setCampaigns(prev => [d.campaign, ...prev])
+       setForm({ name: '', goalType: 'BOOK_CALL', description: '' })
+@@ -129,7 +130,7 @@
+     try {
+       const d = await api<{ campaign: Campaign }>(`/api/campaigns/${editing.id}`, {
+         method: 'PATCH',
+-        body: JSON.stringify({ name: form.name, goalType: form.goalType, description: form.description })
++        body: jsonBody('PATCH /api/campaigns/:id', { name: form.name, goalType: form.goalType, description: form.description })
+       })
+       setCampaigns(prev => prev.map(c => c.id === d.campaign.id ? d.campaign : c))
+       setEditing(null)
+@@ -163,7 +164,7 @@
+       const body: SendCampaignRequest = { approved: true }
+       const d = await api<{ jobId: string; eligible: number; message: string }>(
+         `/api/campaigns/${id}/send`,
+-        { method: 'POST', body: JSON.stringify(body) }
++        { method: 'POST', body: jsonBody('POST /api/campaigns/:id/send', body) }
+       )
+       toast.success(`Approved — sending to ${d.eligible} leads (job ${d.jobId})`)
+       setTimeout(() => loadStats(id), 3000)
+--- a/apps/web/src/views/Intelligence.tsx
++++ b/apps/web/src/views/Intelligence.tsx
+@@ -6,6 +6,7 @@
+ import { Spinner, EmptyState } from '../components/Spinner.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = {
+   api: ApiHook
+@@ -350,7 +351,7 @@
+       const body: RecordProspectOutcomeRequest = { stage: stage as OutcomeStage }
+       await api(`/api/prospects/${prospectId}/outcome`, {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/prospects/:id/outcome', body)
+       })
+       toast.success(`Moved to ${stage}`)
+       load()
+--- a/apps/web/src/views/Leads.tsx
++++ b/apps/web/src/views/Leads.tsx
+@@ -6,6 +6,7 @@
+ import { Spinner, EmptyState } from '../components/Spinner.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
+ 
+@@ -114,7 +115,7 @@
+     try {
+       const d = await api<{ lead: Lead }>(`/api/leads/${lead.id}`, {
+         method: 'PATCH',
+-        body: JSON.stringify(form)
++        body: jsonBody('PATCH /api/leads/:id', form)
+       })
+       onUpdate(d.lead)
+       setEditing(false)
+@@ -171,7 +172,9 @@
+       const queueMap = { research: 'research-lead', outreach: 'generate-outreach' }
+       const d = await api<{ jobId: string; queue: string }>(`/api/jobs/${type}`, {
+         method: 'POST',
+-        body: JSON.stringify({ leadId: lead.id })
++        body: type === 'research'
++          ? jsonBody('POST /api/jobs/research', { leadId: lead.id })
++          : jsonBody('POST /api/jobs/outreach', { leadId: lead.id })
+       })
+       streamJob(d.queue, d.jobId, type, async () => {
+         // Refresh lead data after completion
+@@ -189,7 +192,7 @@
+ 
+   async function moveStage(stage: string) {
+     try {
+-      const d = await api<{ lead: Lead }>(`/api/leads/${lead.id}`, { method: 'PATCH', body: JSON.stringify({ stage }) })
++      const d = await api<{ lead: Lead }>(`/api/leads/${lead.id}`, { method: 'PATCH', body: jsonBody('PATCH /api/leads/:id', { stage }) })
+       onUpdate(d.lead)
+       toast.success(`Moved to ${stage}`)
+     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
+@@ -395,7 +398,7 @@
+       const body: CreateLeadRequest = { ...form, workspaceId: workspace.id }
+       const d = await api<{ lead: Lead }>('/api/leads', {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/leads', body)
+       })
+       setLeads(prev => [d.lead, ...prev])
+       setTotal(t => t + 1)
+@@ -443,7 +446,7 @@
+       const body: ImportLeadsRequest = { workspaceId: workspace.id, leads }
+       const d = await api<{ created: number }>('/api/leads/import', {
+         method: 'POST',
+-        body: JSON.stringify(body)
++        body: jsonBody('POST /api/leads/import', body)
+       })
+       toast.success(`Imported ${d.created} leads with auto-scoring`)
+       fetchLeads()
+@@ -458,7 +461,7 @@
+       let count = 0
+       for (const id of selectedIds) {
+         try {
+-          await api(`/api/jobs/research`, { method: 'POST', body: JSON.stringify({ leadId: id }) })
++          await api(`/api/jobs/research`, { method: 'POST', body: jsonBody('POST /api/jobs/research', { leadId: id }) })
+           count++
+         } catch { /* skip leads that fail — might hit usage limit */ }
+       }
+@@ -476,7 +479,7 @@
+     try {
+       const d = await api<{ deleted: number }>('/api/leads/bulk-delete', {
+         method: 'POST',
+-        body: JSON.stringify({ workspaceId: workspace.id, ids: [...selectedIds] })
++        body: jsonBody('POST /api/leads/bulk-delete', { workspaceId: workspace.id, ids: [...selectedIds] })
+       })
+       toast.success(`Deleted ${d.deleted} leads`)
+       setSelectedIds(new Set())
+@@ -493,7 +496,7 @@
+     try {
+       const d = await api<{ updated: number }>('/api/leads/bulk-stage', {
+         method: 'POST',
+-        body: JSON.stringify({ workspaceId: workspace.id, ids: [...selectedIds], stage })
++        body: jsonBody('POST /api/leads/bulk-stage', { workspaceId: workspace.id, ids: [...selectedIds], stage })
+       })
+       toast.success(`Moved ${d.updated} leads to ${stage}`)
+       setSelectedIds(new Set())
+--- a/apps/web/src/views/Missions.tsx
++++ b/apps/web/src/views/Missions.tsx
+@@ -6,6 +6,7 @@
+ import { MissionBuilder } from '../components/MissionBuilder.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
+ 
+@@ -52,7 +53,7 @@
+     setBusy(prev => ({ ...prev, [id]: true }))
+     try {
+       const body: UpdateMissionRequest = { status }
+-      const d = await api<{ mission: Mission }>(`/api/missions/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
++      const d = await api<{ mission: Mission }>(`/api/missions/${id}`, { method: 'PATCH', body: jsonBody('PATCH /api/missions/:id', body) })
+       setMissions(prev => prev.map(m => m.id === id ? d.mission : m))
+       toast.success(`Mission ${status.toLowerCase()}`)
+     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
+@@ -65,7 +66,7 @@
+     try {
+       const body: DiscoverProspectsRequest = { workspaceId: workspace.id, missionId: id }
+       const d = await api<{ discovered: number; skipped: number; total: number }>('/api/prospects/discover', {
+-        method: 'POST', body: JSON.stringify(body),
++        method: 'POST', body: jsonBody('POST /api/prospects/discover', body),
+       })
+       toast.success(`Discovered ${d.discovered} new prospect${d.discovered !== 1 ? 's' : ''} (${d.skipped} skipped)`)
+       load()
+--- a/apps/web/src/views/Prospects.tsx
++++ b/apps/web/src/views/Prospects.tsx
+@@ -4,6 +4,7 @@
+   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
+   SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, TIER_COLOR
+ } from '../types.js'
++import { jsonBody } from '../lib/apiContract.js'
+ import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
+ import { s, colors } from '../styles.js'
+ import { Spinner, EmptyState } from '../components/Spinner.js'
+@@ -59,7 +60,7 @@
+     try {
+       await api('/api/signals', {
+         method: 'POST',
+-        body: JSON.stringify({ workspaceId, prospectId, type, strength, title, sourceReliability, industryRelevance })
++        body: jsonBody('POST /api/signals', { workspaceId, prospectId, type, strength, title, sourceReliability, industryRelevance })
+       })
+       toast.success('Signal added — prospect rescored')
+       onDone()
+@@ -391,7 +392,7 @@
+     try {
+       await api<Prospect>('/api/prospects', {
+         method: 'POST',
+-        body: JSON.stringify({ ...form, workspaceId: workspace.id })
++        body: jsonBody('POST /api/prospects', { ...form, workspaceId: workspace.id })
+       })
+       toast.success('Prospect added')
+       setShowAdd(false)
+@@ -407,7 +408,7 @@
+     try {
+       const res = await api<{ discovered: number; skipped: number; total: number }>(
+         '/api/prospects/discover',
+-        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, source: sourceName, ...(discoverMissionId ? { missionId: discoverMissionId } : {}) }) }
++        { method: 'POST', body: jsonBody('POST /api/prospects/discover', { workspaceId: workspace.id, source: sourceName, ...(discoverMissionId ? { missionId: discoverMissionId } : {}) }) }
+       )
+       if (res.discovered === 0 && res.total === 0) {
+         toast.error('No results — try broadening your ICP settings')
+@@ -435,7 +436,7 @@
+         if (rows.length === 0) { toast.error('No valid rows found in CSV'); return }
+         const res = await api<{ imported: number; skipped: number; failed: number; errors: string[] }>(
+           '/api/prospects/import',
+-          { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, rows }) }
++          { method: 'POST', body: jsonBody('POST /api/prospects/import', { workspaceId: workspace.id, rows }) }
+         )
+         toast.success(`Imported ${res.imported} prospect${res.imported !== 1 ? 's' : ''}${res.skipped ? `, ${res.skipped} skipped` : ''}${res.failed ? `, ${res.failed} failed` : ''}`)
+         load()
+--- a/apps/web/src/views/Settings.tsx
++++ b/apps/web/src/views/Settings.tsx
+@@ -4,6 +4,7 @@
+ import { Spinner } from '../components/Spinner.js'
+ import type { ApiHook } from '../hooks/useApi.js'
+ import type { ToastHook } from '../hooks/useToast.js'
++import { jsonBody } from '../lib/apiContract.js'
+ 
+ type IcpConfig = {
+   targetIndustries: string[]
+@@ -171,7 +172,7 @@
+     try {
+       const d = await api<{ user: User }>('/api/auth/profile', {
+         method: 'PATCH',
+-        body: JSON.stringify({ name: profileForm.name.trim() || null })
++        body: jsonBody('PATCH /api/auth/profile', { name: profileForm.name.trim() || null })
+       })
+       onUserUpdate(d.user)
+       toast.success('Profile updated')
+@@ -192,7 +193,7 @@
+     try {
+       await api('/api/auth/profile', {
+         method: 'PATCH',
+-        body: JSON.stringify({ currentPassword: passwordForm.currentPassword, newPassword: passwordForm.newPassword })
++        body: jsonBody('PATCH /api/auth/profile', { currentPassword: passwordForm.currentPassword, newPassword: passwordForm.newPassword })
+       })
+       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
+       toast.success('Password changed successfully')
+@@ -206,7 +207,7 @@
+     try {
+       const d = await api<{ workspace: Workspace }>(`/api/workspaces/${workspace.id}`, {
+         method: 'PATCH',
+-        body: JSON.stringify({
++        body: jsonBody('PATCH /api/workspaces/:id', {
+           name: wsForm.name.trim(),
+           slug: wsForm.slug.trim(),
+           senderBusinessName: wsForm.senderBusinessName.trim() || null,
+@@ -225,7 +226,7 @@
+     try {
+       await api(`/api/workspaces/${workspace.id}/members`, {
+         method: 'POST',
+-        body: JSON.stringify({ email: memberForm.email.trim(), role: memberForm.role })
++        body: jsonBody('POST /api/workspaces/:id/members', { email: memberForm.email.trim(), role: memberForm.role as 'admin' | 'member' })
+       })
+       const refreshed = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
+       setMembers(refreshed.members || [])
+@@ -252,7 +253,7 @@
+     try {
+       await api(`/api/workspaces/${workspace.id}/invites`, {
+         method: 'POST',
+-        body: JSON.stringify({ email: inviteForm.email.trim(), role: inviteForm.role })
++        body: jsonBody('POST /api/workspaces/:id/invites', { email: inviteForm.email.trim(), role: inviteForm.role as 'admin' | 'member' })
+       })
+       setInviteForm({ email: '', role: 'member' })
+       toast.success('Invite sent')
+@@ -278,7 +279,7 @@
+     try {
+       await api(`/api/workspaces/${workspace.id}/email-config`, {
+         method: 'PUT',
+-        body: JSON.stringify({
++        body: jsonBody('PUT /api/workspaces/:id/email-config', {
+           smtpHost: emailForm.smtpHost || null,
+           smtpPort: emailForm.smtpPort ? parseInt(emailForm.smtpPort, 10) : null,
+           smtpSecure: emailForm.smtpSecure,
+@@ -304,7 +305,7 @@
+     try {
+       const d = await api<{ icp: IcpConfig }>(`/api/workspaces/${workspace.id}/icp`, {
+         method: 'PUT',
+-        body: JSON.stringify({
++        body: jsonBody('PUT /api/workspaces/:id/icp', {
+           targetIndustries: icpForm.targetIndustries.split(',').map(s => s.trim()).filter(Boolean),
+           targetGeos: icpForm.targetGeos.split(',').map(s => s.trim()).filter(Boolean),
+           minEmployees: icpForm.minEmployees ? parseInt(icpForm.minEmployees, 10) : null,
+--- /dev/null
++++ b/docs/HARDENING_WAVE_4_2026-06-19.md
+@@ -0,0 +1,62 @@
++# Hardening Wave 4 — Typed API Contracts
++
++Date: 2026-06-19
++
++## Goal
++
++Prevent frontend/backend request-shape drift as the product grows. Previous waves hardened runtime validation on the API. This wave adds compile-time route contracts and a lightweight CI guard so new UI mutations cannot bypass those contracts.
++
++## Changes
++
++- Expanded `@acaos/shared` into a route-keyed API request-body registry:
++  - `ApiBodyByRoute`
++  - `ApiBodyRoute`
++  - `ApiBody<Route>`
++- Added request contracts for auth, billing, mailbox, jobs, leads, campaigns, workspaces, packs, signals, prospects, outcomes, missions, and AI tools.
++- Added `apps/web/src/lib/apiContract.ts` with `jsonBody('<METHOD> <ROUTE>', body)`.
++- Migrated production web API mutation bodies from raw `JSON.stringify(...)` to `jsonBody(...)`.
++- Added backend compile-time conformance guards beside Zod schemas for the high-risk mutation routes.
++- Added `scripts/check-api-contracts.mjs` and root script `check:api-contracts`.
++
++## Why this matters
++
++The backend still owns runtime truth via Zod. The shared contract now makes the frontend fail at compile time when it omits required fields such as `workspaceId`, sends the wrong billing plan shape, or calls a queue endpoint with the wrong body.
++
++The guard script prevents regression by failing when production web code uses:
++
++```ts
++body: JSON.stringify(...)
++```
++
++for API request bodies instead of the typed helper.
++
++## Commands run
++
++```bash
++npm run typecheck:shared
++node scripts/check-boundaries.mjs
++node scripts/check-api-contracts.mjs
++```
++
++All three passed.
++
++## Still blocked in this environment
++
++The full API/web TypeScript checks still require installed dependencies:
++
++```bash
++npm ci
++npm run typecheck
++npm test
++npm run build
++```
++
++Without `node_modules`, the API and web type checks stop at missing type libraries such as `@types/node`, `react`, and `react-dom`.
++
++## Next recommended wave
++
++Move from request-body contracts to full API contracts:
++
++1. Type response payloads for the highest-traffic reads and writes.
++2. Add a typed `api.route(...)` wrapper so method, URL template, request body, and response type are selected together.
++3. Generate an OpenAPI JSON artifact from the shared route registry plus backend descriptions for external integrators.
+--- a/package.json
++++ b/package.json
+@@ -14,6 +14,7 @@
+     "prisma:migrate": "npm --workspace @acaos/db run prisma:migrate",
+     "build": "npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
+     "check:boundaries": "node scripts/check-boundaries.mjs",
++    "check:api-contracts": "node scripts/check-api-contracts.mjs",
+     "typecheck:shared": "tsc --noEmit -p packages/shared/tsconfig.json",
+     "typecheck:backend-core": "tsc --noEmit -p packages/backend-core/tsconfig.json",
+     "typecheck:api": "tsc --noEmit -p apps/api/tsconfig.json",
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -167,3 +167,313 @@
+   emailBody?: string
+   followup?: string | null
+ }
++
++// ── Route-keyed API body registry ─────────────────────────────────────────────
++// This is the compile-time bridge between frontend calls and backend validators.
++// UI code should build JSON request bodies with the web helper:
++//
++//   jsonBody('POST /api/leads', body)
++//
++// The route key is intentionally the backend route template, not the concrete URL;
++// dynamic path params stay in the URL, request bodies stay typed here.
++
++export type EmptyJsonBody = Record<string, never>
++export type WorkspaceRole = 'admin' | 'member'
++export type BillingCheckoutPlan = 'starter' | 'growth'
++export type SignalType =
++  | 'HIRING'
++  | 'FUNDING'
++  | 'EXPANSION'
++  | 'TECH_ADOPTION'
++  | 'LEADERSHIP_CHANGE'
++  | 'NEWS_MENTION'
++  | 'PROCUREMENT'
++  | 'BUSINESS_REGISTRATION'
++  | 'WEBSITE_CHANGE'
++
++export interface SignupRequest {
++  email: string
++  password: string
++  name?: string
++}
++
++export interface LoginRequest {
++  email: string
++  password: string
++}
++
++export interface ForgotPasswordRequest {
++  email: string
++}
++
++export interface ResetPasswordRequest {
++  token: string
++  password: string
++}
++
++export interface UpdateProfileRequest {
++  name?: string | null
++  currentPassword?: string
++  newPassword?: string
++}
++
++export interface BillingCheckoutRequest {
++  workspaceId: string
++  plan: BillingCheckoutPlan
++}
++
++export interface BillingPortalRequest {
++  workspaceId: string
++}
++
++export interface SendTestEmailRequest {
++  workspaceId: string
++  to: string
++  subject?: string
++  html?: string
++}
++
++export interface SyncMailboxRequest {
++  workspaceId: string
++}
++
++export interface LeadJobRequest {
++  leadId: string
++}
++
++export interface AnalyzeReplyJobRequest {
++  replyBody: string
++  leadId?: string
++  workspaceId?: string
++}
++
++export interface ResearchBulkJobRequest {
++  workspaceId: string
++}
++
++export interface UpdateCampaignRequest {
++  name?: string
++  goalType?: string
++  description?: string | null
++}
++
++export interface BulkLeadIdsRequest {
++  workspaceId: string
++  ids: string[]
++}
++
++export interface BulkLeadStageRequest extends BulkLeadIdsRequest {
++  stage: string
++}
++
++export interface BulkLeadAssignRequest extends BulkLeadIdsRequest {
++  campaignId?: string | null
++}
++
++export interface UpdateLeadRequest {
++  businessName?: string
++  campaignId?: string | null
++  contactName?: string | null
++  email?: string | null
++  website?: string | null
++  city?: string | null
++  category?: string | null
++  notes?: string | null
++  sourceTag?: string | null
++  aiSummary?: string | null
++  outreachAngle?: string | null
++  stage?: string
++  score?: number
++}
++
++export interface WorkspaceCreateRequest {
++  name: string
++  slug?: string
++}
++
++export interface UpdateWorkspaceRequest {
++  name?: string
++  slug?: string
++  senderBusinessName?: string | null
++  senderPostalAddress?: string | null
++}
++
++export interface WorkspaceMemberRequest {
++  email: string
++  role: WorkspaceRole
++}
++
++export interface UpdateWorkspaceEmailConfigRequest {
++  smtpHost?: string | null
++  smtpPort?: number | string | null
++  smtpSecure?: boolean
++  smtpUser?: string | null
++  smtpPass?: string | null
++  smtpFrom?: string | null
++  imapHost?: string | null
++  imapPort?: number | string | null
++  imapSecure?: boolean
++  imapUser?: string | null
++  imapPass?: string | null
++}
++
++export interface ApplyPackRequest {
++  workspaceId: string
++}
++
++export interface ProspectWriteRequest {
++  workspaceId: string
++  companyName: string
++  domain?: string | null
++  industry?: string | null
++  employeeCount?: number | null
++  estimatedRevenue?: number | null
++  location?: string | null
++  description?: string | null
++  notes?: string | null
++  aiSummary?: string | null
++  contactName?: string | null
++  contactEmail?: string | null
++  contactPhone?: string | null
++  contactTitle?: string | null
++  linkedinUrl?: string | null
++  expectedDealValue?: number | null
++  sourceTag?: string | null
++}
++
++export interface ProspectUpdateRequest extends Partial<Omit<ProspectWriteRequest, 'workspaceId'>> {
++  lastContactedAt?: string | null
++  outcomeStage?: OutcomeStage
++  buyingStage?: string
++}
++
++export interface ImportProspectsRequest {
++  workspaceId: string
++  rows: Array<Record<string, unknown>>
++}
++
++export interface ImportProspectSignalsRequest {
++  workspaceId: string
++  rows: Array<Record<string, unknown>>
++}
++
++export interface SignalEvidenceRequest {
++  provider: string
++  sourceType: string
++  sourceUrl?: string
++  observedAt?: string | Date
++  expiresAt?: string | Date | null
++  confidence?: number
++  rawText?: string | null
++}
++
++export interface CreateSignalRequest {
++  workspaceId: string
++  prospectId: string
++  type: SignalType
++  strength: number
++  title?: string
++  description?: string
++  sourceUrl?: string
++  source?: string
++  sourceReliability?: number
++  industryRelevance?: number
++  detectedAt?: string | Date
++  evidence?: SignalEvidenceRequest
++}
++
++export interface ApproveOutreachIntentRequest {
++  leadId?: string
++}
++
++export interface MaterializeOutreachIntentRequest {
++  campaignId?: string
++}
++
++export interface RecordScoringOutcomeRequest {
++  workspaceId?: string
++  prospectId: string
++  leadId?: string | null
++  score: number
++  replied: boolean
++  replyIntent?: string | null
++  messageRelevance?: number
++  channelUsed?: 'EMAIL' | 'LINKEDIN'
++}
++
++// Keep this map alphabetized by feature area so route additions are obvious in
++// review. A missing key is a signal that a new mutation endpoint needs an API
++// contract before frontend integration.
++export interface ApiBodyByRoute {
++  'POST /api/ai/research': AiResearchRequest
++  'POST /api/ai/outreach': AiOutreachRequest
++  'POST /api/ai/reply-analysis': AiReplyAnalysisRequest
++
++  'POST /api/auth/signup': SignupRequest
++  'POST /api/auth/login': LoginRequest
++  'POST /api/auth/forgot-password': ForgotPasswordRequest
++  'POST /api/auth/reset-password': ResetPasswordRequest
++  'PATCH /api/auth/profile': UpdateProfileRequest
++  'POST /api/auth/resend-verification': EmptyJsonBody
++
++  'POST /api/billing/checkout': BillingCheckoutRequest
++  'POST /api/billing/portal': BillingPortalRequest
++
++  'POST /api/campaigns': CreateCampaignRequest
++  'PATCH /api/campaigns/:id': UpdateCampaignRequest
++  'POST /api/campaigns/:id/send': SendCampaignRequest
++  'POST /api/campaigns/:id/retry-failed': EmptyJsonBody
++
++  'POST /api/jobs/events/ticket': EmptyJsonBody
++  'POST /api/jobs/research': LeadJobRequest
++  'POST /api/jobs/outreach': LeadJobRequest
++  'POST /api/jobs/analyze-reply': AnalyzeReplyJobRequest
++  'POST /api/jobs/research-bulk': ResearchBulkJobRequest
++
++  'POST /api/leads': CreateLeadRequest
++  'POST /api/leads/import': ImportLeadsRequest
++  'PATCH /api/leads/:id': UpdateLeadRequest
++  'POST /api/leads/bulk-delete': BulkLeadIdsRequest
++  'POST /api/leads/bulk-stage': BulkLeadStageRequest
++  'POST /api/leads/bulk-assign': BulkLeadAssignRequest
++  'PATCH /api/leads/:id/drafts/:draftId': UpdateDraftRequest
++
++  'POST /api/mailbox/send-test': SendTestEmailRequest
++  'POST /api/mailbox/sync': SyncMailboxRequest
++
++  'POST /api/missions': CreateMissionRequest
++  'PATCH /api/missions/:id': UpdateMissionRequest
++
++  'POST /api/outcomes': RecordScoringOutcomeRequest
++  'POST /api/outcomes/reset-model': { workspaceId: string }
++
++  'POST /api/packs/:id/apply': ApplyPackRequest
++
++  'POST /api/prospects/discover': DiscoverProspectsRequest
++  'POST /api/prospects/import': ImportProspectsRequest
++  'POST /api/prospects/import-signals': ImportProspectSignalsRequest
++  'POST /api/prospects': ProspectWriteRequest
++  'PATCH /api/prospects/:id': ProspectUpdateRequest
++  'POST /api/prospects/:id/outcome': RecordProspectOutcomeRequest
++  'POST /api/prospects/:id/rescore': EmptyJsonBody
++  'POST /api/prospects/:id/recommend': EmptyJsonBody
++  'POST /api/prospects/:id/enrich': EmptyJsonBody
++  'POST /api/prospects/:id/intents/:intentId/draft': EmptyJsonBody
++  'POST /api/prospects/:id/intents/:intentId/approve': ApproveOutreachIntentRequest
++  'POST /api/prospects/:id/intents/:intentId/reject': EmptyJsonBody
++  'POST /api/prospects/:id/intents/:intentId/materialize': MaterializeOutreachIntentRequest
++
++  'POST /api/signals': CreateSignalRequest
++
++  'POST /api/workspaces': WorkspaceCreateRequest
++  'PATCH /api/workspaces/:id': UpdateWorkspaceRequest
++  'POST /api/workspaces/:id/members': WorkspaceMemberRequest
++  'POST /api/workspaces/:id/invites': WorkspaceMemberRequest
++  'PUT /api/workspaces/:id/icp': UpdateIcpRequest
++  'POST /api/workspaces/:id/seed': SeedWorkspaceRequest
++  'PUT /api/workspaces/:id/email-config': UpdateWorkspaceEmailConfigRequest
++  'POST /api/workspaces/:id/api-key/rotate': EmptyJsonBody
++}
++
++export type ApiBodyRoute = keyof ApiBodyByRoute
++export type ApiBody<Route extends ApiBodyRoute> = ApiBodyByRoute[Route]
+--- /dev/null
++++ b/scripts/check-api-contracts.mjs
+@@ -0,0 +1,39 @@
++#!/usr/bin/env node
++import { readdirSync, readFileSync, statSync } from 'node:fs'
++import { join, relative } from 'node:path'
++
++const root = process.cwd()
++const webSrc = join(root, 'apps', 'web', 'src')
++const violations = []
++
++function walk(dir) {
++  for (const entry of readdirSync(dir)) {
++    const path = join(dir, entry)
++    const stat = statSync(path)
++    if (stat.isDirectory()) {
++      walk(path)
++      continue
++    }
++    if (!/\.(ts|tsx)$/.test(entry)) continue
++    if (/\.test\.(ts|tsx)$/.test(entry)) continue
++    if (path.endsWith(join('apps', 'web', 'src', 'lib', 'apiContract.ts'))) continue
++
++    const text = readFileSync(path, 'utf8')
++    const lines = text.split(/\r?\n/)
++    lines.forEach((line, idx) => {
++      if (/body\s*:\s*JSON\.stringify\s*\(/.test(line)) {
++        violations.push(`${relative(root, path)}:${idx + 1}: use jsonBody('<METHOD> <ROUTE>', body) instead of raw JSON.stringify for API bodies`)
++      }
++    })
++  }
++}
++
++walk(webSrc)
++
++if (violations.length) {
++  console.error('API contract check failed. Untyped request bodies found:')
++  for (const v of violations) console.error(`  - ${v}`)
++  process.exit(1)
++}
++
++console.log('✓ API contract check passed — production web API bodies use typed route contracts.')

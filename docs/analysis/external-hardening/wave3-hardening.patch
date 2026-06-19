@@ -1,0 +1,1187 @@
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/lib/validate.ts /mnt/data/acaos_work3/acaos/apps/api/src/lib/validate.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/lib/validate.ts	2026-06-19 00:50:54.681525133 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/lib/validate.ts	2026-06-19 00:46:06.335860767 +0000
+@@ -2,19 +2,46 @@
+ import type { Request, Response, NextFunction, RequestHandler } from 'express'
+ import { ApiError } from './http.js'
+ 
++export function formatZodError(error: z.ZodError): string {
++  return error.issues
++    .map((e: z.ZodIssue) => `${e.path.length ? `${e.path.join('.')}: ` : ''}${e.message}`)
++    .join('; ')
++}
++
++export function parseBody<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
++  const result = schema.safeParse(body)
++  if (!result.success) throw new ApiError(400, formatZodError(result.error))
++  return result.data
++}
++
++export function parseQuery<T extends z.ZodTypeAny>(schema: T, query: unknown): z.infer<T> {
++  const result = schema.safeParse(query)
++  if (!result.success) throw new ApiError(400, formatZodError(result.error))
++  return result.data
++}
++
+ // Thin Zod middleware: parse req.body against schema, replace with typed value.
+ // Returns a RequestHandler that throws 400 with a human-readable message on failure.
+ export function validate<T extends z.ZodTypeAny>(schema: T): RequestHandler {
+   return (req: Request, _res: Response, next: NextFunction) => {
+-    const result = schema.safeParse(req.body)
+-    if (!result.success) {
+-      const msg = result.error.issues
+-        .map((e: z.ZodIssue) => `${e.path.length ? `${e.path.join('.')}: ` : ''}${e.message}`)
+-        .join('; ')
+-      return next(new ApiError(400, msg))
++    try {
++      req.body = parseBody(schema, req.body)
++      return next()
++    } catch (err) {
++      return next(err)
++    }
++  }
++}
++
++// Query validator for read routes that still need deterministic request contracts.
++export function validateQuery<T extends z.ZodTypeAny>(schema: T): RequestHandler {
++  return (req: Request, _res: Response, next: NextFunction) => {
++    try {
++      req.query = parseQuery(schema, req.query) as Request['query']
++      return next()
++    } catch (err) {
++      return next(err)
+     }
+-    req.body = result.data
+-    return next()
+   }
+ }
+ 
+@@ -25,3 +52,13 @@
+ export const nonEmptyString = z.string().trim().min(1)
+ 
+ export const idField = z.string().trim().min(1, 'id required').max(128, 'id must be at most 128 characters')
++
++export const optionalIdField = z.preprocess(
++  (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
++  idField.optional()
++)
++
++export const positiveIntFromQuery = (defaultValue: number, max: number) => z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? defaultValue : Number(value),
++  z.number().int().min(1).max(max)
++)
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/auth.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/auth.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/auth.ts	2026-06-19 00:50:54.685383424 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/auth.ts	2026-06-19 00:50:07.555909884 +0000
+@@ -290,29 +290,42 @@
+   })
+ )
+ 
++
++const profileUpdateSchema = z.object({
++  name: z.string().trim().max(100).nullable().optional(),
++  currentPassword: z.string().min(1).max(128).optional(),
++  newPassword: passwordField.optional(),
++}).refine(
++  (body) => body.name !== undefined || body.currentPassword !== undefined || body.newPassword !== undefined,
++  'No updates provided'
++).refine(
++  (body) => (!body.currentPassword && !body.newPassword) || Boolean(body.currentPassword && body.newPassword),
++  { message: 'currentPassword and newPassword are both required to change password', path: ['currentPassword'] }
++)
++
+ authRouter.patch(
+   '/profile',
+   requireAuth,
++  validate(profileUpdateSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
++    const body = req.body as z.infer<typeof profileUpdateSchema>
+     const updates: { name?: string | null; passwordHash?: string } = {}
+ 
+-    if (typeof req.body?.name === 'string') {
+-      updates.name = req.body.name.trim() || null
++    if (body.name !== undefined) {
++      updates.name = body.name?.trim() || null
+     }
+ 
+-    if (typeof req.body?.currentPassword === 'string' && typeof req.body?.newPassword === 'string') {
++    if (body.currentPassword && body.newPassword) {
+       const dbUser = await prisma.user.findUnique({ where: { id: user.id } })
+       if (!dbUser?.passwordHash) throw new ApiError(400, 'Cannot change password for this account')
+-      const ok = await bcrypt.compare(req.body.currentPassword, dbUser.passwordHash)
++      const ok = await bcrypt.compare(body.currentPassword, dbUser.passwordHash)
+       if (!ok) throw new ApiError(401, 'Current password is incorrect')
+-      const err = validatePassword(req.body.newPassword)
++      const err = validatePassword(body.newPassword)
+       if (err) throw new ApiError(400, err)
+-      updates.passwordHash = await bcrypt.hash(req.body.newPassword, 10)
++      updates.passwordHash = await bcrypt.hash(body.newPassword, 10)
+     }
+ 
+-    if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updates provided')
+-
+     const updated = await prisma.user.update({
+       where: { id: user.id },
+       data: updates,
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/ingest.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/ingest.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/ingest.ts	2026-06-19 00:50:54.687001372 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/ingest.ts	2026-06-19 00:48:11.842280009 +0000
+@@ -6,6 +6,8 @@
+ import { checkAndIncrementAiUsage, reserveLeadCapacity } from '../lib/limits.js'
+ import { requireAuth } from '../middleware/auth.js'
+ import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
++import { emailField, idField, parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ 
+ export const ingestRouter = Router()
+@@ -13,6 +15,41 @@
+ const MAX_BATCH = 500
+ const MAX_SHORT = 200
+ 
++const optionalId = z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  idField.optional()
++)
++const optionalText = (max: number) => z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  z.string().trim().max(max).optional()
++)
++const optionalEmail = z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  emailField.optional()
++).transform((value) => value?.toLowerCase())
++
++const ingestLeadSchema = z.object({
++  businessName: optionalText(MAX_SHORT),
++  contactName: optionalText(MAX_SHORT),
++  email: optionalEmail,
++  phone: optionalText(50),
++  website: optionalText(500),
++  city: optionalText(MAX_SHORT),
++  category: optionalText(MAX_SHORT),
++  notes: optionalText(2_000),
++  score: z.coerce.number().int().min(0).max(100).optional(),
++}).passthrough()
++
++const ingestBodySchema = z.object({
++  leads: z.array(ingestLeadSchema).min(1, 'leads array required').max(MAX_BATCH, `Maximum ${MAX_BATCH} leads per request`),
++  campaignId: optionalId,
++  sourceTag: optionalText(100),
++  autoResearch: z.boolean().default(true),
++})
++
++const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
++
++
+ // ---------------------------------------------------------------------------
+ // API-key middleware — resolves workspace from x-api-key header
+ // ---------------------------------------------------------------------------
+@@ -52,12 +89,8 @@
+   requireIngestKey,
+   asyncHandler(async (req, res) => {
+     const workspace = (req as any).ingestWorkspace
+-    const { leads, campaignId, sourceTag, autoResearch = true } = req.body ?? {}
+-
+-    if (!Array.isArray(leads) || leads.length === 0) throw new ApiError(400, 'leads array required')
+-    if (leads.length > MAX_BATCH) throw new ApiError(400, `Maximum ${MAX_BATCH} leads per request`)
+-    if (sourceTag && typeof sourceTag !== 'string') throw new ApiError(400, 'sourceTag must be a string')
+-    const tag = typeof sourceTag === 'string' ? sourceTag.trim().slice(0, 100) || null : null
++    const { leads, campaignId, sourceTag, autoResearch } = parseBody(ingestBodySchema, req.body ?? {})
++    const tag = sourceTag ?? null
+ 
+     // Validate campaignId belongs to this workspace
+     if (campaignId) {
+@@ -67,7 +100,7 @@
+ 
+     // Collect emails from the incoming batch for deduplication
+     const incomingEmails = leads
+-      .map((l: any) => (typeof l?.email === 'string' ? l.email.trim().toLowerCase() : null))
++      .map((l) => l.email ?? null)
+       .filter(Boolean) as string[]
+ 
+     // Find which emails already exist in this workspace
+@@ -84,8 +117,8 @@
+     const rows: any[] = []
+ 
+     for (const l of leads) {
+-      if (typeof l?.businessName !== 'string' || !l.businessName.trim()) continue
+-      const email = typeof l.email === 'string' ? l.email.trim().toLowerCase() || null : null
++      if (!l.businessName) continue
++      const email = l.email ?? null
+ 
+       if (email) {
+         if (existingEmails.has(email) || seenEmails.has(email)) continue
+@@ -96,15 +129,15 @@
+         workspaceId: workspace.id,
+         campaignId: campaignId ?? null,
+         sourceTag: tag,
+-        businessName: String(l.businessName).trim().slice(0, MAX_SHORT),
+-        contactName: typeof l.contactName === 'string' ? l.contactName.trim() || null : null,
++        businessName: l.businessName,
++        contactName: l.contactName ?? null,
+         email,
+-        phone: typeof l.phone === 'string' ? l.phone.trim() || null : null,
+-        website: typeof l.website === 'string' ? l.website.trim() || null : null,
+-        city: typeof l.city === 'string' ? l.city.trim() || null : null,
+-        category: typeof l.category === 'string' ? l.category.trim() || null : null,
+-        notes: typeof l.notes === 'string' ? l.notes.trim().slice(0, 2000) || null : null,
+-        score: Number(l.score) || 0
++        phone: l.phone ?? null,
++        website: l.website ?? null,
++        city: l.city ?? null,
++        category: l.category ?? null,
++        notes: l.notes ?? null,
++        score: l.score ?? 0
+       })
+     }
+ 
+@@ -166,8 +199,7 @@
+   '/rotate',
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.query.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId } = parseQuery(workspaceQuerySchema, req.query)
+ 
+     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
+     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
+@@ -188,8 +220,7 @@
+   '/',
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.query.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId } = parseQuery(workspaceQuerySchema, req.query)
+ 
+     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
+     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/jobs.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/jobs.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/jobs.ts	2026-06-19 00:50:54.687693443 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/jobs.ts	2026-06-19 00:46:23.270536730 +0000
+@@ -12,6 +12,8 @@
+   getJobById
+ } from '../lib/queues.js'
+ import { issueSseTicket, consumeSseTicket } from '../lib/sseTickets.js'
++import { validate, workspaceIdField, idField, optionalIdField, nonEmptyString } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { Job } from 'bullmq'
+ 
+@@ -36,17 +38,47 @@
+ 
+ export const jobsRouter = Router()
+ 
+-const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox', 'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations']
++const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox', 'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations'] as const
+ const MAX_REPLY_BODY = 10_000
+ 
++const queueNameSchema = z.enum(QUEUE_NAMES)
++const jobIdParamSchema = z.string().trim().min(1, 'jobId required').max(300, 'jobId must be at most 300 characters')
++  .regex(/^[A-Za-z0-9_.-]+$/, 'jobId contains unsupported characters')
++const leadJobSchema = z.object({ leadId: idField })
++const analyzeReplyJobSchema = z.object({
++  replyBody: nonEmptyString.max(MAX_REPLY_BODY, `replyBody must be at most ${MAX_REPLY_BODY} characters`),
++  leadId: optionalIdField,
++  workspaceId: z.preprocess(
++    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
++    workspaceIdField.optional()
++  ),
++}).refine((body) => Boolean(body.leadId || body.workspaceId), {
++  message: 'leadId or workspaceId required',
++  path: ['leadId'],
++})
++const researchBulkSchema = z.object({ workspaceId: workspaceIdField })
++
++function parseQueueParam(value: string): (typeof QUEUE_NAMES)[number] {
++  return queueNameSchema.parse(value)
++}
++
++function parseJobIdParam(value: string): string {
++  return jobIdParamSchema.parse(value)
++}
++
+ // Server-Sent Events stream for real-time job progress. Registered BEFORE
+ // requireAuth because EventSource cannot send an Authorization header; it
+ // authenticates with a short-lived, single-use ticket (see /events/ticket)
+ // exchanged from Redis, rather than a long-lived JWT in the URL.
+ jobsRouter.get('/events/:queue/:jobId', asyncHandler(async (req, res) => {
+-  const queue = req.params.queue as string
+-  const jobId = req.params.jobId as string
+-  if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
++  let queue: (typeof QUEUE_NAMES)[number]
++  let jobId: string
++  try {
++    queue = parseQueueParam(req.params.queue as string)
++    jobId = parseJobIdParam(req.params.jobId as string)
++  } catch {
++    throw new ApiError(400, `Unknown queue: ${req.params.queue}`)
++  }
+ 
+   const userId = await consumeSseTicket(String(req.query.ticket || '').trim())
+   if (!userId) throw new ApiError(401, 'Invalid or expired ticket')
+@@ -122,10 +154,10 @@
+ jobsRouter.post(
+   '/research',
+   aiRateLimit,
++  validate(leadJobSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const leadId = String(req.body?.leadId || '').trim()
+-    if (!leadId) throw new ApiError(400, 'leadId required')
++    const { leadId } = req.body as z.infer<typeof leadJobSchema>
+ 
+     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
+     if (!lead) throw new ApiError(404, 'Lead not found')
+@@ -143,10 +175,10 @@
+ jobsRouter.post(
+   '/outreach',
+   aiRateLimit,
++  validate(leadJobSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const leadId = String(req.body?.leadId || '').trim()
+-    if (!leadId) throw new ApiError(400, 'leadId required')
++    const { leadId } = req.body as z.infer<typeof leadJobSchema>
+ 
+     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
+     if (!lead) throw new ApiError(404, 'Lead not found')
+@@ -164,19 +196,15 @@
+ jobsRouter.post(
+   '/analyze-reply',
+   aiRateLimit,
++  validate(analyzeReplyJobSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const replyBody = String(req.body?.replyBody || '').trim()
+-    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() || undefined : undefined
+-    const bodyWorkspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() || undefined : undefined
++    const { replyBody, leadId, workspaceId: bodyWorkspaceId } = req.body as z.infer<typeof analyzeReplyJobSchema>
+ 
+-    if (!replyBody) throw new ApiError(400, 'replyBody required')
+-    if (replyBody.length > MAX_REPLY_BODY) throw new ApiError(400, `replyBody must be at most ${MAX_REPLY_BODY} characters`)
+     // Require a billable scope. Previously leadId was optional and an omitted
+     // leadId skipped metering entirely while the worker still ran the AI call —
+     // an unmetered OpenAI spend path. Now every analyze-reply resolves to a
+     // workspace and is charged before enqueue.
+-    if (!leadId && !bodyWorkspaceId) throw new ApiError(400, 'leadId or workspaceId required')
+ 
+     let workspaceId: string
+     if (leadId) {
+@@ -201,10 +229,10 @@
+ jobsRouter.post(
+   '/research-bulk',
+   aiRateLimit,
++  validate(researchBulkSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId } = req.body as z.infer<typeof researchBulkSchema>
+ 
+     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+ 
+@@ -220,7 +248,7 @@
+     }
+ 
+     const jobs = await Promise.all((leads as Array<{ id: string }>).map((l: { id: string }) => enqueueResearchLead({ leadId: l.id, workspaceId, initiatedByUserId: user.id })))
+-    res.status(202).json({ queued: jobs.length, jobs: jobs.map(j => ({ jobId: j.id, leadId: j.name })) })
++    res.status(202).json({ queued: jobs.length, jobs: jobs.map(j => ({ jobId: j.id, leadId: (j.data as { leadId?: string }).leadId ?? j.name })) })
+   })
+ )
+ 
+@@ -229,9 +257,14 @@
+   '/:queue/:jobId',
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const queue = req.params.queue as string
+-    const jobId = req.params.jobId as string
+-    if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)
++    let queue: (typeof QUEUE_NAMES)[number]
++    let jobId: string
++    try {
++      queue = parseQueueParam(req.params.queue as string)
++      jobId = parseJobIdParam(req.params.jobId as string)
++    } catch {
++      throw new ApiError(400, `Unknown queue: ${req.params.queue}`)
++    }
+ 
+     const job = await getJobById(queue, jobId)
+     if (!job) throw new ApiError(404, 'Job not found')
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/outcomes.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/outcomes.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/outcomes.ts	2026-06-19 00:50:54.689279931 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/outcomes.ts	2026-06-19 00:47:24.120930173 +0000
+@@ -4,6 +4,8 @@
+ import { requireAuth } from '../middleware/auth.js'
+ import { userBelongsToWorkspace } from '../lib/workspaces.js'
+ import { hashApiKey } from '../lib/apiKeys.js'
++import { parseBody, validate, workspaceIdField, idField } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ 
+ export const outcomesRouter = Router()
+@@ -33,6 +35,27 @@
+   correlationScore: 0
+ }
+ 
++const optionalOutcomeIdField = z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  idField.optional()
++)
++const optionalWorkspaceIdField = z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  workspaceIdField.optional()
++)
++const recordOutcomeSchema = z.object({
++  workspaceId: optionalWorkspaceIdField,
++  prospectId: idField,
++  leadId: optionalOutcomeIdField,
++  score: z.coerce.number().min(0, 'score must be 0–100').max(100, 'score must be 0–100'),
++  replied: z.boolean(),
++  replyIntent: z.string().trim().max(100).nullable().optional(),
++  messageRelevance: z.coerce.number().min(0).max(1).default(0.5),
++  channelUsed: z.enum(['EMAIL', 'LINKEDIN']).default('EMAIL'),
++})
++const resetModelSchema = z.object({ workspaceId: workspaceIdField })
++
++
+ // ---------------------------------------------------------------------------
+ // Pure weight-update logic — ported from ScorerV2.updateWeights()
+ // ---------------------------------------------------------------------------
+@@ -173,30 +196,29 @@
+   requireIngestKeyOrAuth,
+   asyncHandler(async (req, res) => {
+     const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false
++    const body = parseBody(recordOutcomeSchema, req.body ?? {})
+     let workspaceId: string
+ 
+     if (viaApiKey) {
+       workspaceId = (req as any).resolvedWorkspaceId
+     } else {
+       // JWT path — workspaceId must be in body
+-      workspaceId = String(req.body?.workspaceId || '').trim()
+-      if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++      if (!body.workspaceId) throw new ApiError(400, 'workspaceId required')
++      workspaceId = body.workspaceId
+       const user = (req as AuthedRequest).user
+       const member = await userBelongsToWorkspace(user.id, workspaceId)
+       if (!member) throw new ApiError(403, 'Access denied')
+     }
+ 
+-    const prospectId = String(req.body?.prospectId || '').trim()
+-    if (!prospectId) throw new ApiError(400, 'prospectId required')
+-
+-    const score = Number(req.body?.score)
+-    if (isNaN(score) || score < 0 || score > 100) throw new ApiError(400, 'score must be 0–100')
+-
+-    const replied = Boolean(req.body?.replied)
+-    const replyIntent = typeof req.body?.replyIntent === 'string' ? req.body.replyIntent : null
+-    const messageRelevance = Math.min(1, Math.max(0, Number(req.body?.messageRelevance ?? 0.5)))
+-    const channelUsed = req.body?.channelUsed === 'LINKEDIN' ? 'LINKEDIN' : 'EMAIL'
+-    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() || null : null
++    const {
++      prospectId,
++      score,
++      replied,
++      replyIntent = null,
++      messageRelevance,
++      channelUsed,
++      leadId = null,
++    } = body
+ 
+     // The referenced records must belong to the resolved workspace. Without this
+     // a valid API key could submit outcomes pointing at arbitrary prospect/lead
+@@ -293,10 +315,10 @@
+ outcomesRouter.post(
+   '/model/reset',
+   requireAuth,
++  validate(resetModelSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId } = req.body as z.infer<typeof resetModelSchema>
+ 
+     const membership = await prisma.membership.findFirst({
+       where: { userId: user.id, workspaceId, role: 'owner' }
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/packs.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/packs.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/packs.ts	2026-06-19 00:50:54.689538933 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/packs.ts	2026-06-19 00:49:33.015690900 +0000
+@@ -5,11 +5,15 @@
+ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+ import { listPacks, getPack } from '../lib/packs/index.js'
+ import { recordAudit } from '../lib/audit.js'
++import { validate, workspaceIdField } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ 
+ export const packsRouter = Router()
+ packsRouter.use(requireAuth)
+ 
++const applyPackSchema = z.object({ workspaceId: workspaceIdField })
++
+ // List available industry packs (summaries).
+ packsRouter.get('/', asyncHandler(async (_req, res) => {
+   res.json({ packs: listPacks() })
+@@ -24,10 +28,9 @@
+ 
+ // Apply a pack's ICP preset to a workspace (onboarding shortcut). The operator
+ // can still edit their ICP afterwards; this just seeds it from the vertical.
+-packsRouter.post('/:id/apply', asyncHandler(async (req, res) => {
++packsRouter.post('/:id/apply', validate(applyPackSchema), asyncHandler(async (req, res) => {
+   const user = (req as AuthedRequest).user
+-  const workspaceId = String(req.body?.workspaceId || '').trim()
+-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++  const { workspaceId } = req.body as z.infer<typeof applyPackSchema>
+   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+ 
+   const pack = getPack(req.params.id as string)
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/prospects.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/prospects.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/prospects.ts	2026-06-19 00:50:54.690311146 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/prospects.ts	2026-06-19 00:51:16.446518937 +0000
+@@ -29,7 +29,7 @@
+ import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
+ import { dollarsToCents, centsToDollars } from '../lib/money.js'
+ import { escCsv } from '../lib/csv.js'
+-import { validate, workspaceIdField, nonEmptyString, emailField } from '../lib/validate.js'
++import { validate, workspaceIdField, nonEmptyString, emailField, idField, parseBody } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { Assert, Extends, DiscoverProspectsRequest, RecordProspectOutcomeRequest } from '@acaos/shared'
+@@ -104,6 +104,58 @@
+ 
+ type _OutcomeConforms = Assert<Extends<z.infer<typeof outcomeSchema>, RecordProspectOutcomeRequest>>
+ 
++const importRowsSchema = z.object({
++  workspaceId: workspaceIdField,
++  rows: z.array(z.record(z.string(), z.unknown())).min(1, 'rows array required').max(1000, 'Maximum 1000 rows per import'),
++})
++
++const importSignalRowsSchema = z.object({
++  workspaceId: workspaceIdField,
++  rows: z.array(z.record(z.string(), z.unknown())).min(1, 'rows array required').max(500, 'Maximum 500 rows per import'),
++})
++
++const approveIntentSchema = z.object({
++  leadId: z.preprocess(
++    (value) => value === undefined || value === null || value === '' ? undefined : value,
++    idField.optional()
++  ),
++})
++
++const materializeIntentSchema = z.object({
++  campaignId: z.preprocess(
++    (value) => value === undefined || value === null || value === '' ? undefined : value,
++    idField.optional()
++  ),
++})
++
++function parseOptionalDateValue(value: unknown, field: string): Date | undefined {
++  if (value === undefined || value === null || value === '') return undefined
++  const d = new Date(String(value))
++  if (Number.isNaN(d.getTime())) throw new Error(`${field} must be a valid date`)
++  return d
++}
++
++function parseBoundedNumber(value: unknown, field: string, min: number, max: number, fallback: number): number {
++  if (value === undefined || value === null || value === '') return fallback
++  const n = Number(value)
++  if (!Number.isFinite(n) || n < min || n > max) throw new Error(`${field} must be between ${min} and ${max}`)
++  return n
++}
++
++function parseOptionalNonNegativeNumber(value: unknown, field: string): number | null {
++  if (value === undefined || value === null || value === '') return null
++  const n = Number(value)
++  if (!Number.isFinite(n) || n < 0) throw new Error(`${field} must be a non-negative number`)
++  return n
++}
++
++function asTrimmedString(value: unknown, max = 500): string | null {
++  if (value === undefined || value === null) return null
++  const s = String(value).trim()
++  return s ? s.slice(0, max) : null
++}
++
++
+ /** An array, or undefined when it's missing/empty — for layered ICP fallbacks. */
+ function nonEmpty<T>(arr: T[] | null | undefined): T[] | undefined {
+   return arr && arr.length > 0 ? arr : undefined
+@@ -553,11 +605,7 @@
+ 
+ // POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
+ prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, res) => {
+-  const workspaceId = req.body.workspaceId as string
+-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-  const rows: Record<string, unknown>[] = req.body.rows
+-  if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
+-  if (rows.length > 1000) throw new ApiError(400, 'Maximum 1000 rows per import')
++  const { workspaceId, rows } = parseBody(importRowsSchema, req.body ?? {})
+ 
+   const userId = (req as AuthedRequest).user.id
+   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+@@ -570,16 +618,16 @@
+ 
+   for (let i = 0; i < rows.length; i++) {
+     const row = rows[i]
+-    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
++    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim().slice(0, 200)
+     if (!companyName) { skipped++; continue }
+     try {
+       const meta = {
+-        industry:      row.industry      ? String(row.industry)      : null,
+-        employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
+-        contactEmail:  row.contactEmail  ? String(row.contactEmail)  : null,
+-        contactName:   row.contactName   ? String(row.contactName)   : null,
+-        domain:        row.domain        ? String(row.domain)        : null,
+-        location:      row.location      ? String(row.location)      : null,
++        industry:      asTrimmedString(row.industry, 200),
++        employeeCount: parseOptionalNonNegativeNumber(row.employeeCount, 'employeeCount'),
++        contactEmail:  asTrimmedString(row.contactEmail, 254),
++        contactName:   asTrimmedString(row.contactName, 200),
++        domain:        asTrimmedString(row.domain, 253),
++        location:      asTrimmedString(row.location, 200),
+       }
+       const scores        = calculateOpportunityScores([], meta, icp)
+       const buyingStage   = detectBuyingStage([], scores.opportunityScore)
+@@ -596,14 +644,20 @@
+           location:      meta.location,
+           contactName:   meta.contactName,
+           contactEmail:  meta.contactEmail,
+-          contactPhone:  row.contactPhone  ? String(row.contactPhone)  : null,
+-          contactTitle:  row.contactTitle  ? String(row.contactTitle)  : null,
+-          linkedinUrl:   row.linkedinUrl   ? String(row.linkedinUrl)   : null,
+-          description:   row.description   ? String(row.description)   : null,
+-          notes:         row.notes         ? String(row.notes)         : null,
+-          sourceTag:     row.sourceTag     ? String(row.sourceTag)     : 'csv_import',
+-          estimatedRevenue: row.estimatedRevenue ? dollarsToCents(Number(row.estimatedRevenue)) : null,
+-          expectedDealValue: row.expectedDealValue ? dollarsToCents(Number(row.expectedDealValue)) : null,
++          contactPhone:  asTrimmedString(row.contactPhone, 50),
++          contactTitle:  asTrimmedString(row.contactTitle, 200),
++          linkedinUrl:   asTrimmedString(row.linkedinUrl, 500),
++          description:   asTrimmedString(row.description, 2_000),
++          notes:         asTrimmedString(row.notes, 2_000),
++          sourceTag:     asTrimmedString(row.sourceTag, 100) ?? 'csv_import',
++          estimatedRevenue: (() => {
++            const value = parseOptionalNonNegativeNumber(row.estimatedRevenue, 'estimatedRevenue')
++            return value == null ? null : dollarsToCents(value)
++          })(),
++          expectedDealValue: (() => {
++            const value = parseOptionalNonNegativeNumber(row.expectedDealValue, 'expectedDealValue')
++            return value == null ? null : dollarsToCents(value)
++          })(),
+           ...scores,
+           buyingStage,
+           winProbability,
+@@ -628,11 +682,7 @@
+ ])
+ 
+ prospectsRouter.post('/import-signals', requireVerifiedEmail, asyncHandler(async (req, res) => {
+-  const workspaceId = String(req.body?.workspaceId || '').trim()
+-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-  const rows: Record<string, unknown>[] = req.body?.rows
+-  if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
+-  if (rows.length > 500) throw new ApiError(400, 'Maximum 500 rows per import')
++  const { workspaceId, rows } = parseBody(importSignalRowsSchema, req.body ?? {})
+ 
+   const userId = (req as AuthedRequest).user.id
+   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+@@ -644,7 +694,7 @@
+ 
+   for (let i = 0; i < rows.length; i++) {
+     const row = rows[i]
+-    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
++    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim().slice(0, 200)
+     const signalType = String(row.signalType ?? row.type ?? '').trim().toUpperCase()
+     try {
+       if (!companyName) throw new Error('companyName required')
+@@ -653,10 +703,12 @@
+       const sourceType = String(row.sourceType ?? row.evidenceType ?? '').trim()
+       if (!provider || !sourceType) throw new Error('evidence requires provider and sourceType')
+ 
+-      const domain = row.domain ? String(row.domain) : null
++      const domain = asTrimmedString(row.domain, 253)
+       const domainKey = normalizeDomain(domain)
+-      const sourceUrl = row.sourceUrl ? String(row.sourceUrl) : null
+-      const observedAt = row.observedAt ? new Date(String(row.observedAt)) : undefined
++      const sourceUrl = asTrimmedString(row.sourceUrl, 2048)
++      const observedAt = parseOptionalDateValue(row.observedAt, 'observedAt')
++      const strength = parseBoundedNumber(row.strength, 'strength', 0, 100, 70)
++      const confidence = parseBoundedNumber(row.confidence, 'confidence', 0, 1, 0.7)
+ 
+       let prospect = domainKey
+         ? await prisma.prospect.findFirst({ where: { workspaceId, domainKey }, select: { id: true } })
+@@ -667,10 +719,10 @@
+         prospect = await prisma.prospect.create({
+           data: {
+             workspaceId, companyName, domain, domainKey,
+-            industry: row.industry ? String(row.industry) : null,
+-            location: row.location ? String(row.location) : null,
+-            contactEmail: row.contactEmail ? String(row.contactEmail) : null,
+-            contactName: row.contactName ? String(row.contactName) : null,
++            industry: asTrimmedString(row.industry, 200),
++            location: asTrimmedString(row.location, 200),
++            contactEmail: asTrimmedString(row.contactEmail, 254),
++            contactName: asTrimmedString(row.contactName, 200),
+             sourceTag: 'signal_import',
+           },
+           select: { id: true },
+@@ -681,16 +733,16 @@
+       await ingestSignal({
+         workspaceId, prospectId: prospect.id,
+         type: signalType as SignalType,
+-        strength: row.strength !== undefined ? Number(row.strength) : 70,
+-        source: row.signalSource ? String(row.signalSource) : provider,
+-        title: row.signalTitle ? String(row.signalTitle) : null,
++        strength,
++        source: asTrimmedString(row.signalSource, 100) ?? provider,
++        title: asTrimmedString(row.signalTitle, 300),
+         sourceUrl,
+         detectedAt: observedAt,
+         evidence: {
+           provider, sourceType, sourceUrl,
+-          confidence: row.confidence !== undefined ? Number(row.confidence) : 0.7,
++          confidence,
+           observedAt,
+-          rawText: row.rawText ? String(row.rawText) : null,
++          rawText: asTrimmedString(row.rawText, 5_000),
+         },
+       })
+       signalsIngested++
+@@ -996,7 +1048,7 @@
+   }
+   // Optionally link the intent to a lead so the send path can stamp its
+   // provenance onto the resulting OutreachSent (Stage 5).
+-  const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() : undefined
++  const { leadId } = parseBody(approveIntentSchema, req.body ?? {})
+   if (leadId) {
+     const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { workspaceId: true } })
+     if (!lead || lead.workspaceId !== intent.workspaceId) throw new ApiError(400, 'leadId does not belong to this workspace')
+@@ -1046,7 +1098,7 @@
+   if (!prospect) throw new ApiError(404, 'Prospect not found')
+   if (!prospect.contactEmail) throw new ApiError(400, 'Prospect has no contact email — cannot create a sendable lead')
+ 
+-  const campaignId = typeof req.body?.campaignId === 'string' ? req.body.campaignId.trim() : undefined
++  const { campaignId } = parseBody(materializeIntentSchema, req.body ?? {})
+   if (campaignId) {
+     const c = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { workspaceId: true } })
+     if (!c || c.workspaceId !== intent.workspaceId) throw new ApiError(400, 'campaignId does not belong to this workspace')
+diff -ruN /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/signals.ts /mnt/data/acaos_work3/acaos/apps/api/src/routes/signals.ts
+--- /mnt/data/acaos_base_wave2/acaos/apps/api/src/routes/signals.ts	2026-06-19 00:50:54.690729459 +0000
++++ /mnt/data/acaos_work3/acaos/apps/api/src/routes/signals.ts	2026-06-19 00:47:03.451831356 +0000
+@@ -3,22 +3,88 @@
+ import { asyncHandler, ApiError } from '../lib/http.js'
+ import { prisma } from '../lib/prisma.js'
+ import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
+-import type { RawSignal } from '../lib/signalEngine.js'
++import type { RawSignal, SignalType } from '../lib/signalEngine.js'
+ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+ import { ingestSignal } from '../lib/signalIngest.js'
++import { parseBody, parseQuery, workspaceIdField, idField, positiveIntFromQuery } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ 
+ export const signalsRouter = Router()
+ signalsRouter.use(requireAuth)
+ 
++const SIGNAL_TYPES = [
++  'HIRING',
++  'FUNDING',
++  'EXPANSION',
++  'TECH_ADOPTION',
++  'LEADERSHIP_CHANGE',
++  'NEWS_MENTION',
++  'PROCUREMENT',
++  'BUSINESS_REGISTRATION',
++  'WEBSITE_CHANGE',
++] as const
++
++const boundedText = (max: number) => z.string().trim().min(1).max(max)
++const optionalText = (max: number) => z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  boundedText(max).optional()
++)
++const optionalUrl = z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  z.string().trim().url('sourceUrl must be a valid URL').max(2048).optional()
++)
++const optionalDate = z.preprocess(
++  (value) => value === undefined || value === null || value === '' ? undefined : value,
++  z.union([
++    z.date(),
++    z.string().trim().refine((value) => !Number.isNaN(Date.parse(value)), 'must be a valid date').transform((value) => new Date(value)),
++  ]).optional()
++)
++const percentField = z.coerce.number().int().min(0).max(100)
++const confidenceField = z.coerce.number().min(0).max(1)
++
++const listSignalsQuerySchema = z.object({
++  workspaceId: workspaceIdField,
++  prospectId: z.preprocess((value) => value === '' ? undefined : value, idField.optional()),
++  type: z.preprocess((value) => value === '' ? undefined : value, z.enum(SIGNAL_TYPES).optional()),
++  limit: positiveIntFromQuery(100, 200),
++})
++
++const signalEvidenceSchema = z.object({
++  provider: boundedText(100),
++  sourceType: boundedText(100),
++  sourceUrl: optionalUrl,
++  observedAt: optionalDate,
++  expiresAt: optionalDate.nullable().optional(),
++  confidence: confidenceField.optional(),
++  rawText: z.string().trim().max(5_000).optional().nullable(),
++})
++
++const createSignalSchema = z.object({
++  workspaceId: workspaceIdField,
++  prospectId: idField,
++  type: z.enum(SIGNAL_TYPES),
++  strength: percentField,
++  title: optionalText(300),
++  description: optionalText(2_000),
++  sourceUrl: optionalUrl,
++  source: optionalText(100),
++  sourceReliability: percentField.optional(),
++  industryRelevance: percentField.optional(),
++  detectedAt: optionalDate,
++  evidence: signalEvidenceSchema.optional(),
++})
++
++
+ function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
+   return { type: s.type as RawSignal['type'], strength: s.strength, sourceReliability: s.sourceReliability, industryRelevance: s.industryRelevance, detectedAt: s.detectedAt }
+ }
+ 
+ // GET /api/signals?workspaceId=&prospectId=&type=
+ signalsRouter.get('/', asyncHandler(async (req, res) => {
+-  const workspaceId = req.query.workspaceId as string
+-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++  const query = parseQuery(listSignalsQuerySchema, req.query)
++  const { workspaceId, prospectId, type, limit } = query
+ 
+   const user = (req as AuthedRequest).user
+   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
+@@ -26,10 +92,8 @@
+   }
+ 
+   const where: Record<string, unknown> = { workspaceId }
+-  if (req.query.prospectId) where.prospectId = req.query.prospectId
+-  if (req.query.type) where.type = req.query.type
+-
+-  const limit = Math.min(Number(req.query.limit ?? 100), 200)
++  if (prospectId) where.prospectId = prospectId
++  if (type) where.type = type
+ 
+   const signals = await prisma.signal.findMany({
+     where,
+@@ -50,12 +114,9 @@
+ 
+ // POST /api/signals — add a manual signal
+ signalsRouter.post('/', asyncHandler(async (req, res) => {
++  const body = parseBody(createSignalSchema, req.body)
+   const { workspaceId, prospectId, type, strength, title, description, sourceUrl, source,
+-    sourceReliability, industryRelevance, detectedAt } = req.body
+-
+-  if (!workspaceId || !prospectId) throw new ApiError(400, 'workspaceId and prospectId required')
+-  if (!type) throw new ApiError(400, 'type required')
+-  if (strength === undefined || strength < 0 || strength > 100) throw new ApiError(400, 'strength must be 0-100')
++    sourceReliability, industryRelevance, detectedAt } = body
+ 
+   const user = (req as AuthedRequest).user
+   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+@@ -67,38 +128,33 @@
+   }
+ 
+   const resolvedSource = source ?? 'manual'
+-  const resolvedDetectedAt = detectedAt ? new Date(detectedAt) : new Date()
++  const resolvedDetectedAt = detectedAt ?? new Date()
+ 
+   // Optionally record provenance. When an `evidence` object is supplied, the
+   // ingest service creates an EvidenceSource and links the signal to it.
+-  let evidenceInput
+-  const evidence = req.body?.evidence
+-  if (evidence && typeof evidence === 'object') {
+-    const provider = typeof evidence.provider === 'string' ? evidence.provider.trim() : ''
+-    const sourceType = typeof evidence.sourceType === 'string' ? evidence.sourceType.trim() : ''
+-    if (!provider || !sourceType) throw new ApiError(400, 'evidence requires provider and sourceType')
+-    evidenceInput = {
+-      provider,
+-      sourceType,
+-      sourceUrl: typeof evidence.sourceUrl === 'string' ? evidence.sourceUrl : sourceUrl ?? null,
+-      observedAt: evidence.observedAt ? new Date(evidence.observedAt) : resolvedDetectedAt,
+-      expiresAt: evidence.expiresAt ? new Date(evidence.expiresAt) : null,
+-      confidence: Number(evidence.confidence),
+-      rawText: typeof evidence.rawText === 'string' ? evidence.rawText.slice(0, 5000) : null,
+-    }
+-  }
++  const evidenceInput = body.evidence
++    ? {
++        provider: body.evidence.provider,
++        sourceType: body.evidence.sourceType,
++        sourceUrl: body.evidence.sourceUrl ?? sourceUrl ?? null,
++        observedAt: body.evidence.observedAt ?? resolvedDetectedAt,
++        expiresAt: body.evidence.expiresAt ?? null,
++        confidence: body.evidence.confidence,
++        rawText: body.evidence.rawText ?? null,
++      }
++    : undefined
+ 
+   const signal = await ingestSignal({
+     workspaceId,
+     prospectId,
+-    type,
+-    strength: Number(strength),
++    type: type as SignalType,
++    strength,
+     source: resolvedSource,
+     title: title ?? null,
+     description: description ?? null,
+     sourceUrl: sourceUrl ?? null,
+-    sourceReliability: sourceReliability !== undefined ? Number(sourceReliability) : undefined,
+-    industryRelevance: industryRelevance !== undefined ? Number(industryRelevance) : undefined,
++    sourceReliability,
++    industryRelevance,
+     detectedAt: resolvedDetectedAt,
+     evidence: evidenceInput,
+   })
+diff -ruN /mnt/data/acaos_base_wave2/acaos/docs/HARDENING_WAVE_3_2026-06-19.md /mnt/data/acaos_work3/acaos/docs/HARDENING_WAVE_3_2026-06-19.md
+--- /mnt/data/acaos_base_wave2/acaos/docs/HARDENING_WAVE_3_2026-06-19.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/acaos_work3/acaos/docs/HARDENING_WAVE_3_2026-06-19.md	2026-06-19 00:51:47.234245124 +0000
+@@ -0,0 +1,147 @@
++# Hardening Wave 3 — Production Boundary Closure
++
++Date: 2026-06-19
++
++## Goal
++
++Continue the production-readiness work by closing the remaining long-tail request-validation and queue-ingress gaps without changing the product architecture.
++
++## Scope
++
++This wave focused on routes that still accepted loosely parsed request bodies or query parameters:
++
++- `apps/api/src/routes/jobs.ts`
++- `apps/api/src/routes/signals.ts`
++- `apps/api/src/routes/outcomes.ts`
++- `apps/api/src/routes/ingest.ts`
++- `apps/api/src/routes/prospects.ts`
++- `apps/api/src/routes/packs.ts`
++- `apps/api/src/routes/auth.ts`
++- `apps/api/src/lib/validate.ts`
++
++## Changes
++
++### Central validation helpers
++
++`apps/api/src/lib/validate.ts`
++
++- Added `formatZodError()`
++- Added `parseBody()`
++- Added `parseQuery()`
++- Added `validateQuery()`
++- Added shared optional ID parsing
++- Added query integer coercion helper
++
++This lets routes validate ad hoc payloads without forcing every endpoint into middleware form.
++
++### Jobs route hardening
++
++`apps/api/src/routes/jobs.ts`
++
++- Added Zod schemas for single-lead AI jobs.
++- Added Zod schema for reply-analysis jobs.
++- Added Zod schema for bulk research jobs.
++- Validated queue names and job IDs before job lookup.
++- Preserved the mandatory billable scope for reply analysis.
++- Fixed bulk research response mapping so `leadId` is sourced from job data instead of the BullMQ job name.
++
++### Signals route hardening
++
++`apps/api/src/routes/signals.ts`
++
++- Added strict query validation for list filters.
++- Added strict body validation for manual signal creation.
++- Restricted signal type to known signal types.
++- Enforced signal strength/source reliability/industry relevance ranges.
++- Added safe parsing for dates, URLs, and evidence confidence.
++- Prevented malformed evidence from reaching persistence.
++
++### Outcomes route hardening
++
++`apps/api/src/routes/outcomes.ts`
++
++- Added strict body validation for outcome recording.
++- Fixed a correctness risk where string values like `"false"` could previously be recorded as `true` through `Boolean(...)`.
++- Added strict model-reset body validation.
++- Preserved the dual authentication model: ingest API key or user JWT.
++
++### Ingest route hardening
++
++`apps/api/src/routes/ingest.ts`
++
++- Added strict batch-body validation.
++- Enforced batch cap at schema level.
++- Enforced email syntax before lead creation.
++- Normalized emails at the boundary.
++- Validated source tags, campaign IDs, and scoring inputs.
++- Added query validation for ingest API key rotation/deletion.
++
++### Prospects route hardening
++
++`apps/api/src/routes/prospects.ts`
++
++- Added schema validation for prospect CSV import request envelopes.
++- Added schema validation for signal import request envelopes.
++- Added bounded row parsing for imported text fields.
++- Added non-negative numeric validation for imported employee/revenue/deal-value fields.
++- Added signal import validation for dates, strength, and confidence.
++- Added strict optional body validation for outreach-intent approval and materialization.
++
++### Packs and auth hardening
++
++`apps/api/src/routes/packs.ts`
++
++- Added schema validation for pack application.
++
++`apps/api/src/routes/auth.ts`
++
++- Added schema validation for profile updates.
++- Enforced paired `currentPassword` + `newPassword` for password changes.
++- Preserved empty-update rejection.
++
++## Tests added
++
++- Outcomes: rejects string booleans so `"false"` cannot be recorded as `true`.
++- Signals: rejects malformed evidence before persistence.
++- Ingest: rejects malformed emails at the boundary.
++- Prospects: reports invalid signal import dates as row failures.
++
++## Validation performed
++
++```bash
++npm run check:boundaries
++```
++
++Result:
++
++```text
++✓ Boundary check passed — worker does not import apps/api.
++```
++
++## Validation still blocked in this environment
++
++The uploaded archive does not include installed dependencies, so full TypeScript and test validation could not complete here.
++
++Observed blocker:
++
++```text
++tsc --noEmit -p apps/api/tsconfig.json
++error TS2688: Cannot find type definition file for 'node'.
++```
++
++After installing dependencies, run:
++
++```bash
++npm ci
++npm run typecheck
++npm test
++npm run build
++```
++
++## Remaining recommended work
++
++1. Add query validation to remaining high-traffic read routes.
++2. Add OpenAPI generation from the Zod schemas so frontend/backend drift becomes visible.
++3. Add a small contract-test layer for API request/response shapes.
++4. Add queue-level idempotency keys for more AI enqueue paths, similar to campaign send deduplication.
++5. Add structured validation metrics: route name, validation failure count, and top failed field.
+diff -ruN /mnt/data/acaos_base_wave2/acaos/tests/routes-ingest.test.ts /mnt/data/acaos_work3/acaos/tests/routes-ingest.test.ts
+--- /mnt/data/acaos_base_wave2/acaos/tests/routes-ingest.test.ts	2026-06-19 00:50:54.637811898 +0000
++++ /mnt/data/acaos_work3/acaos/tests/routes-ingest.test.ts	2026-06-19 00:50:22.744307592 +0000
+@@ -119,6 +119,13 @@
+   assert.equal(res.status, 400)
+ })
+ 
++
++test('rejects malformed emails at the ingest boundary', async () => {
++  const res = await ingest({ leads: [{ businessName: 'Bad Email', email: 'not-an-email' }], autoResearch: false })
++  assert.equal(res.status, 400)
++  assert.equal(prisma.callsTo('lead', 'create').length, 0)
++})
++
+ test('rejects an unknown campaignId for the workspace', async () => {
+   const res = await ingest({ leads: [{ businessName: 'A' }], campaignId: 'other-camp', autoResearch: false })
+   assert.equal(res.status, 400)
+diff -ruN /mnt/data/acaos_base_wave2/acaos/tests/routes-outcomes.test.ts /mnt/data/acaos_work3/acaos/tests/routes-outcomes.test.ts
+--- /mnt/data/acaos_base_wave2/acaos/tests/routes-outcomes.test.ts	2026-06-19 00:50:54.639956595 +0000
++++ /mnt/data/acaos_work3/acaos/tests/routes-outcomes.test.ts	2026-06-19 00:50:22.742379797 +0000
+@@ -161,6 +161,17 @@
+   assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
+ })
+ 
++
++test('POST rejects string booleans so replied=false is not mis-recorded as true', async () => {
++  const res = await server.request('/api/outcomes', {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
++    body: JSON.stringify({ prospectId: 'p1', score: 80, replied: 'false' }),
++  })
++  assert.equal(res.status, 400)
++  assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
++})
++
+ test('POST validates the score range', async () => {
+   const res = await server.request('/api/outcomes', {
+     method: 'POST',
+diff -ruN /mnt/data/acaos_base_wave2/acaos/tests/routes-prospects.test.ts /mnt/data/acaos_work3/acaos/tests/routes-prospects.test.ts
+--- /mnt/data/acaos_base_wave2/acaos/tests/routes-prospects.test.ts	2026-06-19 00:50:54.640801152 +0000
++++ /mnt/data/acaos_work3/acaos/tests/routes-prospects.test.ts	2026-06-19 00:50:22.745347403 +0000
+@@ -333,6 +333,20 @@
+   assert.equal(res.body.failed, 2)
+ })
+ 
++
++test('POST /import-signals reports invalid dates as row failures', async () => {
++  installPrisma(createFakePrisma(importSignalsSpec()))
++  const res = await server.request('/api/prospects/import-signals', {
++    method: 'POST', headers: jsonHeaders,
++    body: JSON.stringify({ workspaceId: OWNED_WS, rows: [
++      { companyName: 'BadDate Co', signalType: 'HIRING', provider: 'x', sourceType: 'y', observedAt: 'not-a-date' },
++    ] }),
++  })
++  assert.equal(res.status, 201)
++  assert.equal(res.body.signalsIngested, 0)
++  assert.equal(res.body.failed, 1)
++})
++
+ test('POST /import-signals denies a non-member workspace', async () => {
+   installPrisma(createFakePrisma(importSignalsSpec()))
+   const res = await server.request('/api/prospects/import-signals', {
+diff -ruN /mnt/data/acaos_base_wave2/acaos/tests/routes-signals.test.ts /mnt/data/acaos_work3/acaos/tests/routes-signals.test.ts
+--- /mnt/data/acaos_base_wave2/acaos/tests/routes-signals.test.ts	2026-06-19 00:50:54.641584085 +0000
++++ /mnt/data/acaos_work3/acaos/tests/routes-signals.test.ts	2026-06-19 00:50:22.743399641 +0000
+@@ -156,6 +156,23 @@
+   assert.equal(badStrength.status, 400)
+ })
+ 
++
++test('POST rejects malformed evidence before touching persistence', async () => {
++  const res = await server.request('/api/signals', {
++    method: 'POST',
++    headers: { Authorization: bearer(MEMBER), 'Content-Type': 'application/json' },
++    body: JSON.stringify({
++      workspaceId: OWNED_WS,
++      prospectId: 'p1',
++      type: 'FUNDING',
++      strength: 80,
++      evidence: { provider: 'analyst', sourceType: 'manual', confidence: 2 },
++    }),
++  })
++  assert.equal(res.status, 400)
++  assert.equal(prisma.callsTo('signal', 'upsert').length, 0)
++})
++
+ test('POST creates a signal and rescores the prospect in the owned workspace', async () => {
+   const res = await server.request('/api/signals', {
+     method: 'POST',

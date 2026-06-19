@@ -3,7 +3,8 @@
  * without touching the scoring engine, mission builder, or dashboard.
  */
 
-import { apolloSearchBreaker } from './circuit.js'
+import { apolloSearchBreaker, googlePlacesBreaker } from './circuit.js'
+import { providerFetch } from '@acaos/backend-core/lib/providerHttp.js'
 
 export type ProspectSearchInput = {
   industries?: string[]
@@ -112,7 +113,9 @@ class ApolloSource implements ProspectSourceProvider {
     }
 
     return apolloSearchBreaker.call(async () => {
-      const res = await fetch('https://api.apollo.io/v1/mixed_companies/search', {
+      // Breaker applied by the surrounding apolloSearchBreaker.call; providerFetch
+      // adds timeout / transient-retry / size-bound.
+      const res = await providerFetch('https://api.apollo.io/v1/mixed_companies/search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,7 +123,7 @@ class ApolloSource implements ProspectSourceProvider {
           'Cache-Control': 'no-cache',
         },
         body: JSON.stringify(body),
-      })
+      }, { provider: 'apollo-search', envPrefix: 'APOLLO' })
 
       if (!res.ok) {
         const msg = await res.text().catch(() => res.statusText)
@@ -170,7 +173,7 @@ class GooglePlacesSource implements ProspectSourceProvider {
     // Let failures propagate (the discover route records a FAILED DiscoveryRun and
     // returns a clear 502) rather than swallowing them into an empty result, which
     // is indistinguishable from "no matches".
-    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    const res = await providerFetch('https://places.googleapis.com/v1/places:searchText', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -182,7 +185,7 @@ class GooglePlacesSource implements ProspectSourceProvider {
         ].join(','),
       },
       body: JSON.stringify({ textQuery, pageSize: limit }),
-    })
+    }, { provider: 'google-places', envPrefix: 'GOOGLE_PLACES', breaker: googlePlacesBreaker })
 
     if (!res.ok) {
       const msg = await res.text().catch(() => res.statusText)
