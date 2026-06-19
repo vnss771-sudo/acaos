@@ -2,6 +2,7 @@
 import type { PrismaClient, Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { ApiError } from './errors.js'
+import { estimateDiscoveryCost, type DiscoveryCostBreakdown } from './discoveryCost.js'
 
 // Either the singleton client or an interactive-transaction client.
 type Db = PrismaClient | Prisma.TransactionClient
@@ -142,20 +143,42 @@ export async function reserveLeadCapacity(
   return Math.max(0, Math.min(requested, maxLeads - count))
 }
 
+// Start of the current month in UTC — matches the UTC month window used by the
+// usage counters so the discovery-cost view lines up with the quota period.
+function startOfMonthUtc(): Date {
+  const d = new Date()
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
+}
+
+// Estimated weighted discovery spend for the workspace this month, derived from
+// the recorded DiscoveryRun history (no extra tracking). Every run that reached
+// a provider counts — including failed ones, which still cost the platform.
+export async function getMonthlyDiscoveryCost(workspaceId: string): Promise<DiscoveryCostBreakdown> {
+  const grouped = await prisma.discoveryRun.groupBy({
+    by: ['source'],
+    where: { workspaceId, startedAt: { gte: startOfMonthUtc() } },
+    _count: true,
+  })
+  return estimateDiscoveryCost(
+    (grouped as Array<{ source: string; _count: number }>).map((g) => ({ source: g.source, count: g._count }))
+  )
+}
+
 export async function getMonthlyUsage(workspaceId: string): Promise<{
   month: string
   totals: Record<UsageAction, number>
   total: number
   limit: number
   plan: Plan
-  discovery: { used: number; limit: number }
+  discovery: { used: number; limit: number; estimatedCostCents: number; byProvider: DiscoveryCostBreakdown['byProvider'] }
   leads: { used: number; limit: number }
 }> {
   const plan = await getWorkspacePlan(workspaceId)
   const month = currentMonth()
-  const [records, leadsUsed] = await Promise.all([
+  const [records, leadsUsed, discoveryCost] = await Promise.all([
     prisma.usageRecord.findMany({ where: { workspaceId, month } }),
     prisma.lead.count({ where: { workspaceId } }),
+    getMonthlyDiscoveryCost(workspaceId),
   ])
 
   const totals: Record<UsageAction, number> = {
@@ -175,7 +198,12 @@ export async function getMonthlyUsage(workspaceId: string): Promise<{
 
   return {
     month, totals, total, limit: norm(limit), plan,
-    discovery: { used: discoveryUsed, limit: norm(PLAN_LIMITS[plan].discoveriesPerMonth) },
+    discovery: {
+      used: discoveryUsed,
+      limit: norm(PLAN_LIMITS[plan].discoveriesPerMonth),
+      estimatedCostCents: discoveryCost.totalCents,
+      byProvider: discoveryCost.byProvider,
+    },
     leads: { used: leadsUsed, limit: norm(PLAN_LIMITS[plan].maxLeads) },
   }
 }

@@ -38,6 +38,7 @@ function spec(opts: {
     lead: {
       count: async () => leadCount,
     },
+    discoveryRun: { groupBy: async () => [] },
   }
 }
 
