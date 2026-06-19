@@ -162,7 +162,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
                     )}
                   </div>
                 </div>
-                {expanded[m.id] && <MissionDetailPanel api={api} missionId={m.id} toast={toast} />}
+                {expanded[m.id] && <MissionDetailPanel api={api} missionId={m.id} toast={toast} canManage={canManage} />}
               </div>
             )
           })}
@@ -184,28 +184,97 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
 
 // The mission control plane: playbook, discovery history, owned prospects, and
 // the actionable outreach queue scoped to this mission. Lazy-loaded on expand.
-function MissionDetailPanel({ api, missionId, toast }: { api: ApiHook; missionId: string; toast: ToastHook }) {
+function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook; missionId: string; toast: ToastHook; canManage: boolean }) {
   const [detail, setDetail] = useState<MissionDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<Record<string, boolean>>({})
 
-  useEffect(() => {
-    let cancelled = false
+  const reqRef = useRef(0)
+  const load = useCallback(() => {
+    const reqId = ++reqRef.current
     setLoading(true)
     api<MissionDetail>(`/api/missions/${missionId}`)
-      .then(d => { if (!cancelled) setDetail(d) })
-      .catch(e => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load mission detail') })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [api, missionId])
+      .then(d => { if (reqId === reqRef.current) setDetail(d) })
+      .catch(e => { if (reqId === reqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load mission detail') })
+      .finally(() => { if (reqId === reqRef.current) setLoading(false) })
+  }, [api, missionId, toast])
 
-  const panel: React.CSSProperties = { borderTop: `1px solid ${colors.border}`, marginTop: 8, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }
+  useEffect(() => { load() }, [missionId])
+
+  // Run an action, then refresh the funnel + queue so the operator sees the
+  // result of each step without leaving the mission.
+  const act = useCallback(async (key: string, fn: () => Promise<unknown>, successMsg: string) => {
+    setBusy(prev => ({ ...prev, [key]: true }))
+    try { await fn(); toast.success(successMsg); load() }
+    catch (e) { toast.error(e instanceof Error ? e.message : 'Action failed') }
+    finally { setBusy(prev => ({ ...prev, [key]: false })) }
+  }, [load, toast])
+
+  const score = () => act('score',
+    () => api(`/api/missions/${missionId}/score`, { method: 'POST' }),
+    'Scoring started — recommendations will appear shortly')
+
+  const intentAction = (prospectId: string, intentId: string, verb: 'draft' | 'approve' | 'reject', msg: string) =>
+    act(`${verb}:${intentId}`,
+      () => api(`/api/prospects/${prospectId}/intents/${intentId}/${verb}`, { method: 'POST' }),
+      msg)
+
+  const panel: React.CSSProperties = { borderTop: `1px solid ${colors.border}`, marginTop: 8, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }
   const heading: React.CSSProperties = { color: colors.textFaint, fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }
 
-  if (loading) return <div style={panel}><span style={{ color: colors.textMuted, fontSize: 12 }}>Loading details…</span></div>
+  if (loading && !detail) return <div style={panel}><span style={{ color: colors.textMuted, fontSize: 12 }}>Loading details…</span></div>
   if (!detail) return null
+
+  const f = detail.funnel
+  const funnelStages: Array<{ label: string; value: number }> = [
+    { label: 'Discovered', value: f.discovered },
+    { label: 'Recommended', value: f.recommended },
+    { label: 'Drafted', value: f.drafted },
+    { label: 'Approved', value: f.approved },
+    { label: 'Sent', value: f.sent },
+  ]
 
   return (
     <div style={panel}>
+      {/* Operator-loop funnel strip */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'stretch' }}>
+        {funnelStages.map(st => (
+          <div key={st.label} style={{ flex: '1 1 80px', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '8px 10px' }}>
+            <div style={{ color: colors.text, fontSize: 18, fontWeight: 700 }}>{st.value}</div>
+            <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{st.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Score & recommend */}
+      {canManage && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button style={s.btnSm} disabled={busy.score} onClick={score}>
+            {busy.score ? 'Scoring…' : 'Score & recommend'}
+          </button>
+          <span style={{ color: colors.textFaint, fontSize: 12 }}>
+            Scores discovered prospects and generates outreach recommendations.
+          </span>
+        </div>
+      )}
+
+      {/* Send readiness */}
+      <div>
+        <div style={heading}>Send readiness</div>
+        {detail.sendReadiness.ready ? (
+          <div style={{ color: colors.green, fontSize: 13, marginTop: 4 }}>✓ Ready to send — SMTP and compliance details are configured.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+            {detail.sendReadiness.checks.filter(c => !c.ok).map(c => (
+              <div key={c.name} style={{ fontSize: 12 }}>
+                <span style={{ color: colors.amber }}>• {c.label}</span>
+                <span style={{ color: colors.textFaint }}> — {c.hint}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div>
         <div style={heading}>Playbook</div>
         <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
@@ -216,17 +285,48 @@ function MissionDetailPanel({ api, missionId, toast }: { api: ApiHook; missionId
       <div>
         <div style={heading}>Action queue</div>
         {detail.intents.length === 0 ? (
-          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — discover and score prospects to populate it.</div>
+          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — discover prospects, then Score &amp; recommend to populate it.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-            {detail.intents.map(i => (
-              <div key={i.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
-                <span style={{ color: colors.text }}>{i.prospect?.companyName ?? 'Unknown'}</span>
-                <span style={{ color: colors.textMuted }}>
-                  {i.status}{i.prospect ? ` · score ${i.prospect.opportunityScore}` : ''}
-                </span>
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+            {detail.intents.map(i => {
+              const pid = i.prospect?.id
+              const why = i.recommendation?.reasoning || i.messageAngle || null
+              return (
+                <div key={i.id} style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                    <span style={{ color: colors.text, fontWeight: 600 }}>{i.prospect?.companyName ?? 'Unknown'}</span>
+                    <span style={{ color: colors.textMuted }}>{i.status}{i.prospect ? ` · score ${i.prospect.opportunityScore}` : ''}</span>
+                  </div>
+                  {why && <div style={{ color: colors.textMuted, fontSize: 12 }}>{why}</div>}
+                  {i.status === 'DRAFTED' && i.draftSubject && (
+                    <div style={{ background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6, padding: '6px 8px' }}>
+                      <div style={{ color: colors.text, fontSize: 12, fontWeight: 600 }}>{i.draftSubject}</div>
+                      {i.draftBody && <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, whiteSpace: 'pre-wrap' }}>{i.draftBody}</div>}
+                    </div>
+                  )}
+                  {canManage && pid && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {i.status === 'PROPOSED' && (
+                        <button style={s.btnSm} disabled={busy[`draft:${i.id}`]} onClick={() => intentAction(pid, i.id, 'draft', 'Draft generated')}>
+                          {busy[`draft:${i.id}`] ? 'Drafting…' : 'Generate draft'}
+                        </button>
+                      )}
+                      {i.status === 'DRAFTED' && (
+                        <button style={s.btnSm} disabled={busy[`approve:${i.id}`]} onClick={() => intentAction(pid, i.id, 'approve', 'Outreach approved')}>
+                          {busy[`approve:${i.id}`] ? 'Approving…' : 'Approve'}
+                        </button>
+                      )}
+                      {(i.status === 'PROPOSED' || i.status === 'DRAFTED') && (
+                        <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} disabled={busy[`reject:${i.id}`]} onClick={() => intentAction(pid, i.id, 'reject', 'Outreach rejected')}>
+                          {busy[`reject:${i.id}`] ? 'Rejecting…' : 'Reject'}
+                        </button>
+                      )}
+                      {i.status === 'APPROVED' && <span style={{ color: colors.green, fontSize: 12, alignSelf: 'center' }}>✓ Approved</span>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

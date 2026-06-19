@@ -7,6 +7,8 @@ import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import { recordAudit } from '../lib/audit.js'
 import { getPack } from '../lib/packs/index.js'
+import { enqueueScoreProspects } from '../lib/queues.js'
+import { getSendReadiness } from '../lib/sendReadiness.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { Assert, Extends, CreateMissionRequest, UpdateMissionRequest } from '@acaos/shared'
 
@@ -124,7 +126,7 @@ missionsRouter.get(
     const pack = mission.playbookId ? getPack(mission.playbookId) : undefined
     const playbook = pack ? { id: pack.id, label: pack.label, description: pack.description } : null
 
-    const [discoveryRuns, prospects, intents] = await Promise.all([
+    const [discoveryRuns, prospects, intents, prospectTotal, intentStatusCounts, sendReadiness] = await Promise.all([
       prisma.discoveryRun.findMany({
         where: { missionId: mission.id },
         orderBy: { startedAt: 'desc' },
@@ -151,10 +153,29 @@ missionsRouter.get(
           recommendation: { select: { reasoning: true, actionText: true, urgency: true, priority: true } },
         },
       }),
+      // Funnel inputs: every prospect the mission owns, and the intent backlog by
+      // stage. Counted in SQL so the strip stays accurate as the mission scales.
+      prisma.prospect.count({ where: { missionId: mission.id } }),
+      prisma.outreachIntent.groupBy({ by: ['status'], where: { missionId: mission.id }, _count: true }),
+      // Whether this workspace can actually send yet (SMTP + compliance footer).
+      getSendReadiness(mission.workspaceId),
     ])
     intents.sort((a, b) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
 
-    res.json({ mission, playbook, discoveryRuns, prospects, intents })
+    // Operator-loop funnel: discovered → recommended → drafted → approved → sent.
+    const byStatus = new Map<string, number>(
+      (intentStatusCounts as Array<{ status: string; _count: number }>).map((r) => [r.status, r._count])
+    )
+    const funnel = {
+      discovered: prospectTotal,
+      recommended: (byStatus.get('PROPOSED') ?? 0) + (byStatus.get('DRAFTED') ?? 0) + (byStatus.get('APPROVED') ?? 0) + (byStatus.get('SENT') ?? 0),
+      drafted: byStatus.get('DRAFTED') ?? 0,
+      approved: byStatus.get('APPROVED') ?? 0,
+      rejected: byStatus.get('REJECTED') ?? 0,
+      sent: byStatus.get('SENT') ?? 0,
+    }
+
+    res.json({ mission, playbook, discoveryRuns, prospects, intents, funnel, sendReadiness })
   })
 )
 
@@ -219,5 +240,30 @@ missionsRouter.patch(
       })
     }
     res.json({ mission })
+  })
+)
+
+// Score & recommend from the mission control plane. Scoring runs workspace-wide
+// (it includes the mission's prospects) and cascades into auto-generated
+// recommendations + outreach intents — the loop's "discovered → recommended"
+// step. Fire-and-forget enqueue mirrors the discovery path; the operator polls
+// the funnel for the result.
+missionsRouter.post(
+  '/:id/score',
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const mission = await prisma.mission.findUnique({
+      where: { id: req.params.id as string },
+      select: { id: true, workspaceId: true },
+    })
+    if (!mission) throw new ApiError(404, 'Mission not found')
+    await assertMinimumWorkspaceRole(user.id, mission.workspaceId, 'admin')
+
+    enqueueScoreProspects(mission.workspaceId).catch(() => {})
+    void recordAudit({
+      workspaceId: mission.workspaceId, actorUserId: user.id, type: 'mission.score',
+      entityType: 'mission', entityId: mission.id,
+    })
+    res.status(202).json({ enqueued: true })
   })
 )
