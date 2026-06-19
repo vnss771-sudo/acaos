@@ -120,19 +120,45 @@ See **`.env.example`** for the full, commented list. Required in production:
 | `APP_URL` | Public URL of the web app (used in email links) |
 
 Optional: `OPENAI_API_KEY` (research/outreach/reply AI), `APOLLO_API_KEY` /
-`GOOGLE_PLACES_API_KEY` / `HUNTER_API_KEY` (discovery), `SENTRY_DSN` (error capture).
+`GOOGLE_PLACES_API_KEY` / `HUNTER_API_KEY` (discovery), `SENTRY_DSN` (error capture),
+`METRICS_TOKEN` (bearer-gate `/metrics`).
+
+Optional tuning (sensible defaults — see `.env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STEP_UP_MAX_AGE_MIN` | `15` | Freshness window (min) for step-up re-auth on sensitive mutations (billing, admin promotion, MFA disable). |
+| `STATS_CACHE_TTL_MS` | `5000` | `/api/stats` single-flight cache TTL (`0` = pure single-flight). |
+| `RETENTION_PURGE_INTERVAL_MS` | `86400000` | How often the worker runs the data-retention purge. |
+| `RETENTION_*_DAYS` | per policy | Per-class retention windows (override `docs/DATA_RETENTION.md`). |
+
+> **MFA secrets** are encrypted at rest with the same `EMAIL_ENCRYPTION_KEY` — see
+> the rotation caveat in `docs/KEY_ROTATION.md` before rotating that key.
+
+`npm run prisma:migrate` applies all migrations, including the MFA/step-up
+`User` columns — no manual schema steps are needed.
+
+### Operations & monitoring
+
+Ready-to-use Prometheus/Grafana/Alertmanager + blackbox uptime assets ship in
+[`ops/monitoring/`](ops/monitoring/); SLOs and per-alert runbooks are in
+[`docs/SLO.md`](docs/SLO.md) and [`docs/RUNBOOKS.md`](docs/RUNBOOKS.md). Full
+operator guide: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ---
 
 ## 6. Verify (CI gates)
 
 ```bash
+npm run verify             # one-shot: boundaries + mutations + lint + typecheck + tests + web + build
+# …or run individual gates:
 npm run check:boundaries   # worker must not import apps/api (architectural guard)
 npm run typecheck          # shared + backend-core + api + web + worker
 npm run test               # fast unit/integration suite (no external services)
+npm run test:coverage      # same, with the 80/65/80 coverage gate
 npm run test:web           # frontend (Vitest)
-npm run test:db            # needs PostgreSQL
-npm run test:redis         # needs Redis
+npm run test:db            # needs PostgreSQL (test:db:local boots an ephemeral one)
+npm run test:redis         # needs Redis   (test:redis:local boots ephemeral PG+Redis)
 npm run test:e2e           # Playwright (run npm run test:e2e:install once first)
 ```
 
