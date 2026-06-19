@@ -27,6 +27,11 @@ jobs:
       - name: Check package boundaries
         run: npm run check:boundaries
 
+      # Ratchet: production frontend mutations must go through the typed route
+      # client, not raw body: JSON.stringify(...). Cheap, no Prisma needed.
+      - name: Check frontend mutations (typed route client)
+        run: npm run check:frontend-mutations
+
       # Lint runs without type information, so no Prisma client is needed — keep
       # it early and cheap alongside the boundary check.
       - name: Lint (ESLint)

@@ -1,5 +1,7 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
@@ -13,6 +15,16 @@ export const ingestRouter = Router()
 
 const MAX_BATCH = 500
 const MAX_SHORT = 200
+
+// Validate the batch envelope; per-row shaping stays lenient below (a row with no
+// businessName is skipped, not rejected) to preserve the ingest contract.
+const ingestSchema = z.object({
+  leads: z.array(z.any()).min(1, 'leads array required').max(MAX_BATCH, `Maximum ${MAX_BATCH} leads per request`),
+  campaignId: z.string().optional(),
+  sourceTag: z.string().optional(),
+  autoResearch: z.boolean().optional().default(true),
+})
+const keyQuerySchema = z.object({ workspaceId: workspaceIdField })
 
 // ---------------------------------------------------------------------------
 // API-key middleware — resolves workspace from x-api-key header
@@ -54,11 +66,8 @@ ingestRouter.post(
   requireIngestKey,
   asyncHandler(async (req, res) => {
     const workspace = (req as any).ingestWorkspace
-    const { leads, campaignId, sourceTag, autoResearch = true } = req.body ?? {}
+    const { leads, campaignId, sourceTag, autoResearch } = parseBody(ingestSchema, req)
 
-    if (!Array.isArray(leads) || leads.length === 0) throw new ApiError(400, 'leads array required')
-    if (leads.length > MAX_BATCH) throw new ApiError(400, `Maximum ${MAX_BATCH} leads per request`)
-    if (sourceTag && typeof sourceTag !== 'string') throw new ApiError(400, 'sourceTag must be a string')
     const tag = typeof sourceTag === 'string' ? sourceTag.trim().slice(0, 100) || null : null
 
     // Validate campaignId belongs to this workspace
@@ -168,8 +177,7 @@ keyRouter.post(
   '/rotate',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')
@@ -190,8 +198,7 @@ keyRouter.delete(
   '/',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
     if (!member || member.role !== 'owner') throw new ApiError(403, 'Only workspace owners can manage API keys')

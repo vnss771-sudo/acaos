@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { s, colors } from '../styles.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -19,6 +20,7 @@ type Props = { api: ApiHook; workspaceId: string; toast: ToastHook }
 // surface: each evidence-backed opportunity can be drafted → approved → prepared
 // to send inline, no API/curl needed. Hides itself when there's nothing to act on.
 export function OutreachIntents({ api, workspaceId, toast }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [intents, setIntents] = useState<IntentRow[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
@@ -33,7 +35,9 @@ export function OutreachIntents({ api, workspaceId, toast }: Props) {
     if (!intent.prospect) return
     setBusyId(intent.id)
     try {
-      await api(`/api/prospects/${intent.prospect.id}/intents/${intent.id}/${action}`, { method: 'POST', body: JSON.stringify({}) })
+      await route('POST /api/prospects/:prospectId/intents/:intentId/:action', {
+        params: { prospectId: intent.prospect.id, intentId: intent.id, action }
+      })
       toast.success(
         action === 'draft' ? 'Draft generated' :
         action === 'approve' ? 'Approved' :

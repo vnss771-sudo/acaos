@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { User, Workspace, WorkspaceMember } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -48,6 +49,7 @@ type Props = {
 }
 
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate, canManage = false }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
   const [wsForm, setWsForm] = useState({ name: workspace?.name ?? '', slug: workspace?.slug ?? '', senderBusinessName: workspace?.senderBusinessName ?? '', senderPostalAddress: workspace?.senderPostalAddress ?? '' })
@@ -177,10 +179,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   async function saveProfile() {
     setSavingProfile(true)
     try {
-      const d = await api<{ user: User }>('/api/auth/profile', {
-        method: 'PATCH',
-        body: JSON.stringify({ name: profileForm.name.trim() || null })
-      })
+      const d = await route('PATCH /api/auth/profile', { body: { name: profileForm.name.trim() || null } }) as { user: User }
       onUserUpdate(d.user)
       toast.success('Profile updated')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
@@ -198,10 +197,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     }
     setSavingPassword(true)
     try {
-      await api('/api/auth/profile', {
-        method: 'PATCH',
-        body: JSON.stringify({ currentPassword: passwordForm.currentPassword, newPassword: passwordForm.newPassword })
-      })
+      await route('PATCH /api/auth/profile', { body: { currentPassword: passwordForm.currentPassword, newPassword: passwordForm.newPassword } })
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
       toast.success('Password changed successfully')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Password change failed') }
@@ -212,15 +208,15 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace) return
     setSavingWs(true)
     try {
-      const d = await api<{ workspace: Workspace }>(`/api/workspaces/${workspace.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
+      const d = await route('PATCH /api/workspaces/:id', {
+        params: { id: workspace.id },
+        body: {
           name: wsForm.name.trim(),
           slug: wsForm.slug.trim(),
           senderBusinessName: wsForm.senderBusinessName.trim() || null,
           senderPostalAddress: wsForm.senderPostalAddress.trim() || null,
-        })
-      })
+        }
+      }) as { workspace: Workspace }
       onWorkspaceUpdate(d.workspace)
       toast.success('Workspace updated')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
@@ -231,9 +227,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !memberForm.email.trim()) return
     setAddingMember(true)
     try {
-      await api(`/api/workspaces/${workspace.id}/members`, {
-        method: 'POST',
-        body: JSON.stringify({ email: memberForm.email.trim(), role: memberForm.role })
+      await route('POST /api/workspaces/:id/members', {
+        params: { id: workspace.id },
+        body: { email: memberForm.email.trim(), role: memberForm.role }
       })
       const refreshed = await api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
       setMembers(refreshed.members || [])
@@ -247,7 +243,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !confirm('Remove this member?')) return
     setRemovingMemberId(userId)
     try {
-      await api(`/api/workspaces/${workspace.id}/members/${userId}`, { method: 'DELETE' })
+      await route('DELETE /api/workspaces/:id/members/:userId', { params: { id: workspace.id, userId } })
       setMembers(prev => prev.filter(m => m.user.id !== userId))
       toast.success('Member removed')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
@@ -258,9 +254,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !inviteForm.email.trim()) return
     setSendingInvite(true)
     try {
-      await api(`/api/workspaces/${workspace.id}/invites`, {
-        method: 'POST',
-        body: JSON.stringify({ email: inviteForm.email.trim(), role: inviteForm.role })
+      await route('POST /api/workspaces/:id/invites', {
+        params: { id: workspace.id },
+        body: { email: inviteForm.email.trim(), role: inviteForm.role }
       })
       setInviteForm({ email: '', role: 'member' })
       toast.success('Invite sent')
@@ -274,7 +270,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   async function cancelInvite(inviteId: string) {
     if (!workspace) return
     try {
-      await api(`/api/workspaces/${workspace.id}/invites/${inviteId}`, { method: 'DELETE' })
+      await route('DELETE /api/workspaces/:id/invites/:inviteId', { params: { id: workspace.id, inviteId } })
       setPendingInvites(prev => prev.filter(i => i.id !== inviteId))
       toast.success('Invite cancelled')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
@@ -284,9 +280,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace) return
     setSavingEmail(true)
     try {
-      await api(`/api/workspaces/${workspace.id}/email-config`, {
-        method: 'PUT',
-        body: JSON.stringify({
+      await route('PUT /api/workspaces/:id/email-config', {
+        params: { id: workspace.id },
+        body: {
           smtpHost: emailForm.smtpHost || null,
           smtpPort: emailForm.smtpPort ? parseInt(emailForm.smtpPort, 10) : null,
           smtpSecure: emailForm.smtpSecure,
@@ -298,7 +294,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           imapSecure: emailForm.imapSecure,
           imapUser: emailForm.imapUser || null,
           imapPass: emailForm.imapPass || null, // null = keep existing
-        })
+        }
       })
       toast.success('Email config saved')
       setEmailForm(f => ({ ...f, smtpPass: '', imapPass: '', smtpPassSet: !!f.smtpHost, imapPassSet: !!f.imapHost }))
@@ -310,16 +306,16 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace) return
     setSavingIcp(true)
     try {
-      const d = await api<{ icp: IcpConfig }>(`/api/workspaces/${workspace.id}/icp`, {
-        method: 'PUT',
-        body: JSON.stringify({
+      const d = await route('PUT /api/workspaces/:id/icp', {
+        params: { id: workspace.id },
+        body: {
           targetIndustries: icpForm.targetIndustries.split(',').map(s => s.trim()).filter(Boolean),
           targetGeos: icpForm.targetGeos.split(',').map(s => s.trim()).filter(Boolean),
           minEmployees: icpForm.minEmployees ? parseInt(icpForm.minEmployees, 10) : null,
           maxEmployees: icpForm.maxEmployees ? parseInt(icpForm.maxEmployees, 10) : null,
           mustHaveEmail: icpForm.mustHaveEmail,
-        })
-      })
+        }
+      }) as { icp: IcpConfig }
       setIcp(d.icp)
       toast.success('ICP settings saved')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to save ICP') }
@@ -330,7 +326,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace) return
     setKeyWorking(true)
     try {
-      const d = await api<{ apiKey: string }>(`/api/workspaces/${workspace.id}/api-key/rotate`, { method: 'POST' })
+      const d = await route('POST /api/workspaces/:id/api-key/rotate', { params: { id: workspace.id } })
       setNewKeyModal(d.apiKey)
       setHasKey(true)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to generate key') }
@@ -341,7 +337,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     if (!workspace || !confirm('Revoke this API key? All integrations using it will stop working.')) return
     setKeyWorking(true)
     try {
-      await api(`/api/workspaces/${workspace.id}/api-key`, { method: 'DELETE' })
+      await route('DELETE /api/workspaces/:id/api-key', { params: { id: workspace.id } })
       setHasKey(false)
       toast.success('API key revoked')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to revoke key') }
@@ -397,7 +393,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             <span style={{ color: '#fbbf24', fontSize: 13 }}>Your email address is not verified.</span>
             <button
               style={{ ...s.btnSm, background: '#92400e', color: '#fbbf24', flexShrink: 0 }}
-              onClick={() => api('/api/auth/resend-verification', { method: 'POST' }).then(() => toast.success('Verification email sent')).catch(() => toast.error('Failed to send'))}
+              onClick={() => route('POST /api/auth/resend-verification').then(() => toast.success('Verification email sent')).catch(() => toast.error('Failed to send'))}
             >
               Resend
             </button>

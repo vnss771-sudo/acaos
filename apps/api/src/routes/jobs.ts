@@ -1,6 +1,8 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -38,6 +40,17 @@ export const jobsRouter = Router()
 
 const QUEUE_NAMES = ['research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox', 'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations']
 const MAX_REPLY_BODY = 10_000
+
+const leadIdBodySchema = z.object({ leadId: nonEmptyString })
+const workspaceBodySchema = z.object({ workspaceId: workspaceIdField })
+const emptyToUndefined = z.string().optional().transform((v) => (typeof v === 'string' ? v.trim() || undefined : undefined))
+// Require a billable scope: an omitted leadId previously skipped metering while
+// the worker still ran the AI call. Every analyze-reply must resolve to a workspace.
+const analyzeReplyBodySchema = z.object({
+  replyBody: z.string().trim().min(1, 'replyBody required').max(MAX_REPLY_BODY, `replyBody must be at most ${MAX_REPLY_BODY} characters`),
+  leadId: emptyToUndefined,
+  workspaceId: emptyToUndefined,
+}).refine((d) => d.leadId || d.workspaceId, { message: 'leadId or workspaceId required' })
 
 // Server-Sent Events stream for real-time job progress. Registered BEFORE
 // requireAuth because EventSource cannot send an Authorization header; it
@@ -124,8 +137,7 @@ jobsRouter.post(
   aiRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const leadId = String(req.body?.leadId || '').trim()
-    if (!leadId) throw new ApiError(400, 'leadId required')
+    const { leadId } = parseBody(leadIdBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
@@ -145,8 +157,7 @@ jobsRouter.post(
   aiRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const leadId = String(req.body?.leadId || '').trim()
-    if (!leadId) throw new ApiError(400, 'leadId required')
+    const { leadId } = parseBody(leadIdBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
@@ -166,17 +177,7 @@ jobsRouter.post(
   aiRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const replyBody = String(req.body?.replyBody || '').trim()
-    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() || undefined : undefined
-    const bodyWorkspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() || undefined : undefined
-
-    if (!replyBody) throw new ApiError(400, 'replyBody required')
-    if (replyBody.length > MAX_REPLY_BODY) throw new ApiError(400, `replyBody must be at most ${MAX_REPLY_BODY} characters`)
-    // Require a billable scope. Previously leadId was optional and an omitted
-    // leadId skipped metering entirely while the worker still ran the AI call —
-    // an unmetered OpenAI spend path. Now every analyze-reply resolves to a
-    // workspace and is charged before enqueue.
-    if (!leadId && !bodyWorkspaceId) throw new ApiError(400, 'leadId or workspaceId required')
+    const { replyBody, leadId, workspaceId: bodyWorkspaceId } = parseBody(analyzeReplyBodySchema, req)
 
     let workspaceId: string
     if (leadId) {
@@ -203,8 +204,7 @@ jobsRouter.post(
   aiRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseBody(workspaceBodySchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 

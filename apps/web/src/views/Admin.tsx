@@ -229,7 +229,7 @@ export function AdminView({ api, toast }: Props) {
       )}
 
       <div style={{ marginTop: 16, color: colors.textFaint, fontSize: 12 }}>
-        Set <code style={{ color: colors.amber }}>ADMIN_EMAIL</code> / <code style={{ color: colors.amber }}>VITE_ADMIN_EMAIL</code> env vars to control access.
+        Admin access is granted by the <code style={{ color: colors.amber }}>isPlatformAdmin</code> user flag (bootstrapped once via the <code style={{ color: colors.amber }}>ADMIN_EMAIL</code> env var on first admin request).
         Use <code style={{ color: colors.amber }}>EMAIL_ENCRYPTION_KEY</code> (64 hex chars) in production for credential encryption.
       </div>
     </div>

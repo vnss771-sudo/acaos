@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { CreateMissionRequest } from '@acaos/shared'
+import { makeRouteApi } from '../lib/routeApi.js'
 import { colors, s } from '../styles.js'
 import type { Pack, Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -59,6 +60,7 @@ const cardStyle: React.CSSProperties = {
 }
 
 export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [step, setStep] = useState(1)
   const [answer1, setAnswer1] = useState('')
   const [answer2, setAnswer2] = useState('')
@@ -105,10 +107,7 @@ export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Pr
         offer: answer2.trim(),
         playbookId: playbookId || null,
       }
-      const d = await api<{ mission: { id: string; name: string }; campaign: { id: string; name: string } }>('/api/missions', {
-        method: 'POST',
-        body: JSON.stringify(body)
-      })
+      const d = await route('POST /api/missions', { body }) as { mission: { id: string; name: string }; campaign: { id: string; name: string } }
       onCreated(d.campaign.id, d.campaign.name)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create mission')

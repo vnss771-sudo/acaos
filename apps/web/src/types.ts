@@ -3,6 +3,9 @@ export type User = {
   email: string
   name?: string | null
   emailVerified?: boolean
+  // Authoritative cross-tenant admin claim from the backend (/api/auth/me).
+  // The admin UI is gated on this, never on a build-time env var.
+  isPlatformAdmin?: boolean
 }
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member'

@@ -4,7 +4,7 @@
  */
 
 import { apolloSearchBreaker, googlePlacesBreaker } from './circuit.js'
-import { fetchWithTimeout } from './fetchWithTimeout.js'
+import { callProvider } from './providerClient.js'
 
 export type ProspectSearchInput = {
   industries?: string[]
@@ -112,8 +112,14 @@ class ApolloSource implements ProspectSourceProvider {
       body.organization_num_employees_ranges = [`${min},${max}`]
     }
 
-    return apolloSearchBreaker.call(async () => {
-      const res = await fetchWithTimeout('https://api.apollo.io/v1/mixed_companies/search', {
+    // Transient failures (timeout/429/5xx) are retried then trip the breaker; a
+    // terminal error propagates so the discover route records a FAILED run rather
+    // than masking it as an empty result.
+    return callProvider<ProspectCandidate[]>({
+      provider: 'apollo',
+      operation: 'mixed_companies/search',
+      url: 'https://api.apollo.io/v1/mixed_companies/search',
+      init: {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -121,17 +127,14 @@ class ApolloSource implements ProspectSourceProvider {
           'Cache-Control': 'no-cache',
         },
         body: JSON.stringify(body),
-      })
-
-      if (!res.ok) {
-        const msg = await res.text().catch(() => res.statusText)
-        throw new Error(`Apollo search ${res.status}: ${msg.slice(0, 200)}`)
-      }
-
-      const data = await res.json() as { organizations?: ApolloOrg[] }
-      return (data.organizations ?? [])
-        .filter(o => o.name)
-        .map(apolloOrgToCandidate)
+      },
+      breaker: apolloSearchBreaker,
+      onSuccess: async (res) => {
+        const data = await res.json() as { organizations?: ApolloOrg[] }
+        return (data.organizations ?? [])
+          .filter(o => o.name)
+          .map(apolloOrgToCandidate)
+      },
     })
   }
 }
@@ -170,9 +173,13 @@ class GooglePlacesSource implements ProspectSourceProvider {
 
     // Let failures propagate (the discover route records a FAILED DiscoveryRun and
     // returns a clear 502) rather than swallowing them into an empty result, which
-    // is indistinguishable from "no matches".
-    return googlePlacesBreaker.call(async () => {
-      const res = await fetchWithTimeout('https://places.googleapis.com/v1/places:searchText', {
+    // is indistinguishable from "no matches". Transient errors are retried with
+    // backoff and trip the breaker before surfacing.
+    return callProvider<ProspectCandidate[]>({
+      provider: 'google_places',
+      operation: 'places:searchText',
+      url: 'https://places.googleapis.com/v1/places:searchText',
+      init: {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -184,38 +191,35 @@ class GooglePlacesSource implements ProspectSourceProvider {
           ].join(','),
         },
         body: JSON.stringify({ textQuery, pageSize: limit }),
-      })
+      },
+      breaker: googlePlacesBreaker,
+      onSuccess: async (res) => {
+        const data = await res.json() as {
+          places?: Array<{
+            id?: string
+            displayName?: { text?: string }
+            formattedAddress?: string
+            websiteUri?: string
+            nationalPhoneNumber?: string
+            types?: string[]
+            businessStatus?: string
+          }>
+        }
 
-      if (!res.ok) {
-        const msg = await res.text().catch(() => res.statusText)
-        throw new Error(`Google Places search ${res.status}: ${msg.slice(0, 200)}`)
-      }
-
-      const data = await res.json() as {
-        places?: Array<{
-          id?: string
-          displayName?: { text?: string }
-          formattedAddress?: string
-          websiteUri?: string
-          nationalPhoneNumber?: string
-          types?: string[]
-          businessStatus?: string
-        }>
-      }
-
-      return (data.places ?? [])
-        .filter(p => p.businessStatus !== 'CLOSED_PERMANENTLY' && p.displayName?.text)
-        .map(p => {
-          let domain: string | undefined
-          try { domain = new URL(p.websiteUri!).hostname.replace(/^www\./, '') } catch { /* no website */ }
-          return {
-            companyName: p.displayName!.text!,
-            domain,
-            location:    p.formattedAddress ?? undefined,
-            description: p.types?.slice(0, 3).map(t => t.replace(/_/g, ' ')).join(', ') ?? undefined,
-            sourceId:    p.id ?? undefined,
-          }
-        })
+        return (data.places ?? [])
+          .filter(p => p.businessStatus !== 'CLOSED_PERMANENTLY' && p.displayName?.text)
+          .map(p => {
+            let domain: string | undefined
+            try { domain = new URL(p.websiteUri!).hostname.replace(/^www\./, '') } catch { /* no website */ }
+            return {
+              companyName: p.displayName!.text!,
+              domain,
+              location:    p.formattedAddress ?? undefined,
+              description: p.types?.slice(0, 3).map(t => t.replace(/_/g, ' ')).join(', ') ?? undefined,
+              sourceId:    p.id ?? undefined,
+            }
+          })
+      },
     })
   }
 }

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react'
-import type { AiResearchRequest, AiOutreachRequest, AiReplyAnalysisRequest } from '@acaos/shared'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
+import type { AiResearchRequest, AiOutreachRequest, AiReplyAnalysisRequest, JobEnqueueRequest } from '@acaos/shared'
 import type { Workspace, Lead } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -45,6 +46,7 @@ function JobStatusBadge({ state, progress }: { state: string; progress: number }
 }
 
 export function AiTools({ api, workspace, toast }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [tab, setTab] = useState<Tab>('research')
   const [syncMode, setSyncMode] = useState<'sync' | 'async'>('sync')
   const [leads, setLeads] = useState<Lead[]>([])
@@ -124,7 +126,7 @@ export function AiTools({ api, workspace, toast }: Props) {
       if (tab === 'research') {
         // Typed against the shared contract: omitting workspaceId is a compile error.
         const body: AiResearchRequest = { workspaceId: workspace.id, businessName: inputs.businessName, website: inputs.website, notes: inputs.notes }
-        data = await api<{ result: string }>('/api/ai/research', { method: 'POST', body: JSON.stringify(body) })
+        data = await route('POST /api/ai/research', { body })
       } else if (tab === 'outreach') {
         // Carry the prospect's own research (summary + angle) into the email so
         // it uses the real hook — not generic workspace defaults.
@@ -137,10 +139,10 @@ export function AiTools({ api, workspace, toast }: Props) {
           outreachAngle: ctx?.outreachAngle,
           notes: inputs.notes || undefined,
         }
-        data = await api<{ result: string }>('/api/ai/outreach', { method: 'POST', body: JSON.stringify(body) })
+        data = await route('POST /api/ai/outreach', { body })
       } else {
         const body: AiReplyAnalysisRequest = { workspaceId: workspace.id, replyBody: inputs.replyBody }
-        data = await api<{ result: string }>('/api/ai/reply-analysis', { method: 'POST', body: JSON.stringify(body) })
+        data = await route('POST /api/ai/reply-analysis', { body })
       }
       const resStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)
       setResult(resStr)
@@ -156,13 +158,10 @@ export function AiTools({ api, workspace, toast }: Props) {
     setActiveJob(null)
     try {
       const endpointMap = { research: 'research', outreach: 'outreach', reply: 'analyze-reply' }
-      const body: Record<string, string> = { leadId: selectedLeadId }
+      const body: JobEnqueueRequest = { leadId: selectedLeadId }
       if (tab === 'reply') body.replyBody = inputs.replyBody
 
-      const data = await api<{ jobId: string; queue: string }>(`/api/jobs/${endpointMap[tab]}`, {
-        method: 'POST',
-        body: JSON.stringify(body)
-      })
+      const data = await route('POST /api/jobs/:type', { params: { type: endpointMap[tab] }, body })
       setActiveJob({ jobId: data.jobId, queue: data.queue, state: 'waiting', progress: 0 })
       toast.info('Job queued — polling for results…')
       startPolling(data.queue, data.jobId)

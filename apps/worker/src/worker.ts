@@ -4,6 +4,23 @@ import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
 import { generateLeadResearch, generateOutreach, analyzeReply } from '@acaos/backend-core/services/openai.js'
+import {
+  parseAiJson,
+  parseLeadResearchJson,
+  OutreachDraftOutputSchema,
+  ReplyAnalysisOutputSchema,
+} from '@acaos/backend-core/lib/aiSchemas.js'
+import {
+  parseJobPayload,
+  ResearchLeadPayloadSchema,
+  GenerateOutreachPayloadSchema,
+  AnalyzeReplyPayloadSchema,
+  SyncMailboxPayloadSchema,
+  ScoreProspectsPayloadSchema,
+  GenerateRecommendationsPayloadSchema,
+  CalibrateScoringPayloadSchema,
+  SendCampaignPayloadSchema,
+} from '@acaos/backend-core/lib/queueSchemas.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
@@ -26,10 +43,6 @@ function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
 }
 
-function parseJson<T>(raw: string, fallback: T): T {
-  try { return JSON.parse(raw) } catch { return fallback }
-}
-
 async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
   const model = await prisma.scoringModel.findUnique({
     where: { workspaceId },
@@ -42,7 +55,7 @@ async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights>
 const researchWorker = new Worker(
   'research-lead',
   async (job) => {
-    const { leadId } = job.data as { leadId: string }
+    const { leadId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
     log('research-lead', `Processing leadId=${leadId}`)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -60,15 +73,9 @@ const researchWorker = new Worker(
 
     await job.updateProgress(60)
 
-    const parsed = parseJson<{
-      aiSummary?: string
-      outreachAngle?: string
-      qualificationSignals?: string[]
-      icpScore?: number
-      hiringSignals?: boolean
-      digitalMaturity?: string
-      estimatedTeamSize?: string
-    }>(raw, {})
+    // Lenient: research is best-effort enrichment, so a malformed field is
+    // dropped (not fatal) and the scorer falls back to its computed score.
+    const parsed = parseLeadResearchJson(raw)
 
     const enrichedLead = {
       businessName: lead.businessName,
@@ -110,7 +117,7 @@ const researchWorker = new Worker(
 const outreachWorker = new Worker(
   'generate-outreach',
   async (job) => {
-    const { leadId } = job.data as { leadId: string }
+    const { leadId } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
     log('generate-outreach', `Processing leadId=${leadId}`)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -129,25 +136,25 @@ const outreachWorker = new Worker(
 
     await job.updateProgress(80)
 
-    const parsed = parseJson<{ subject?: string; email?: string; followup?: string }>(raw, {})
+    // Strict: a draft missing subject/email is unusable. Fail closed — throwing
+    // here marks the job failed so BullMQ retries rather than persisting garbage.
+    const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
 
-    if (parsed.subject && parsed.email) {
-      await prisma.outreachDraft.create({
-        data: {
-          leadId: lead.id,
-          workspaceId: lead.workspaceId,
-          subject: parsed.subject,
-          emailBody: parsed.email,
-          followup: parsed.followup ?? null
-        }
-      })
+    await prisma.outreachDraft.create({
+      data: {
+        leadId: lead.id,
+        workspaceId: lead.workspaceId,
+        subject: parsed.subject,
+        emailBody: parsed.email,
+        followup: parsed.followup ?? null
+      }
+    })
 
-      // Generating a draft is NOT a send. Do not advance the lead to
-      // OUTREACH_SENT here — sendCampaignBatch excludes that stage from the send
-      // selection, so marking it now would prevent the campaign from ever
-      // sending the draft. sendCampaignBatch sets OUTREACH_SENT only after SMTP
-      // delivery is recorded in OutreachSent.
-    }
+    // Generating a draft is NOT a send. Do not advance the lead to
+    // OUTREACH_SENT here — sendCampaignBatch excludes that stage from the send
+    // selection, so marking it now would prevent the campaign from ever
+    // sending the draft. sendCampaignBatch sets OUTREACH_SENT only after SMTP
+    // delivery is recorded in OutreachSent.
 
     await job.updateProgress(100)
     log('generate-outreach', `Done leadId=${leadId}`)
@@ -160,24 +167,18 @@ const outreachWorker = new Worker(
 const replyWorker = new Worker(
   'analyze-reply',
   async (job) => {
-    const { replyBody, leadId } = job.data as { replyBody: string; leadId?: string }
+    const { replyBody, leadId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
     log('analyze-reply', `Processing${leadId ? ` leadId=${leadId}` : ''}`)
 
     await job.updateProgress(10)
     const raw = await analyzeReply(replyBody)
     await job.updateProgress(70)
 
-    const parsed = parseJson<{
-      classification?: string
-      confidence?: number
-      summary?: string
-      suggestedAction?: string
-      urgency?: string
-      keyQuote?: string
-      isAutoReply?: boolean
-    }>(raw, {})
+    // Strict: classification drives CRM stage + scoring, so an unknown value must
+    // fail closed (throw → retry) rather than silently mis-route a lead.
+    const parsed = parseAiJson(ReplyAnalysisOutputSchema, raw, 'analyze-reply')
 
-    if (leadId && parsed.classification) {
+    if (leadId) {
       // Read the lead first: the job payload is the only source of `leadId`, so
       // confirm the row exists (and capture its workspace) before any write, and
       // scope the stage update by workspaceId so a forged/mis-routed job can't
@@ -223,7 +224,7 @@ const replyWorker = new Worker(
           OUT_OF_OFFICE: 'NOT_INTERESTED'
         }
 
-        const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(parsed.classification ?? '')
+        const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(parsed.classification)
 
         await prisma.scoringOutcome.create({
           data: {
@@ -234,7 +235,7 @@ const replyWorker = new Worker(
             prospectId: null,
             score: lead.score,
             replied,
-            replyIntent: replyIntentMap[parsed.classification!] ?? null,
+            replyIntent: replyIntentMap[parsed.classification] ?? null,
             messageRelevance: replied ? 0.8 : 0.2,
             channelUsed: 'EMAIL',
             scoringModelId: model.id
@@ -254,7 +255,7 @@ const replyWorker = new Worker(
 const mailboxWorker = new Worker(
   'sync-mailbox',
   async (job) => {
-    const { workspaceId, autoSync } = job.data as { workspaceId?: string; autoSync?: boolean }
+    const { workspaceId, autoSync } = parseJobPayload(SyncMailboxPayloadSchema, 'sync-mailbox', job.data)
     const { syncMailboxOnce, isMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
 
     if (autoSync) {
@@ -298,7 +299,7 @@ const mailboxWorker = new Worker(
 const scoreProspectsWorker = new Worker(
   'score-prospects',
   async (job) => {
-    const { workspaceId } = job.data as { workspaceId: string }
+    const { workspaceId } = parseJobPayload(ScoreProspectsPayloadSchema, 'score-prospects', job.data)
     log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
     const result = await scoreProspects(workspaceId, (n) => job.updateProgress(n))
     log('score-prospects', `Done: ${result.updated} prospects rescored`)
@@ -318,7 +319,7 @@ const scoreProspectsWorker = new Worker(
 const recommendWorker = new Worker(
   'generate-recommendations',
   async (job) => {
-    const { prospectId, workspaceId } = job.data as { prospectId: string; workspaceId: string }
+    const { prospectId, workspaceId } = parseJobPayload(GenerateRecommendationsPayloadSchema, 'generate-recommendations', job.data)
     log('generate-recommendations', `Generating for prospectId=${prospectId}`)
 
     // Scope by the payload workspaceId so a mis-routed job can't read a prospect
@@ -395,11 +396,7 @@ const recommendWorker = new Worker(
 const sendCampaignWorker = new Worker(
   'send-campaign',
   async (job) => {
-    const { campaignId, workspaceId, leadIds } = job.data as {
-      campaignId: string
-      workspaceId: string
-      leadIds?: string[]
-    }
+    const { campaignId, workspaceId, leadIds } = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', job.data)
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
     const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
     log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`)
@@ -412,7 +409,7 @@ const sendCampaignWorker = new Worker(
 const calibrateWorker = new Worker(
   'calibrate-scoring',
   async (job) => {
-    const { workspaceId } = job.data as { workspaceId: string }
+    const { workspaceId } = parseJobPayload(CalibrateScoringPayloadSchema, 'calibrate-scoring', job.data)
     log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
     const stats = await calibrateScoring(workspaceId, (n) => job.updateProgress(n))
     if (!stats.calibrated) {

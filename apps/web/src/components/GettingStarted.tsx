@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { s, colors } from '../styles.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import type { View } from '../types.js'
@@ -18,6 +19,7 @@ type Props = {
 // outreach, plus a one-click "apply the FieldOps preset" shortcut. Collapses
 // itself once the workspace is send-ready so it doesn't clutter the dashboard.
 export function GettingStarted({ api, workspaceId, toast, setView }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [readiness, setReadiness] = useState<Readiness | null>(null)
   const [applying, setApplying] = useState(false)
 
@@ -32,7 +34,7 @@ export function GettingStarted({ api, workspaceId, toast, setView }: Props) {
   async function applyFieldOps() {
     setApplying(true)
     try {
-      await api(`/api/packs/fieldops/apply`, { method: 'POST', body: JSON.stringify({ workspaceId }) })
+      await route('POST /api/packs/fieldops/apply', { body: { workspaceId } })
       toast.success('FieldOps preset applied — your targeting is set for trades & field service')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not apply pack')

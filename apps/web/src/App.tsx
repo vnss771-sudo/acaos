@@ -20,8 +20,6 @@ import { AdminView } from './views/Admin.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { colors } from './styles.js'
 
-const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
-
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error?: Error }> {
@@ -185,7 +183,9 @@ export function App() {
     )
   }
 
-  const isAdmin = Boolean(ADMIN_EMAIL && user.email.toLowerCase() === ADMIN_EMAIL)
+  // Gate the admin UI on the backend's authoritative claim (from /api/auth/me),
+  // not a build-time env var — the API enforces /api/admin server-side regardless.
+  const isAdmin = Boolean(user.isPlatformAdmin)
 
   const VIEW_TITLE: Record<View, string> = {
     dashboard: 'Acquisition Radar',

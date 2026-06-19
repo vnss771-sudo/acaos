@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import type { LoginRequest, ForgotPasswordRequest, ResetPasswordRequest } from '@acaos/shared'
 import { s } from '../styles.js'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
@@ -29,10 +30,11 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
 
     try {
       if (mode === 'forgot') {
+        const forgotBody: ForgotPasswordRequest = { email: email.trim().toLowerCase() }
         const res = await fetch(`${API}/api/auth/forgot-password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email.trim().toLowerCase() })
+          body: JSON.stringify(forgotBody)
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Request failed')
@@ -43,10 +45,11 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
 
       if (mode === 'reset') {
         if (password !== confirmPassword) throw new Error('Passwords do not match')
+        const resetBody: ResetPasswordRequest = { token: resetToken ?? '', password }
         const res = await fetch(`${API}/api/auth/reset-password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: resetToken, password })
+          body: JSON.stringify(resetBody)
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Reset failed')
@@ -59,7 +62,7 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
         return
       }
 
-      const body: Record<string, string> = {
+      const body: LoginRequest = {
         email: email.trim().toLowerCase(),
         password
       }

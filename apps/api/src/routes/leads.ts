@@ -1,6 +1,8 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
@@ -9,7 +11,6 @@ import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
 import type { LeadStage } from '@prisma/client'
-import type { UpdateDraftRequest } from '@acaos/shared'
 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
@@ -25,6 +26,63 @@ const MAX_SHORT = 200
 const MAX_NOTES = 2_000
 const MAX_AI = 5_000
 
+// page/limit/search stay tolerant (.catch) and are clamped in the handler, matching
+// the previous Number()||default behaviour rather than rejecting odd query strings.
+const listLeadsQuerySchema = z.object({
+  workspaceId: workspaceIdField,
+  campaignId: z.string().trim().optional(),
+  stage: z.string().trim().optional(),
+  search: z.string().trim().optional(),
+  page: z.coerce.number().int().positive().optional().catch(undefined),
+  limit: z.coerce.number().int().positive().optional().catch(undefined),
+})
+const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
+const createLeadSchema = z.object({
+  workspaceId: workspaceIdField,
+  businessName: z.string().trim().min(1, 'businessName required').max(MAX_SHORT, `businessName must be at most ${MAX_SHORT} characters`),
+  campaignId: z.string().optional(),
+  contactName: z.string().optional(),
+  email: z.string().optional(),
+  website: z.string().optional(),
+  city: z.string().optional(),
+  category: z.string().optional(),
+  notes: z.string().optional(),
+})
+const importLeadsSchema = z.object({
+  workspaceId: workspaceIdField,
+  leads: z.array(z.any()).min(1, 'leads array required').max(500, 'Maximum 500 leads per import'),
+})
+const idList = z.array(z.string()).min(1, 'ids array required')
+const bulkDeleteSchema = z.object({ workspaceId: workspaceIdField, ids: idList.max(200, 'Maximum 200 leads per bulk delete') })
+const bulkStageSchema = z.object({ workspaceId: workspaceIdField, ids: idList.max(200, 'Maximum 200 leads per bulk update'), stage: z.string().trim().min(1) })
+const bulkAssignSchema = z.object({ workspaceId: workspaceIdField, ids: idList.max(200, 'Maximum 200 leads per bulk update'), campaignId: z.string().optional() })
+// PATCH is a partial update: every field optional. Per-field length/stage checks
+// stay in the handler so their exact messages and "only update what's present"
+// semantics are preserved.
+// The web edit form PATCHes the whole lead (spread of the Lead object), so the
+// nullable columns arrive as null. Accept null here (unknown keys like id/phone
+// are stripped by z.object); the handler's `typeof === 'string'` checks then skip
+// null/absent fields, preserving the original "update only the strings sent" rule.
+const updateLeadSchema = z.object({
+  businessName: z.string().optional(),
+  contactName: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  aiSummary: z.string().nullable().optional(),
+  outreachAngle: z.string().nullable().optional(),
+  stage: z.string().optional(),
+  campaignId: z.string().nullable().optional(),
+  score: z.number().optional(),
+})
+const updateDraftSchema = z.object({
+  subject: z.string().optional(),
+  emailBody: z.string().optional(),
+  followup: z.union([z.string(), z.null()]).optional(),
+})
+
 async function getWorkspaceWeights(workspaceId: string) {
   const model = await prisma.scoringModel.findUnique({
     where: { workspaceId },
@@ -38,15 +96,13 @@ leadsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    const campaignId = typeof req.query.campaignId === 'string' ? req.query.campaignId.trim() : undefined
-    const stage = typeof req.query.stage === 'string' ? req.query.stage.trim() : undefined
-    const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : undefined
-    const search = rawSearch && rawSearch.length > MAX_SHORT ? rawSearch.slice(0, MAX_SHORT) : rawSearch
-    const page = Math.max(1, Number(req.query.page) || 1)
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25))
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const q = parseQuery(listLeadsQuerySchema, req)
+    const workspaceId = q.workspaceId
+    const campaignId = q.campaignId
+    const stage = q.stage
+    const search = q.search && q.search.length > MAX_SHORT ? q.search.slice(0, MAX_SHORT) : q.search
+    const page = Math.max(1, q.page ?? 1)
+    const limit = Math.min(100, Math.max(1, q.limit ?? 25))
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -84,12 +140,8 @@ leadsRouter.post(
   '/',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    const businessName = String(req.body?.businessName || '').trim()
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (!businessName) throw new ApiError(400, 'businessName required')
-    if (businessName.length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
+    const body = parseBody(createLeadSchema, req)
+    const workspaceId = body.workspaceId
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -98,14 +150,14 @@ leadsRouter.post(
 
     const leadData = {
       workspaceId,
-      businessName,
-      campaignId: typeof req.body?.campaignId === 'string' ? req.body.campaignId || null : null,
-      contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() || null : null,
-      email: typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() || null : null,
-      website: typeof req.body?.website === 'string' ? req.body.website.trim() || null : null,
-      city: typeof req.body?.city === 'string' ? req.body.city.trim() || null : null,
-      category: typeof req.body?.category === 'string' ? req.body.category.trim() || null : null,
-      notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() || null : null
+      businessName: body.businessName,
+      campaignId: body.campaignId || null,
+      contactName: typeof body.contactName === 'string' ? body.contactName.trim() || null : null,
+      email: typeof body.email === 'string' ? body.email.trim().toLowerCase() || null : null,
+      website: typeof body.website === 'string' ? body.website.trim() || null : null,
+      city: typeof body.city === 'string' ? body.city.trim() || null : null,
+      category: typeof body.category === 'string' ? body.category.trim() || null : null,
+      notes: typeof body.notes === 'string' ? body.notes.trim() || null : null
     }
 
     await assertCampaignInWorkspace(leadData.campaignId, workspaceId)
@@ -123,12 +175,7 @@ leadsRouter.post(
   '/import',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    const leads = req.body?.leads
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (!Array.isArray(leads) || leads.length === 0) throw new ApiError(400, 'leads array required')
-    if (leads.length > 500) throw new ApiError(400, 'Maximum 500 leads per import')
+    const { workspaceId, leads } = parseBody(importLeadsSchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
@@ -176,8 +223,7 @@ leadsRouter.post(
 // Export leads as CSV
 leadsRouter.get('/export', asyncHandler(async (req, res) => {
   const user = (req as AuthedRequest).user
-  const workspaceId = String(req.query.workspaceId || '').trim()
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
@@ -248,38 +294,40 @@ leadsRouter.patch(
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
+    const body = parseBody(updateLeadSchema, req)
+    const b = body as Record<string, unknown>
     const updates: Record<string, unknown> = {}
     const shortFields = ['contactName', 'email', 'website', 'city', 'category']
     const notesFields = ['notes']
     const aiFields = ['aiSummary', 'outreachAngle']
 
     for (const field of shortFields) {
-      if (typeof req.body?.[field] === 'string') updates[field] = req.body[field].trim() || null
+      if (typeof b[field] === 'string') updates[field] = (b[field] as string).trim() || null
     }
     for (const field of notesFields) {
-      if (typeof req.body?.[field] === 'string') {
-        const v = req.body[field].trim()
+      if (typeof b[field] === 'string') {
+        const v = (b[field] as string).trim()
         if (v.length > MAX_NOTES) throw new ApiError(400, `${field} must be at most ${MAX_NOTES} characters`)
         updates[field] = v || null
       }
     }
     for (const field of aiFields) {
-      if (typeof req.body?.[field] === 'string') {
-        const v = req.body[field].trim()
+      if (typeof b[field] === 'string') {
+        const v = (b[field] as string).trim()
         if (v.length > MAX_AI) throw new ApiError(400, `${field} must be at most ${MAX_AI} characters`)
         updates[field] = v || null
       }
     }
-    if (typeof req.body?.businessName === 'string' && req.body.businessName.trim()) {
-      if (req.body.businessName.trim().length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
-      updates.businessName = req.body.businessName.trim()
+    if (typeof body.businessName === 'string' && body.businessName.trim()) {
+      if (body.businessName.trim().length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
+      updates.businessName = body.businessName.trim()
     }
-    if (typeof req.body?.stage === 'string') {
-      if (!VALID_STAGES.includes(req.body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
-      updates.stage = req.body.stage
+    if (typeof body.stage === 'string') {
+      if (!VALID_STAGES.includes(body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
+      updates.stage = body.stage
     }
-    if (typeof req.body?.campaignId === 'string') {
-      const cid = req.body.campaignId || null
+    if (typeof body.campaignId === 'string') {
+      const cid = body.campaignId || null
       await assertCampaignInWorkspace(cid, lead.workspaceId)
       updates.campaignId = cid
     }
@@ -291,9 +339,9 @@ leadsRouter.patch(
       const merged = { ...lead, ...updates }
       const weights = await getWorkspaceWeights(lead.workspaceId)
       updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights)
-    } else if (typeof req.body?.score === 'number') {
+    } else if (typeof body.score === 'number') {
       // Allow manual override only if no auto-rescore
-      updates.score = req.body.score
+      updates.score = body.score
     }
 
     const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
@@ -322,12 +370,7 @@ leadsRouter.post(
   '/bulk-delete',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    const ids = req.body?.ids
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
-    if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk delete')
+    const { workspaceId, ids } = parseBody(bulkDeleteSchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
@@ -343,13 +386,7 @@ leadsRouter.post(
   '/bulk-stage',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    const ids = req.body?.ids
-    const stage = String(req.body?.stage || '').trim()
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
-    if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk update')
+    const { workspaceId, ids, stage } = parseBody(bulkStageSchema, req)
     if (!VALID_STAGES.includes(stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -367,13 +404,9 @@ leadsRouter.post(
   '/bulk-assign',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    const ids = req.body?.ids
-    const campaignId = typeof req.body?.campaignId === 'string' ? req.body.campaignId || null : null
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
-    if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk update')
+    const parsed = parseBody(bulkAssignSchema, req)
+    const { workspaceId, ids } = parsed
+    const campaignId = parsed.campaignId || null
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
@@ -416,8 +449,7 @@ leadsRouter.get(
   '/approvals/pending',
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
@@ -491,7 +523,7 @@ leadsRouter.patch(
     await assertMinimumWorkspaceRole(user.id, draft.workspaceId, 'admin')
     if (draft.status !== 'DRAFTED') throw new ApiError(409, `Cannot edit a ${draft.status.toLowerCase()} draft`)
 
-    const body = req.body as UpdateDraftRequest
+    const body = parseBody(updateDraftSchema, req)
     const data: { subject?: string; emailBody?: string; followup?: string | null } = {}
     if (typeof body.subject === 'string') {
       const s = body.subject.trim()

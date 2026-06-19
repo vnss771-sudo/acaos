@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react'
-import type { RecordProspectOutcomeRequest, OutcomeStage } from '@acaos/shared'
+import React, { useEffect, useState, useRef, useMemo } from 'react'
+import type { OutcomeStage } from '@acaos/shared'
 import type { Workspace, OpportunitiesData, ForecastData, Prospect, Signal, View } from '../types.js'
 import { BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS, TIER_COLOR } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -325,6 +326,7 @@ function ForecastPanel({ forecast }: { forecast: ForecastData }) {
 }
 
 export function Intelligence({ api, workspace, toast, setView }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [opportunities, setOpportunities] = useState<OpportunitiesData | null>(null)
   const [forecast, setForecast] = useState<ForecastData | null>(null)
   const [loading, setLoading] = useState(false)
@@ -351,10 +353,9 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   const handleOutcome = async (prospectId: string, stage: string) => {
     if (!workspace) return
     try {
-      const body: RecordProspectOutcomeRequest = { stage: stage as OutcomeStage }
-      await api(`/api/prospects/${prospectId}/outcome`, {
-        method: 'POST',
-        body: JSON.stringify(body)
+      await route('POST /api/prospects/:id/outcome', {
+        params: { id: prospectId },
+        body: { stage: stage as OutcomeStage }
       })
       toast.success(`Moved to ${stage}`)
       load()

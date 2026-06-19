@@ -28,6 +28,15 @@ export type OutcomeStage =
   | 'WON'
   | 'LOST'
 
+// ── Auth handshake (POST /api/auth/*) ─────────────────────────────────────────
+// These run in AuthScreen via raw fetch — by design: there is no bearer token
+// yet, the flow must control credentials/CSRF, and a 401 means bad credentials,
+// not an expired session. They can't go through the authenticated route client,
+// but their bodies are still typed here for compile-time safety.
+export interface LoginRequest { email: string; password: string; name?: string }
+export interface ForgotPasswordRequest { email: string }
+export interface ResetPasswordRequest { token: string; password: string }
+
 // ── AI tools (POST /api/ai/*) ────────────────────────────────────────────────
 // Every handler rejects the request with 400 "workspaceId required" before doing
 // any work, so workspaceId is required here.
@@ -59,6 +68,13 @@ export interface AiReplyAnalysisRequest {
 // ── Campaigns ─────────────────────────────────────────────────────────────────
 export interface CreateCampaignRequest {
   workspaceId: string
+  name: string
+  goalType: string
+  description?: string
+}
+
+// PATCH /api/campaigns/:id
+export interface UpdateCampaignRequest {
   name: string
   goalType: string
   description?: string
@@ -167,3 +183,194 @@ export interface UpdateDraftRequest {
   emailBody?: string
   followup?: string | null
 }
+
+// ── Route contract map ────────────────────────────────────────────────────────
+// The single source of truth that binds METHOD + path → { params, query, body,
+// response }. The web client calls every mutation through a typed helper keyed by
+// these entries (see apps/web/src/lib/routeApi.ts), so a call can never drift from
+// the contract: the path, params, body shape, and response type are all checked
+// at the call site. Response types are pragmatic DTOs — only the fields the client
+// reads; rich entities (Lead/Prospect/Mission/Workspace) are returned as `unknown`
+// and narrowed at the call site until their DTOs are consolidated into shared.
+
+/** Minimal campaign shape returned by create/update. */
+export interface CampaignDTO {
+  id: string
+  name: string
+  goalType: string
+  description?: string | null
+  createdAt: string
+  _count?: { leads: number }
+}
+
+// ── Additional mutation request bodies (frontend → API) ───────────────────────
+// Partial lead update. Nullable string fields mirror the Lead columns so the web
+// edit form (which PATCHes a spread of the whole Lead) is assignable; the backend
+// ignores nulls and updates only the strings present.
+export interface UpdateLeadRequest {
+  businessName?: string
+  contactName?: string | null
+  email?: string | null
+  website?: string | null
+  city?: string | null
+  category?: string | null
+  notes?: string | null
+  aiSummary?: string | null
+  outreachAngle?: string | null
+  stage?: string
+  campaignId?: string | null
+  score?: number
+  phone?: string | null
+  lastContactedAt?: string | null
+  id?: string
+  createdAt?: string
+}
+export interface BulkLeadIdsRequest { workspaceId: string; ids: string[] }
+export interface BulkLeadStageRequest { workspaceId: string; ids: string[]; stage: string }
+/** Body for the async job-enqueue endpoints (POST /api/jobs/:type). */
+export interface JobEnqueueRequest {
+  leadId?: string
+  workspaceId?: string
+  replyBody?: string
+  businessName?: string
+  website?: string
+  category?: string
+  city?: string
+  contactName?: string
+  aiSummary?: string
+  outreachAngle?: string
+  notes?: string
+}
+export interface CreateSignalRequest {
+  workspaceId: string
+  prospectId: string
+  type: string
+  strength: number
+  title?: string
+  description?: string
+  sourceUrl?: string
+  source?: string
+  sourceReliability?: number
+  industryRelevance?: number
+  detectedAt?: string
+}
+// The web create form spreads its prospect draft, whose columns are nullable, so
+// the declared fields accept null (undeclared form fields are dropped by the
+// spread and ignored by the backend).
+export interface CreateProspectRequest {
+  workspaceId: string
+  companyName?: string | null
+  domain?: string | null
+  industry?: string | null
+  employeeCount?: number | null
+  location?: string | null
+  contactName?: string | null
+  contactEmail?: string | null
+  contactTitle?: string | null
+}
+export interface ImportProspectsRequest {
+  workspaceId: string
+  rows: Record<string, unknown>[]
+}
+export interface BillingCheckoutRequest { workspaceId: string; plan: 'starter' | 'growth' }
+export interface BillingPortalRequest { workspaceId: string }
+export interface UpdateWorkspaceRequest {
+  name?: string
+  slug?: string
+  senderBusinessName?: string | null
+  senderPostalAddress?: string | null
+}
+export interface WorkspaceMemberInviteRequest { email: string; role: string }
+export interface EmailConfigRequest {
+  smtpHost?: string | null
+  smtpPort?: number | null
+  smtpSecure?: boolean
+  smtpUser?: string | null
+  smtpPass?: string | null
+  smtpFrom?: string | null
+  imapHost?: string | null
+  imapPort?: number | null
+  imapSecure?: boolean
+  imapUser?: string | null
+  imapPass?: string | null
+}
+export interface ProfileUpdateRequest {
+  name?: string | null
+  currentPassword?: string
+  newPassword?: string
+}
+export interface ApplyPackRequest { workspaceId: string }
+
+export interface RouteContracts {
+  // Campaigns
+  'POST /api/campaigns': { body: CreateCampaignRequest; response: { campaign: CampaignDTO } }
+  'PATCH /api/campaigns/:id': { params: { id: string }; body: UpdateCampaignRequest; response: { campaign: CampaignDTO } }
+  'DELETE /api/campaigns/:id': { params: { id: string }; response: { ok: boolean } }
+  'POST /api/campaigns/:id/send': { params: { id: string }; body: SendCampaignRequest; response: { jobId: string; eligible: number; message: string } }
+  'POST /api/campaigns/:id/retry-failed': { params: { id: string }; response: { cleared: number } }
+
+  // AI tools (sync)
+  'POST /api/ai/research': { body: AiResearchRequest; response: { result: string } }
+  'POST /api/ai/outreach': { body: AiOutreachRequest; response: { result: string } }
+  'POST /api/ai/reply-analysis': { body: AiReplyAnalysisRequest; response: { result: unknown } }
+
+  // Async jobs
+  'POST /api/jobs/events/ticket': { response: { ticket: string } }
+  'POST /api/jobs/:type': { params: { type: string }; body: JobEnqueueRequest; response: { jobId: string; queue: string } }
+
+  // Leads
+  'POST /api/leads': { body: CreateLeadRequest; response: unknown }
+  'PATCH /api/leads/:id': { params: { id: string }; body: UpdateLeadRequest; response: unknown }
+  'DELETE /api/leads/:id': { params: { id: string }; response: unknown }
+  'POST /api/leads/import': { body: ImportLeadsRequest; response: { created: number } }
+  'POST /api/leads/bulk-delete': { body: BulkLeadIdsRequest; response: { deleted: number } }
+  'POST /api/leads/bulk-stage': { body: BulkLeadStageRequest; response: { updated: number } }
+
+  // Approval-queue drafts (lead-scoped)
+  'PATCH /api/leads/:id/drafts/:draftId': { params: { id: string; draftId: string }; body: UpdateDraftRequest; response: unknown }
+  'POST /api/leads/:id/drafts/:draftId/:action': { params: { id: string; draftId: string; action: string }; response: unknown }
+
+  // Prospects
+  'POST /api/prospects': { body: CreateProspectRequest; response: unknown }
+  'POST /api/prospects/discover': { body: DiscoverProspectsRequest; response: { discovered: number; skipped: number; total: number } }
+  'POST /api/prospects/import': { body: ImportProspectsRequest; response: { imported: number; skipped: number; failed: number; errors: string[] } }
+  'POST /api/prospects/:id/rescore': { params: { id: string }; response: unknown }
+  'POST /api/prospects/:id/recommend': { params: { id: string }; response: unknown }
+  'POST /api/prospects/:id/enrich': { params: { id: string }; response: { signalsCreated: number } }
+  'POST /api/prospects/:id/outcome': { params: { id: string }; body: RecordProspectOutcomeRequest; response: unknown }
+  'POST /api/prospects/:prospectId/intents/:intentId/:action': { params: { prospectId: string; intentId: string; action: string }; response: unknown }
+
+  // Signals
+  'POST /api/signals': { body: CreateSignalRequest; response: unknown }
+
+  // Missions
+  'POST /api/missions': { body: CreateMissionRequest; response: unknown }
+  'PATCH /api/missions/:id': { params: { id: string }; body: UpdateMissionRequest; response: unknown }
+  'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
+
+  // Workspaces
+  'PATCH /api/workspaces/:id': { params: { id: string }; body: UpdateWorkspaceRequest; response: unknown }
+  'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
+  'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
+  'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }
+  'POST /api/workspaces/:id/members': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }
+  'DELETE /api/workspaces/:id/members/:userId': { params: { id: string; userId: string }; response: unknown }
+  'POST /api/workspaces/:id/invites': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }
+  'DELETE /api/workspaces/:id/invites/:inviteId': { params: { id: string; inviteId: string }; response: unknown }
+  'POST /api/workspaces/:id/api-key/rotate': { params: { id: string }; response: { apiKey: string } }
+  'DELETE /api/workspaces/:id/api-key': { params: { id: string }; response: unknown }
+
+  // Billing
+  'POST /api/billing/checkout': { body: BillingCheckoutRequest; response: { url: string } }
+  'POST /api/billing/portal': { body: BillingPortalRequest; response: { url: string } }
+
+  // Auth profile / misc
+  'PATCH /api/auth/profile': { body: ProfileUpdateRequest; response: unknown }
+  'POST /api/auth/resend-verification': { response: unknown }
+  'POST /api/packs/fieldops/apply': { body: ApplyPackRequest; response: unknown }
+}
+
+export type RouteKey = keyof RouteContracts
+export type RouteParams<K extends RouteKey> = RouteContracts[K] extends { params: infer P } ? P : undefined
+export type RouteBody<K extends RouteKey> = RouteContracts[K] extends { body: infer B } ? B : undefined
+export type RouteResponse<K extends RouteKey> = RouteContracts[K] extends { response: infer R } ? R : unknown

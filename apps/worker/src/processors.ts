@@ -16,6 +16,7 @@ import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEn
 import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
+import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
@@ -404,9 +405,13 @@ export async function sendCampaignBatch(
             targetCustomer: missionCtx?.targetCustomer ?? undefined,
           } : undefined,
         })
-        const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }
-        if (!parsed.subject || !parsed.email) {
-          // No usable draft produced — refund the reserved AI call.
+        // Strict, schema-validated parse. A draft with bad JSON or a missing
+        // subject/body is unusable — refund the reserved call and skip this lead
+        // rather than failing the whole batch (an isolated bad draft is expected).
+        let parsed: OutreachDraftOutput
+        try {
+          parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'send-campaign')
+        } catch {
           await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
           skipped++; continue
         }

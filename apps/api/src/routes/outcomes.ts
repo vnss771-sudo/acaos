@@ -1,5 +1,7 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, nonEmptyString } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -169,12 +171,26 @@ async function requireIngestKeyOrAuth(
 // POST /api/outcomes
 // Record a reply outcome from FieldOps and update weights every 7 records
 // ---------------------------------------------------------------------------
+// workspaceId is optional here: the API-key path resolves it from the key and
+// omits it from the body, while the JWT path requires it (enforced below).
+const recordOutcomeSchema = z.object({
+  workspaceId: z.string().trim().min(1).optional(),
+  prospectId: nonEmptyString,
+  score: z.coerce.number().min(0, 'score must be 0–100').max(100, 'score must be 0–100'),
+  replied: z.coerce.boolean().optional(),
+  replyIntent: z.string().optional(),
+  messageRelevance: z.coerce.number().optional(),
+  channelUsed: z.string().optional(),
+  leadId: z.string().optional(),
+})
+
 outcomesRouter.post(
   '/',
   apiKeyRateLimit,
   requireIngestKeyOrAuth,
   asyncHandler(async (req, res) => {
     const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false
+    const parsed = parseBody(recordOutcomeSchema, req)
     let workspaceId: string
 
     if (viaApiKey) {
@@ -184,23 +200,19 @@ outcomesRouter.post(
       // shared workspace scoring model (every 7th outcome recomputes its
       // weights), so the human path requires admin, not plain membership. The
       // automated FieldOps ingest path (API key) is authorized by the key itself.
-      workspaceId = String(req.body?.workspaceId || '').trim()
-      if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+      if (!parsed.workspaceId) throw new ApiError(400, 'workspaceId required')
+      workspaceId = parsed.workspaceId
       const user = (req as AuthedRequest).user
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
     }
 
-    const prospectId = String(req.body?.prospectId || '').trim()
-    if (!prospectId) throw new ApiError(400, 'prospectId required')
-
-    const score = Number(req.body?.score)
-    if (isNaN(score) || score < 0 || score > 100) throw new ApiError(400, 'score must be 0–100')
-
-    const replied = Boolean(req.body?.replied)
-    const replyIntent = typeof req.body?.replyIntent === 'string' ? req.body.replyIntent : null
-    const messageRelevance = Math.min(1, Math.max(0, Number(req.body?.messageRelevance ?? 0.5)))
-    const channelUsed = req.body?.channelUsed === 'LINKEDIN' ? 'LINKEDIN' : 'EMAIL'
-    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() || null : null
+    const prospectId = parsed.prospectId
+    const score = parsed.score
+    const replied = parsed.replied ?? false
+    const replyIntent = typeof parsed.replyIntent === 'string' ? parsed.replyIntent : null
+    const messageRelevance = Math.min(1, Math.max(0, parsed.messageRelevance ?? 0.5))
+    const channelUsed = parsed.channelUsed === 'LINKEDIN' ? 'LINKEDIN' : 'EMAIL'
+    const leadId = typeof parsed.leadId === 'string' ? parsed.leadId.trim() || null : null
 
     // The referenced records must belong to the resolved workspace. Without this
     // a valid API key could submit outcomes pointing at arbitrary prospect/lead

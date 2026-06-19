@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { UpdateMissionRequest, DiscoverProspectsRequest } from '@acaos/shared'
 import type { Mission, MissionDetail, MissionStatus, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -30,6 +31,7 @@ function StatusBadge({ status }: { status: MissionStatus }) {
 }
 
 export function MissionsView({ api, workspace, toast, canManage = false }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [missions, setMissions] = useState<Mission[]>([])
   const [loading, setLoading] = useState(true)
   const [showBuilder, setShowBuilder] = useState(false)
@@ -56,7 +58,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
     setBusy(prev => ({ ...prev, [id]: true }))
     try {
       const body: UpdateMissionRequest = { status }
-      const d = await api<{ mission: Mission }>(`/api/missions/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+      const d = await route('PATCH /api/missions/:id', { params: { id }, body }) as { mission: Mission }
       setMissions(prev => prev.map(m => m.id === id ? d.mission : m))
       toast.success(`Mission ${status.toLowerCase()}`)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
@@ -68,9 +70,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
     setBusy(prev => ({ ...prev, [id]: true }))
     try {
       const body: DiscoverProspectsRequest = { workspaceId: workspace.id, missionId: id }
-      const d = await api<{ discovered: number; skipped: number; total: number }>('/api/prospects/discover', {
-        method: 'POST', body: JSON.stringify(body),
-      })
+      const d = await route('POST /api/prospects/discover', { body })
       toast.success(`Discovered ${d.discovered} new prospect${d.discovered !== 1 ? 's' : ''} (${d.skipped} skipped)`)
       load()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Discovery failed') }
@@ -231,6 +231,7 @@ function MissionGuide({ detail }: { detail: MissionDetail }) {
 // The mission control plane: playbook, discovery history, owned prospects, and
 // the actionable outreach queue scoped to this mission. Lazy-loaded on expand.
 function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook; missionId: string; toast: ToastHook; canManage: boolean }) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [detail, setDetail] = useState<MissionDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
@@ -257,12 +258,12 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
   }, [load, toast])
 
   const score = () => act('score',
-    () => api(`/api/missions/${missionId}/score`, { method: 'POST' }),
+    () => route('POST /api/missions/:id/score', { params: { id: missionId } }),
     'Scoring started — recommendations will appear shortly')
 
   const intentAction = (prospectId: string, intentId: string, verb: 'draft' | 'approve' | 'reject', msg: string) =>
     act(`${verb}:${intentId}`,
-      () => api(`/api/prospects/${prospectId}/intents/${intentId}/${verb}`, { method: 'POST' }),
+      () => route('POST /api/prospects/:prospectId/intents/:intentId/:action', { params: { prospectId, intentId, action: verb } }),
       msg)
 
   const panel: React.CSSProperties = { borderTop: `1px solid ${colors.border}`, marginTop: 8, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }

@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react'
-import type { CreateCampaignRequest, SendCampaignRequest } from '@acaos/shared'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
@@ -44,6 +44,8 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
+  // Typed, contract-keyed client for mutations (reads still use `api` directly).
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [campaigns, setCampaigns]   = useState<Campaign[]>([])
   const [loading, setLoading]       = useState(false)
   const [adding, setAdding]         = useState(false)
@@ -85,12 +87,10 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
     if (!form.name.trim() || !workspace) return
     setSaving(true)
     try {
-      const body: CreateCampaignRequest = { workspaceId: workspace.id, name: form.name, goalType: form.goalType, description: form.description }
-      const d = await api<{ campaign: Campaign }>('/api/campaigns', {
-        method: 'POST',
-        body: JSON.stringify(body)
+      const d = await route('POST /api/campaigns', {
+        body: { workspaceId: workspace.id, name: form.name, goalType: form.goalType, description: form.description }
       })
-      setCampaigns(prev => [d.campaign, ...prev])
+      setCampaigns(prev => [d.campaign as Campaign, ...prev])
       setForm({ name: '', goalType: 'BOOK_CALL', description: '' })
       setAdding(false)
       toast.success('Campaign created')
@@ -103,11 +103,11 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
     if (!editing) return
     setSaving(true)
     try {
-      const d = await api<{ campaign: Campaign }>(`/api/campaigns/${editing.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name: form.name, goalType: form.goalType, description: form.description })
+      const d = await route('PATCH /api/campaigns/:id', {
+        params: { id: editing.id },
+        body: { name: form.name, goalType: form.goalType, description: form.description }
       })
-      setCampaigns(prev => prev.map(c => c.id === d.campaign.id ? d.campaign : c))
+      setCampaigns(prev => prev.map(c => c.id === d.campaign.id ? (d.campaign as Campaign) : c))
       setEditing(null)
       toast.success('Campaign updated')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
@@ -117,7 +117,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   async function deleteCampaign(id: string) {
     if (!confirm('Delete this campaign and unlink its leads?')) return
     try {
-      await api(`/api/campaigns/${id}`, { method: 'DELETE' })
+      await route('DELETE /api/campaigns/:id', { params: { id } })
       setCampaigns(prev => prev.filter(c => c.id !== id))
       toast.success('Campaign deleted')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
@@ -135,12 +135,8 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
     try {
       // approvalMode workspaces (the default) require an explicit opt-in flag;
       // the confirmation modal the user just accepted IS that approval. The
-      // shared SendCampaignRequest type makes `approved` mandatory at compile time.
-      const body: SendCampaignRequest = { approved: true }
-      const d = await api<{ jobId: string; eligible: number; message: string }>(
-        `/api/campaigns/${id}/send`,
-        { method: 'POST', body: JSON.stringify(body) }
-      )
+      // contract makes `approved` mandatory on this route at compile time.
+      const d = await route('POST /api/campaigns/:id/send', { params: { id }, body: { approved: true } })
       toast.success(`Approved — sending to ${d.eligible} leads (job ${d.jobId})`)
       setTimeout(() => loadStats(id), 3000)
       setTimeout(() => loadStats(id), 10_000)
@@ -150,7 +146,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
   async function retryFailed(id: string) {
     try {
-      const d = await api<{ cleared: number }>(`/api/campaigns/${id}/retry-failed`, { method: 'POST' })
+      const d = await route('POST /api/campaigns/:id/retry-failed', { params: { id } })
       toast.success(`Cleared ${d.cleared} failed send${d.cleared !== 1 ? 's' : ''} — relaunch to retry`)
       loadStats(id)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Retry failed') }
