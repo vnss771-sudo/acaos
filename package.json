@@ -36,6 +36,12 @@
     "smoke:api": "node scripts/smoke-api-health.mjs",
     "pack": "node scripts/make-zips.mjs"
   },
+  "overrides": {
+    "nodemailer": "^9.0.1",
+    "imapflow": {
+      "nodemailer": "^9.0.1"
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@types/bcryptjs": "^2.4.6",
