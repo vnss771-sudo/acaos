@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { CreateCampaignRequest, SendCampaignRequest } from '@acaos/shared'
 import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
+import { LaunchApprovalModal } from '../components/LaunchApprovalModal.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -40,7 +40,7 @@ const GOAL_COLORS: Record<string, string> = {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  SENDING: colors.amber, SENT: colors.blue, REPLIED: '#22c55e', BOUNCED: '#ef4444', FAILED: '#ef4444'
+  SENDING: colors.amber, SENT: colors.blue, REPLIED: colors.green, BOUNCED: colors.red, FAILED: colors.red
 }
 
 export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
@@ -56,7 +56,6 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
   const [approvalPending, setApprovalPending] = useState<{ id: string; name: string; eligible: number } | null>(null)
-  const [domainCheck, setDomainCheck] = useState<{ hasSPF: boolean; hasDKIM: boolean } | null | 'loading'>('loading')
   const [showMissionBuilder, setShowMissionBuilder] = useState(false)
 
   const loadStats = useCallback(async (id: string) => {
@@ -65,9 +64,6 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       setStats(prev => ({ ...prev, [id]: d.stats }))
     } catch { /* non-fatal */ }
   }, [api])
-
-  // Dismiss the launch-approval modal with Escape (only while it's open).
-  useEscapeKey(() => setApprovalPending(null), !!approvalPending)
 
   useEffect(() => {
     if (!workspace) return
@@ -84,35 +80,6 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [workspace?.id])
-
-  useEffect(() => {
-    if (!approvalPending || !workspace) {
-      setDomainCheck('loading')
-      return
-    }
-    let cancelled = false
-    setDomainCheck('loading')
-    api<{ config: { smtpFrom?: string | null } | null }>(`/api/workspaces/${workspace.id}/email-config`)
-      .then(({ config }) => {
-        const smtpFrom = config?.smtpFrom || ''
-        const atIdx = smtpFrom.lastIndexOf('@')
-        // Extract domain from "Name <user@domain.com>" or "user@domain.com"
-        const raw = atIdx !== -1 ? smtpFrom.slice(atIdx + 1).replace(/[>\s]+$/, '').trim() : ''
-        if (!raw) {
-          if (!cancelled) setDomainCheck({ hasSPF: false, hasDKIM: false })
-          return
-        }
-        return api<{ hasSPF: boolean; hasDKIM: boolean }>(
-          `/api/mailbox/check-domain?domain=${encodeURIComponent(raw)}&workspaceId=${encodeURIComponent(workspace.id)}`
-        ).then(result => {
-          if (!cancelled) setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM })
-        })
-      })
-      .catch(() => {
-        if (!cancelled) setDomainCheck({ hasSPF: false, hasDKIM: false })
-      })
-    return () => { cancelled = true }
-  }, [approvalPending?.id, workspace?.id])
 
   async function create() {
     if (!form.name.trim() || !workspace) return
@@ -216,84 +183,15 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
   return (
     <div style={s.stack}>
-      {/* Approval modal */}
-      {approvalPending && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 100,
-          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }} onClick={() => setApprovalPending(null)}>
-          <div role="dialog" aria-modal="true" aria-label="Confirm campaign launch" style={{
-            background: colors.bgCard, border: `1px solid ${colors.border}`,
-            borderRadius: 12, padding: 28, width: 420, maxWidth: '90vw'
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
-              Approve Outreach Mission
-            </div>
-            <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 20 }}>
-              Campaign: <strong style={{ color: colors.text }}>{approvalPending.name}</strong>
-            </div>
-            <div style={{
-              background: '#f59e0b18', border: '1px solid #f59e0b44',
-              borderRadius: 8, padding: '12px 16px', marginBottom: 20
-            }}>
-              <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: 20 }}>{approvalPending.eligible}</div>
-              <div style={{ color: colors.textFaint, fontSize: 13 }}>
-                leads will each receive a personalised AI-generated email.
-              </div>
-            </div>
-            <div style={{
-              background: '#1e293b', border: `1px solid ${colors.border}`,
-              borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 12
-            }}>
-              <div style={{ color: colors.textMuted, fontWeight: 700, marginBottom: 8, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Deliverability checklist</div>
-              {/* SPF — dynamic */}
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
-                <span style={{ color: domainCheck === 'loading' ? colors.textFaint : domainCheck?.hasSPF ? colors.green : '#ef4444', flexShrink: 0 }}>
-                  {domainCheck === 'loading' ? '…' : domainCheck?.hasSPF ? '✓' : '✗'}
-                </span>
-                <span style={{ color: colors.textFaint }}>
-                  {domainCheck === 'loading'
-                    ? 'Checking… SPF record (v=spf1 include:…)'
-                    : domainCheck?.hasSPF
-                      ? 'Sending domain has SPF record (v=spf1 include:…)'
-                      : 'Sending domain has SPF record (v=spf1 include:…) — not detected'}
-                </span>
-              </div>
-              {/* DKIM — dynamic */}
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
-                <span style={{ color: domainCheck === 'loading' ? colors.textFaint : domainCheck?.hasDKIM ? colors.green : '#ef4444', flexShrink: 0 }}>
-                  {domainCheck === 'loading' ? '…' : domainCheck?.hasDKIM ? '✓' : '✗'}
-                </span>
-                <span style={{ color: colors.textFaint }}>
-                  {domainCheck === 'loading'
-                    ? 'Checking… DKIM signature configured for sending domain'
-                    : domainCheck?.hasDKIM
-                      ? 'DKIM signature configured for sending domain'
-                      : 'DKIM signature configured for sending domain — not detected'}
-                </span>
-              </div>
-              {/* Static items */}
-              {[
-                'Sending address matches your workspace email config',
-                'Lead list has been reviewed for quality',
-              ].map(item => (
-                <div key={item} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
-                  <span style={{ color: colors.green, flexShrink: 0 }}>✓</span>
-                  <span style={{ color: colors.textFaint }}>{item}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button style={s.btnSecondary} onClick={() => setApprovalPending(null)}>Cancel</button>
-              <button
-                style={{ ...s.btn, background: '#16a34a' }}
-                onClick={confirmLaunch}
-              >
-                Approve & Send
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Approval modal — owns its own deliverability check */}
+      {approvalPending && workspace && (
+        <LaunchApprovalModal
+          api={api}
+          workspace={workspace}
+          pending={approvalPending}
+          onCancel={() => setApprovalPending(null)}
+          onConfirm={confirmLaunch}
+        />
       )}
 
       {/* Mission builder modal */}
@@ -343,7 +241,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
             <button style={s.btn} disabled={saving} onClick={editing ? update : create}>
               {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Campaign'}
             </button>
-            <button style={{ ...s.btn, background: '#1f2937' }} onClick={() => { setAdding(false); setEditing(null) }}>Cancel</button>
+            <button style={{ ...s.btn, background: colors.borderLight }} onClick={() => { setAdding(false); setEditing(null) }}>Cancel</button>
           </div>
         </div>
       )}
@@ -384,14 +282,14 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                   <Stat label="Has Email" value={st?.leadsWithEmail ?? '—'} />
                   <Stat label="Eligible" value={st?.eligible ?? '—'} color={colors.green} />
                   <Stat label="Sent" value={st?.sent ?? 0} color={colors.blue} />
-                  <Stat label="Replied" value={st?.replied ?? 0} color="#22c55e" />
+                  <Stat label="Replied" value={st?.replied ?? 0} color={colors.green} />
                   {((st?.failed ?? 0) + (st?.bounced ?? 0)) > 0 && (
-                    <Stat label="Failed/Bounced" value={(st?.failed ?? 0) + (st?.bounced ?? 0)} color="#ef4444" />
+                    <Stat label="Failed/Bounced" value={(st?.failed ?? 0) + (st?.bounced ?? 0)} color={colors.red} />
                   )}
                   <Stat
                     label="Reply Rate"
                     value={st ? `${Math.round(st.replyRate * 100)}%` : '—'}
-                    color={st && st.replyRate > 0.1 ? '#22c55e' : colors.textMuted}
+                    color={st && st.replyRate > 0.1 ? colors.green : colors.textMuted}
                   />
                   <Stat
                     label="Goal"
@@ -406,7 +304,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                     <button
                       style={{
                         ...s.btn,
-                        background: isLaunching ? '#374151' : '#16a34a',
+                        background: isLaunching ? colors.textDisabled : colors.greenDark,
                         opacity: isLaunching || !st?.eligible ? 0.6 : 1,
                         cursor: isLaunching || !st?.eligible ? 'not-allowed' : 'pointer',
                       }}
@@ -419,7 +317,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
                   {canManage && (st?.failed ?? 0) > 0 && (
                     <button
-                      style={{ ...s.btnSm, border: '1px solid #ef4444', color: '#ef4444' }}
+                      style={{ ...s.btnSm, border: `1px solid ${colors.red}`, color: colors.red }}
                       disabled={isLaunching}
                       onClick={() => retryFailed(c.id)}
                       title="Clear failed sends so those leads can be retried on the next launch"
@@ -430,7 +328,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
                   {(st?.sent ?? 0) > 0 && (
                     <button
-                      style={{ ...s.btnSm, background: isExpanded ? '#1e3a5f' : '#1f2937' }}
+                      style={{ ...s.btnSm, background: isExpanded ? colors.blueDark : colors.borderLight }}
                       onClick={() => toggleOutreach(c.id)}
                     >
                       {isExpanded ? 'Hide Outreach' : `View ${st!.sent} Sent`}
@@ -440,7 +338,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
                 {/* Outreach log (expanded) */}
                 {isExpanded && (
-                  <div style={{ marginTop: 16, borderTop: '1px solid #374151', paddingTop: 16 }}>
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${colors.textDisabled}`, paddingTop: 16 }}>
                     <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
                       Outreach Log
                     </div>
@@ -452,7 +350,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
                         {(outreach[c.id] ?? []).map(o => (
                           <div key={o.id} style={{
-                            background: '#111827',
+                            background: colors.bgElevated,
                             borderRadius: 6,
                             padding: '8px 12px',
                             display: 'flex',
@@ -470,7 +368,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                               </div>
                               <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 2 }}>{o.subject}</div>
                               {o.status === 'FAILED' && o.lastError && (
-                                <div style={{ color: '#ef4444', fontSize: 11, marginTop: 2 }}>⚠ {o.lastError}</div>
+                                <div style={{ color: colors.red, fontSize: 11, marginTop: 2 }}>⚠ {o.lastError}</div>
                               )}
                             </div>
                             <div style={{ flexShrink: 0, textAlign: 'right' }}>
