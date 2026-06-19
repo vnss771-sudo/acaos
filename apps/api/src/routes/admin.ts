@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { recordAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
 import type { AuthedRequest, AuthUser } from '../types/auth.js'
 
@@ -11,20 +12,43 @@ adminRouter.use(requireAuth)
 // a verified email — not just a matching address.
 adminRouter.use(requireVerifiedEmail)
 
-function isAdminUser(user: AuthUser): boolean {
-  // Primary path: a non-user-settable DB flag, provisioned out-of-band. The
-  // ADMIN_EMAIL env var is kept as a bootstrap fallback so the founder account
-  // works before the flag is set, but the boundary no longer rests on it alone.
-  if (user.isPlatformAdmin) return true
+function emailMatchesBootstrapAdmin(user: AuthUser): boolean {
   const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase()
   return Boolean(adminEmail && user.email.toLowerCase() === adminEmail)
 }
 
-adminRouter.use((req, _res, next) => {
-  const user = (req as AuthedRequest).user
-  if (!isAdminUser(user)) throw new ApiError(403, 'Admin access required')
-  next()
-})
+// Platform-admin gate. Authority rests on the non-user-settable DB flag
+// (`isPlatformAdmin`). ADMIN_EMAIL is NOT a perpetual fallback — it is a
+// one-time bootstrap: the first time a verified user whose address matches
+// ADMIN_EMAIL reaches an admin route, we promote them to the DB flag and write
+// an audit event. From then on the flag is the sole source of truth, so the env
+// var can be removed and the grant is permanently recorded. This closes the
+// "silent, never-expiring env backdoor" — every admin grant is now observable
+// in the audit log and any subsequent ADMIN_EMAIL change cannot escalate a
+// different account without leaving a trail.
+adminRouter.use(
+  asyncHandler(async (req, _res, next) => {
+    const user = (req as AuthedRequest).user
+
+    if (user.isPlatformAdmin) return next()
+
+    if (user.emailVerified && emailMatchesBootstrapAdmin(user)) {
+      await prisma.user.update({ where: { id: user.id }, data: { isPlatformAdmin: true } })
+      user.isPlatformAdmin = true
+      await recordAudit({
+        actorUserId: user.id,
+        type: 'platform_admin.bootstrap',
+        entityType: 'User',
+        entityId: user.id,
+        metadata: { via: 'ADMIN_EMAIL' },
+      })
+      console.warn(`[admin] bootstrapped platform admin from ADMIN_EMAIL for user ${user.id} — promoted to DB flag`)
+      return next()
+    }
+
+    throw new ApiError(403, 'Admin access required')
+  })
+)
 
 adminRouter.get(
   '/overview',

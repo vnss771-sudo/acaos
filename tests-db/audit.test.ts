@@ -51,3 +51,27 @@ test('GET /admin/audit denies a non-admin', async () => {
   const res = await server.request('/api/admin/audit', { headers: { Authorization: bearer(user.id) } })
   assert.equal(res.status, 403)
 })
+
+test('ADMIN_EMAIL is a one-time bootstrap: first hit promotes the DB flag and audits it', async () => {
+  const { user } = await seedUserWithWorkspace('founder@acaos.test')
+  // Verified, matches ADMIN_EMAIL, but the DB flag is NOT yet set.
+  await prisma.user.update({ where: { id: user.id }, data: { emailVerified: true, isPlatformAdmin: false } })
+  process.env.ADMIN_EMAIL = 'founder@acaos.test'
+
+  // First admin request: granted via the env bootstrap.
+  const res = await server.request('/api/admin/audit', { headers: { Authorization: bearer(user.id) } })
+  assert.equal(res.status, 200)
+
+  // The grant is now persisted to the DB flag (source of truth from here on)…
+  const promoted = await prisma.user.findUnique({ where: { id: user.id }, select: { isPlatformAdmin: true } })
+  assert.equal(promoted!.isPlatformAdmin, true)
+
+  // …and recorded in the audit log, so the bootstrap is observable.
+  const ev = await prisma.auditEvent.findFirst({ where: { type: 'platform_admin.bootstrap', actorUserId: user.id } })
+  assert.ok(ev, 'expected a platform_admin.bootstrap audit event')
+
+  // Removing the env var no longer locks the founder out — the DB flag carries it.
+  delete process.env.ADMIN_EMAIL
+  const after = await server.request('/api/admin/audit', { headers: { Authorization: bearer(user.id) } })
+  assert.equal(after.status, 200)
+})
