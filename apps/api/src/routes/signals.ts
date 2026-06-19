@@ -1,9 +1,12 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
+import type { SignalType } from '@prisma/client'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -15,10 +18,16 @@ function toRawSignal(s: { type: string; strength: number; sourceReliability: num
   return { type: s.type as RawSignal['type'], strength: s.strength, sourceReliability: s.sourceReliability, industryRelevance: s.industryRelevance, detectedAt: s.detectedAt }
 }
 
+const listSignalsQuerySchema = z.object({
+  workspaceId: workspaceIdField,
+  prospectId: z.string().optional(),
+  type: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+})
+
 // GET /api/signals?workspaceId=&prospectId=&type=
 signalsRouter.get('/', asyncHandler(async (req, res) => {
-  const workspaceId = req.query.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const { workspaceId, prospectId, type, limit } = parseQuery(listSignalsQuerySchema, req)
 
   const user = (req as AuthedRequest).user
   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
@@ -26,15 +35,13 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
   }
 
   const where: Record<string, unknown> = { workspaceId }
-  if (req.query.prospectId) where.prospectId = req.query.prospectId
-  if (req.query.type) where.type = req.query.type
-
-  const limit = Math.min(Number(req.query.limit ?? 100), 200)
+  if (prospectId) where.prospectId = prospectId
+  if (type) where.type = type
 
   const signals = await prisma.signal.findMany({
     where,
     orderBy: { detectedAt: 'desc' },
-    take: limit,
+    take: Math.min(limit ?? 100, 200),
     include: { prospect: { select: { id: true, companyName: true } } }
   })
 
@@ -48,14 +55,37 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
   res.json({ signals: withFreshness })
 }))
 
+// strength/reliability/relevance accept numeric strings (coerced) to match the
+// previous hand-rolled Number(...) behaviour. `type` is validated as a non-empty
+// string here and mapped to the signal enum downstream.
+const createSignalSchema = z.object({
+  workspaceId: workspaceIdField,
+  prospectId: nonEmptyString,
+  type: nonEmptyString,
+  strength: z.coerce.number().min(0, 'strength must be 0-100').max(100, 'strength must be 0-100'),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  sourceUrl: z.string().optional(),
+  source: z.string().optional(),
+  sourceReliability: z.coerce.number().optional(),
+  industryRelevance: z.coerce.number().optional(),
+  detectedAt: z.union([z.string(), z.number()]).optional(),
+  evidence: z.object({
+    provider: z.string().optional(),
+    sourceType: z.string().optional(),
+    sourceUrl: z.string().optional(),
+    observedAt: z.union([z.string(), z.number()]).optional(),
+    expiresAt: z.union([z.string(), z.number()]).optional(),
+    confidence: z.coerce.number().optional(),
+    rawText: z.string().optional(),
+  }).optional(),
+})
+
 // POST /api/signals — add a manual signal
 signalsRouter.post('/', asyncHandler(async (req, res) => {
-  const { workspaceId, prospectId, type, strength, title, description, sourceUrl, source,
-    sourceReliability, industryRelevance, detectedAt } = req.body
-
-  if (!workspaceId || !prospectId) throw new ApiError(400, 'workspaceId and prospectId required')
-  if (!type) throw new ApiError(400, 'type required')
-  if (strength === undefined || strength < 0 || strength > 100) throw new ApiError(400, 'strength must be 0-100')
+  const body = parseBody(createSignalSchema, req)
+  const { workspaceId, prospectId, type, strength, title, description, sourceUrl,
+    sourceReliability, industryRelevance } = body
 
   const user = (req as AuthedRequest).user
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -66,24 +96,24 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Prospect does not belong to this workspace')
   }
 
-  const resolvedSource = source ?? 'manual'
-  const resolvedDetectedAt = detectedAt ? new Date(detectedAt) : new Date()
+  const resolvedSource = body.source ?? 'manual'
+  const resolvedDetectedAt = body.detectedAt ? new Date(body.detectedAt) : new Date()
 
   // Optionally record provenance. When an `evidence` object is supplied, the
   // ingest service creates an EvidenceSource and links the signal to it.
   let evidenceInput
-  const evidence = req.body?.evidence
-  if (evidence && typeof evidence === 'object') {
-    const provider = typeof evidence.provider === 'string' ? evidence.provider.trim() : ''
-    const sourceType = typeof evidence.sourceType === 'string' ? evidence.sourceType.trim() : ''
+  const evidence = body.evidence
+  if (evidence) {
+    const provider = evidence.provider?.trim() ?? ''
+    const sourceType = evidence.sourceType?.trim() ?? ''
     if (!provider || !sourceType) throw new ApiError(400, 'evidence requires provider and sourceType')
     evidenceInput = {
       provider,
       sourceType,
-      sourceUrl: typeof evidence.sourceUrl === 'string' ? evidence.sourceUrl : sourceUrl ?? null,
+      sourceUrl: evidence.sourceUrl ?? sourceUrl ?? null,
       observedAt: evidence.observedAt ? new Date(evidence.observedAt) : resolvedDetectedAt,
       expiresAt: evidence.expiresAt ? new Date(evidence.expiresAt) : null,
-      confidence: Number(evidence.confidence),
+      confidence: evidence.confidence ?? NaN,
       rawText: typeof evidence.rawText === 'string' ? evidence.rawText.slice(0, 5000) : null,
     }
   }
@@ -91,14 +121,14 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   const signal = await ingestSignal({
     workspaceId,
     prospectId,
-    type,
-    strength: Number(strength),
+    type: type as SignalType,
+    strength,
     source: resolvedSource,
     title: title ?? null,
     description: description ?? null,
     sourceUrl: sourceUrl ?? null,
-    sourceReliability: sourceReliability !== undefined ? Number(sourceReliability) : undefined,
-    industryRelevance: industryRelevance !== undefined ? Number(industryRelevance) : undefined,
+    sourceReliability,
+    industryRelevance,
     detectedAt: resolvedDetectedAt,
     evidence: evidenceInput,
   })

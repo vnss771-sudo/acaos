@@ -1,7 +1,9 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
 import { isValidEmail } from '../lib/validation.js'
@@ -11,17 +13,29 @@ import type { AuthedRequest } from '../types/auth.js'
 export const mailboxRouter = Router()
 mailboxRouter.use(requireAuth)
 
+// `to` stays optional here on purpose: recipient validity is checked in-handler
+// *after* the SMTP-configured guard, so an unconfigured workspace returns 503
+// rather than leaking that the recipient was the problem.
+const sendTestSchema = z.object({
+  workspaceId: workspaceIdField,
+  to: z.string().optional(),
+  subject: z.string().optional(),
+  html: z.string().optional(),
+})
+const syncSchema = z.object({ workspaceId: workspaceIdField })
+const checkDomainSchema = z.object({ domain: z.string().trim().min(1, 'domain required') })
+
 mailboxRouter.post(
   '/send-test',
   requireVerifiedEmail,
   mailRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const to = String(req.body?.to || '').trim()
-    const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : 'Test'
-    const html = typeof req.body?.html === 'string' ? req.body.html : '<p>Hello</p>'
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const parsed = parseBody(sendTestSchema, req)
+    const workspaceId = parsed.workspaceId
+    const to = (parsed.to ?? '').trim()
+    const subject = typeof parsed.subject === 'string' ? parsed.subject.trim() : 'Test'
+    const html = typeof parsed.html === 'string' ? parsed.html : '<p>Hello</p>'
 
     const emailCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
     if (!isMailConfigured(emailCfg)) throw new ApiError(503, 'SMTP is not configured')
@@ -45,8 +59,7 @@ mailboxRouter.post(
   syncRateLimit,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseBody(syncSchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })
     if (!member) throw new ApiError(403, 'Access denied')
@@ -66,8 +79,7 @@ mailboxRouter.post(
 mailboxRouter.get(
   '/check-domain',
   asyncHandler(async (req, res) => {
-    const domain = String(req.query.domain || '').trim()
-    if (!domain) throw new ApiError(400, 'domain required')
+    const { domain } = parseQuery(checkDomainSchema, req)
 
     let records: string[] = []
     try {

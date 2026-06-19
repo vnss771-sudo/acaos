@@ -1,6 +1,8 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
+import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
 import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
@@ -11,22 +13,22 @@ import type { BillingPlan } from '@prisma/client'
 
 export const billingRouter = Router()
 
+// Accept a server-side plan enum, never a raw Stripe price id from the client. A
+// client-supplied price could point at an arbitrary (cheaper or unintended) price
+// in the Stripe account; the price is resolved server-side from the chosen plan.
+const checkoutSchema = z.object({
+  workspaceId: workspaceIdField,
+  plan: z.enum(['starter', 'growth']),
+})
+const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
+const workspaceBodySchema = z.object({ workspaceId: workspaceIdField })
+
 billingRouter.post(
   '/checkout',
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    // Accept a server-side plan enum, never a raw Stripe price id from the
-    // client. A client-supplied price could point at an arbitrary (cheaper or
-    // unintended) price in the Stripe account; the price is resolved server-side
-    // from the chosen plan instead.
-    const plan = typeof req.body?.plan === 'string' ? req.body.plan.trim() : ''
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    if (plan !== 'starter' && plan !== 'growth') {
-      throw new ApiError(400, 'plan must be "starter" or "growth"')
-    }
+    const { workspaceId, plan } = parseBody(checkoutSchema, req)
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
     if (!allowed) throw new ApiError(403, 'Workspace billing access denied')
@@ -53,8 +55,7 @@ billingRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
     if (!allowed) throw new ApiError(403, 'Access denied')
@@ -80,8 +81,7 @@ billingRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseBody(workspaceBodySchema, req)
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
     if (!allowed) throw new ApiError(403, 'Access denied')
