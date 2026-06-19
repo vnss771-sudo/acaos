@@ -34,7 +34,10 @@
     "eval:outreach": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/eval-outreach.ts",
     "start:prod": "node scripts/start-with-migrations.mjs",
     "smoke:api": "node scripts/smoke-api-health.mjs",
-    "pack": "node scripts/make-zips.mjs"
+    "pack": "node scripts/make-zips.mjs",
+    "pretypecheck": "node scripts/ensure-prisma.mjs",
+    "pretest": "node scripts/ensure-prisma.mjs",
+    "prebuild": "node scripts/ensure-prisma.mjs"
   },
   "overrides": {
     "nodemailer": "^9.0.1",

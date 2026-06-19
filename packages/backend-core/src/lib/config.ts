@@ -65,6 +65,17 @@ export function validateConfig(): void {
     for (const key of REQUIRED_IN_PRODUCTION) {
       if (!process.env[key]?.trim()) problems.push(`${key} is required in production`)
     }
+    // Rate limiting must never be disabled in production — one stray env var would
+    // drop auth/AI/mail/sync throttles. Refuse to boot rather than run wide open.
+    if (process.env.RATE_LIMIT_DISABLED === 'true') {
+      problems.push('RATE_LIMIT_DISABLED must not be "true" in production')
+    }
+    // /metrics serves openly when METRICS_TOKEN is unset; the endpoint itself
+    // fails closed in production (404), but warn so operators set a token or front
+    // it with network ACLs deliberately.
+    if (!process.env.METRICS_TOKEN?.trim()) {
+      console.warn('[config] METRICS_TOKEN not set — /metrics is disabled in production (returns 404)')
+    }
     for (const { key, feature } of FEATURE_GATED) {
       if (!process.env[key]?.trim()) {
         console.warn(`[config] ${key} not set — ${feature} will be unavailable`)
