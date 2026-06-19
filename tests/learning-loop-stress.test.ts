@@ -65,13 +65,15 @@ describe('win rate extremes', () => {
     assert.equal(r.signalWeights.HIRING, expected)
   })
 
-  it('all LOST → baselineWinRate = 0, signal weight floored at 0.5x (no NaN)', () => {
+  it('all LOST → baselineWinRate = 0, weights left uncalibrated (no signal to learn, no NaN)', () => {
     const r = calibrate(Array.from({ length: 10 }, () => make('LOST', 'retail', 5, ['FUNDING'])))
     assert.equal(r.stats.baselineWinRate, 0)
-    // typeWinRate=0, lift=0/0.01=0 → clamped to 0.5
-    const expected = Math.round(EVENT_BASE_WEIGHTS.FUNDING * 0.5)
-    assert.equal(r.signalWeights.FUNDING, expected)
-    assert.ok(Number.isFinite(r.signalWeights.FUNDING), 'No NaN/Infinity when win rate is 0')
+    // With zero wins there is no win-rate lift to learn from; rather than floor
+    // every weight off a loss streak, calibration is skipped and weights are
+    // left as-is. No NaN/Infinity from a zero baseline.
+    assert.equal(r.stats.calibrated, false)
+    assert.equal(r.stats.reason, 'insufficient wins')
+    assert.deepEqual(r.signalWeights, {})
   })
 
   it('50/50 split → baselineWinRate = 0.5', () => {

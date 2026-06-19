@@ -68,7 +68,10 @@ export function App() {
 
   const { toasts, toast, removeToast } = useToast()
 
-  function logout() {
+  // Memoized so its identity is stable: `api` depends on it (useApi), and several
+  // views deliberately key data-loading effects on `api`. A fresh logout every
+  // render would churn `api` and defeat that.
+  const logout = useCallback(() => {
     // The refresh cookie is HttpOnly; the server clears it. A custom header
     // satisfies the CSRF guard.
     fetch(`${API}/api/auth/logout`, {
@@ -80,7 +83,7 @@ export function App() {
     setUser(null)
     setWorkspaces([])
     setActiveWsId(null)
-  }
+  }, [])
 
   const api = useApi(token, logout, setToken)
 
@@ -246,11 +249,11 @@ export function App() {
 
         {/* Past-due payment warning banner */}
         {activeWorkspace?.subscriptionStatus === 'past_due' && (
-          <div style={{
+          <div role="alert" style={{
             background: '#7c2d12', borderBottom: '1px solid #b45309',
             padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0
           }}>
-            <span style={{ fontSize: 16 }}>⚠</span>
+            <span aria-hidden="true" style={{ fontSize: 16 }}>⚠</span>
             <span style={{ fontSize: 13, color: '#fde68a', flex: 1 }}>
               Your last payment failed. AI features are limited until billing is updated.
             </span>

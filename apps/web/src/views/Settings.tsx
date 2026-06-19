@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { User, Workspace, WorkspaceMember } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
@@ -91,17 +92,20 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
 
   useEffect(() => {
     if (!workspace) return
+    // Drop results from a superseded workspace so a slow response for the previous
+    // workspace can't populate the current one's settings forms.
+    let cancelled = false
     setMembersLoading(true)
     api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
-      .then(d => setMembers(d.members || []))
+      .then(d => { if (!cancelled) setMembers(d.members || []) })
       .catch(() => {})
-      .finally(() => setMembersLoading(false))
+      .finally(() => { if (!cancelled) setMembersLoading(false) })
     api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
-      .then(d => setPendingInvites(d.invites || []))
+      .then(d => { if (!cancelled) setPendingInvites(d.invites || []) })
       .catch(() => {})
     api<{ icp: IcpConfig | null }>(`/api/workspaces/${workspace.id}/icp`)
       .then(d => {
-        if (d.icp) {
+        if (d.icp && !cancelled) {
           setIcp(d.icp)
           setIcpForm({
             targetIndustries: d.icp.targetIndustries.join(', '),
@@ -115,7 +119,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .catch(() => {})
     api<{ config: Record<string, unknown> | null }>(`/api/workspaces/${workspace.id}/email-config`)
       .then(d => {
-        if (d.config) {
+        if (d.config && !cancelled) {
           setEmailForm({
             smtpHost: String(d.config.smtpHost ?? ''),
             smtpPort: String(d.config.smtpPort ?? '587'),
@@ -134,6 +138,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
         }
       })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [workspace?.id])
 
   // Compliance: fetch domain check and suppression count when email config is set
@@ -165,6 +170,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .then(d => setSuppressionCount(d.suppressions?.length ?? 0))
       .catch(() => setSuppressionCount(null))
   }, [workspace?.id])
+
+  // Dismiss the API-key modal with Escape (only active while it's open).
+  useEscapeKey(() => setNewKeyModal(null), !!newKeyModal)
 
   async function saveProfile() {
     setSavingProfile(true)
@@ -360,7 +368,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
         }}>
-          <div style={{ ...s.card, maxWidth: 480, width: '90%' }}>
+          <div role="dialog" aria-modal="true" aria-label="New API key" style={{ ...s.card, maxWidth: 480, width: '90%' }}>
             <div style={{ color: colors.amber, fontWeight: 700, marginBottom: 8 }}>⚠ Save this key — it will not be shown again</div>
             <div style={{
               background: '#0b1220', border: `1px solid ${colors.border}`,
@@ -397,15 +405,15 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
         )}
         <div style={{ display: 'grid', gap: 12, maxWidth: 400, marginBottom: 16 }}>
           <div>
-            <label style={s.label}>Email</label>
+            <label style={s.label} htmlFor="settings-field-0">Email</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input style={{ ...s.input, flex: 1, opacity: 0.6, cursor: 'not-allowed' }} value={user.email} disabled />
+              <input id="settings-field-0" style={{ ...s.input, flex: 1, opacity: 0.6, cursor: 'not-allowed' }} value={user.email} disabled />
               {user.emailVerified && <span style={{ color: '#22c55e', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>✓ Verified</span>}
             </div>
           </div>
           <div>
-            <label style={s.label}>Name</label>
-            <input style={s.input} value={profileForm.name} onChange={e => setProfileForm({ name: e.target.value })} placeholder="Your name" />
+            <label style={s.label} htmlFor="settings-field-1">Name</label>
+            <input id="settings-field-1" style={s.input} value={profileForm.name} onChange={e => setProfileForm({ name: e.target.value })} placeholder="Your name" />
           </div>
         </div>
         <button style={s.btn} disabled={savingProfile} onClick={saveProfile}>
@@ -423,8 +431,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             { label: 'Confirm New Password', field: 'confirmPassword', autocomplete: 'new-password' }
           ].map(({ label, field, autocomplete }) => (
             <div key={field}>
-              <label style={s.label}>{label}</label>
-              <input
+              <label style={s.label} htmlFor="settings-field-2">{label}</label>
+              <input id="settings-field-2"
                 style={s.input}
                 type="password"
                 value={(passwordForm as Record<string, string>)[field]}
@@ -446,14 +454,14 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           <div style={s.sectionHeader}>Workspace</div>
           <div style={{ display: 'grid', gap: 12, maxWidth: 400, marginBottom: 16 }}>
             <div>
-              <label style={s.label}>Workspace Name</label>
-              <input style={s.input} value={wsForm.name} onChange={e => setWsForm(f => ({ ...f, name: e.target.value }))} />
+              <label style={s.label} htmlFor="settings-field-3">Workspace Name</label>
+              <input id="settings-field-3" style={s.input} value={wsForm.name} onChange={e => setWsForm(f => ({ ...f, name: e.target.value }))} />
             </div>
             <div>
-              <label style={s.label}>Slug</label>
+              <label style={s.label} htmlFor="settings-field-4">Slug</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: colors.textFaint, fontSize: 14 }}>acaos.app/</span>
-                <input
+                <input id="settings-field-4"
                   style={{ ...s.input, flex: 1 }}
                   value={wsForm.slug}
                   onChange={e => setWsForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))}
@@ -461,12 +469,12 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               </div>
             </div>
             <div>
-              <label style={s.label}>Sender Business Name <span style={{ color: colors.textFaint, fontWeight: 400 }}>(CAN-SPAM / GDPR)</span></label>
-              <input style={s.input} placeholder="Acme Services LLC" value={wsForm.senderBusinessName} onChange={e => setWsForm(f => ({ ...f, senderBusinessName: e.target.value }))} />
+              <label style={s.label} htmlFor="settings-field-5">Sender Business Name <span style={{ color: colors.textFaint, fontWeight: 400 }}>(CAN-SPAM / GDPR)</span></label>
+              <input id="settings-field-5" style={s.input} placeholder="Acme Services LLC" value={wsForm.senderBusinessName} onChange={e => setWsForm(f => ({ ...f, senderBusinessName: e.target.value }))} />
             </div>
             <div>
-              <label style={s.label}>Sender Postal Address</label>
-              <input style={s.input} placeholder="123 Main St, City, ST 00000, USA" value={wsForm.senderPostalAddress} onChange={e => setWsForm(f => ({ ...f, senderPostalAddress: e.target.value }))} />
+              <label style={s.label} htmlFor="settings-field-6">Sender Postal Address</label>
+              <input id="settings-field-6" style={s.input} placeholder="123 Main St, City, ST 00000, USA" value={wsForm.senderPostalAddress} onChange={e => setWsForm(f => ({ ...f, senderPostalAddress: e.target.value }))} />
               <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>Included in outbound email footer to meet commercial email regulations.</div>
             </div>
           </div>
@@ -526,8 +534,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                 <>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
                     <div>
-                      <label style={s.label}>Email (existing account)</label>
-                      <input
+                      <label style={s.label} htmlFor="settings-field-7">Email (existing account)</label>
+                      <input id="settings-field-7"
                         style={{ ...s.input, width: 220 }}
                         placeholder="colleague@company.com"
                         value={memberForm.email}
@@ -535,8 +543,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                       />
                     </div>
                     <div>
-                      <label style={s.label}>Role</label>
-                      <select
+                      <label style={s.label} htmlFor="settings-field-8">Role</label>
+                      <select id="settings-field-8"
                         style={{ ...s.input, width: 120 }}
                         value={memberForm.role}
                         onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
@@ -557,8 +565,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                     <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Send Invite Email</div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       <div>
-                        <label style={s.label}>Email</label>
-                        <input
+                        <label style={s.label} htmlFor="settings-field-9">Email</label>
+                        <input id="settings-field-9"
                           style={{ ...s.input, width: 220 }}
                           placeholder="new-user@company.com"
                           value={inviteForm.email}
@@ -566,8 +574,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                         />
                       </div>
                       <div>
-                        <label style={s.label}>Role</label>
-                        <select
+                        <label style={s.label} htmlFor="settings-field-10">Role</label>
+                        <select id="settings-field-10"
                           style={{ ...s.input, width: 120 }}
                           value={inviteForm.role}
                           onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}
@@ -594,7 +602,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                                 <span style={{ color: colors.text, fontSize: 13 }}>{inv.email}</span>
                                 <span style={{ color: colors.textFaint, fontSize: 12, marginLeft: 8 }}>({inv.role})</span>
                               </div>
-                              <button style={s.btnDanger} onClick={() => cancelInvite(inv.id)}>✕</button>
+                              <button style={s.btnDanger} aria-label={`Cancel invite for ${inv.email}`} onClick={() => cancelInvite(inv.id)}>✕</button>
                             </div>
                           ))}
                         </div>
@@ -617,8 +625,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           </div>
           <div style={{ display: 'grid', gap: 12, maxWidth: 500, marginBottom: 16 }}>
             <div>
-              <label style={s.label}>Target Industries (comma-separated)</label>
-              <input
+              <label style={s.label} htmlFor="settings-field-11">Target Industries (comma-separated)</label>
+              <input id="settings-field-11"
                 style={s.input}
                 placeholder="e.g. HVAC, Electrical, Plumbing"
                 value={icpForm.targetIndustries}
@@ -626,8 +634,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               />
             </div>
             <div>
-              <label style={s.label}>Target Geographies (comma-separated)</label>
-              <input
+              <label style={s.label} htmlFor="settings-field-12">Target Geographies (comma-separated)</label>
+              <input id="settings-field-12"
                 style={s.input}
                 placeholder="e.g. Brisbane, Sydney, Melbourne"
                 value={icpForm.targetGeos}
@@ -636,8 +644,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label style={s.label}>Min Employees</label>
-                <input
+                <label style={s.label} htmlFor="settings-field-13">Min Employees</label>
+                <input id="settings-field-13"
                   style={s.input}
                   type="number"
                   min="0"
@@ -647,8 +655,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                 />
               </div>
               <div>
-                <label style={s.label}>Max Employees</label>
-                <input
+                <label style={s.label} htmlFor="settings-field-14">Max Employees</label>
+                <input id="settings-field-14"
                   style={s.input}
                   type="number"
                   min="0"
@@ -696,8 +704,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                   { label: 'From Address', field: 'smtpFrom', placeholder: 'You <you@company.com>' },
                 ].map(({ label, field, placeholder }) => (
                   <div key={field} style={field === 'smtpFrom' ? { gridColumn: '1/-1' } : {}}>
-                    <label style={s.label}>{label}</label>
-                    <input
+                    <label style={s.label} htmlFor="settings-field-15">{label}</label>
+                    <input id="settings-field-15"
                       style={s.input}
                       type={field === 'smtpPass' ? 'password' : 'text'}
                       placeholder={placeholder}
@@ -731,8 +739,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                   { label: emailForm.imapPassSet ? 'Password (leave blank to keep)' : 'Password', field: 'imapPass', placeholder: '••••••••' },
                 ].map(({ label, field, placeholder }) => (
                   <div key={field}>
-                    <label style={s.label}>{label}</label>
-                    <input
+                    <label style={s.label} htmlFor="settings-field-16">{label}</label>
+                    <input id="settings-field-16"
                       style={s.input}
                       type={field === 'imapPass' ? 'password' : 'text'}
                       placeholder={placeholder}

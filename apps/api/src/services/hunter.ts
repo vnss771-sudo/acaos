@@ -1,6 +1,8 @@
 // Hunter.io domain-search: given a company domain, find the best contact email.
 // Used as a post-discovery enrichment step when a prospect has no contactEmail.
 
+import { fetchWithTimeout } from '../lib/fetchWithTimeout.js'
+
 type HunterContact = {
   email: string
   firstName?: string
@@ -24,7 +26,7 @@ export async function findContactEmail(domain: string): Promise<HunterContact | 
   url.searchParams.set('type', 'personal')
 
   try {
-    const res = await fetch(url.toString())
+    const res = await fetchWithTimeout(url.toString())
     if (!res.ok) return null
 
     const data = await res.json() as {

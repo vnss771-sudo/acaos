@@ -3,5 +3,10 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile.worker"
 
 [deploy]
+# The worker serves a liveness endpoint on $PORT (see startHealthServer), so a
+# wedged-but-not-crashed worker is detected and restarted instead of silently
+# stalling the queues.
+healthcheckPath = "/live"
+healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

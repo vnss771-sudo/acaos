@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import type { RecordProspectOutcomeRequest, OutcomeStage } from '@acaos/shared'
 import type { Workspace, OpportunitiesData, ForecastData, Prospect, Signal, View } from '../types.js'
 import { BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS, TIER_COLOR } from '../types.js'
@@ -330,16 +330,20 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'opportunities' | 'forecast'>('opportunities')
 
+  // Monotonic request id so a slow earlier load can't overwrite a newer one when
+  // the workspace switches.
+  const loadReqRef = useRef(0)
   const load = () => {
     if (!workspace) return
+    const reqId = ++loadReqRef.current
     setLoading(true)
     Promise.all([
       api<OpportunitiesData>(`/api/intelligence/opportunities?workspaceId=${workspace.id}`),
       api<ForecastData>(`/api/intelligence/forecast?workspaceId=${workspace.id}`)
     ])
-      .then(([opp, fc]) => { setOpportunities(opp); setForecast(fc) })
-      .catch(e => toast.error(e.message))
-      .finally(() => setLoading(false))
+      .then(([opp, fc]) => { if (reqId === loadReqRef.current) { setOpportunities(opp); setForecast(fc) } })
+      .catch(e => { if (reqId === loadReqRef.current) toast.error(e.message) })
+      .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
   }
 
   useEffect(() => { load() }, [workspace?.id])

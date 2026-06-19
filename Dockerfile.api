@@ -26,6 +26,18 @@ RUN npm run build -w @acaos/api
 EXPOSE 4000
 ENV NODE_ENV=production
 
+# Drop to the unprivileged 'node' user shipped in the base image so a container
+# escape / RCE does not run as root. The app and its caches must be node-owned
+# (the startup script runs `npx prisma migrate deploy`, which needs a writable
+# HOME/npm cache).
+RUN chown -R node:node /app
+USER node
+
+# Liveness from inside the container (Node 22 has global fetch). Honors the
+# platform-injected PORT (Railway sets 8080), falling back to the EXPOSEd 4000.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 # Safe startup: versioned migrate (with one-time auto-baseline), then start.
 # Never `prisma db push` in production — it can drop data on a schema change.
 CMD ["node", "scripts/start-with-migrations.mjs"]

@@ -158,8 +158,10 @@ export async function recordProcessedReply(params: {
         data: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
       })
       if (advance) {
-        await tx.lead.update({
-          where: { id: lead!.id },
+        // Scope writes by workspaceId (in scope here) as defense-in-depth so a
+        // mis-attributed lead id can never mutate another tenant's row.
+        await tx.lead.updateMany({
+          where: { id: lead!.id, workspaceId },
           data: { stage: 'REPLIED', lastContactedAt: new Date() },
         })
       }
@@ -167,7 +169,7 @@ export async function recordProcessedReply(params: {
       // CLOSED lead that replies still deserves an accurate outreach record.
       if (lead) {
         await tx.outreachSent.updateMany({
-          where: { leadId: lead.id, status: 'SENT' },
+          where: { leadId: lead.id, workspaceId, status: 'SENT' },
           data: { status: 'REPLIED', repliedAt: new Date() },
         })
       }

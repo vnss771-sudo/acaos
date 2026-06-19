@@ -12,7 +12,11 @@ export function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove
   if (toasts.length === 0) return null
 
   return (
-    <div style={{
+    <div
+      role="region"
+      aria-label="Notifications"
+      aria-live="polite"
+      style={{
       position: 'fixed',
       bottom: 24,
       right: 24,
@@ -26,7 +30,7 @@ export function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove
       {toasts.map(t => {
         const c = TOAST_COLORS[t.type]
         return (
-          <div key={t.id} style={{
+          <div key={t.id} role={t.type === 'error' ? 'alert' : 'status'} style={{
             background: c.bg,
             border: `1px solid ${c.border}`,
             borderRadius: 10,
@@ -37,10 +41,11 @@ export function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove
             boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
             animation: 'slideIn 0.2s ease'
           }}>
-            <span style={{ color: c.border, fontSize: 14, marginTop: 1, flexShrink: 0 }}>{c.icon}</span>
+            <span aria-hidden="true" style={{ color: c.border, fontSize: 14, marginTop: 1, flexShrink: 0 }}>{c.icon}</span>
             <span style={{ color: '#e2e8f0', fontSize: 14, flex: 1, lineHeight: 1.4 }}>{t.message}</span>
             <button
               onClick={() => onRemove(t.id)}
+              aria-label="Dismiss notification"
               style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 0, fontSize: 16, lineHeight: 1, flexShrink: 0 }}
             >
               ×

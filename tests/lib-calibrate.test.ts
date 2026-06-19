@@ -32,16 +32,20 @@ test('computes the baseline win rate across all outcomes', () => {
   assert.equal(res.stats.baselineWinRate, 0.6)
 })
 
-test('a signal type that always wins gets its weight boosted (multiplier capped at 2x)', () => {
-  // FUNDING appears only on WON; PROCUREMENT appears on a mix → lower lift.
+test('a high-win-rate signal type is boosted, but shrinkage keeps a small sample under the 2x cap', () => {
+  // FUNDING appears only on WON; PROCUREMENT appears only on LOST.
   const outcomes = [
     ...Array.from({ length: 5 }, () => outcome('WON', 'tech', 40, ['FUNDING'])),
     ...Array.from({ length: 5 }, () => outcome('LOST', 'retail', 10, ['PROCUREMENT'])),
   ]
   const res = calibrate(outcomes)
-  // baseline win rate = 0.5; FUNDING win rate = 1.0 → lift 2.0 → multiplier clamped to 2.0
-  assert.equal(res.signalWeights.FUNDING, Math.round(EVENT_BASE_WEIGHTS.FUNDING * 2.0))
-  // PROCUREMENT win rate = 0 → lift 0 → multiplier clamped to floor 0.5
+  const fundingBase = EVENT_BASE_WEIGHTS.FUNDING
+  // baseline win rate = 0.5; FUNDING wins 5/5, but the win rate is shrunk toward
+  // the baseline (small sample) so the multiplier lands below the hard 2x cap
+  // while still boosting the weight above its base.
+  assert.ok(res.signalWeights.FUNDING > fundingBase, 'high win-rate signal must be boosted')
+  assert.ok(res.signalWeights.FUNDING <= Math.round(fundingBase * 2.0), 'never exceeds the 2x cap')
+  // PROCUREMENT never wins → multiplier clamped to the 0.5 floor.
   assert.equal(res.signalWeights.PROCUREMENT, Math.round(EVENT_BASE_WEIGHTS.PROCUREMENT * 0.5))
 })
 
@@ -68,11 +72,14 @@ test('ICP update captures top WON industries and an employee-count band', () => 
   assert.ok(res.icpUpdate.minEmployees! <= res.icpUpdate.maxEmployees!)
 })
 
-test('lift uses a safe denominator when no outcome was won (no division by zero)', () => {
+test('does not calibrate weights when there are zero wins (no signal lift to learn)', () => {
   const outcomes = Array.from({ length: 10 }, () => outcome('LOST', 'retail', 10, ['FUNDING']))
   const res = calibrate(outcomes)
+  // An all-LOST sample has no win-rate signal; calibrating would just floor every
+  // weight uniformly and discard existing tuning. Report the baseline but leave
+  // weights untouched (no NaN/Infinity, no division by zero).
+  assert.equal(res.stats.calibrated, false)
+  assert.equal(res.stats.reason, 'insufficient wins')
   assert.equal(res.stats.baselineWinRate, 0)
-  // FUNDING win rate 0 → multiplier floor 0.5, finite weight (no NaN/Infinity)
-  assert.ok(Number.isFinite(res.signalWeights.FUNDING))
-  assert.equal(res.signalWeights.FUNDING, Math.round(EVENT_BASE_WEIGHTS.FUNDING * 0.5))
+  assert.deepEqual(res.signalWeights, {})
 })

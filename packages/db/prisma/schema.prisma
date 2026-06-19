@@ -55,6 +55,10 @@ model User {
   name                String?
   passwordHash        String?
   emailVerified       Boolean                 @default(false)
+  // Platform (founder) admin access to the cross-tenant /api/admin panel. Set
+  // out-of-band (not user-settable) — the gate must not rest on a mutable env
+  // var alone. Defaults false so no account is admin unless explicitly granted.
+  isPlatformAdmin     Boolean                 @default(false)
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
   memberships         Membership[]
@@ -241,6 +245,9 @@ model OutreachSent {
   @@index([leadId])
   @@index([toEmail])
   @@index([outreachIntentId])
+  // Serves the per-workspace deliverability counters (status + window filters in
+  // the campaigns/mission stats and the send loop).
+  @@index([workspaceId, status, sentAt])
   // Outbox idempotency: at most one send row per (campaign, lead). Postgres
   // treats NULLs as distinct, so non-campaign/non-lead sends are unaffected.
   @@unique([campaignId, leadId])
@@ -309,6 +316,8 @@ model UsageRecord {
 
   @@unique([workspaceId, month, action])
   @@index([workspaceId])
+  // Serves the admin cross-workspace usage rollups that filter by month alone.
+  @@index([month])
 }
 
 // Deduplicate IMAP messages processed during mailbox sync.

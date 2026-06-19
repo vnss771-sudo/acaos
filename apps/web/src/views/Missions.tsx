@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import type { UpdateMissionRequest, DiscoverProspectsRequest } from '@acaos/shared'
 import type { Mission, MissionDetail, MissionStatus, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
@@ -35,13 +35,17 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
   const [showBuilder, setShowBuilder] = useState(false)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
 
+  // Monotonic request id so only the latest load applies (load runs from the
+  // effect on workspace change and imperatively after status edits).
+  const loadReqRef = useRef(0)
   const load = useCallback(() => {
     if (!workspace) return
+    const reqId = ++loadReqRef.current
     setLoading(true)
     api<{ missions: Mission[] }>(`/api/missions?workspaceId=${workspace.id}`)
-      .then(d => setMissions(d.missions || []))
-      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load missions'))
-      .finally(() => setLoading(false))
+      .then(d => { if (reqId === loadReqRef.current) setMissions(d.missions || []) })
+      .catch(e => { if (reqId === loadReqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load missions') })
+      .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
   }, [api, workspace?.id, toast])
 
   useEffect(() => { load() }, [workspace?.id])
@@ -185,11 +189,13 @@ function MissionDetailPanel({ api, missionId, toast }: { api: ApiHook; missionId
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
     setLoading(true)
     api<MissionDetail>(`/api/missions/${missionId}`)
-      .then(setDetail)
-      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load mission detail'))
-      .finally(() => setLoading(false))
+      .then(d => { if (!cancelled) setDetail(d) })
+      .catch(e => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load mission detail') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [api, missionId])
 
   const panel: React.CSSProperties = { borderTop: `1px solid ${colors.border}`, marginTop: 8, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }

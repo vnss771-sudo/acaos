@@ -27,7 +27,9 @@ test('recordAudit writes an event with metadata', async () => {
 
 test('GET /admin/audit lists events for an admin (newest first, filterable)', async () => {
   const { user, workspace } = await seedUserWithWorkspace('admin@acaos.test')
-  process.env.ADMIN_EMAIL = 'admin@acaos.test'
+  // Primary admin path: the non-user-settable DB flag + a verified email (the
+  // hardened gate requires both — not just a matching ADMIN_EMAIL).
+  await prisma.user.update({ where: { id: user.id }, data: { isPlatformAdmin: true, emailVerified: true } })
   await recordAudit({ workspaceId: workspace.id, actorUserId: user.id, type: 'campaign.send', entityId: 'c1' })
   await recordAudit({ workspaceId: workspace.id, actorUserId: user.id, type: 'mission.create', entityId: 'm1' })
 
@@ -42,6 +44,9 @@ test('GET /admin/audit lists events for an admin (newest first, filterable)', as
 
 test('GET /admin/audit denies a non-admin', async () => {
   const { user } = await seedUserWithWorkspace('notadmin@acaos.test')
+  // Verified, but not a platform admin and not the ADMIN_EMAIL — denied by the
+  // admin gate (not merely the email-verification gate).
+  await prisma.user.update({ where: { id: user.id }, data: { emailVerified: true } })
   process.env.ADMIN_EMAIL = 'someoneelse@acaos.test'
   const res = await server.request('/api/admin/audit', { headers: { Authorization: bearer(user.id) } })
   assert.equal(res.status, 403)

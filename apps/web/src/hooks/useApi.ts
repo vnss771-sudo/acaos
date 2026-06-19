@@ -22,21 +22,34 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = DEFA
   }
 }
 
+// Single-flight the refresh: when several requests 401 at once they must share
+// one refresh round-trip, not each fire their own (which would spam /auth/refresh
+// and rotate the cookie repeatedly). Concurrent callers await the same promise.
+let inflightRefresh: Promise<string | null> | null = null
+
 async function tryRefresh(): Promise<string | null> {
-  // The refresh token lives in an HttpOnly cookie (sent automatically with
-  // credentials: 'include'); JS never sees it. A custom header satisfies the
-  // server's CSRF guard. The new access token comes back in the body.
+  if (inflightRefresh) return inflightRefresh
+  inflightRefresh = (async () => {
+    // The refresh token lives in an HttpOnly cookie (sent automatically with
+    // credentials: 'include'); JS never sees it. A custom header satisfies the
+    // server's CSRF guard. The new access token comes back in the body.
+    try {
+      const res = await fetchWithTimeout(`${API}/api/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Protection': '1' }
+      }, 15_000)
+      if (!res.ok) return null
+      const data = await res.json()
+      return data.token as string
+    } catch {
+      return null
+    }
+  })()
   try {
-    const res = await fetchWithTimeout(`${API}/api/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Protection': '1' }
-    }, 15_000)
-    if (!res.ok) return null
-    const data = await res.json()
-    return data.token as string
-  } catch {
-    return null
+    return await inflightRefresh
+  } finally {
+    inflightRefresh = null
   }
 }
 

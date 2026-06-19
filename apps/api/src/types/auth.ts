@@ -5,6 +5,7 @@ export type AuthUser = {
   email: string
   name: string | null
   emailVerified: boolean
+  isPlatformAdmin: boolean
 }
 
 export type AuthedRequest = Request & {

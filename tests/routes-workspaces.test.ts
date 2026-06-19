@@ -147,3 +147,58 @@ test('PUT /:id/email-config accepts a public host', async () => {
   assert.equal(res.status, 200)
   assert.equal(prisma.callsTo('workspaceEmailConfig', 'upsert').length, 1)
 })
+
+test('POST /:id/members — an owner can grant the admin role', async () => {
+  prisma = createFakePrisma(spec({
+    membership: {
+      findFirst: async (a: any) => (a?.where?.role?.in ? { role: 'owner' } : null),
+      create: async (a: any) => ({ id: 'm-new', ...a.data }),
+    },
+    user: { findUnique: async (a: any) => a?.where?.email
+      ? { id: 'u2', email: 'new@a.test', name: null }
+      : { id: USER, email: 'u1@a.test', name: null } },
+  }))
+  installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/members`, {
+    method: 'POST', headers: jsonAuth,
+    body: JSON.stringify({ email: 'new@a.test', role: 'admin' }),
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.member.role, 'admin')
+})
+
+test('POST /:id/members — an admin cannot grant the admin role (only owners can)', async () => {
+  prisma = createFakePrisma(spec({
+    // Caller is an admin (not owner); invitee is not yet a member.
+    membership: { findFirst: async (a: any) => (a?.where?.role?.in ? { role: 'admin' } : null) },
+    user: { findUnique: async (a: any) => a?.where?.email
+      ? { id: 'u2', email: 'new@a.test', name: null }
+      : { id: USER, email: 'u1@a.test', name: null } },
+  }))
+  installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/members`, {
+    method: 'POST', headers: jsonAuth,
+    body: JSON.stringify({ email: 'new@a.test', role: 'admin' }),
+  })
+  assert.equal(res.status, 403)
+  assert.equal(prisma.callsTo('membership', 'create').length, 0)
+})
+
+test('POST /:id/members — an admin can still add a regular member', async () => {
+  prisma = createFakePrisma(spec({
+    membership: {
+      findFirst: async (a: any) => (a?.where?.role?.in ? { role: 'admin' } : null),
+      create: async (a: any) => ({ id: 'm-new', ...a.data }),
+    },
+    user: { findUnique: async (a: any) => a?.where?.email
+      ? { id: 'u2', email: 'new@a.test', name: null }
+      : { id: USER, email: 'u1@a.test', name: null } },
+  }))
+  installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/members`, {
+    method: 'POST', headers: jsonAuth,
+    body: JSON.stringify({ email: 'new@a.test', role: 'member' }),
+  })
+  assert.equal(res.status, 201)
+  assert.equal(res.body.member.role, 'member')
+})

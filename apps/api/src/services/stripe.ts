@@ -1,6 +1,7 @@
 import Stripe from 'stripe'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
+import { stripeBreaker } from '../lib/circuit.js'
 
 function getStripe() {
   if (!hasEnv(['STRIPE_SECRET_KEY'])) {
@@ -54,16 +55,16 @@ export async function createCheckoutSession(
     sessionParams.customer_email = customerEmail
   }
 
-  return stripe.checkout.sessions.create(sessionParams)
+  return stripeBreaker.call(() => stripe.checkout.sessions.create(sessionParams))
 }
 
 export async function createBillingPortalSession(customerId: string) {
   const stripe = getStripe()
   const webBase = process.env.WEB_URL || process.env.API_URL || 'https://acaos.app'
-  return stripe.billingPortal.sessions.create({
+  return stripeBreaker.call(() => stripe.billingPortal.sessions.create({
     customer: customerId,
     return_url: `${webBase}/billing`
-  })
+  }))
 }
 
 export function constructWebhookEvent(payload: Buffer, sig: string) {

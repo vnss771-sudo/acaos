@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { CreateMissionRequest } from '@acaos/shared'
 import { colors, s } from '../styles.js'
 import type { Pack, Workspace } from '../types.js'
@@ -121,9 +122,11 @@ export function MissionBuilder({ workspace, api, toast, onCreated, onClose }: Pr
   const canProceed3 = true // goalType always has a value
   const canLaunch = (missionName.trim() || buildDefaultName(answer1)).length > 0
 
+  useEscapeKey(onClose)
+
   return (
     <div style={overlayStyle} onClick={onClose}>
-      <div style={cardStyle} onClick={e => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label="New mission" style={cardStyle} onClick={e => e.stopPropagation()}>
         {/* Header row */}
         <div style={{ ...s.flexBetween, marginBottom: 24 }}>
           <div style={{ color: colors.textMuted, fontSize: 13 }}>
