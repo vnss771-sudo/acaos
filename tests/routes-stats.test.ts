@@ -36,6 +36,7 @@ function spec() {
     scoringModel: { findUnique: async () => ({ weights: {}, performanceMetrics: {}, updateCount: 3, lastWeightUpdate: new Date() }) },
     usageRecord: { findMany: async () => [{ action: 'AI_RESEARCH', count: 2 }] },
     workspace: { findUnique: async () => ({ plan: 'free', subscriptionStatus: null }) },
+    discoveryRun: { groupBy: async () => [] },
   }
 }
 

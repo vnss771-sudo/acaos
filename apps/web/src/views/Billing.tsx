@@ -14,7 +14,12 @@ type UsageStats = {
   total: number
   limit: number
   plan: string
-  discovery?: { used: number; limit: number }
+  discovery?: {
+    used: number
+    limit: number
+    estimatedCostCents?: number
+    byProvider?: Record<string, { runs: number; costCents: number }>
+  }
   leads?: { used: number; limit: number }
 }
 
@@ -180,6 +185,28 @@ export function Billing({ api, workspace, toast }: Props) {
                 )}
               </div>
             ))}
+
+            {billingStatus.usage.discovery?.estimatedCostCents != null && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ color: colors.textMuted, fontSize: 13 }}>
+                  Estimated discovery cost this month
+                  {(() => {
+                    const by = billingStatus.usage.discovery.byProvider
+                    const parts = by
+                      ? Object.entries(by)
+                          .filter(([, v]) => v.costCents > 0)
+                          .map(([name, v]) => `${name} $${(v.costCents / 100).toFixed(2)}`)
+                      : []
+                    return parts.length > 0
+                      ? <span style={{ color: colors.textMuted, fontSize: 11, marginLeft: 6 }}>({parts.join(', ')})</span>
+                      : null
+                  })()}
+                </span>
+                <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>
+                  ${(billingStatus.usage.discovery.estimatedCostCents / 100).toFixed(2)}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

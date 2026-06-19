@@ -3,7 +3,8 @@
 
 import { test, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAndIncrementDiscoveryUsage, checkAndIncrementAiUsage, getMonthlyUsage } from '../packages/backend-core/src/lib/limits.ts'
+import { checkAndIncrementDiscoveryUsage, checkAndIncrementAiUsage, getMonthlyUsage, getMonthlyDiscoveryCost } from '../packages/backend-core/src/lib/limits.ts'
+import { DISCOVERY_PROVIDER_COST_CENTS } from '../packages/backend-core/src/lib/discoveryCost.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 test('getMonthlyUsage reports discovery + lead usage with plan limits', async () => {
@@ -51,4 +52,27 @@ test('discovery usage does not count against the AI monthly limit', async () => 
     where: { workspaceId_month_action: { workspaceId: workspace.id, month: currentMonth(), action: 'DISCOVERY' } },
   })
   assert.equal(disc!.count, 20)
+})
+
+test('getMonthlyDiscoveryCost weights recorded runs by provider', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await prisma.discoveryRun.createMany({
+    data: [
+      { workspaceId: workspace.id, source: 'apollo' },
+      { workspaceId: workspace.id, source: 'apollo' },
+      { workspaceId: workspace.id, source: 'google_places' },
+      { workspaceId: workspace.id, source: 'example' }, // unpriced → free
+    ],
+  })
+
+  const cost = await getMonthlyDiscoveryCost(workspace.id)
+  const expected = DISCOVERY_PROVIDER_COST_CENTS.apollo * 2 + DISCOVERY_PROVIDER_COST_CENTS.google_places
+  assert.equal(cost.totalCents, expected)
+  assert.equal(cost.byProvider.apollo.runs, 2)
+  assert.equal(cost.byProvider.apollo.costCents, DISCOVERY_PROVIDER_COST_CENTS.apollo * 2)
+  assert.equal(cost.byProvider.example.costCents, 0)
+
+  // And it surfaces through the aggregate usage view.
+  const usage = await getMonthlyUsage(workspace.id)
+  assert.equal(usage.discovery.estimatedCostCents, expected)
 })

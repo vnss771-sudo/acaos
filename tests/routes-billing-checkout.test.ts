@@ -29,6 +29,7 @@ function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: nu
     workspace: { findUnique: async () => ws },
     usageRecord: { findMany: async () => [] },
     lead: { count: async () => 0 },
+    discoveryRun: { groupBy: async () => [] },
   }
 }
 
