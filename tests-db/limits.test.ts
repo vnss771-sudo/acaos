@@ -3,7 +3,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAndIncrementAiUsage } from '../packages/backend-core/src/lib/limits.ts'
+import { checkAndIncrementAiUsage, refundAiUsage, getMonthlyUsage } from '../packages/backend-core/src/lib/limits.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
@@ -32,6 +32,23 @@ test('concurrent AI-usage increments never exceed the free plan cap', async () =
   const persisted = records.reduce((s, r) => s + r.count, 0)
   assert.ok(persisted <= 15, `persisted usage ${persisted} must not exceed 15`)
   assert.equal(persisted, ok, 'persisted count matches successful calls')
+})
+
+test('refundAiUsage returns a reserved call and floors at zero', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+
+  await checkAndIncrementAiUsage(workspace.id, 'AI_OUTREACH')
+  await checkAndIncrementAiUsage(workspace.id, 'AI_OUTREACH')
+  // One reserved call produced no usable draft → refund it.
+  await refundAiUsage(workspace.id, 'AI_OUTREACH')
+  let usage = await getMonthlyUsage(workspace.id)
+  assert.equal(usage.totals.AI_OUTREACH, 1, 'one refund leaves a single billed call')
+
+  // Refund the last one, then refund again past zero — must never go negative.
+  await refundAiUsage(workspace.id, 'AI_OUTREACH')
+  await refundAiUsage(workspace.id, 'AI_OUTREACH')
+  usage = await getMonthlyUsage(workspace.id)
+  assert.equal(usage.totals.AI_OUTREACH, 0, 'refunds floor at zero, never negative')
 })
 
 test('a growth (unlimited) workspace accepts many concurrent calls', async () => {

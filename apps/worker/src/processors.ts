@@ -17,7 +17,7 @@ import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
-import { checkAndIncrementAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { randomBytes } from 'crypto'
 
@@ -399,7 +399,11 @@ export async function sendCampaignBatch(
           } : undefined,
         })
         const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }
-        if (!parsed.subject || !parsed.email) { skipped++; continue }
+        if (!parsed.subject || !parsed.email) {
+          // No usable draft produced — refund the reserved AI call.
+          await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+          skipped++; continue
+        }
         subject = parsed.subject
         body    = parsed.email
 
@@ -415,6 +419,8 @@ export async function sendCampaignBatch(
         })
       } catch (err) {
         console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
+        // Generation failed after reserving the AI call — refund it.
+        await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
         failed++
         continue
       }
