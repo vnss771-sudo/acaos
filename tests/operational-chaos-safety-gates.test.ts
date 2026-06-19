@@ -70,6 +70,22 @@ test('operational chaos: approval mode is enforced before campaign enqueue', () 
   assert.ok(approvalIdx < enqueueIdx && approvedBodyIdx < enqueueIdx, 'Approval check must happen before enqueue')
 })
 
+test('operational chaos: worker must skip unapproved leads before any AI generation', () => {
+  // Regression guard for the approval-mode bypass: the send loop fetches APPROVED
+  // drafts only, so a lead with no included draft must be SKIPPED — never sent
+  // with freshly generated copy. The skip guard must therefore sit in the
+  // draft-generation branch and run BEFORE generateOutreach, or the entire
+  // approval gate is bypassed at send time.
+  const draftCheckIdx = processors.indexOf('if (lead.outreachDrafts[0])')
+  const skipGuardIdx = processors.indexOf('if (icp?.approvalMode) { skipped++; continue }')
+  const generateIdx = processors.indexOf('generateOutreach(')
+  assert.notEqual(draftCheckIdx, -1, 'Could not locate the draft-presence check')
+  assert.notEqual(skipGuardIdx, -1, 'Missing approval-mode skip guard in the draft-generation branch')
+  assert.notEqual(generateIdx, -1, 'Could not locate generateOutreach call')
+  assert.ok(draftCheckIdx < skipGuardIdx, 'Skip guard must be inside the no-approved-draft branch')
+  assert.ok(skipGuardIdx < generateIdx, 'Unapproved leads must be skipped before AI generation runs')
+})
+
 test('operational chaos: messageId is unique for reply correlation', () => {
   const outreach = modelBlock('OutreachSent')
   assert.match(outreach, /messageId\s+String\?\s+@unique/, 'messageId must remain unique for reply correlation')

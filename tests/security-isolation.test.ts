@@ -18,7 +18,6 @@ import {
   type FakePrisma, type TestServer
 } from './helpers/integration.ts'
 import { leadsRouter } from '../apps/api/src/routes/leads.ts'
-import { prospectsRouter } from '../apps/api/src/routes/prospects.ts'
 import { campaignsRouter } from '../apps/api/src/routes/campaigns.ts'
 import { workspaceRouter } from '../apps/api/src/routes/workspaces.ts'
 import { signJwt } from '../packages/backend-core/src/lib/jwt.ts'
@@ -33,7 +32,6 @@ const WS_A = 'workspace-alpha'
 const WS_B = 'workspace-bravo'
 const LEAD_IN_B = 'lead-in-ws-b'
 const CAMPAIGN_IN_B = 'campaign-in-ws-b'
-const PROSPECT_IN_B = 'prospect-in-ws-b'
 
 function membershipFor(userId: string, workspaceId: string) {
   return { id: `m-${userId}-${workspaceId}`, userId, workspaceId, role: 'member' }

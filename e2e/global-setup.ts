@@ -5,7 +5,6 @@ import { execSync } from 'node:child_process'
 // history, so re-running the suite is cheap.
 export default async function globalSetup() {
   const DATABASE_URL = process.env.DATABASE_URL!
-  // eslint-disable-next-line no-console
   console.log(`[e2e] applying migrations to ${DATABASE_URL.replace(/:[^:@/]+@/, ':***@')}`)
   execSync('npx prisma migrate deploy --schema packages/db/prisma/schema.prisma', {
     stdio: 'inherit',

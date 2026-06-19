@@ -3,7 +3,6 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 const ALG = 'aes-256-gcm'
 const KEY_LEN = 32
 const IV_LEN = 12
-const TAG_LEN = 16
 
 function getKey(): Buffer {
   const raw = process.env.EMAIL_ENCRYPTION_KEY || ''

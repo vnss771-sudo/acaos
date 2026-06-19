@@ -286,8 +286,9 @@ export async function sendCampaignBatch(
   const leads = await prisma.lead.findMany({
     where,
     include: {
-      // When approvalMode is on, only include APPROVED drafts so leads without
-      // an approved draft are skipped rather than triggering AI generation.
+      // When approvalMode is on, only include APPROVED drafts. A lead that ends
+      // up with no included draft is then skipped in the send loop below (it is
+      // NOT sent with freshly generated copy — that would bypass approval).
       outreachDrafts: {
         where: icp?.approvalMode ? { status: 'APPROVED' } : undefined,
         orderBy: { createdAt: 'desc' },
@@ -366,6 +367,13 @@ export async function sendCampaignBatch(
       subject = lead.outreachDrafts[0].subject
       body = lead.outreachDrafts[0].emailBody
     } else {
+      // Approval mode: only human-approved drafts may be sent. The query above
+      // includes APPROVED drafts only, so an empty drafts array here means this
+      // lead has nothing approved — it must be skipped, never sent with freshly
+      // generated copy. (Without this guard, generating below would bypass the
+      // entire approval gate.)
+      if (icp?.approvalMode) { skipped++; continue }
+
       // Check AI limit before generating
       try {
         await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')

@@ -102,11 +102,16 @@ A `Mission` model + `/api/missions` API + Missions view now exist; creating a mi
 **2. Approval workflow — now first-class**
 Drafts have a status (`DRAFTED | APPROVED | REJECTED | SENT | SKIPPED`), and a **Review Queue** (`/api/leads/approvals/pending` + the Approvals view) lets the team edit copy and approve/reject before anything sends; `approvalMode` gates campaign sends to `APPROVED` drafts. Approvals/edits are audit-logged.
 
-**3. Example data not excluded from all intelligence endpoints**
-Example/seed prospects are hidden from the opportunities list when real prospects exist. But the forecast, stats, and learning/calibration endpoints do not all apply the same `isExample` filter consistently. Example data could skew intelligence reports.
+**3. Example data excluded from intelligence endpoints — Resolved ✓**
+Once any real prospect exists, example/seed prospects are filtered out everywhere it matters: `/api/intelligence/opportunities`, `/forecast` (including won-revenue, via the prospect relation), and `/stats` (prospect counts, tier buckets, stage distribution, and signal breakdown through the prospect relation) all apply the same `isExample: false` gate. The learning loop aggregates `ScoringOutcome` rows, which are only ever recorded against real in-workspace prospects, so calibration is unaffected by demo data. ✓ Resolved.
 
-**4. Compliance footer is basic**
-Outbound emails include an unsubscribe link, which is good. But the footer should also include the workspace business name, sender email, and a contact address to meet commercial email compliance requirements (CAN-SPAM, GDPR). Needs `senderBusinessName` and `senderPostalAddress` fields on the workspace.
+**4. Compliance footer — Resolved ✓**
+Outbound emails carry a full compliance footer: an unsubscribe link plus the
+workspace `senderBusinessName` and `senderPostalAddress` (CAN-SPAM / GDPR sender
+identity + physical address) when configured. Those fields are editable in
+Settings (`PATCH /api/workspaces/:id`, validated), persisted on the `Workspace`
+model, and the send-readiness check + getting-started checklist flag them as
+required before launch. ✓ Resolved.
 
 **5. Discovery source errors — partially addressed**
 A `DiscoveryRun` model records every run (status, counts, error code/message); both Apollo and Google Places now throw on provider failure (no swallowed `[]`), failures surface as a `502` with a clear message (not a misleading "no results"), `GET /api/prospects/discovery-runs` exposes history, and the Prospects view shows a **discovery-history panel** flagging failed runs and their reasons. ✓ Resolved.

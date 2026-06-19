@@ -4,7 +4,7 @@
 // campaign stats under concurrent load, circuit breaker concurrency, and
 // escCsv throughput. All tests use node:test with fake Prisma — no live DB.
 
-import { describe, it, before, after, beforeEach, afterEach } from 'node:test'
+import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { ingestRouter } from '../apps/api/src/routes/ingest.ts'
@@ -24,7 +24,6 @@ import {
   resetPrisma,
   startTestServer,
   bearer,
-  type FakePrisma,
   type TestServer,
 } from './helpers/integration.ts'
 
@@ -505,7 +504,6 @@ describe('C. Cursor-based export pagination correctness', () => {
       scoringModel: { findUnique: async () => null },
       lead: {
         findMany: async (a: any) => {
-          const cursorId: string | undefined = a?.cursor?.id
           const take: number = a?.take ?? chunkSize
 
           const pageNum = callCount++

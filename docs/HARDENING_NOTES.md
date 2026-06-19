@@ -1,30 +1,10 @@
-# ACAOS Hardening Notes
+# ACAOS Security & Operational Hardening
 
-This hardened bundle adds:
-- fixed signup relation flow
-- input normalization and workspace slug safety
-- centralized async error handling
-- production-safe unexpected error responses
-- stricter production JWT secret enforcement
-- billing owner/admin authorization checks
-- safer SMTP and IMAP config handling
-- root test, typecheck, build, smoke, and audit validation
-- corrected Docker Compose local wiring
+Reference for the authorization, abuse-prevention, and operational controls in
+the codebase. Linked from [`SECURITY.md`](../SECURITY.md). For deployment and
+runbook detail see [`OPERATIONS.md`](OPERATIONS.md).
 
-Validation completed in this environment:
-- `npm install`
-- `npm run test`
-- `npm run typecheck`
-- `npm run build`
-- `npm run smoke:api`
-- `npm audit`
-
-Not fully validated here:
-- Prisma client generation against a real Postgres-backed environment
-- Redis-backed worker execution
-- live Stripe, OpenAI, SMTP, and IMAP integrations
-
-## Security review follow-up (static assessment)
+## Application-level controls
 
 A source-level security assessment surfaced authorization and abuse-prevention
 gaps that have since been closed:

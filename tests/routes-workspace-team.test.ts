@@ -315,7 +315,7 @@ describe('DELETE /:id/members/:userId — remove a member', () => {
     installPrisma(createFakePrisma(buildSpec({
       membership: {
         findFirst: async (a: any) => {
-          const { userId, workspaceId, role } = a?.where ?? {}
+          const { userId, workspaceId } = a?.where ?? {}
           if (workspaceId !== WS_ID) return null
           if (userId === OWNER_ID) return { id: 'm-owner', role: 'owner' }
           // Other users are NOT in the workspace
