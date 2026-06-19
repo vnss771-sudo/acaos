@@ -36,7 +36,7 @@ test('google throws on a non-OK response (surfaced as a FAILED discovery run)', 
   globalThis.fetch = (async () => ({ ok: false, status: 429, statusText: 'rate', text: async () => 'quota exceeded' })) as unknown as typeof fetch
   await assert.rejects(
     () => getSource('google_places')!.search({ industries: ['x'], locations: ['y'], limit: 10 }),
-    /Google Places search 429/,
+    /google_places places:searchText 429/,
   )
 })
 

@@ -8,6 +8,10 @@ const DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 1
 
 // counter: http_requests_total{method,route,status}
 const requestTotals = new Map<string, { labels: Labels; value: number }>()
+// counter: provider_calls_total{provider,operation,outcome} — every outbound
+// third-party HTTP call, labelled by its typed outcome, so a provider fault is
+// distinguishable from a legitimate empty result on a dashboard.
+const providerTotals = new Map<string, { labels: Labels; value: number }>()
 // histogram: per method+route → { labels, buckets[], sum, count }
 type Hist = { labels: Labels; buckets: number[]; sum: number; count: number }
 const durations = new Map<string, Hist>()
@@ -41,6 +45,14 @@ export function observeDuration(method: string, route: string, seconds: number):
   }
 }
 
+export function incProviderCall(provider: string, operation: string, outcome: string): void {
+  const labels = { provider, operation, outcome }
+  const id = idOf(labels)
+  const entry = providerTotals.get(id)
+  if (entry) entry.value += 1
+  else providerTotals.set(id, { labels, value: 1 })
+}
+
 export function setInFlight(n: number): void { inFlight = n }
 export function incInFlight(): void { inFlight++ }
 export function decInFlight(): void { inFlight = Math.max(0, inFlight - 1) }
@@ -49,6 +61,7 @@ export function decInFlight(): void { inFlight = Math.max(0, inFlight - 1) }
 export function resetMetrics(): void {
   requestTotals.clear()
   durations.clear()
+  providerTotals.clear()
   inFlight = 0
 }
 
@@ -83,6 +96,12 @@ export function renderMetrics(): string {
     lines.push(`http_request_duration_seconds_bucket${fmtLabels({ ...h.labels, le: '+Inf' })} ${h.count}`)
     lines.push(`http_request_duration_seconds_sum${fmtLabels(h.labels)} ${h.sum}`)
     lines.push(`http_request_duration_seconds_count${fmtLabels(h.labels)} ${h.count}`)
+  }
+
+  lines.push('# HELP provider_calls_total External provider calls by provider, operation and outcome.')
+  lines.push('# TYPE provider_calls_total counter')
+  for (const { labels, value } of providerTotals.values()) {
+    lines.push(`provider_calls_total${fmtLabels(labels)} ${value}`)
   }
 
   lines.push('# HELP http_requests_in_flight In-flight HTTP requests.')

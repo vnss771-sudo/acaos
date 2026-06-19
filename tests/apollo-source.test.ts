@@ -45,5 +45,7 @@ test('apollo throws a descriptive error on a non-OK response', async () => {
   process.env.APOLLO_API_KEY = 'k'
   globalThis.fetch = (async () => ({ ok: false, status: 429, statusText: 'rate', text: async () => 'too many requests' })) as unknown as typeof fetch
   const src = getSource('apollo')!
-  await assert.rejects(() => src.search({ limit: 10 }), /Apollo search 429/)
+  // callProvider surfaces a typed, descriptive ProviderError (provider + operation
+  // + status + detail) after retrying the 429; the discover route records it FAILED.
+  await assert.rejects(() => src.search({ limit: 10 }), /apollo mixed_companies\/search 429/)
 })

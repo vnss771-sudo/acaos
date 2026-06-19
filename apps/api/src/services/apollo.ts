@@ -4,7 +4,7 @@
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
 import { apolloBreaker } from '../lib/circuit.js'
-import { fetchWithTimeout } from '../lib/fetchWithTimeout.js'
+import { callProvider } from '../lib/providerClient.js'
 
 export type EnrichmentSignal = {
   type: string
@@ -57,14 +57,18 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
     throw new ApiError(503, 'Apollo enrichment is not configured')
   }
 
-  return apolloBreaker.call(async () => {
-    const apiKey = process.env.APOLLO_API_KEY!
+  const apiKey = process.env.APOLLO_API_KEY!
+  const body: Record<string, unknown> = prospect.domain
+    ? { domain: prospect.domain }
+    : { name: prospect.companyName }
 
-    const body: Record<string, unknown> = prospect.domain
-      ? { domain: prospect.domain }
-      : { name: prospect.companyName }
+  const EMPTY: EnrichmentResult = { signals: [], updates: {} }
 
-    const res = await fetchWithTimeout('https://api.apollo.io/v1/organizations/enrich', {
+  return callProvider<EnrichmentResult>({
+    provider: 'apollo',
+    operation: 'organizations/enrich',
+    url: 'https://api.apollo.io/v1/organizations/enrich',
+    init: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -72,19 +76,16 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
         'Cache-Control': 'no-cache',
       },
       body: JSON.stringify(body),
-    })
-
-    // Transient failures (rate-limit / 5xx) must throw so the circuit breaker
-    // counts them and can trip; a "not found" (any other non-ok) is a legitimate
-    // empty enrichment, not a fault.
-    if (res.status === 429 || res.status >= 500) {
-      throw new Error(`Apollo enrich ${res.status}`)
-    }
-    if (!res.ok) return { signals: [], updates: {} }
-
+    },
+    breaker: apolloBreaker,
+    // Transient failures (timeout / 429 / 5xx) are retried with backoff and, if
+    // still failing, trip the breaker. A terminal client error (e.g. unknown
+    // company) is a legitimate empty enrichment, not a fault.
+    onClientError: () => EMPTY,
+    onSuccess: async (res) => {
     const data = await res.json() as { organization?: ApolloOrg }
     const org = data.organization
-    if (!org) return { signals: [], updates: {} }
+    if (!org) return EMPTY
 
     const signals: EnrichmentSignal[] = []
     const updates: Record<string, unknown> = {}
@@ -149,5 +150,6 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
     }
 
     return { signals, updates }
+    },
   })
 }
