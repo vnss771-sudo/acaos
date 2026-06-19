@@ -100,9 +100,25 @@ export type MissionIntent = {
   status: string
   messageAngle?: string | null
   channel?: string | null
+  evidenceSnapshot?: unknown
+  draftSubject?: string | null
+  draftBody?: string | null
+  draftFollowup?: string | null
   prospect?: MissionProspect | null
   recommendation?: { reasoning?: string | null; actionText?: string | null; urgency?: string | null; priority?: number | null } | null
 }
+
+export type MissionFunnel = {
+  discovered: number
+  recommended: number
+  drafted: number
+  approved: number
+  rejected: number
+  sent: number
+}
+
+export type ReadinessCheck = { name: string; label: string; ok: boolean; hint: string }
+export type SendReadiness = { ready: boolean; checks: ReadinessCheck[] }
 
 // GET /api/missions/:id — the mission control plane.
 export type MissionDetail = {
@@ -111,6 +127,8 @@ export type MissionDetail = {
   discoveryRuns: DiscoveryRun[]
   prospects: MissionProspect[]
   intents: MissionIntent[]
+  funnel: MissionFunnel
+  sendReadiness: SendReadiness
 }
 
 export type Lead = {

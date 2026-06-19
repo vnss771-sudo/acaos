@@ -59,10 +59,12 @@ function spec(overrides: Record<string, unknown> = {}) {
     },
     campaign: { create: async (a: any) => ({ id: 'c1', ...a.data }) },
     discoveryRun: { findMany: async () => [], groupBy: async () => [] },
-    prospect: { findMany: async () => [] },
-    outreachIntent: { findMany: async () => [] },
+    prospect: { findMany: async () => [], count: async () => 0 },
+    outreachIntent: { findMany: async () => [], groupBy: async () => [] },
     outreachSent: { groupBy: async () => [] },
     outreachDraft: { findMany: async () => [] },
+    workspaceEmailConfig: { findUnique: async () => null },
+    workspace: { findUnique: async () => ({ senderBusinessName: 'Acme LLC', senderPostalAddress: '123 St' }) },
     auditEvent: { create: async () => ({ id: 'a1' }) },
     ...overrides,
   }
@@ -104,11 +106,17 @@ test('GET / returns missions with stats + discovery shape for a member', async (
 
 test('GET /:id returns the enriched control plane for a member', async () => {
   prisma = createFakePrisma(spec({
-    prospect: { findMany: async () => [{ id: 'p1', companyName: 'Acme', industry: 'construction', opportunityScore: 80, buyingStage: 'PURCHASING' }] },
-    outreachIntent: { findMany: async () => [
-      { id: 'i1', status: 'PROPOSED', prospect: { id: 'pa', companyName: 'Low', opportunityScore: 40 } },
-      { id: 'i2', status: 'APPROVED', prospect: { id: 'pb', companyName: 'High', opportunityScore: 95 } },
-    ] },
+    prospect: {
+      findMany: async () => [{ id: 'p1', companyName: 'Acme', industry: 'construction', opportunityScore: 80, buyingStage: 'PURCHASING' }],
+      count: async () => 3,
+    },
+    outreachIntent: {
+      findMany: async () => [
+        { id: 'i1', status: 'PROPOSED', prospect: { id: 'pa', companyName: 'Low', opportunityScore: 40 } },
+        { id: 'i2', status: 'APPROVED', prospect: { id: 'pb', companyName: 'High', opportunityScore: 95 } },
+      ],
+      groupBy: async () => [{ status: 'PROPOSED', _count: 1 }, { status: 'APPROVED', _count: 1 }],
+    },
     discoveryRun: { findMany: async () => [{ id: 'r1', source: 'apollo', status: 'SUCCEEDED', resultCount: 5, importedCount: 3, skippedCount: 2 }] },
   }))
   installPrisma(prisma)
@@ -119,6 +127,13 @@ test('GET /:id returns the enriched control plane for a member', async () => {
   assert.equal(res.body.discoveryRuns.length, 1)
   // Action queue is sorted strongest-opportunity first.
   assert.equal(res.body.intents[0].prospect.companyName, 'High')
+  // Funnel is derived from prospect count + intent status groupBy.
+  assert.equal(res.body.funnel.discovered, 3)
+  assert.equal(res.body.funnel.recommended, 2) // PROPOSED + APPROVED
+  assert.equal(res.body.funnel.approved, 1)
+  // Send readiness is surfaced for the operator.
+  assert.ok(Array.isArray(res.body.sendReadiness.checks))
+  assert.equal(typeof res.body.sendReadiness.ready, 'boolean')
 })
 
 test('GET /:id resolves the playbook when the mission has one', async () => {
@@ -185,4 +200,18 @@ test('PATCH /:id denies another workspace and does not update', async () => {
   })
   assert.equal(res.status, 403)
   assert.equal(prisma.callsTo('mission', 'update').length, 0)
+})
+
+// --- POST /:id/score ---
+// The 202 happy path enqueues to Redis (integration territory, like the jobs
+// routes), so only the pre-enqueue authz guards are covered here.
+test('POST /:id/score returns 404 for an unknown mission', async () => {
+  const res = await server.request('/api/missions/missing/score', { method: 'POST', headers: jsonHeaders })
+  assert.equal(res.status, 404)
+})
+
+test('POST /:id/score denies a non-admin of the mission workspace (no audit)', async () => {
+  const res = await server.request('/api/missions/m-other/score', { method: 'POST', headers: jsonHeaders })
+  assert.equal(res.status, 403)
+  assert.equal(prisma.callsTo('auditEvent', 'create').length, 0)
 })

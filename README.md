@@ -96,8 +96,8 @@ These are open items from the engineering release-gate review. Fixed items are n
 
 ### High priority (fix before onboarding paying users)
 
-**1. Mission Builder — now first-class (deepening continues)**
-A `Mission` model + `/api/missions` API + Missions view now exist; creating a mission provisions its linked execution campaign. Still to wire directly into the mission control plane: ICP/playbook selection, discovery runs, and recommendations.
+**1. Mission Builder — now an actionable control plane (deepening continues)**
+A `Mission` model + `/api/missions` API + Missions view exist; creating a mission provisions its linked execution campaign. The mission detail is now a working **operator-loop hub**: a discovered → recommended → drafted → approved → sent funnel strip, a **Score & recommend** action (`POST /api/missions/:id/score`), inline **Generate draft / Approve / Reject** on each outreach intent (with the recommendation reasoning shown as evidence), and a live **send-readiness** check — all without leaving the mission. Remaining: a guided wizard UX layer on top of these primitives, and per-mission ICP/playbook overrides.
 
 **2. Approval workflow — now first-class**
 Drafts have a status (`DRAFTED | APPROVED | REJECTED | SENT | SKIPPED`), and a **Review Queue** (`/api/leads/approvals/pending` + the Approvals view) lets the team edit copy and approve/reject before anything sends; `approvalMode` gates campaign sends to `APPROVED` drafts. Approvals/edits are audit-logged.
@@ -122,12 +122,12 @@ A `DiscoveryRun` model records every run (status, counts, error code/message); b
 Shared backend runtime logic (`prisma`, `scoring`, `signalEngine`, `mail`, `suppressions`, etc.) now lives in the `packages/backend-core` workspace, which both `api` and `worker` depend on. The worker no longer reaches into `apps/api/src/`; `npm run check:boundaries` enforces this in CI. (Typed request contracts live in `packages/shared`.) ✓ Resolved.
 
 **7. Discovery providers use platform-level API keys — quota enforced + surfaced**
-Apollo, Google Places, and Hunter keys are set once for the whole platform, but discovery is metered per workspace with a monthly quota (`checkAndIncrementDiscoveryUsage`: free 25 / starter 500 / growth unlimited; `429` when exceeded) and every run is recorded in `DiscoveryRun`. Usage vs. plan limits (AI, discovery, leads) is now shown on the Billing page. ✓ Resolved. Remaining: per-provider cost weighting.
+Apollo, Google Places, and Hunter keys are set once for the whole platform, but discovery is metered per workspace with a monthly quota (`checkAndIncrementDiscoveryUsage`: free 25 / starter 500 / growth unlimited; `429` when exceeded) and every run is recorded in `DiscoveryRun`. Usage vs. plan limits (AI, discovery, leads) is shown on the Billing page, and **per-provider cost weighting** now estimates weighted discovery spend (Apollo > Places > Hunter) and surfaces it on Billing. ✓ Resolved.
 
 ### Low priority (polish)
 
-**8. Mission workflow is still maturing**
-`Mission` is a first-class model and API (`/api/missions`) with a Missions view; creating a mission provisions its linked execution `Campaign`, the list surfaces per-mission deliverability + pending-review + discovery stats, and discovery runs can be scoped to a mission (selectable from the Prospects view). Status lifecycle exists (DRAFT→…→COMPLETE). Still to deepen: wiring recommendations and the approval queue directly into the mission control plane.
+**8. Mission workflow — operator loop now drivable from the mission**
+`Mission` is a first-class model and API (`/api/missions`) with a Missions view; creating a mission provisions its linked execution `Campaign`, the list surfaces per-mission deliverability + pending-review + discovery stats, and discovery runs can be scoped to a mission. Recommendations and the approval queue are now wired **directly into the mission control plane**: the detail panel drives discover → score/recommend → review evidence → approve/reject draft → check send-readiness inline (see #1). Still to deepen: a guided wizard layer and engagement/learning callbacks surfaced per mission.
 
 **9. Observability — largely resolved**
 Request IDs + structured JSON logging, an `AuditEvent` log (surfaced in the Admin Recent Activity view + `GET /api/admin/audit`), DB+Redis-aware health/readiness probes, a Prometheus `GET /metrics` endpoint, and a pluggable error-capture seam with an optional Sentry transport (`SENTRY_DSN`) all exist. ✓ Resolved. Remaining (deployment-side): wiring an external uptime monitor and a metrics dashboard/alerts. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
