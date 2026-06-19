@@ -914,14 +914,24 @@ prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, re
   const intent = await prisma.outreachIntent.findUnique({ where: { id: req.params.intentId as string } })
   if (!intent || intent.prospectId !== prospect.id) throw new ApiError(404, 'Outreach intent not found')
 
-  const [recommendation, icpRow] = await Promise.all([
+  const [recommendation, icpRow, missionCtx] = await Promise.all([
     intent.recommendationId
       ? prisma.recommendation.findUnique({ where: { id: intent.recommendationId }, select: { reasoning: true, messageAngle: true } })
       : Promise.resolve(null),
     prisma.workspaceICP.findUnique({ where: { workspaceId: prospect.workspaceId }, select: { targetIndustries: true, businessType: true, outreachTone: true } }),
+    // Per-mission override (offer + target customer) when the intent belongs to a mission.
+    intent.missionId
+      ? prisma.mission.findUnique({ where: { id: intent.missionId }, select: { targetCustomer: true, offer: true } })
+      : Promise.resolve(null),
   ])
-  const icp = icpRow
-    ? { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+  const icp = (icpRow || missionCtx)
+    ? {
+        targetIndustries: icpRow?.targetIndustries,
+        businessType: icpRow?.businessType ?? undefined,
+        outreachTone: icpRow?.outreachTone ?? undefined,
+        offer: missionCtx?.offer ?? undefined,
+        targetCustomer: missionCtx?.targetCustomer ?? undefined,
+      }
     : undefined
 
   const raw = await generateOutreach(buildIntentDraftInput({ prospect, recommendation, intent, icp }))
