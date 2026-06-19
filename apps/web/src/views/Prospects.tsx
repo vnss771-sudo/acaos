@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
-import type { Workspace, Prospect, Signal, Recommendation, DiscoveryRun } from '../types.js'
+import { makeRouteApi } from '../lib/routeApi.js'
+import type { Workspace, Prospect, Signal, DiscoveryRun } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
   SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS, TIER_COLOR
@@ -48,6 +49,7 @@ function SignalBadge({ signal }: { signal: Signal }) {
 function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
   prospectId: string; workspaceId: string; api: ApiHook; onDone: () => void; toast: ToastHook
 }) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [type, setType] = useState<SignalType>('HIRING')
   const [strength, setStrength] = useState(70)
   const [title, setTitle] = useState('')
@@ -58,9 +60,8 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
   const submit = async () => {
     setSaving(true)
     try {
-      await api('/api/signals', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId, prospectId, type, strength, title, sourceReliability, industryRelevance })
+      await route('POST /api/signals', {
+        body: { workspaceId, prospectId, type, strength, title, sourceReliability, industryRelevance }
       })
       toast.success('Signal added — prospect rescored')
       onDone()
@@ -111,6 +112,7 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
 function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = false }: {
   prospect: Prospect; api: ApiHook; toast: ToastHook; onClose: () => void; onRefresh: () => void; canManage?: boolean
 }) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [detail, setDetail] = useState<Prospect | null>(null)
   const [showAddSignal, setShowAddSignal] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -124,7 +126,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
 
   const handleRescore = async () => {
     try {
-      const updated = await api<Prospect>(`/api/prospects/${prospect.id}/rescore`, { method: 'POST' })
+      const updated = await route('POST /api/prospects/:id/rescore', { params: { id: prospect.id } }) as Prospect
       setDetail(updated)
       onRefresh()
       toast.success(`Rescored: ${updated.opportunityScore}`)
@@ -133,7 +135,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
 
   const handleRecommend = async () => {
     try {
-      await api<Recommendation>(`/api/prospects/${prospect.id}/recommend`, { method: 'POST' })
+      await route('POST /api/prospects/:id/recommend', { params: { id: prospect.id } })
       const updated = await api<Prospect>(`/api/prospects/${prospect.id}`)
       setDetail(updated)
       toast.success('Recommendation generated')
@@ -142,7 +144,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
 
   const handleEnrich = async () => {
     try {
-      const result = await api<{ signalsCreated: number }>(`/api/prospects/${prospect.id}/enrich`, { method: 'POST' })
+      const result = await route('POST /api/prospects/:id/enrich', { params: { id: prospect.id } })
       const updated = await api<Prospect>(`/api/prospects/${prospect.id}`)
       setDetail(updated)
       onRefresh()
@@ -334,6 +336,7 @@ function parseCsv(text: string): Record<string, string>[] {
 }
 
 export function ProspectsView({ api, workspace, toast, canManage = false }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<Prospect | null>(null)
@@ -405,10 +408,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     if (!workspace || !form.companyName.trim()) return
     setSaving(true)
     try {
-      await api<Prospect>('/api/prospects', {
-        method: 'POST',
-        body: JSON.stringify({ ...form, workspaceId: workspace.id })
-      })
+      await route('POST /api/prospects', { body: { ...form, workspaceId: workspace.id } })
       toast.success('Prospect added')
       setShowAdd(false)
       setForm(BLANK)
@@ -421,10 +421,9 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     if (!workspace || discovering) return
     setDiscovering(true)
     try {
-      const res = await api<{ discovered: number; skipped: number; total: number }>(
-        '/api/prospects/discover',
-        { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, source: sourceName, ...(discoverMissionId ? { missionId: discoverMissionId } : {}) }) }
-      )
+      const res = await route('POST /api/prospects/discover', {
+        body: { workspaceId: workspace.id, source: sourceName, ...(discoverMissionId ? { missionId: discoverMissionId } : {}) }
+      })
       if (res.discovered === 0 && res.total === 0) {
         toast.error('No results — try broadening your ICP settings')
       } else {
@@ -449,10 +448,9 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
         const text = ev.target?.result as string
         const rows = parseCsv(text)
         if (rows.length === 0) { toast.error('No valid rows found in CSV'); return }
-        const res = await api<{ imported: number; skipped: number; failed: number; errors: string[] }>(
-          '/api/prospects/import',
-          { method: 'POST', body: JSON.stringify({ workspaceId: workspace.id, rows }) }
-        )
+        const res = await route('POST /api/prospects/import', {
+          body: { workspaceId: workspace.id, rows }
+        })
         toast.success(`Imported ${res.imported} prospect${res.imported !== 1 ? 's' : ''}${res.skipped ? `, ${res.skipped} skipped` : ''}${res.failed ? `, ${res.failed} failed` : ''}`)
         load()
       } catch (err: unknown) { toast.error((err as Error).message) }

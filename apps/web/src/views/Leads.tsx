@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/shared'
 import type { Lead, Workspace, Campaign, OutreachDraft } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -97,6 +98,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
   onUpdate: (l: Lead) => void; onClose: () => void
   campaigns: Campaign[]
 }) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({ ...lead })
   const [drafts, setDrafts] = useState<OutreachDraft[]>([])
@@ -112,10 +114,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
   async function save() {
     setSaving(true)
     try {
-      const d = await api<{ lead: Lead }>(`/api/leads/${lead.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(form)
-      })
+      const d = await route('PATCH /api/leads/:id', { params: { id: lead.id }, body: form }) as { lead: Lead }
       onUpdate(d.lead)
       setEditing(false)
       toast.success('Lead updated')
@@ -128,7 +127,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
     // putting a long-lived JWT in the EventSource URL.
     let ticket: string
     try {
-      const r = await api<{ ticket: string }>('/api/jobs/events/ticket', { method: 'POST' })
+      const r = await route('POST /api/jobs/events/ticket')
       ticket = r.ticket
     } catch {
       return
@@ -168,10 +167,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
 
   async function enqueue(type: 'research' | 'outreach') {
     try {
-      const d = await api<{ jobId: string; queue: string }>(`/api/jobs/${type}`, {
-        method: 'POST',
-        body: JSON.stringify({ leadId: lead.id })
-      })
+      const d = await route('POST /api/jobs/:type', { params: { type }, body: { leadId: lead.id } })
       streamJob(d.queue, d.jobId, type, async () => {
         // Refresh lead data after completion
         try {
@@ -188,7 +184,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
 
   async function moveStage(stage: string) {
     try {
-      const d = await api<{ lead: Lead }>(`/api/leads/${lead.id}`, { method: 'PATCH', body: JSON.stringify({ stage }) })
+      const d = await route('PATCH /api/leads/:id', { params: { id: lead.id }, body: { stage } }) as { lead: Lead }
       onUpdate(d.lead)
       toast.success(`Moved to ${stage}`)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
@@ -347,6 +343,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
 }
 
 export function Leads({ api, workspace, toast, canManage = false }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [leads, setLeads] = useState<Lead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -400,10 +397,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     setSaving(true)
     try {
       const body: CreateLeadRequest = { ...form, workspaceId: workspace.id }
-      const d = await api<{ lead: Lead }>('/api/leads', {
-        method: 'POST',
-        body: JSON.stringify(body)
-      })
+      const d = await route('POST /api/leads', { body }) as { lead: Lead }
       setLeads(prev => [d.lead, ...prev])
       setTotal(t => t + 1)
       setForm(BLANK_FORM)
@@ -416,7 +410,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   async function deleteLead(leadId: string) {
     if (!confirm('Delete this lead?')) return
     try {
-      await api(`/api/leads/${leadId}`, { method: 'DELETE' })
+      await route('DELETE /api/leads/:id', { params: { id: leadId } })
       setLeads(prev => prev.filter(l => l.id !== leadId))
       setTotal(t => t - 1)
       if (selected?.id === leadId) setSelected(null)
@@ -448,10 +442,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
       if (leads.length === 0) { toast.error('No rows with a businessName found. Check your CSV column headers.'); return }
 
       const body: ImportLeadsRequest = { workspaceId: workspace.id, leads }
-      const d = await api<{ created: number }>('/api/leads/import', {
-        method: 'POST',
-        body: JSON.stringify(body)
-      })
+      const d = await route('POST /api/leads/import', { body })
       toast.success(`Imported ${d.created} leads with auto-scoring`)
       fetchLeads()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Import failed') }
@@ -465,7 +456,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
       let count = 0
       for (const id of selectedIds) {
         try {
-          await api(`/api/jobs/research`, { method: 'POST', body: JSON.stringify({ leadId: id }) })
+          await route('POST /api/jobs/:type', { params: { type: 'research' }, body: { leadId: id } })
           count++
         } catch { /* skip leads that fail — might hit usage limit */ }
       }
@@ -481,10 +472,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     if (!confirm(`Delete ${selectedIds.size} leads? This cannot be undone.`)) return
     setBulkWorking('delete')
     try {
-      const d = await api<{ deleted: number }>('/api/leads/bulk-delete', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, ids: [...selectedIds] })
-      })
+      const d = await route('POST /api/leads/bulk-delete', { body: { workspaceId: workspace.id, ids: [...selectedIds] } })
       toast.success(`Deleted ${d.deleted} leads`)
       setSelectedIds(new Set())
       setShowBulkMenu(false)
@@ -498,10 +486,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     if (!workspace || selectedIds.size === 0) return
     setBulkWorking('stage')
     try {
-      const d = await api<{ updated: number }>('/api/leads/bulk-stage', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, ids: [...selectedIds], stage })
-      })
+      const d = await route('POST /api/leads/bulk-stage', { body: { workspaceId: workspace.id, ids: [...selectedIds], stage } })
       toast.success(`Moved ${d.updated} leads to ${stage}`)
       setSelectedIds(new Set())
       setShowBulkMenu(false)

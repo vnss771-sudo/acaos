@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import type { SeedWorkspaceRequest, UpdateIcpRequest } from '@acaos/shared'
+import { makeRouteApi } from '../lib/routeApi.js'
 import { colors, s } from '../styles.js'
 import type { Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -75,6 +76,7 @@ function StepDots({ total, current }: { total: number; current: number }) {
 }
 
 export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [step, setStep] = useState(1)
   const [selectedPlaybook, setSelectedPlaybook] = useState<Playbook | null>(null)
   const [icpForm, setIcpForm] = useState<IcpForm>({
@@ -100,10 +102,7 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
     try {
       setSaving(true)
       const body: SeedWorkspaceRequest = { playbookId: null, includeExamples: false }
-      await api(`/api/workspaces/${workspace.id}/seed`, {
-        method: 'POST',
-        body: JSON.stringify(body)
-      })
+      await route('POST /api/workspaces/:id/seed', { params: { id: workspace.id }, body })
       onComplete()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to skip setup')
@@ -128,10 +127,7 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
         approvalMode: icpForm.approvalMode,
         excludedIndustries: []
       }
-      await api(`/api/workspaces/${workspace.id}/icp`, {
-        method: 'PUT',
-        body: JSON.stringify(icpBody)
-      })
+      await route('PUT /api/workspaces/:id/icp', { params: { id: workspace.id }, body: icpBody })
       setStep(3)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save ICP settings')
@@ -145,10 +141,7 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
       setSaving(true)
       const useExamples = skip ? false : includeExamples
       const body: SeedWorkspaceRequest = { playbookId: selectedPlaybook?.id ?? null, includeExamples: useExamples }
-      await api(`/api/workspaces/${workspace.id}/seed`, {
-        method: 'POST',
-        body: JSON.stringify(body)
-      })
+      await route('POST /api/workspaces/:id/seed', { params: { id: workspace.id }, body })
       setStep(4)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to seed workspace')

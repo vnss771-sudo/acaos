@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import type { UpdateDraftRequest } from '@acaos/shared'
 import type { OutreachDraft, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -14,6 +15,7 @@ type PendingDraft = OutreachDraft & {
 }
 
 export function ApprovalsView({ api, workspace, toast, canManage = false }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [drafts, setDrafts] = useState<PendingDraft[]>([])
   const [loading, setLoading] = useState(true)
   const [edits, setEdits] = useState<Record<string, { subject: string; emailBody: string }>>({})
@@ -44,7 +46,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
     setBusyFor(d.id, true)
     try {
       const body: UpdateDraftRequest = { subject: e.subject, emailBody: e.emailBody }
-      const r = await api<{ draft: OutreachDraft }>(`/api/leads/${d.lead.id}/drafts/${d.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+      const r = await route('PATCH /api/leads/:id/drafts/:draftId', { params: { id: d.lead.id, draftId: d.id }, body }) as { draft: OutreachDraft }
       setDrafts(prev => prev.map(x => x.id === d.id ? { ...x, subject: r.draft.subject, emailBody: r.draft.emailBody } : x))
       toast.success('Draft updated')
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Save failed') }
@@ -55,7 +57,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
     setBusyFor(d.id, true)
     try {
       if (action === 'approve' && edited(d)) await save(d)
-      await api(`/api/leads/${d.lead.id}/drafts/${d.id}/${action}`, { method: 'POST' })
+      await route('POST /api/leads/:id/drafts/:draftId/:action', { params: { id: d.lead.id, draftId: d.id, action } })
       remove(d.id)
       toast.success(action === 'approve' ? 'Approved — ready to send' : 'Rejected')
     } catch (err) { toast.error(err instanceof Error ? err.message : `${action} failed`) }

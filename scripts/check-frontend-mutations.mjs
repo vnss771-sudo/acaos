@@ -5,11 +5,11 @@
 // the request shape can never drift from the shared RouteContracts.
 //
 // This is a RATCHET: ALLOWLIST holds the files that still contain raw mutations
-// today. CI fails if:
-//   1. a file NOT on the allowlist introduces a raw mutation (no backsliding), or
-//   2. a file ON the allowlist no longer has any (it migrated — remove it so the
-//      list keeps shrinking and can never silently grow stale).
-// The end state is an empty allowlist, at which point the pattern is fully banned.
+// today (now empty — every view was migrated to the typed route client). CI fails
+// if:
+//   1. a non-allowlisted, non-exempt file introduces a raw mutation (no backsliding), or
+//   2. a file ON the allowlist no longer has any (remove it so the list can't grow stale).
+// EXEMPT files are permitted raw fetch by design and are documented below.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,22 +18,17 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const SRC = join(ROOT, 'apps/web/src')
 const PATTERN = /body:\s*JSON\.stringify\(/
 
-// Files still pending migration to the typed route client. Shrink this list as
-// each view is converted; do not add to it.
-const ALLOWLIST = new Set([
-  'apps/web/src/views/Prospects.tsx',
-  'apps/web/src/views/Settings.tsx',
-  'apps/web/src/views/Intelligence.tsx',
-  'apps/web/src/views/Leads.tsx',
-  'apps/web/src/views/Missions.tsx',
-  'apps/web/src/views/AiTools.tsx',
-  'apps/web/src/views/Approvals.tsx',
-  'apps/web/src/views/Billing.tsx',
-  'apps/web/src/components/OutreachIntents.tsx',
+// Empty: every production view now routes mutations through makeRouteApi. Do not
+// add to this — a new raw mutation should be migrated, not allowlisted.
+const ALLOWLIST = new Set([])
+
+// Permanent, documented exceptions. These use raw fetch by design and CANNOT go
+// through the authenticated route client.
+const EXEMPT = new Set([
+  // Pre-auth handshake: no bearer token yet, must control credentials/CSRF, and a
+  // 401 means bad credentials (not an expired session) — so it must not flow
+  // through the authenticated api/route client. Bodies are typed via @acaos/shared.
   'apps/web/src/components/AuthScreen.tsx',
-  'apps/web/src/components/GettingStarted.tsx',
-  'apps/web/src/components/MissionBuilder.tsx',
-  'apps/web/src/components/OnboardingWizard.tsx',
 ])
 
 function walk(dir) {
@@ -48,9 +43,9 @@ function walk(dir) {
 
 const offenders = new Set()
 for (const file of walk(SRC)) {
-  if (PATTERN.test(readFileSync(file, 'utf8'))) {
-    offenders.add(relative(ROOT, file).replace(/\\/g, '/'))
-  }
+  const rel = relative(ROOT, file).replace(/\\/g, '/')
+  if (EXEMPT.has(rel)) continue
+  if (PATTERN.test(readFileSync(file, 'utf8'))) offenders.add(rel)
 }
 
 const newOffenders = [...offenders].filter((f) => !ALLOWLIST.has(f))
@@ -71,4 +66,4 @@ if (migrated.length) {
 }
 
 if (failed) process.exit(1)
-console.log(`✓ No new raw frontend mutations (${ALLOWLIST.size} file(s) pending migration to the typed client).`)
+console.log(`✓ All frontend mutations go through the typed route client (${ALLOWLIST.size} pending, ${EXEMPT.size} documented exemption(s)).`)

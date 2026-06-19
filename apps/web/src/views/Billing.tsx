@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import type { Workspace } from '../types.js'
 import { PLAN_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -66,6 +67,7 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 export function Billing({ api, workspace, toast }: Props) {
+  const route = useMemo(() => makeRouteApi(api), [api])
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [checkoutLoading, setCheckoutLoading] = useState('')
@@ -87,10 +89,7 @@ export function Billing({ api, workspace, toast }: Props) {
       // Send the plan name, not a price id. The server resolves the Stripe price
       // from the plan so a client can't point checkout at an arbitrary price.
       const plan = priceKey === 'growth' ? 'growth' : 'starter'
-      const d = await api<{ url: string }>('/api/billing/checkout', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id, plan })
-      })
+      const d = await route('POST /api/billing/checkout', { body: { workspaceId: workspace.id, plan } })
       window.location.href = d.url
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Checkout failed') }
     finally { setCheckoutLoading('') }
@@ -100,10 +99,7 @@ export function Billing({ api, workspace, toast }: Props) {
     if (!workspace) return
     setPortalLoading(true)
     try {
-      const d = await api<{ url: string }>('/api/billing/portal', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId: workspace.id })
-      })
+      const d = await route('POST /api/billing/portal', { body: { workspaceId: workspace.id } })
       window.location.href = d.url
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not open billing portal') }
     finally { setPortalLoading(false) }

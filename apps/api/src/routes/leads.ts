@@ -59,18 +59,22 @@ const bulkAssignSchema = z.object({ workspaceId: workspaceIdField, ids: idList.m
 // PATCH is a partial update: every field optional. Per-field length/stage checks
 // stay in the handler so their exact messages and "only update what's present"
 // semantics are preserved.
+// The web edit form PATCHes the whole lead (spread of the Lead object), so the
+// nullable columns arrive as null. Accept null here (unknown keys like id/phone
+// are stripped by z.object); the handler's `typeof === 'string'` checks then skip
+// null/absent fields, preserving the original "update only the strings sent" rule.
 const updateLeadSchema = z.object({
   businessName: z.string().optional(),
-  contactName: z.string().optional(),
-  email: z.string().optional(),
-  website: z.string().optional(),
-  city: z.string().optional(),
-  category: z.string().optional(),
-  notes: z.string().optional(),
-  aiSummary: z.string().optional(),
-  outreachAngle: z.string().optional(),
+  contactName: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  aiSummary: z.string().nullable().optional(),
+  outreachAngle: z.string().nullable().optional(),
   stage: z.string().optional(),
-  campaignId: z.string().optional(),
+  campaignId: z.string().nullable().optional(),
   score: z.number().optional(),
 })
 const updateDraftSchema = z.object({

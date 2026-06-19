@@ -19,19 +19,19 @@ type HasBody<K extends RouteKey> = RouteBody<K> extends undefined ? { body?: und
 export type RouteOptions<K extends RouteKey> = HasParams<K> & HasBody<K>
 
 export function makeRouteApi(api: RawApi) {
-  return function route<K extends RouteKey>(key: K, opts: RouteOptions<K>): Promise<RouteResponse<K>> {
+  return function route<K extends RouteKey>(key: K, opts?: RouteOptions<K>): Promise<RouteResponse<K>> {
     const sep = key.indexOf(' ')
     const method = key.slice(0, sep)
     let path = key.slice(sep + 1)
 
-    const params = (opts as { params?: Record<string, string | number> }).params
+    const params = (opts as { params?: Record<string, string | number> } | undefined)?.params
     if (params) {
       for (const [k, v] of Object.entries(params)) {
         path = path.replace(`:${k}`, encodeURIComponent(String(v)))
       }
     }
 
-    const body = (opts as { body?: unknown }).body
+    const body = (opts as { body?: unknown } | undefined)?.body
     const init: { method: string; body?: string } = { method }
     if (body !== undefined) init.body = JSON.stringify(body)
 
