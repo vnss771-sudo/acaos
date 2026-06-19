@@ -19,8 +19,11 @@ const PLAN_LIMITS = {
 type Plan = keyof typeof PLAN_LIMITS
 
 function currentMonth(): string {
+  // Use UTC so the monthly quota window rolls over at the same instant for every
+  // workspace regardless of the server's local timezone (a tz change or a deploy
+  // in another region must not shift the billing-period boundary).
   const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
 function resolvePlan(plan: string | null | undefined): Plan {

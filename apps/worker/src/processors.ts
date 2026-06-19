@@ -296,9 +296,9 @@ export async function sendCampaignBatch(
 
   // Filter suppressed addresses before doing any AI work
   const emailList = leads.map((l: CampaignLeadRow) => l.email!).filter(Boolean)
-  const suppressedSet = emailList.length > 0
+  const isSuppressed = emailList.length > 0
     ? await bulkCheckSuppression(workspaceId, emailList)
-    : new Set<string>()
+    : () => false
 
   const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
 
@@ -338,7 +338,7 @@ export async function sendCampaignBatch(
     if (alreadySent) { skipped++; continue }
 
     // Skip suppressed addresses (unsubscribed or bounced)
-    if (suppressedSet.has(lead.email!.toLowerCase().trim())) { skipped++; continue }
+    if (isSuppressed(lead.email!)) { skipped++; continue }
 
     // Stop once daily cap is reached
     if (sent >= dailyRemaining) { skipped++; continue }
