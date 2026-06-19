@@ -77,6 +77,27 @@ jobs:
         run: docker build -f Dockerfile.api -t acaos-api .
       - name: Build worker image
         run: docker build -f Dockerfile.worker -t acaos-worker .
+      # Build the web image too — a broken COPY in Dockerfile.web would otherwise
+      # only surface at deploy time.
+      - name: Build web image
+        run: docker build -f Dockerfile.web -t acaos-web .
+
+      # Scan the real images we ship (this catches OS/package CVEs in the actual
+      # deployed dependency set, which `npm audit --omit=dev` does not).
+      - name: Scan API image (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: acaos-api
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan worker image (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: acaos-worker
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
 
   # Database-backed integration tests against a real PostgreSQL service.
   verify-db:

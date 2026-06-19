@@ -483,7 +483,13 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
 void initErrorReporting()
 
 // ── Liveness probe + metrics ─────────────────────────────────────────────────────
-const healthServer = startHealthServer(Number(process.env.WORKER_HEALTH_PORT || 9090), { collectQueueDepths })
+// Bind to the platform-injected PORT when present (so Railway's healthcheck, which
+// probes $PORT, can reach /live and restart a wedged worker) and fall back to the
+// fixed 9090 locally/in Docker. WORKER_HEALTH_PORT overrides both.
+const healthServer = startHealthServer(
+  Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
+  { collectQueueDepths },
+)
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
