@@ -45,13 +45,13 @@
 - Provider cost/quota weighting; scheduled cleanup jobs (expired tokens, old processed events); dashboards/alerts; frontend polish (stale `useApi.ts` comment, Nginx CSP `connect-src`, generated client types); runbook refresh.
 
 ## External hardening waves — T2/T3 source material
-Three externally-produced patches are preserved verbatim under
-`docs/analysis/external-hardening/` (`wave1-hardening.patch`,
-`wave2-hardening.patch`, `wave3-hardening.patch`). Together they implement T2 and
-effectively all of T3, and are the reference to **adapt** (not `git apply` — they
-were cut against a pre-#110 snapshot and edit the old
-`apps/api/src/services/{apollo,hunter}.ts` locations, so they conflict with
-#110/#111).
+Four externally-produced patches are preserved verbatim under
+`docs/analysis/external-hardening/` (`wave1`…`wave4-hardening.patch`). Together
+they implement T2, effectively all of T3, and a typed frontend/backend contract
+layer. They are the reference to **adapt** (not `git apply` — cut against a
+pre-#110 snapshot, editing the old `apps/api/src/services/{apollo,hunter}.ts`
+locations, so they conflict with #110/#111). Waves build on each other: apply in
+order 1→4 when porting.
 
 - **Wave 1** — FA-03 (T2): strict zod schemas + `parseLeadResearchJson` /
   `parseOutreachJson` / `parseReplyAnalysisJson` in `openai.ts`, fail-closed with
@@ -74,9 +74,18 @@ were cut against a pre-#110 snapshot and edit the old
   `routes-{ingest,outcomes,signals,prospects}`.
 
 With waves 2 + 3, T3 route validation spans **effectively every mutation route**.
-**Residual TODO** (not in any wave): the CI guard that fails on an unvalidated
-mutation route, query validation on remaining read routes, and an optional
-OpenAPI export from the zod schemas.
+- **Wave 4** — typed API contracts (the "kill frontend/backend drift" part of
+  T3): a route-keyed body registry in `@acaos/shared` (`ApiBodyByRoute`,
+  `ApiBody<Route>`), an `apps/web/src/lib/apiContract.ts` `jsonBody('<METHOD>
+  <ROUTE>', body)` helper, web mutation calls migrated to it, backend
+  `Assert<Extends<…>>` conformance guards beside the zod schemas, and a
+  `scripts/check-api-contracts.mjs` (+ `npm run check:api-contracts`) guard that
+  fails when production web code uses raw `JSON.stringify` for an API body.
+
+**Residual TODO** (not in any wave): the backend CI guard that fails on an
+*unvalidated mutation route* (distinct from wave 4's frontend-body guard), query
+validation on remaining read routes, and an OpenAPI export from the shared
+registry + zod schemas.
 
 **Decision (2026-06-19):** port T2 + T3 from these waves **after #110 + #111
 merge** to master, adapting to the relocated backend-core files and avoiding the
