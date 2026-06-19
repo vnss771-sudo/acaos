@@ -82,6 +82,24 @@ jobs:
       - name: Build web image
         run: docker build -f Dockerfile.web -t acaos-web .
 
+      # Boot-smoke the real images. `docker build` proves the image assembles, but
+      # NOT that it runs — a multi-stage image can build clean yet fail at startup
+      # if the generated Prisma client or a compiled module doesn't resolve in the
+      # production-only node_modules. These run the actual shipped images far
+      # enough to load the Prisma client and a compiled dist module, catching that
+      # class of deploy-time failure here. (A dummy DATABASE_URL satisfies client
+      # construction; nothing connects.)
+      - name: Smoke-test API image (runtime module resolution)
+        run: |
+          docker run --rm -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db --entrypoint node acaos-api \
+            -e "import('@prisma/client').then(m => { new m.PrismaClient(); console.log('api: prisma client ok') })"
+          docker run --rm --entrypoint node acaos-api \
+            -e "import('/app/apps/api/dist/lib/html.js').then(m => { if (typeof m.escapeHtml !== 'function') process.exit(1); console.log('api: compiled dist ok') })"
+      - name: Smoke-test worker image (runtime module resolution)
+        run: |
+          docker run --rm -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db --entrypoint node acaos-worker \
+            -e "import('@prisma/client').then(m => { new m.PrismaClient(); console.log('worker: prisma client ok') })"
+
       # Scan the real images we ship (this catches OS/package CVEs in the actual
       # deployed dependency set, which `npm audit --omit=dev` does not).
       #
