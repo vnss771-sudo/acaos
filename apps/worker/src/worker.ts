@@ -20,7 +20,9 @@ import {
   GenerateRecommendationsPayloadSchema,
   CalibrateScoringPayloadSchema,
   SendCampaignPayloadSchema,
+  RetentionPurgePayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
+import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
@@ -422,6 +424,22 @@ const calibrateWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── retention-purge ───────────────────────────────────────────────────────────
+// Enforces the documented data-retention windows (docs/DATA_RETENTION.md) by
+// deleting rows past their window. Platform-wide, idempotent, runs daily.
+const retentionWorker = new Worker(
+  'retention-purge',
+  async (job) => {
+    parseJobPayload(RetentionPurgePayloadSchema, 'retention-purge', job.data)
+    log('retention-purge', 'Starting retention sweep')
+    const deleted = await purgeExpiredData()
+    const total = Object.values(deleted).reduce((a, b) => a + b, 0)
+    log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}`)
+    return deleted
+  },
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers + job metrics ───────────────────────────────────────────────
 const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
@@ -432,6 +450,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
+  ['retention-purge',         retentionWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
   worker.on('completed', (job) => {
@@ -473,6 +492,18 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
   ).catch(err => console.warn('[worker] Failed to schedule IMAP auto-sync:', err.message))
 }
 
+// ── Repeatable data-retention purge (daily) ───────────────────────────────────
+// Interval overridable via RETENTION_PURGE_INTERVAL_MS (default 24h).
+{
+  const purgeQueue = new Queue('retention-purge', { connection })
+  const every = Number(process.env.RETENTION_PURGE_INTERVAL_MS || 24 * 60 * 60 * 1000)
+  purgeQueue.upsertJobScheduler(
+    'daily-retention-purge',
+    { every },
+    { name: 'daily-retention-purge', data: {}, opts: { attempts: 1, removeOnComplete: { count: 7 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
+}
+
 // Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
@@ -504,6 +535,7 @@ async function shutdown(signal: string) {
     recommendWorker.close(),
     calibrateWorker.close(),
     sendCampaignWorker.close(),
+    retentionWorker.close(),
   ])
   await prisma.$disconnect()
   console.log('[worker] Shutdown complete')
@@ -525,4 +557,4 @@ process.on('uncaughtException', (err) => {
   captureError(err, { source: 'worker.uncaughtException' })
 })
 
-console.log('[worker] Started — listening on 8 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign)')
+console.log('[worker] Started — listening on 9 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign, retention-purge)')

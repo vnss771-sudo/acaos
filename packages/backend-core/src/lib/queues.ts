@@ -72,20 +72,28 @@ export async function enqueueCalibrate(workspaceId: string) {
   return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, defaultJobOpts)
 }
 
-export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
-  // Deterministic jobId so repeated "launch" clicks within the same minute collapse
-  // to a single send job (BullMQ ignores an add with an existing jobId). The
-  // minute bucket still allows a legitimate re-launch later; the lead set is part
-  // of the key so "send all" and "send subset" are distinct operations.
+// Deterministic jobId so repeated "launch" clicks within the same minute collapse
+// to a single send job (BullMQ ignores an add with an existing jobId). The minute
+// bucket still allows a legitimate re-launch later; the lead set is part of the
+// key so "send all" and "send subset" are distinct operations. Pure (clock
+// injectable) so the dedup contract can be unit-tested without Redis.
+// NOTE: BullMQ forbids ':' in custom job IDs (it's the internal Redis key
+// separator), so use '-'. cuids/hex/number segments contain no '-'.
+export function sendCampaignJobId(
+  campaignId: string,
+  workspaceId: string,
+  leadIds?: string[],
+  now: number = Date.now(),
+): string {
   const leadKey = leadIds?.length ? [...leadIds].sort().join(',') : 'all'
   const leadHash = createHash('sha256').update(leadKey).digest('hex').slice(0, 16)
-  const minuteBucket = Math.floor(Date.now() / 60_000)
-  // NOTE: BullMQ forbids ':' in custom job IDs (it's the internal Redis key
-  // separator), so use '-'. cuids/hex/number segments contain no '-'.
-  const dedupJobId = `send-campaign-${workspaceId}-${campaignId}-${leadHash}-${minuteBucket}`
+  const minuteBucket = Math.floor(now / 60_000)
+  return `send-campaign-${workspaceId}-${campaignId}-${leadHash}-${minuteBucket}`
+}
 
+export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
   return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds }, {
-    jobId: dedupJobId,
+    jobId: sendCampaignJobId(campaignId, workspaceId, leadIds),
     attempts: 2,
     backoff: { type: 'exponential', delay: 10_000 },
     removeOnComplete: 200,
@@ -93,9 +101,21 @@ export async function enqueueSendCampaign(campaignId: string, workspaceId: strin
   })
 }
 
+// On-demand trigger for the retention sweep (the worker also runs it daily). The
+// fixed jobId collapses concurrent manual triggers within the same minute.
+export async function enqueueRetentionPurge() {
+  return getQueue('retention-purge').add('retention-purge', {}, {
+    jobId: `retention-purge-${Math.floor(Date.now() / 60_000)}`,
+    attempts: 1,
+    removeOnComplete: { count: 10 },
+    removeOnFail: { count: 20 },
+  })
+}
+
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
-  'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations'
+  'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
+  'retention-purge'
 ]
 
 export async function getQueueStats() {

@@ -100,7 +100,7 @@ export async function sendMail(to: string, subject: string, html: string, cfg?: 
 }
 
 // Strips quoted text and signatures to get the fresh reply content
-function extractReplyBody(raw: string): string {
+export function extractReplyBody(raw: string): string {
   const lines = raw.split('\n')
   const cleaned: string[] = []
 
@@ -115,7 +115,7 @@ function extractReplyBody(raw: string): string {
 }
 
 // Parse plain text from a raw MIME message Buffer
-function extractPlainText(source: Buffer): string {
+export function extractPlainText(source: Buffer): string {
   const raw = source.toString('utf-8', 0, 20_000)
 
   // Try to find Content-Type: text/plain part

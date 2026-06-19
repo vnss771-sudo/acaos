@@ -60,6 +60,12 @@ export const SendCampaignPayloadSchema = z.object({
 })
 export type SendCampaignPayload = z.infer<typeof SendCampaignPayloadSchema>
 
+// The retention sweep is platform-wide (no workspace) and carries no parameters;
+// an empty object keeps it on the same validated-payload contract as every other
+// queue so a malformed enqueue still fails fast rather than silently.
+export const RetentionPurgePayloadSchema = z.object({}).passthrough()
+export type RetentionPurgePayload = z.infer<typeof RetentionPurgePayloadSchema>
+
 function formatIssues(error: z.ZodError): string {
   return error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
 }
