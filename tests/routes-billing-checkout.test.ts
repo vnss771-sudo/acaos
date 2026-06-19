@@ -22,9 +22,11 @@ function billingMember(a: any) {
   return userId === OWNER ? { id: 'm' } : { id: 'm' }
 }
 
-function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: null, plan: 'free', stripeSubscriptionId: null }) {
+function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: null, plan: 'free', stripeSubscriptionId: null }, lastReauthAt: Date | null = new Date()) {
   return {
-    user: { findUnique: async (a: any) => ({ id: a?.where?.id, email: 'x@a.test', name: null }) },
+    // Billing mutations are behind step-up auth (requireFreshAuth) — a recent
+    // lastReauthAt by default so the guard-path branches below are reachable.
+    user: { findUnique: async (a: any) => ({ id: a?.where?.id, email: 'x@a.test', name: null, lastReauthAt }) },
     membership: { findFirst: async (a: any) => billingMember(a) },
     workspace: { findUnique: async () => ws },
     usageRecord: { findMany: async () => [] },
@@ -56,6 +58,13 @@ test('checkout rejects a missing or unknown plan (no raw price ids accepted)', a
 
 test('checkout denies a non-owner/admin', async () => {
   assert.equal((await post('/api/billing/checkout', MEMBER, { workspaceId: WS, plan: 'starter' })).status, 403)
+})
+
+test('checkout requires step-up (fresh auth) — stale re-auth is rejected', async () => {
+  boot(spec(undefined, new Date(Date.now() - 60 * 60_000))) // last re-auth 1h ago
+  const res = await post('/api/billing/checkout', OWNER, { workspaceId: WS, plan: 'starter' })
+  assert.equal(res.status, 403)
+  assert.equal(res.body.code, 'REAUTH_REQUIRED')
 })
 
 test('checkout 409s when the workspace already has an active subscription', async () => {

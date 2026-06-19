@@ -3,6 +3,7 @@ import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { User, Workspace, WorkspaceMember } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
+import { MfaSettings } from '../components/MfaSettings.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -443,6 +444,14 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           {savingPassword ? <><Spinner size={14} color="#fff" /> Saving…</> : 'Change Password'}
         </button>
       </div>
+
+      {/* Security / Two-factor authentication */}
+      <MfaSettings
+        api={api}
+        enabled={!!user.totpEnabled}
+        onEnabledChange={(totpEnabled) => onUserUpdate({ ...user, totpEnabled })}
+        toast={toast}
+      />
 
       {/* Workspace settings */}
       {workspace && (

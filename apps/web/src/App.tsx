@@ -6,6 +6,7 @@ import { useToast } from './hooks/useToast.js'
 import { ToastContainer } from './components/Toast.js'
 import { Sidebar } from './components/Sidebar.js'
 import { AuthScreen } from './components/AuthScreen.js'
+import { ReauthModal } from './components/ReauthModal.js'
 import { Dashboard } from './views/Dashboard.js'
 import { Campaigns } from './views/Campaigns.js'
 import { MissionsView } from './views/Missions.js'
@@ -63,6 +64,9 @@ export function App() {
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
   const [view, setView] = useState<View>('dashboard')
   const [booting, setBooting] = useState(true)
+  // Step-up: set when any authed API call returns 403 {code:"REAUTH_REQUIRED"}.
+  // While true the ReauthModal is shown; on success the user can retry the action.
+  const [reauthRequired, setReauthRequired] = useState(false)
 
   const { toasts, toast, removeToast } = useToast()
 
@@ -83,7 +87,8 @@ export function App() {
     setActiveWsId(null)
   }, [])
 
-  const api = useApi(token, logout, setToken)
+  const onReauthRequired = useCallback(() => setReauthRequired(true), [])
+  const api = useApi(token, logout, setToken, onReauthRequired)
 
   // Exchange the HttpOnly refresh cookie for a fresh access token. Returns true
   // when a session was (re)established.
@@ -303,6 +308,20 @@ export function App() {
           api={api}
           toast={toast}
           onComplete={() => handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })}
+        />
+      )}
+
+      {/* Step-up re-authentication — shown when an authed call needs a fresh
+          credential proof. After a successful reauth the user retries the action. */}
+      {reauthRequired && (
+        <ReauthModal
+          api={api}
+          mfaEnabled={!!user.totpEnabled}
+          onSuccess={() => {
+            setReauthRequired(false)
+            toast.success('Identity confirmed — please retry your action')
+          }}
+          onCancel={() => setReauthRequired(false)}
         />
       )}
 
