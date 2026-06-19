@@ -64,6 +64,13 @@ export interface CreateCampaignRequest {
   description?: string
 }
 
+// PATCH /api/campaigns/:id
+export interface UpdateCampaignRequest {
+  name: string
+  goalType: string
+  description?: string
+}
+
 // POST /api/campaigns/:id/send. `approved` is mandatory in the contract even
 // though the backend only enforces it under approvalMode: approvalMode is the
 // DEFAULT for onboarded workspaces, and always sending the flag is harmless
@@ -167,3 +174,51 @@ export interface UpdateDraftRequest {
   emailBody?: string
   followup?: string | null
 }
+
+// ── Route contract map ────────────────────────────────────────────────────────
+// The single source of truth that binds METHOD + path → { params, query, body,
+// response }. The web client calls every mutation through a typed helper keyed by
+// these entries (see apps/web/src/lib/routeApi.ts), so a call can never drift from
+// the contract: the path, params, body shape, and response type are all checked
+// at the call site. Response types are pragmatic DTOs — only the fields the client
+// reads. Endpoints not yet migrated to the typed client carry `response: unknown`
+// and are tracked by scripts/check-frontend-mutations.mjs until converted.
+
+/** Minimal campaign shape returned by create/update. */
+export interface CampaignDTO {
+  id: string
+  name: string
+  goalType: string
+  description?: string | null
+  createdAt: string
+  _count?: { leads: number }
+}
+
+export interface RouteContracts {
+  // Campaigns (migrated to the typed client — precise responses)
+  'POST /api/campaigns': { body: CreateCampaignRequest; response: { campaign: CampaignDTO } }
+  'PATCH /api/campaigns/:id': { params: { id: string }; body: UpdateCampaignRequest; response: { campaign: CampaignDTO } }
+  'DELETE /api/campaigns/:id': { params: { id: string }; response: { ok: boolean } }
+  'POST /api/campaigns/:id/send': { params: { id: string }; body: SendCampaignRequest; response: { jobId: string; eligible: number; message: string } }
+  'POST /api/campaigns/:id/retry-failed': { params: { id: string }; response: { cleared: number } }
+
+  // Remaining mutation endpoints — bodies are contract-checked; responses will be
+  // tightened as each view migrates off raw fetch.
+  'POST /api/ai/research': { body: AiResearchRequest; response: { result: string } }
+  'POST /api/ai/outreach': { body: AiOutreachRequest; response: { result: string } }
+  'POST /api/ai/analyze-reply': { body: AiReplyAnalysisRequest; response: unknown }
+  'POST /api/leads': { body: CreateLeadRequest; response: unknown }
+  'POST /api/leads/import': { body: ImportLeadsRequest; response: { created: number } }
+  'POST /api/prospects/discover': { body: DiscoverProspectsRequest; response: unknown }
+  'POST /api/prospects/:id/outcome': { params: { id: string }; body: RecordProspectOutcomeRequest; response: unknown }
+  'POST /api/missions': { body: CreateMissionRequest; response: unknown }
+  'PATCH /api/missions/:id': { params: { id: string }; body: UpdateMissionRequest; response: unknown }
+  'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
+  'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
+  'PATCH /api/leads/:id/drafts/:draftId': { params: { id: string; draftId: string }; body: UpdateDraftRequest; response: unknown }
+}
+
+export type RouteKey = keyof RouteContracts
+export type RouteParams<K extends RouteKey> = RouteContracts[K] extends { params: infer P } ? P : undefined
+export type RouteBody<K extends RouteKey> = RouteContracts[K] extends { body: infer B } ? B : undefined
+export type RouteResponse<K extends RouteKey> = RouteContracts[K] extends { response: infer R } ? R : unknown
