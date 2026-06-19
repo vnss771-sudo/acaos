@@ -10,10 +10,14 @@ node_modules/
 apps/web/dist/
 apps/api/dist/
 apps/worker/dist/
+packages/*/dist/
 apps/api/src/**/*.js
 apps/api/src/**/*.js.map
 apps/worker/src/**/*.js
 apps/worker/src/**/*.js.map
+
+# TypeScript incremental build info
+*.tsbuildinfo
 
 # Logs
 *.log
