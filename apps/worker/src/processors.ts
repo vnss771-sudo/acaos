@@ -258,10 +258,13 @@ export async function sendCampaignBatch(
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
-  const [wsCfgRecord, icp, workspace] = await Promise.all([
+  const [wsCfgRecord, icp, workspace, missionCtx] = await Promise.all([
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
     prisma.workspaceICP.findUnique({ where: { workspaceId } }),
     prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
+    // Per-mission outreach overrides (offer + target customer), if this campaign
+    // is the execution arm of a mission. campaignId is unique on Mission.
+    prisma.mission.findUnique({ where: { campaignId }, select: { targetCustomer: true, offer: true } }),
   ])
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
@@ -390,12 +393,15 @@ export async function sendCampaignBatch(
           contactName:   lead.contactName ?? undefined,
           aiSummary:     lead.aiSummary   ?? undefined,
           outreachAngle: lead.outreachAngle ?? undefined,
-          // Pass the workspace ICP so campaign sends honour the seller's
-          // configured tone + product description (matches the AI Tools path).
-          icp: icp ? {
-            targetIndustries: icp.targetIndustries,
-            businessType: icp.businessType ?? undefined,
-            outreachTone: icp.outreachTone ?? undefined,
+          // Pass the workspace ICP (tone + product) merged with any per-mission
+          // override (offer + target customer), so a mission's sends reflect that
+          // mission rather than the generic seller profile.
+          icp: (icp || missionCtx) ? {
+            targetIndustries: icp?.targetIndustries,
+            businessType: icp?.businessType ?? undefined,
+            outreachTone: icp?.outreachTone ?? undefined,
+            offer: missionCtx?.offer ?? undefined,
+            targetCustomer: missionCtx?.targetCustomer ?? undefined,
           } : undefined,
         })
         const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }

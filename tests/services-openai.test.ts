@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { generateLeadResearch, generateOutreach, analyzeReply, buildOutreachUserPrompt } from '../packages/backend-core/src/services/openai.ts'
+import { generateLeadResearch, generateOutreach, analyzeReply, buildOutreachUserPrompt, buildVerticalDesc } from '../packages/backend-core/src/services/openai.ts'
 import { ApiError } from '../apps/api/src/lib/http.ts'
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => void | Promise<void>) {
@@ -107,6 +107,25 @@ test('buildOutreachUserPrompt: never asserts the seller ICP industry as the pros
 test('buildOutreachUserPrompt: uses the provided category verbatim when present', () => {
   const prompt = buildOutreachUserPrompt({ businessName: 'Acme Plumbing', category: 'Plumbing' })
   assert.match(prompt, /Industry:\s*Plumbing/)
+})
+
+test('buildOutreachUserPrompt: weaves in a per-mission offer when present', () => {
+  const offer = '3 months free onboarding for the first 10 crews'
+  const prompt = buildOutreachUserPrompt({ businessName: 'Acme Plumbing', icp: { offer } })
+  assert.match(prompt, /specific offer \/ value proposition/i)
+  assert.ok(prompt.includes(offer), 'the mission offer text should appear in the prompt')
+})
+
+test('buildOutreachUserPrompt: omits the offer line when no offer is set', () => {
+  const prompt = buildOutreachUserPrompt({ businessName: 'Acme Plumbing', icp: { businessType: 'field ops software' } })
+  assert.doesNotMatch(prompt, /specific offer \/ value proposition/i)
+})
+
+test('buildVerticalDesc: a mission targetCustomer overrides the workspace industries', () => {
+  const target = 'roofing companies in Texas with 10–50 field staff'
+  assert.equal(buildVerticalDesc({ targetIndustries: ['Manufacturing'], targetCustomer: target }), target)
+  // Falls back to the ICP industries when no mission target is set.
+  assert.equal(buildVerticalDesc({ targetIndustries: ['Plumbing', 'HVAC'] }), 'Plumbing, HVAC')
 })
 
 test('buildOutreachUserPrompt: includes contact first name only when provided', () => {

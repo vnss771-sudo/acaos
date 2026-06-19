@@ -45,9 +45,18 @@ export type IcpContext = {
   targetIndustries?: string[]
   businessType?: string
   outreachTone?: string
+  // Per-mission overrides: a mission can target a narrower customer and pitch a
+  // specific offer than the workspace-wide ICP, so its outreach copy reflects
+  // that mission rather than the generic seller profile.
+  offer?: string
+  targetCustomer?: string
 }
 
-function buildVerticalDesc(icp: IcpContext | undefined): string {
+export function buildVerticalDesc(icp: IcpContext | undefined): string {
+  // A mission's targetCustomer is the most specific description of who we're
+  // selling to; fall back to the workspace ICP industries, then the default.
+  const targetCustomer = icp?.targetCustomer?.trim()
+  if (targetCustomer) return targetCustomer
   const industries = icp?.targetIndustries?.filter(Boolean) ?? []
   if (industries.length > 0) return industries.join(', ')
   return 'field-service businesses — civil engineering, electrical, plumbing, HVAC, landscaping, facilities management, roofing, painting, construction, and adjacent trades'
@@ -112,7 +121,9 @@ export type OutreachInput = {
 export function buildOutreachUserPrompt(input: OutreachInput): string {
   const firstName = input.contactName?.split(' ')[0] ?? null
   const notes = input.notes?.trim()
+  const offer = input.icp?.offer?.trim()
   return `Write a cold outreach email for this prospect:
+${offer ? `\nThis campaign's specific offer / value proposition: ${offer}. Anchor the email's value on this — phrase it as a concrete outcome for the recipient, never as a salesy pitch.\n` : ''}
 
 Business: ${input.businessName}
 Industry: ${input.category || `(not provided — infer it from the business name "${input.businessName}"; do NOT assume the seller's target industry)`}
