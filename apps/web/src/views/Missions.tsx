@@ -331,6 +331,48 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
         )}
       </div>
 
+      {/* Engagement — the loop tail: what actually went out and came back */}
+      <div>
+        <div style={heading}>Engagement</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+          {[
+            { label: 'Sent', value: String(detail.engagement.sent) },
+            { label: 'Replied', value: String(detail.engagement.replied) },
+            { label: 'Reply rate', value: `${Math.round(detail.engagement.replyRate * 100)}%` },
+            ...(detail.engagement.bounced > 0 ? [{ label: 'Bounced', value: String(detail.engagement.bounced) }] : []),
+          ].map(st => (
+            <div key={st.label} style={{ flex: '1 1 70px', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '6px 8px' }}>
+              <div style={{ color: colors.text, fontSize: 16, fontWeight: 700 }}>{st.value}</div>
+              <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{st.label}</div>
+            </div>
+          ))}
+        </div>
+        {detail.engagement.sent === 0 ? (
+          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 6 }}>Nothing sent yet — approve drafts and run the campaign to start engagement.</div>
+        ) : detail.recentSends.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+            {detail.recentSends.map(sd => (
+              <div key={sd.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+                <span style={{ color: colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sd.toEmail} · {sd.subject}</span>
+                <span style={{ flexShrink: 0, color: sd.status === 'REPLIED' ? colors.green : (sd.status === 'BOUNCED' || sd.status === 'FAILED') ? colors.red : colors.textFaint }}>
+                  {sd.status === 'REPLIED' && sd.replyIntent ? `replied · ${sd.replyIntent}` : sd.status.toLowerCase()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Learning — is the loop improving the model? */}
+      <div>
+        <div style={heading}>Learning</div>
+        <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
+          {detail.learning.totalOutcomes === 0
+            ? 'No outcomes recorded yet — the scoring model learns once replies and outcomes come in.'
+            : `Scoring model updated ${detail.learning.updateCount}× from ${detail.learning.totalOutcomes} outcome${detail.learning.totalOutcomes === 1 ? '' : 's'}${detail.learning.lastWeightUpdate ? ` · last ${new Date(detail.learning.lastWeightUpdate).toLocaleDateString()}` : ''}.`}
+        </div>
+      </div>
+
       <div>
         <div style={heading}>Top prospects</div>
         {detail.prospects.length === 0 ? (

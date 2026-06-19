@@ -25,6 +25,12 @@ const detail: MissionDetail = {
   ],
   funnel: { discovered: 3, recommended: 2, drafted: 1, approved: 0, rejected: 0, sent: 0 },
   sendReadiness: { ready: false, checks: [{ name: 'smtpConfigured', label: 'Email sending configured', ok: false, hint: 'Add SMTP in Settings.' }] },
+  engagement: { sent: 4, replied: 1, bounced: 0, failed: 0, replyRate: 0.25 },
+  recentSends: [
+    { id: 's1', toEmail: 'cfo@high.co', subject: 'Quick question', status: 'REPLIED', replyIntent: 'INTERESTED', sentAt: new Date().toISOString(), repliedAt: new Date().toISOString() },
+    { id: 's2', toEmail: 'ops@low.co', subject: 'Intro', status: 'SENT', replyIntent: null, sentAt: new Date().toISOString(), repliedAt: null },
+  ],
+  learning: { updateCount: 2, lastWeightUpdate: new Date().toISOString(), totalOutcomes: 14 },
 }
 
 function makeApi() {
@@ -58,6 +64,19 @@ describe('MissionsView control plane', () => {
     expect(screen.getByText('Quick question')).toBeInTheDocument()
     // A failing send-readiness check is shown
     expect(screen.getByText(/Email sending configured/)).toBeInTheDocument()
+  })
+
+  test('shows engagement (reply rate + recent replies) and learning progress', async () => {
+    const api = makeApi()
+    await expandDetails(api)
+
+    expect(screen.getByText('Engagement')).toBeInTheDocument()
+    // Reply rate from the engagement payload (0.25 → 25%)
+    expect(screen.getByText('25%')).toBeInTheDocument()
+    // A recent reply with its classified intent
+    expect(screen.getByText(/replied · INTERESTED/)).toBeInTheDocument()
+    // Learning summary reflects the scoring-model progress
+    expect(screen.getByText(/Scoring model updated 2× from 14 outcomes/)).toBeInTheDocument()
   })
 
   test('Score & recommend posts to the mission score endpoint', async () => {

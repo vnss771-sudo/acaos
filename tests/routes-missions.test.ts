@@ -61,8 +61,10 @@ function spec(overrides: Record<string, unknown> = {}) {
     discoveryRun: { findMany: async () => [], groupBy: async () => [] },
     prospect: { findMany: async () => [], count: async () => 0 },
     outreachIntent: { findMany: async () => [], groupBy: async () => [] },
-    outreachSent: { groupBy: async () => [] },
+    outreachSent: { groupBy: async () => [], findMany: async () => [] },
     outreachDraft: { findMany: async () => [] },
+    scoringModel: { findUnique: async () => null },
+    scoringOutcome: { count: async () => 0 },
     workspaceEmailConfig: { findUnique: async () => null },
     workspace: { findUnique: async () => ({ senderBusinessName: 'Acme LLC', senderPostalAddress: '123 St' }) },
     auditEvent: { create: async () => ({ id: 'a1' }) },
@@ -134,6 +136,37 @@ test('GET /:id returns the enriched control plane for a member', async () => {
   // Send readiness is surfaced for the operator.
   assert.ok(Array.isArray(res.body.sendReadiness.checks))
   assert.equal(typeof res.body.sendReadiness.ready, 'boolean')
+})
+
+test('GET /:id reports engagement and learning for the loop tail', async () => {
+  prisma = createFakePrisma(spec({
+    outreachSent: {
+      // SENT + REPLIED + BOUNCED all count as "delivered"; FAILED/SENDING do not.
+      groupBy: async () => [
+        { status: 'SENT', _count: 6 }, { status: 'REPLIED', _count: 2 },
+        { status: 'BOUNCED', _count: 1 }, { status: 'FAILED', _count: 3 },
+      ],
+      findMany: async () => [
+        { id: 's1', toEmail: 'cfo@high.co', subject: 'Hi', status: 'REPLIED', replyIntent: 'INTERESTED', sentAt: new Date(), repliedAt: new Date() },
+      ],
+    },
+    scoringModel: { findUnique: async () => ({ updateCount: 3, lastWeightUpdate: new Date() }) },
+    scoringOutcome: { count: async () => 21 },
+  }))
+  installPrisma(prisma)
+  const res = await server.request('/api/missions/m1', { headers: auth(MEMBER) })
+  assert.equal(res.status, 200)
+  // delivered = 6 + 2 + 1 = 9; replied = 2; failed excluded from "sent"
+  assert.equal(res.body.engagement.sent, 9)
+  assert.equal(res.body.engagement.replied, 2)
+  assert.equal(res.body.engagement.bounced, 1)
+  assert.equal(res.body.engagement.failed, 3)
+  assert.ok(Math.abs(res.body.engagement.replyRate - 2 / 9) < 1e-9)
+  assert.equal(res.body.recentSends.length, 1)
+  assert.equal(res.body.recentSends[0].replyIntent, 'INTERESTED')
+  // Learning reflects the workspace scoring model + outcome count.
+  assert.equal(res.body.learning.updateCount, 3)
+  assert.equal(res.body.learning.totalOutcomes, 21)
 })
 
 test('GET /:id resolves the playbook when the mission has one', async () => {
