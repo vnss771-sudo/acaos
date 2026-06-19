@@ -20,10 +20,22 @@ import { logger } from './logger.js'
 export type ProviderFetchOptions = {
   /** Short provider label for logs/metrics, e.g. 'apollo-enrich', 'hunter'. */
   provider: string
-  /** Per-attempt timeout. Default 12s. */
+  /**
+   * Per-attempt timeout. Precedence: explicit `timeoutMs` →
+   * `${envPrefix}_TIMEOUT_MS` → `EXTERNAL_HTTP_TIMEOUT_MS` → 12s.
+   */
   timeoutMs?: number
-  /** Extra attempts after the first. Default 2 (so up to 3 attempts total). */
+  /**
+   * Extra attempts after the first (so 2 ⇒ up to 3 attempts). Precedence:
+   * explicit `retries` → `${envPrefix}_RETRIES` → `EXTERNAL_HTTP_RETRIES` → 2.
+   */
   retries?: number
+  /**
+   * Env-var namespace for per-provider timeout/retry overrides, e.g. 'APOLLO'
+   * reads `APOLLO_TIMEOUT_MS` / `APOLLO_RETRIES`. Falls back to the global
+   * `EXTERNAL_HTTP_*` knobs, then the built-in defaults.
+   */
+  envPrefix?: string
   /** Reject responses whose Content-Length exceeds this. Default 5 MB. */
   maxBytes?: number
   /** Optional circuit breaker wrapping the whole call. */
@@ -52,6 +64,26 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
+}
+
+/** Reads a non-negative finite number from an env var, or undefined if unset/invalid. */
+function numEnv(name: string): number | undefined {
+  const raw = process.env[name]
+  if (raw == null || raw === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
+function resolveTimeoutMs(opts: ProviderFetchOptions): number {
+  if (opts.timeoutMs != null) return opts.timeoutMs
+  const prefixed = opts.envPrefix ? numEnv(`${opts.envPrefix}_TIMEOUT_MS`) : undefined
+  return prefixed ?? numEnv('EXTERNAL_HTTP_TIMEOUT_MS') ?? DEFAULT_TIMEOUT_MS
+}
+
+function resolveRetries(opts: ProviderFetchOptions): number {
+  if (opts.retries != null) return opts.retries
+  const prefixed = opts.envPrefix ? numEnv(`${opts.envPrefix}_RETRIES`) : undefined
+  return Math.floor(prefixed ?? numEnv('EXTERNAL_HTTP_RETRIES') ?? DEFAULT_RETRIES)
 }
 
 function backoffMs(attempt: number): number {
@@ -84,16 +116,24 @@ function enforceMaxBytes(res: Response, provider: string, maxBytes: number): voi
 
 async function runWithRetries(url: string, init: RequestInit, opts: ProviderFetchOptions): Promise<Response> {
   const provider = opts.provider
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const retries = opts.retries ?? DEFAULT_RETRIES
+  const timeoutMs = resolveTimeoutMs(opts)
+  const retries = resolveRetries(opts)
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES
+  const parentSignal = init.signal ?? undefined
 
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Honour caller cancellation before spending another attempt/backoff.
+    if (parentSignal?.aborted) {
+      throw new ProviderHttpError(`${provider} request aborted by caller`, provider, 'network', parentSignal.reason)
+    }
     const startedAt = Date.now()
     // Clearable, unref'd timeout so a hung socket is aborted without the timer
-    // itself keeping the process/event loop alive.
+    // itself keeping the process/event loop alive. A caller-supplied signal is
+    // propagated so request cancellation still aborts the in-flight fetch.
     const controller = new AbortController()
+    const onParentAbort = () => controller.abort(parentSignal?.reason)
+    if (parentSignal) parentSignal.addEventListener('abort', onParentAbort, { once: true })
     const timer = setTimeout(
       () => controller.abort(Object.assign(new Error(`${provider} timed out after ${timeoutMs}ms`), { name: 'TimeoutError' })),
       timeoutMs,
@@ -131,6 +171,7 @@ async function runWithRetries(url: string, init: RequestInit, opts: ProviderFetc
       throw new ProviderHttpError(`${provider} request failed: ${detail}`, provider, kind, err)
     } finally {
       clearTimeout(timer)
+      if (parentSignal) parentSignal.removeEventListener('abort', onParentAbort)
     }
   }
   // Unreachable, but satisfies the type checker.

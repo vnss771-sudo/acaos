@@ -123,7 +123,7 @@ class ApolloSource implements ProspectSourceProvider {
           'Cache-Control': 'no-cache',
         },
         body: JSON.stringify(body),
-      }, { provider: 'apollo-search' })
+      }, { provider: 'apollo-search', envPrefix: 'APOLLO' })
 
       if (!res.ok) {
         const msg = await res.text().catch(() => res.statusText)
@@ -185,7 +185,7 @@ class GooglePlacesSource implements ProspectSourceProvider {
         ].join(','),
       },
       body: JSON.stringify({ textQuery, pageSize: limit }),
-    }, { provider: 'google-places', breaker: googlePlacesBreaker })
+    }, { provider: 'google-places', envPrefix: 'GOOGLE_PLACES', breaker: googlePlacesBreaker })
 
     if (!res.ok) {
       const msg = await res.text().catch(() => res.statusText)

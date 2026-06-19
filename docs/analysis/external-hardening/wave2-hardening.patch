@@ -1,0 +1,1336 @@
+diff -ruN acaos_base_hardened/acaos/apps/api/src/lib/validate.ts acaos_work2/acaos/apps/api/src/lib/validate.ts
+--- acaos_base_hardened/acaos/apps/api/src/lib/validate.ts	2026-06-19 00:37:51.051199139 +0000
++++ acaos_work2/acaos/apps/api/src/lib/validate.ts	2026-06-19 00:32:05.410731745 +0000
+@@ -8,7 +8,9 @@
+   return (req: Request, _res: Response, next: NextFunction) => {
+     const result = schema.safeParse(req.body)
+     if (!result.success) {
+-      const msg = result.error.issues.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`).join('; ')
++      const msg = result.error.issues
++        .map((e: z.ZodIssue) => `${e.path.length ? `${e.path.join('.')}: ` : ''}${e.message}`)
++        .join('; ')
+       return next(new ApiError(400, msg))
+     }
+     req.body = result.data
+@@ -19,5 +21,7 @@
+ // Common field schemas reused across routes
+ export const emailField = z.string().trim().email('Valid email required').max(254)
+ export const passwordField = z.string().min(8, 'Password must be at least 8 characters').max(128)
+-export const workspaceIdField = z.string().min(1, 'workspaceId required')
++export const workspaceIdField = z.string().trim().min(1, 'workspaceId required').max(128, 'workspaceId must be at most 128 characters')
+ export const nonEmptyString = z.string().trim().min(1)
++
++export const idField = z.string().trim().min(1, 'id required').max(128, 'id must be at most 128 characters')
+diff -ruN acaos_base_hardened/acaos/apps/api/src/routes/billing.ts acaos_work2/acaos/apps/api/src/routes/billing.ts
+--- acaos_base_hardened/acaos/apps/api/src/routes/billing.ts	2026-06-19 00:37:51.055764755 +0000
++++ acaos_work2/acaos/apps/api/src/routes/billing.ts	2026-06-19 00:31:57.960694131 +0000
+@@ -6,27 +6,33 @@
+ import { getMonthlyUsage } from '../lib/limits.js'
+ import { prisma } from '../lib/prisma.js'
+ import { isMailConfigured, sendMail } from '../services/mail.js'
++import { validate, workspaceIdField } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { BillingPlan } from '@prisma/client'
+ 
+ export const billingRouter = Router()
+ 
++const checkoutSchema = z.object({
++  workspaceId: workspaceIdField,
++  // Accept a server-side plan enum, never a raw Stripe price id from the
++  // client. A client-supplied price could point at an arbitrary (cheaper or
++  // unintended) price in the Stripe account; the price is resolved server-side
++  // from the chosen plan instead.
++  plan: z.enum(['starter', 'growth']),
++})
++
++const billingPortalSchema = z.object({
++  workspaceId: workspaceIdField,
++})
++
+ billingRouter.post(
+   '/checkout',
+   requireAuth,
++  validate(checkoutSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    // Accept a server-side plan enum, never a raw Stripe price id from the
+-    // client. A client-supplied price could point at an arbitrary (cheaper or
+-    // unintended) price in the Stripe account; the price is resolved server-side
+-    // from the chosen plan instead.
+-    const plan = typeof req.body?.plan === 'string' ? req.body.plan.trim() : ''
+-
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-    if (plan !== 'starter' && plan !== 'growth') {
+-      throw new ApiError(400, 'plan must be "starter" or "growth"')
+-    }
++    const { workspaceId, plan } = req.body as z.infer<typeof checkoutSchema>
+ 
+     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
+     if (!allowed) throw new ApiError(403, 'Workspace billing access denied')
+@@ -78,10 +84,10 @@
+ billingRouter.post(
+   '/portal',
+   requireAuth,
++  validate(billingPortalSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId } = req.body as z.infer<typeof billingPortalSchema>
+ 
+     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
+     if (!allowed) throw new ApiError(403, 'Access denied')
+diff -ruN acaos_base_hardened/acaos/apps/api/src/routes/campaigns.ts acaos_work2/acaos/apps/api/src/routes/campaigns.ts
+--- acaos_base_hardened/acaos/apps/api/src/routes/campaigns.ts	2026-06-19 00:37:51.056176646 +0000
++++ acaos_work2/acaos/apps/api/src/routes/campaigns.ts	2026-06-19 00:34:07.733545610 +0000
+@@ -4,14 +4,14 @@
+ import { prisma } from '../lib/prisma.js'
+ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+ import { enqueueSendCampaign, getJobById } from '../lib/queues.js'
+-import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
++import { validate, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
+ import { z } from 'zod'
+ import { isProduction } from '../lib/config.js'
+ import { getSendReadiness } from '../lib/sendReadiness.js'
+ import { recordAudit } from '../lib/audit.js'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { LeadStage } from '@prisma/client'
+-import type { Assert, Extends, CreateCampaignRequest } from '@acaos/shared'
++import type { Assert, Extends, CreateCampaignRequest, SendCampaignRequest } from '@acaos/shared'
+ 
+ export const campaignsRouter = Router()
+ campaignsRouter.use(requireAuth)
+@@ -29,6 +29,22 @@
+ // frontend is typed against. If the zod schema drifts from the contract, this fails.
+ type _CreateCampaignConforms = Assert<Extends<z.infer<typeof createCampaignSchema>, CreateCampaignRequest>>
+ 
++const updateCampaignSchema = z.object({
++  name: nonEmptyString.max(200, 'name must be at most 200 characters').optional(),
++  goalType: z.enum(GOAL_TYPES).optional(),
++  description: z.string().trim().max(1000).nullable().optional(),
++}).refine((body) => Object.keys(body).length > 0, 'No updatable fields provided')
++
++const sendCampaignSchema = z.preprocess(
++  (body) => body ?? {},
++  z.object({
++    approved: z.boolean().default(false),
++    leadIds: z.array(idField).min(1).max(1000).optional(),
++  })
++)
++
++type _SendCampaignConforms = Assert<Extends<z.infer<typeof sendCampaignSchema>, SendCampaignRequest>>
++
+ // List campaigns for a workspace
+ campaignsRouter.get(
+   '/',
+@@ -133,6 +149,7 @@
+ // Update campaign
+ campaignsRouter.patch(
+   '/:id',
++  validate(updateCampaignSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const campaignId = req.params.id as string
+@@ -141,18 +158,11 @@
+ 
+     await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
+ 
+-    const updates: { name?: string; goalType?: string; description?: string } = {}
+-    if (typeof req.body?.name === 'string' && req.body.name.trim()) {
+-      updates.name = req.body.name.trim()
+-    }
+-    if (typeof req.body?.goalType === 'string' && req.body.goalType.trim()) {
+-      updates.goalType = req.body.goalType.trim()
+-    }
+-    if (typeof req.body?.description === 'string') {
+-      updates.description = req.body.description.trim() || null as unknown as string
+-    }
+-
+-    if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updatable fields provided')
++    const body = req.body as z.infer<typeof updateCampaignSchema>
++    const updates: { name?: string; goalType?: string; description?: string | null } = {}
++    if (body.name !== undefined) updates.name = body.name
++    if (body.goalType !== undefined) updates.goalType = body.goalType
++    if (body.description !== undefined) updates.description = body.description || null
+ 
+     const campaign = await prisma.campaign.update({ where: { id: campaignId }, data: updates })
+     res.json({ campaign })
+@@ -237,8 +247,10 @@
+ campaignsRouter.post(
+   '/:id/send',
+   requireVerifiedEmail,
++  validate(sendCampaignSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
++    const body = req.body as z.infer<typeof sendCampaignSchema>
+     const campaign = await prisma.campaign.findUnique({
+       where: { id: req.params.id as string },
+       include: { _count: { select: { leads: true } } }
+@@ -262,11 +274,9 @@
+       }
+     }
+ 
+-    // Resolve which leads to send to — filter to string IDs only so non-string
+-    // elements (numbers, objects) from untrusted input don't reach Prisma.
+-    const requestedIds: string[] | undefined = Array.isArray(req.body?.leadIds)
+-      ? (req.body.leadIds as unknown[]).filter((id): id is string => typeof id === 'string')
+-      : undefined
++    // Resolve which leads to send to. Validation rejects non-string IDs before
++    // anything reaches Prisma.
++    const requestedIds = body.leadIds
+ 
+     const where = {
+       campaignId: campaign.id,
+@@ -293,7 +303,7 @@
+     if (icp?.approvalMode) {
+       // Approval mode: require explicit opt-in flag in the request body.
+       // The frontend sends { approved: true } after the user confirms the modal.
+-      if (!req.body?.approved) {
++      if (!body.approved) {
+         throw new ApiError(403, 'Approval required — send { approved: true } to confirm dispatch')
+       }
+       // This product reviews drafts per-lead (Review Queue → APPROVED) and the
+diff -ruN acaos_base_hardened/acaos/apps/api/src/routes/leads.ts acaos_work2/acaos/apps/api/src/routes/leads.ts
+--- acaos_base_hardened/acaos/apps/api/src/routes/leads.ts	2026-06-19 00:37:51.059664110 +0000
++++ acaos_work2/acaos/apps/api/src/routes/leads.ts	2026-06-19 00:36:59.269866485 +0000
+@@ -7,9 +7,11 @@
+ import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
+ import { escCsv } from '../lib/csv.js'
+ import { recordAudit } from '../lib/audit.js'
++import { validate, workspaceIdField, nonEmptyString, idField, emailField } from '../lib/validate.js'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { LeadStage } from '@prisma/client'
+-import type { UpdateDraftRequest } from '@acaos/shared'
++import type { Assert, Extends, CreateLeadRequest, ImportLeadsRequest, UpdateDraftRequest } from '@acaos/shared'
+ 
+ export const leadsRouter = Router()
+ leadsRouter.use(requireAuth)
+@@ -20,11 +22,98 @@
+   if (!campaign) throw new ApiError(400, 'campaignId not found in this workspace')
+ }
+ 
+-const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
++const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
+ const MAX_SHORT = 200
+ const MAX_NOTES = 2_000
+ const MAX_AI = 5_000
+ 
++const nullableIdField = z.preprocess(
++  (value) => typeof value === 'string' && value.trim() === '' ? null : value,
++  idField.nullable().optional()
++)
++const optionalShortField = z.string().trim().max(MAX_SHORT).optional()
++const optionalNotesField = z.string().trim().max(MAX_NOTES).optional()
++const optionalEmailInputField = z.preprocess(
++  (value) => typeof value === 'string' ? value.trim().toLowerCase() : value,
++  z.union([z.literal(''), emailField]).optional()
++)
++const nullableShortUpdateField = z.string().trim().max(MAX_SHORT).nullable().optional()
++const nullableNotesUpdateField = z.string().trim().max(MAX_NOTES).nullable().optional()
++const nullableAiUpdateField = z.string().trim().max(MAX_AI).nullable().optional()
++const nullableEmailUpdateField = z.preprocess(
++  (value) => typeof value === 'string' ? value.trim().toLowerCase() : value,
++  z.union([z.literal(''), emailField]).nullable().optional()
++)
++
++const leadInputSchema = z.object({
++  businessName: nonEmptyString.max(MAX_SHORT, `businessName must be at most ${MAX_SHORT} characters`),
++  campaignId: nullableIdField,
++  contactName: optionalShortField,
++  email: optionalEmailInputField,
++  website: optionalShortField,
++  city: optionalShortField,
++  category: optionalShortField,
++  notes: optionalNotesField,
++  sourceTag: optionalShortField,
++})
++
++const createLeadSchema = leadInputSchema.extend({
++  workspaceId: workspaceIdField,
++})
++
++type _CreateLeadConforms = Assert<Extends<z.infer<typeof createLeadSchema>, CreateLeadRequest>>
++
++const importLeadsSchema = z.object({
++  workspaceId: workspaceIdField,
++  leads: z.array(leadInputSchema).min(1, 'leads array required').max(500, 'Maximum 500 leads per import'),
++})
++
++type _ImportLeadsConforms = Assert<Extends<z.infer<typeof importLeadsSchema>, ImportLeadsRequest>>
++
++const updateLeadSchema = z.object({
++  businessName: nonEmptyString.max(MAX_SHORT, `businessName must be at most ${MAX_SHORT} characters`).optional(),
++  campaignId: nullableIdField,
++  contactName: nullableShortUpdateField,
++  email: nullableEmailUpdateField,
++  website: nullableShortUpdateField,
++  city: nullableShortUpdateField,
++  category: nullableShortUpdateField,
++  notes: nullableNotesUpdateField,
++  aiSummary: nullableAiUpdateField,
++  outreachAngle: nullableAiUpdateField,
++  stage: z.enum(VALID_STAGES).optional(),
++  score: z.number().min(0).max(100).optional(),
++}).refine((body) => Object.keys(body).length > 0, 'At least one field required')
++
++const bulkIdsSchema = z.object({
++  workspaceId: workspaceIdField,
++  ids: z.array(idField).min(1, 'ids array required').max(200, 'Maximum 200 leads per bulk update'),
++})
++
++const bulkDeleteSchema = bulkIdsSchema
++const bulkStageSchema = bulkIdsSchema.extend({
++  stage: z.enum(VALID_STAGES),
++})
++const bulkAssignSchema = bulkIdsSchema.extend({
++  campaignId: nullableIdField,
++})
++
++const updateDraftSchema = z.object({
++  subject: nonEmptyString.max(300, 'subject must be at most 300 characters').optional(),
++  emailBody: nonEmptyString.max(20_000, 'emailBody must be at most 20000 characters').optional(),
++  followup: z.string().trim().max(20_000, 'followup must be at most 20000 characters').nullable().optional(),
++}).refine((body) => Object.keys(body).length > 0, 'No editable fields provided')
++
++type _UpdateDraftConforms = Assert<Extends<z.infer<typeof updateDraftSchema>, UpdateDraftRequest>>
++
++function hasOwn<T extends object>(value: T, key: PropertyKey): boolean {
++  return Object.prototype.hasOwnProperty.call(value, key)
++}
++
++function emptyToNull(value: string | null | undefined): string | null {
++  return typeof value === 'string' && value.trim() ? value.trim() : null
++}
++
+ async function getWorkspaceWeights(workspaceId: string) {
+   const model = await prisma.scoringModel.findUnique({
+     where: { workspaceId },
+@@ -82,14 +171,11 @@
+ // Create single lead
+ leadsRouter.post(
+   '/',
++  validate(createLeadSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    const businessName = String(req.body?.businessName || '').trim()
+-
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-    if (!businessName) throw new ApiError(400, 'businessName required')
+-    if (businessName.length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
++    const body = req.body as z.infer<typeof createLeadSchema>
++    const { workspaceId, businessName } = body
+ 
+     const member = await userBelongsToWorkspace(user.id, workspaceId)
+     if (!member) throw new ApiError(403, 'Access denied')
+@@ -99,13 +185,14 @@
+     const leadData = {
+       workspaceId,
+       businessName,
+-      campaignId: typeof req.body?.campaignId === 'string' ? req.body.campaignId || null : null,
+-      contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() || null : null,
+-      email: typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() || null : null,
+-      website: typeof req.body?.website === 'string' ? req.body.website.trim() || null : null,
+-      city: typeof req.body?.city === 'string' ? req.body.city.trim() || null : null,
+-      category: typeof req.body?.category === 'string' ? req.body.category.trim() || null : null,
+-      notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() || null : null
++      campaignId: body.campaignId ?? null,
++      contactName: body.contactName || null,
++      email: body.email || null,
++      website: body.website || null,
++      city: body.city || null,
++      category: body.category || null,
++      notes: body.notes || null,
++      sourceTag: body.sourceTag || null,
+     }
+ 
+     await assertCampaignInWorkspace(leadData.campaignId, workspaceId)
+@@ -121,38 +208,32 @@
+ // Bulk import leads
+ leadsRouter.post(
+   '/import',
++  validate(importLeadsSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    const leads = req.body?.leads
+-
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-    if (!Array.isArray(leads) || leads.length === 0) throw new ApiError(400, 'leads array required')
+-    if (leads.length > 500) throw new ApiError(400, 'Maximum 500 leads per import')
++    const { workspaceId, leads } = req.body as z.infer<typeof importLeadsSchema>
+ 
+     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+ 
+     const weights = await getWorkspaceWeights(workspaceId)
+ 
+-    const rows = leads
+-      .filter((l) => typeof l?.businessName === 'string' && l.businessName.trim())
+-      .map((l) => {
+-        const row = {
+-          workspaceId,
+-          businessName: String(l.businessName).trim(),
+-          campaignId: typeof l.campaignId === 'string' ? l.campaignId || null : null,
+-          contactName: typeof l.contactName === 'string' ? l.contactName.trim() || null : null,
+-          email: typeof l.email === 'string' ? l.email.trim().toLowerCase() || null : null,
+-          website: typeof l.website === 'string' ? l.website.trim() || null : null,
+-          city: typeof l.city === 'string' ? l.city.trim() || null : null,
+-          category: typeof l.category === 'string' ? l.category.trim() || null : null,
+-          notes: typeof l.notes === 'string' ? l.notes.trim() || null : null,
+-          sourceTag: typeof l.sourceTag === 'string' ? l.sourceTag.trim() || null : null
+-        }
+-        return { ...row, score: computeLeadScore(row, weights) }
+-      })
++    const rows = leads.map((l) => {
++      const row = {
++        workspaceId,
++        businessName: l.businessName,
++        campaignId: l.campaignId ?? null,
++        contactName: l.contactName || null,
++        email: l.email || null,
++        website: l.website || null,
++        city: l.city || null,
++        category: l.category || null,
++        notes: l.notes || null,
++        sourceTag: l.sourceTag || null
++      }
++      return { ...row, score: computeLeadScore(row, weights) }
++    })
+ 
+-    const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
++    const campaignIds = [...new Set(rows.map((r) => r.campaignId).filter((cid): cid is string => Boolean(cid)))]
+     for (const cid of campaignIds) await assertCampaignInWorkspace(cid, workspaceId)
+ 
+     // Reserve capacity and insert atomically under a per-workspace lock so the
+@@ -239,8 +320,10 @@
+ // Update lead (including AI fields and stage)
+ leadsRouter.patch(
+   '/:id',
++  validate(updateLeadSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
++    const body = req.body as z.infer<typeof updateLeadSchema>
+     const leadId = req.params.id as string
+     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
+     if (!lead) throw new ApiError(404, 'Lead not found')
+@@ -249,37 +332,15 @@
+     if (!member) throw new ApiError(403, 'Access denied')
+ 
+     const updates: Record<string, unknown> = {}
+-    const shortFields = ['contactName', 'email', 'website', 'city', 'category']
+-    const notesFields = ['notes']
+-    const aiFields = ['aiSummary', 'outreachAngle']
++    const nullableStringFields = ['contactName', 'email', 'website', 'city', 'category', 'notes', 'aiSummary', 'outreachAngle'] as const
+ 
+-    for (const field of shortFields) {
+-      if (typeof req.body?.[field] === 'string') updates[field] = req.body[field].trim() || null
+-    }
+-    for (const field of notesFields) {
+-      if (typeof req.body?.[field] === 'string') {
+-        const v = req.body[field].trim()
+-        if (v.length > MAX_NOTES) throw new ApiError(400, `${field} must be at most ${MAX_NOTES} characters`)
+-        updates[field] = v || null
+-      }
+-    }
+-    for (const field of aiFields) {
+-      if (typeof req.body?.[field] === 'string') {
+-        const v = req.body[field].trim()
+-        if (v.length > MAX_AI) throw new ApiError(400, `${field} must be at most ${MAX_AI} characters`)
+-        updates[field] = v || null
+-      }
+-    }
+-    if (typeof req.body?.businessName === 'string' && req.body.businessName.trim()) {
+-      if (req.body.businessName.trim().length > MAX_SHORT) throw new ApiError(400, `businessName must be at most ${MAX_SHORT} characters`)
+-      updates.businessName = req.body.businessName.trim()
+-    }
+-    if (typeof req.body?.stage === 'string') {
+-      if (!VALID_STAGES.includes(req.body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
+-      updates.stage = req.body.stage
+-    }
+-    if (typeof req.body?.campaignId === 'string') {
+-      const cid = req.body.campaignId || null
++    if (typeof body.businessName === 'string') updates.businessName = body.businessName
++    for (const field of nullableStringFields) {
++      if (hasOwn(body, field)) updates[field] = emptyToNull(body[field])
++    }
++    if (body.stage) updates.stage = body.stage
++    if (hasOwn(body, 'campaignId')) {
++      const cid = body.campaignId ?? null
+       await assertCampaignInWorkspace(cid, lead.workspaceId)
+       updates.campaignId = cid
+     }
+@@ -291,9 +352,9 @@
+       const merged = { ...lead, ...updates }
+       const weights = await getWorkspaceWeights(lead.workspaceId)
+       updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights)
+-    } else if (typeof req.body?.score === 'number') {
++    } else if (typeof body.score === 'number') {
+       // Allow manual override only if no auto-rescore
+-      updates.score = req.body.score
++      updates.score = body.score
+     }
+ 
+     const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
+@@ -320,14 +381,10 @@
+ // Bulk delete leads
+ leadsRouter.post(
+   '/bulk-delete',
++  validate(bulkDeleteSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    const ids = req.body?.ids
+-
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
+-    if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk delete')
++    const { workspaceId, ids } = req.body as z.infer<typeof bulkDeleteSchema>
+ 
+     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+ 
+@@ -341,16 +398,10 @@
+ // Bulk stage update
+ leadsRouter.post(
+   '/bulk-stage',
++  validate(bulkStageSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    const ids = req.body?.ids
+-    const stage = String(req.body?.stage || '').trim()
+-
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
+-    if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk update')
+-    if (!VALID_STAGES.includes(stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
++    const { workspaceId, ids, stage } = req.body as z.infer<typeof bulkStageSchema>
+ 
+     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+ 
+@@ -365,15 +416,11 @@
+ // Bulk campaign assignment
+ leadsRouter.post(
+   '/bulk-assign',
++  validate(bulkAssignSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    const ids = req.body?.ids
+-    const campaignId = typeof req.body?.campaignId === 'string' ? req.body.campaignId || null : null
+-
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+-    if (!Array.isArray(ids) || ids.length === 0) throw new ApiError(400, 'ids array required')
+-    if (ids.length > 200) throw new ApiError(400, 'Maximum 200 leads per bulk update')
++    const { workspaceId, ids, campaignId: rawCampaignId } = req.body as z.infer<typeof bulkAssignSchema>
++    const campaignId = rawCampaignId ?? null
+ 
+     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+ 
+@@ -482,6 +529,7 @@
+ // drafts are editable — once APPROVED/SENT the content is locked.
+ leadsRouter.patch(
+   '/:id/drafts/:draftId',
++  validate(updateDraftSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const { id: leadId, draftId } = req.params as { id: string; draftId: string }
+@@ -491,24 +539,11 @@
+     await assertMinimumWorkspaceRole(user.id, draft.workspaceId, 'admin')
+     if (draft.status !== 'DRAFTED') throw new ApiError(409, `Cannot edit a ${draft.status.toLowerCase()} draft`)
+ 
+-    const body = req.body as UpdateDraftRequest
++    const body = req.body as z.infer<typeof updateDraftSchema>
+     const data: { subject?: string; emailBody?: string; followup?: string | null } = {}
+-    if (typeof body.subject === 'string') {
+-      const s = body.subject.trim()
+-      if (!s) throw new ApiError(400, 'subject cannot be empty')
+-      if (s.length > 300) throw new ApiError(400, 'subject must be at most 300 characters')
+-      data.subject = s
+-    }
+-    if (typeof body.emailBody === 'string') {
+-      const b = body.emailBody.trim()
+-      if (!b) throw new ApiError(400, 'emailBody cannot be empty')
+-      if (b.length > 20_000) throw new ApiError(400, 'emailBody must be at most 20000 characters')
+-      data.emailBody = b
+-    }
+-    if (body.followup === null) data.followup = null
+-    else if (typeof body.followup === 'string') data.followup = body.followup.trim() || null
+-
+-    if (Object.keys(data).length === 0) throw new ApiError(400, 'No editable fields provided')
++    if (typeof body.subject === 'string') data.subject = body.subject
++    if (typeof body.emailBody === 'string') data.emailBody = body.emailBody
++    if (hasOwn(body, 'followup')) data.followup = emptyToNull(body.followup)
+ 
+     const updated = await prisma.outreachDraft.update({ where: { id: draftId }, data })
+     void recordAudit({
+diff -ruN acaos_base_hardened/acaos/apps/api/src/routes/mailbox.ts acaos_work2/acaos/apps/api/src/routes/mailbox.ts
+--- acaos_base_hardened/acaos/apps/api/src/routes/mailbox.ts	2026-06-19 00:37:51.060160475 +0000
++++ acaos_work2/acaos/apps/api/src/routes/mailbox.ts	2026-06-19 00:31:41.214245314 +0000
+@@ -4,30 +4,46 @@
+ import { asyncHandler, ApiError } from '../lib/http.js'
+ import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
+ import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
+-import { isValidEmail } from '../lib/validation.js'
++import { validate, workspaceIdField, emailField } from '../lib/validate.js'
+ import { promises as dns } from 'dns'
++import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+ 
+ export const mailboxRouter = Router()
+ mailboxRouter.use(requireAuth)
+ 
++const sendTestSchema = z.object({
++  workspaceId: workspaceIdField,
++  to: emailField,
++  subject: z.string().trim().max(300).default('Test'),
++  html: z.string().max(50_000).default('<p>Hello</p>'),
++})
++
++const syncMailboxSchema = z.object({
++  workspaceId: workspaceIdField,
++})
++
++const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
++
++function parseDomain(value: unknown): string {
++  const domain = String(value || '').trim().toLowerCase().replace(/\.$/, '')
++  if (!domain) throw new ApiError(400, 'domain required')
++  if (!DOMAIN_RE.test(domain)) throw new ApiError(400, 'Valid domain required')
++  return domain
++}
++
+ mailboxRouter.post(
+   '/send-test',
+   requireVerifiedEmail,
+   mailRateLimit,
++  validate(sendTestSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const to = String(req.body?.to || '').trim()
+-    const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : 'Test'
+-    const html = typeof req.body?.html === 'string' ? req.body.html : '<p>Hello</p>'
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId, to, subject, html } = req.body as z.infer<typeof sendTestSchema>
+ 
+     const emailCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+     if (!isMailConfigured(emailCfg)) throw new ApiError(503, 'SMTP is not configured')
+ 
+-    if (!to || !isValidEmail(to)) throw new ApiError(400, 'Valid recipient email required')
+-
+     // Require owner or admin — test-send uses real SMTP credits
+     const member = await prisma.membership.findFirst({
+       where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+@@ -43,10 +59,10 @@
+   '/sync',
+   requireVerifiedEmail,
+   syncRateLimit,
++  validate(syncMailboxSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = String(req.body?.workspaceId || '').trim()
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const { workspaceId } = req.body as z.infer<typeof syncMailboxSchema>
+ 
+     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })
+     if (!member) throw new ApiError(403, 'Access denied')
+@@ -66,8 +82,7 @@
+ mailboxRouter.get(
+   '/check-domain',
+   asyncHandler(async (req, res) => {
+-    const domain = String(req.query.domain || '').trim()
+-    if (!domain) throw new ApiError(400, 'domain required')
++    const domain = parseDomain(req.query.domain)
+ 
+     let records: string[] = []
+     try {
+diff -ruN acaos_base_hardened/acaos/apps/api/src/routes/prospects.ts acaos_work2/acaos/apps/api/src/routes/prospects.ts
+--- acaos_base_hardened/acaos/apps/api/src/routes/prospects.ts	2026-06-19 00:37:51.062861944 +0000
++++ acaos_work2/acaos/apps/api/src/routes/prospects.ts	2026-06-19 00:38:32.023780200 +0000
+@@ -29,28 +29,81 @@
+ import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
+ import { dollarsToCents, centsToDollars } from '../lib/money.js'
+ import { escCsv } from '../lib/csv.js'
+-import { validate, workspaceIdField } from '../lib/validate.js'
++import { validate, workspaceIdField, nonEmptyString, emailField } from '../lib/validate.js'
+ import { z } from 'zod'
+ import type { AuthedRequest } from '../types/auth.js'
+-import type { Assert, Extends, DiscoverProspectsRequest } from '@acaos/shared'
++import type { Assert, Extends, DiscoverProspectsRequest, RecordProspectOutcomeRequest } from '@acaos/shared'
+ 
+ export const prospectsRouter = Router()
+ prospectsRouter.use(requireAuth)
+ 
+ // Request contract for POST /discover, pinned to the shared type so they can't drift.
++const boundedText = (max = 200) => z.string().trim().max(max)
++const nullableText = (max = 200) => boundedText(max).nullable().optional()
++const boundedList = z.array(boundedText(100).min(1)).max(25)
++const optionalNonNegativeInt = z.preprocess(
++  (value) => value === '' || value == null ? null : typeof value === 'string' ? Number(value) : value,
++  z.number().int().nonnegative().nullable().optional()
++)
++const optionalMoney = z.preprocess(
++  (value) => value === '' || value == null ? null : typeof value === 'string' ? Number(value) : value,
++  z.number().nonnegative().nullable().optional()
++)
++const optionalEmail = z.preprocess(
++  (value) => typeof value === 'string' ? (value.trim() === '' ? null : value.trim().toLowerCase()) : value,
++  emailField.nullable().optional()
++)
++
+ const discoverSchema = z.object({
+   workspaceId: workspaceIdField,
+-  source: z.string().optional(),
+-  missionId: z.string().nullish(),
+-  industries: z.array(z.string()).optional(),
+-  locations: z.array(z.string()).optional(),
+-  keywords: z.array(z.string()).optional(),
+-  minEmployees: z.number().int().optional(),
+-  maxEmployees: z.number().int().optional(),
+-  limit: z.number().int().optional(),
+-})
++  source: boundedText(50).optional(),
++  missionId: z.string().trim().min(1).max(128).nullish(),
++  industries: boundedList.optional(),
++  locations: boundedList.optional(),
++  keywords: boundedList.optional(),
++  minEmployees: z.number().int().nonnegative().optional(),
++  maxEmployees: z.number().int().nonnegative().optional(),
++  limit: z.number().int().min(1).max(50).optional(),
++}).refine(
++  (body) => body.minEmployees === undefined || body.maxEmployees === undefined || body.minEmployees <= body.maxEmployees,
++  { message: 'minEmployees must be less than or equal to maxEmployees', path: ['minEmployees'] }
++)
+ type _DiscoverConforms = Assert<Extends<z.infer<typeof discoverSchema>, DiscoverProspectsRequest>>
+ 
++const prospectWriteSchema = z.object({
++  workspaceId: workspaceIdField,
++  companyName: nonEmptyString.max(200, 'companyName must be at most 200 characters'),
++  domain: nullableText(253),
++  industry: nullableText(),
++  employeeCount: optionalNonNegativeInt,
++  estimatedRevenue: optionalMoney,
++  location: nullableText(),
++  description: nullableText(2_000),
++  notes: nullableText(2_000),
++  aiSummary: nullableText(5_000),
++  contactName: nullableText(),
++  contactEmail: optionalEmail,
++  contactPhone: nullableText(50),
++  contactTitle: nullableText(),
++  linkedinUrl: nullableText(500),
++  expectedDealValue: optionalMoney,
++  sourceTag: nullableText(100),
++})
++
++const prospectUpdateSchema = prospectWriteSchema.omit({ workspaceId: true }).partial().extend({
++  lastContactedAt: z.string().datetime().nullable().optional(),
++  outcomeStage: z.enum(['DISCOVERED', 'CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST']).optional(),
++  buyingStage: z.string().trim().max(50).optional(),
++}).refine((body) => Object.keys(body).length > 0, 'No updatable fields provided')
++
++const outcomeSchema = z.object({
++  stage: z.enum(['DISCOVERED', 'CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST']),
++  notes: z.string().trim().max(2_000).optional(),
++  dealValue: z.number().nonnegative().optional(),
++})
++
++type _OutcomeConforms = Assert<Extends<z.infer<typeof outcomeSchema>, RecordProspectOutcomeRequest>>
++
+ /** An array, or undefined when it's missing/empty — for layered ICP fallbacks. */
+ function nonEmpty<T>(arr: T[] | null | undefined): T[] | undefined {
+   return arr && arr.length > 0 ? arr : undefined
+@@ -653,21 +706,20 @@
+ }))
+ 
+ // POST /api/prospects
+-prospectsRouter.post('/', asyncHandler(async (req, res) => {
+-  const workspaceId = req.body.workspaceId as string
+-  if (!workspaceId)          throw new ApiError(400, 'workspaceId required')
+-  if (!req.body.companyName) throw new ApiError(400, 'companyName required')
++prospectsRouter.post('/', validate(prospectWriteSchema), asyncHandler(async (req, res) => {
++  const body = req.body as z.infer<typeof prospectWriteSchema>
++  const { workspaceId } = body
+ 
+   const userId = (req as AuthedRequest).user.id
+   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+ 
+   const meta = {
+-    industry:      req.body.industry      ?? null,
+-    employeeCount: req.body.employeeCount ? Number(req.body.employeeCount) : null,
+-    contactEmail:  req.body.contactEmail  ?? null,
+-    contactName:   req.body.contactName   ?? null,
+-    domain:        req.body.domain        ?? null,
+-    location:      req.body.location      ?? null,
++    industry:      body.industry      ?? null,
++    employeeCount: body.employeeCount ?? null,
++    contactEmail:  body.contactEmail  ?? null,
++    contactName:   body.contactName   ?? null,
++    domain:        body.domain        ?? null,
++    location:      body.location      ?? null,
+   }
+ 
+   const icp    = await getICP(workspaceId)
+@@ -678,23 +730,23 @@
+   const created = await prisma.prospect.create({
+     data: {
+       workspaceId,
+-      companyName:       req.body.companyName,
++      companyName:       body.companyName,
+       domain:            meta.domain,
+       domainKey:         normalizeDomain(meta.domain),
+       industry:          meta.industry,
+       employeeCount:     meta.employeeCount,
+-      estimatedRevenue:  req.body.estimatedRevenue  ? dollarsToCents(Number(req.body.estimatedRevenue))  : null,
++      estimatedRevenue:  body.estimatedRevenue != null ? dollarsToCents(body.estimatedRevenue) : null,
+       location:          meta.location,
+-      description:       req.body.description   ?? null,
+-      notes:             req.body.notes          ?? null,
+-      aiSummary:         req.body.aiSummary      ?? null,
++      description:       body.description   ?? null,
++      notes:             body.notes          ?? null,
++      aiSummary:         body.aiSummary      ?? null,
+       contactName:       meta.contactName,
+       contactEmail:      meta.contactEmail,
+-      contactPhone:      req.body.contactPhone   ?? null,
+-      contactTitle:      req.body.contactTitle   ?? null,
+-      linkedinUrl:       req.body.linkedinUrl    ?? null,
+-      expectedDealValue: req.body.expectedDealValue ? dollarsToCents(Number(req.body.expectedDealValue)) : null,
+-      sourceTag:         req.body.sourceTag      ?? null,
++      contactPhone:      body.contactPhone   ?? null,
++      contactTitle:      body.contactTitle   ?? null,
++      linkedinUrl:       body.linkedinUrl    ?? null,
++      expectedDealValue: body.expectedDealValue != null ? dollarsToCents(body.expectedDealValue) : null,
++      sourceTag:         body.sourceTag      ?? null,
+       ...scores,
+       buyingStage,
+       winProbability,
+@@ -705,30 +757,25 @@
+ }))
+ 
+ // PATCH /api/prospects/:id
+-prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
++prospectsRouter.patch('/:id', validate(prospectUpdateSchema), asyncHandler(async (req, res) => {
++  const body = req.body as z.infer<typeof prospectUpdateSchema>
+   const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+   if (!existing) throw new ApiError(404, 'Prospect not found')
+ 
+   const userId = (req as AuthedRequest).user.id
+   if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
+ 
+-  const allowed = [
+-    'companyName', 'domain', 'industry', 'employeeCount', 'estimatedRevenue',
+-    'location', 'description', 'notes', 'aiSummary',
+-    'contactName', 'contactEmail', 'contactPhone', 'contactTitle',
+-    'linkedinUrl', 'outcomeStage', 'buyingStage', 'expectedDealValue', 'sourceTag',
+-  ]
+-
+-  const moneyFields = new Set(['expectedDealValue', 'estimatedRevenue'])
+   const data: Record<string, unknown> = {}
+-  for (const key of allowed) {
+-    if (req.body[key] === undefined) continue
+-    // Money arrives as whole units and is stored as integer cents.
+-    data[key] = moneyFields.has(key) && req.body[key] != null
+-      ? dollarsToCents(Number(req.body[key]))
+-      : req.body[key]
++  for (const [key, value] of Object.entries(body)) {
++    if (value === undefined) continue
++    if ((key === 'expectedDealValue' || key === 'estimatedRevenue') && value != null) {
++      data[key] = dollarsToCents(value as number)
++    } else if (key === 'lastContactedAt' && value) {
++      data.lastContactedAt = new Date(value as string)
++    } else {
++      data[key] = value
++    }
+   }
+-  if (req.body.lastContactedAt) data.lastContactedAt = new Date(req.body.lastContactedAt)
+   // Keep domainKey in sync whenever domain is patched
+   if ('domain' in data) data.domainKey = normalizeDomain(data.domain as string | null)
+ 
+@@ -780,7 +827,8 @@
+ }))
+ 
+ // POST /api/prospects/:id/outcome
+-prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
++prospectsRouter.post('/:id/outcome', validate(outcomeSchema), asyncHandler(async (req, res) => {
++  const body = req.body as z.infer<typeof outcomeSchema>
+   const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+   if (!prospect) throw new ApiError(404, 'Prospect not found')
+ 
+@@ -791,30 +839,28 @@
+   // demo data into the forecast and the scoring calibration loop.
+   if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot have outcomes — add real prospects first')
+ 
+-  if (!req.body.stage) throw new ApiError(400, 'stage required')
+-
+   const [outcome, updated] = await prisma.$transaction([
+     prisma.prospectOutcome.create({
+       data: {
+         workspaceId: prospect.workspaceId,
+         prospectId:  prospect.id,
+-        stage:       req.body.stage,
+-        notes:       req.body.notes     ?? null,
+-        dealValue:   req.body.dealValue ? dollarsToCents(Number(req.body.dealValue)) : null,
++        stage:       body.stage,
++        notes:       body.notes     ?? null,
++        dealValue:   body.dealValue != null ? dollarsToCents(body.dealValue) : null,
+       },
+     }),
+     prisma.prospect.update({
+       where: { id: prospect.id },
+       data: {
+-        outcomeStage: req.body.stage,
+-        lastContactedAt: ['CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST'].includes(req.body.stage)
++        outcomeStage: body.stage,
++        lastContactedAt: ['CONTACTED', 'MEETING', 'PROPOSAL', 'WON', 'LOST'].includes(body.stage)
+           ? new Date() : undefined,
+       },
+     }),
+   ])
+ 
+   // Trigger background jobs on definitive outcomes
+-  if (['WON', 'LOST'].includes(req.body.stage)) {
++  if (['WON', 'LOST'].includes(body.stage)) {
+     enqueueScoreProspects(prospect.workspaceId).catch(() => {})
+     enqueueCalibrate(prospect.workspaceId).catch(() => {})
+   }
+diff -ruN acaos_base_hardened/acaos/apps/api/src/routes/workspaces.ts acaos_work2/acaos/apps/api/src/routes/workspaces.ts
+--- acaos_base_hardened/acaos/apps/api/src/routes/workspaces.ts	2026-06-19 00:37:51.065034342 +0000
++++ acaos_work2/acaos/apps/api/src/routes/workspaces.ts	2026-06-19 00:38:32.022347250 +0000
+@@ -3,20 +3,19 @@
+ import { prisma } from '../lib/prisma.js'
+ import { asyncHandler, ApiError } from '../lib/http.js'
+ import { ensureWorkspaceSlug, userCanManageWorkspaceBilling, normalizeWorkspaceRole } from '../lib/workspaces.js'
+-import { normalizeOptionalString } from '../lib/validation.js'
+-import { validate, nonEmptyString } from '../lib/validate.js'
++import { validate, nonEmptyString, emailField } from '../lib/validate.js'
+ import { z } from 'zod'
+ import { createBillingPortalSession } from '../services/stripe.js'
+ import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
+ import { generateRefreshToken, hashRefreshToken } from '../lib/jwt.js'
+ import { isMailConfigured, sendMail } from '../services/mail.js'
+ import { escapeHtml } from '../lib/html.js'
+-import { encryptSecret, decryptSecret, isEncrypted } from '../lib/encrypt.js'
++import { encryptSecret } from '../lib/encrypt.js'
+ import { assertPublicMailHost } from '../lib/ssrf.js'
+-import { normalizeEmail, isValidEmail } from '../lib/validation.js'
+ import type { AuthedRequest } from '../types/auth.js'
+ import type { SignalType } from '../lib/signalEngine.js'
+ import { evictCachedWorkspace } from '../lib/ingestCache.js'
++import type { Assert, Extends, SeedWorkspaceRequest, UpdateIcpRequest } from '@acaos/shared'
+ 
+ // ── F-04: SSRF protection helpers ────────────────────────────────────────────
+ // Host validation lives in lib/ssrf.ts (`assertPublicMailHost`), which resolves
+@@ -31,6 +30,80 @@
+   }
+ }
+ 
++const workspaceCreateSchema = z.object({
++  name: nonEmptyString.max(100, 'Workspace name must be at most 100 characters'),
++  slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens').optional(),
++})
++
++const workspaceRoleField = z.enum(['admin', 'member']).default('member')
++
++const addMemberSchema = z.object({
++  email: emailField,
++  role: workspaceRoleField,
++})
++
++const inviteMemberSchema = addMemberSchema
++
++const secretField = z.string().max(2_000).nullable().optional()
++const mailHostField = z.string().trim().max(253).nullable().optional()
++const mailUserField = z.string().trim().max(320).nullable().optional()
++const mailPortField = z.preprocess(
++  (value) => value === '' || value == null ? null : typeof value === 'string' ? Number(value) : value,
++  z.number().int().positive().nullable().optional()
++)
++const nullableBoolean = (fallback: boolean) => z.preprocess(
++  (value) => value == null ? undefined : value,
++  z.boolean().default(fallback)
++)
++const nullableEmailConfigField = z.preprocess(
++  (value) => typeof value === 'string' && value.trim() === '' ? null : value,
++  z.string().trim().email('smtpFrom must be a valid email').max(254).nullable().optional()
++)
++
++const emailConfigSchema = z.object({
++  smtpHost: mailHostField,
++  smtpPort: mailPortField,
++  smtpSecure: nullableBoolean(false),
++  smtpUser: mailUserField,
++  smtpPass: secretField,
++  smtpFrom: nullableEmailConfigField,
++  imapHost: mailHostField,
++  imapPort: mailPortField,
++  imapSecure: nullableBoolean(true),
++  imapUser: mailUserField,
++  imapPass: secretField,
++})
++
++const boundedListField = z.array(z.string().trim().min(1).max(100)).max(50)
++const nullableBoundedString = z.string().trim().max(200).nullable().optional()
++
++const updateIcpSchema = z.object({
++  businessType: nullableBoundedString,
++  playbook: z.string().trim().max(100).nullable().optional(),
++  targetIndustries: boundedListField.optional(),
++  targetGeos: boundedListField.optional(),
++  excludedIndustries: boundedListField.optional(),
++  minEmployees: z.number().int().nonnegative().nullable().optional(),
++  maxEmployees: z.number().int().nonnegative().nullable().optional(),
++  mustHaveEmail: z.boolean().optional(),
++  outreachTone: z.enum(['professional', 'casual', 'direct']).optional(),
++  dailySendLimit: z.number().int().min(1).max(500).optional(),
++  approvalMode: z.boolean().optional(),
++}).refine(
++  (body) => body.minEmployees == null || body.maxEmployees == null || body.minEmployees <= body.maxEmployees,
++  { message: 'minEmployees must be less than or equal to maxEmployees', path: ['minEmployees'] }
++)
++
++type _UpdateIcpConforms = Assert<Extends<z.infer<typeof updateIcpSchema>, Partial<UpdateIcpRequest>>>
++
++const seedWorkspaceSchema = z.object({
++  playbookId: z.string().trim().min(1).max(100).nullable().default(null),
++  includeExamples: z.boolean().default(true),
++})
++
++type _SeedWorkspaceConforms = Assert<Extends<z.infer<typeof seedWorkspaceSchema>, SeedWorkspaceRequest>>
++
++
+ export const workspaceRouter = Router()
+ workspaceRouter.use(requireAuth)
+ 
+@@ -58,12 +131,10 @@
+ 
+ workspaceRouter.post(
+   '/',
++  validate(workspaceCreateSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const name = normalizeOptionalString(req.body?.name)
+-    const requestedSlug = normalizeOptionalString(req.body?.slug)
+-
+-    if (!name) throw new ApiError(400, 'Workspace name is required')
++    const { name, slug: requestedSlug } = req.body as z.infer<typeof workspaceCreateSchema>
+ 
+     const slug = await ensureWorkspaceSlug(requestedSlug || name)
+ 
+@@ -201,21 +272,18 @@
+ 
+ workspaceRouter.post(
+   '/:id/members',
++  validate(addMemberSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const workspaceId = req.params.id as string
++    const { email, role } = req.body as z.infer<typeof addMemberSchema>
+ 
+     const canManage = await prisma.membership.findFirst({
+       where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+     })
+     if (!canManage) throw new ApiError(403, 'Must be owner or admin to add members')
+ 
+-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+-    const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+-
+-    if (!email) throw new ApiError(400, 'email required')
+-
+-    const invitee = await prisma.user.findUnique({ where: { email }, select: { id: true, email: true, name: true } })
++    const invitee = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true, email: true, name: true } })
+     if (!invitee) throw new ApiError(404, 'User not found — ask them to create an account first')
+ 
+     if (invitee.id === user.id) throw new ApiError(400, 'You are already a member')
+@@ -233,21 +301,18 @@
+ 
+ workspaceRouter.post(
+   '/:id/invites',
++  validate(inviteMemberSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const workspaceId = req.params.id as string
++    const { role } = req.body as z.infer<typeof inviteMemberSchema>
++    const email = String(req.body.email).trim().toLowerCase()
+ 
+     const canManage = await prisma.membership.findFirst({
+       where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+     })
+     if (!canManage) throw new ApiError(403, 'Must be owner or admin to invite members')
+ 
+-    const rawEmail = typeof req.body?.email === 'string' ? req.body.email : ''
+-    const email = normalizeEmail(rawEmail)
+-    if (!isValidEmail(email)) throw new ApiError(400, 'Valid email required')
+-
+-    const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+-
+     // Check if already a member
+     const existingUser = await prisma.user.findUnique({ where: { email } })
+     if (existingUser) {
+@@ -413,6 +478,7 @@
+ 
+ workspaceRouter.put(
+   '/:id/email-config',
++  validate(emailConfigSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const workspaceId = req.params.id as string
+@@ -422,24 +488,22 @@
+     })
+     if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+ 
+-    const b = req.body ?? {}
+-    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+-    const num = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null)
+-    const bool = (v: unknown, def: boolean) => (typeof v === 'boolean' ? v : def)
++    const b = req.body as z.infer<typeof emailConfigSchema>
++    const str = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+ 
+     const rawSmtpPass = str(b.smtpPass)
+     const rawImapPass = str(b.imapPass)
+ 
+     const data = {
+       smtpHost:   str(b.smtpHost),
+-      smtpPort:   num(b.smtpPort),
+-      smtpSecure: bool(b.smtpSecure, false),
++      smtpPort:   b.smtpPort ?? null,
++      smtpSecure: b.smtpSecure,
+       smtpUser:   str(b.smtpUser),
+       smtpPass:   rawSmtpPass ? encryptSecret(rawSmtpPass) : null,
+       smtpFrom:   str(b.smtpFrom),
+       imapHost:   str(b.imapHost),
+-      imapPort:   num(b.imapPort),
+-      imapSecure: bool(b.imapSecure, true),
++      imapPort:   b.imapPort ?? null,
++      imapSecure: b.imapSecure,
+       imapUser:   str(b.imapUser),
+       imapPass:   rawImapPass ? encryptSecret(rawImapPass) : null,
+     }
+@@ -485,43 +549,29 @@
+ 
+ workspaceRouter.put(
+   '/:id/icp',
++  validate(updateIcpSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const workspaceId = req.params.id as string
++    const body = req.body as z.infer<typeof updateIcpSchema>
+ 
+     const canManage = await prisma.membership.findFirst({
+       where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+     })
+     if (!canManage) throw new ApiError(403, 'Must be owner or admin to update ICP')
+ 
+-    const body = req.body ?? {}
+-    const arr = (v: unknown): string[] | undefined =>
+-      Array.isArray(v) ? v.filter((s: unknown) => typeof s === 'string') : undefined
+-
+-    const targetIndustries = arr(body.targetIndustries)
+-    const targetGeos = arr(body.targetGeos)
+-    const excludedIndustries = arr(body.excludedIndustries)
+-    const minEmployees = typeof body.minEmployees === 'number' ? body.minEmployees : null
+-    const maxEmployees = typeof body.maxEmployees === 'number' ? body.maxEmployees : null
+-    const mustHaveEmail = typeof body.mustHaveEmail === 'boolean' ? body.mustHaveEmail : undefined
+-    const businessType = typeof body.businessType === 'string' ? body.businessType.trim() || null : undefined
+-    const outreachTone = typeof body.outreachTone === 'string' && ['professional', 'casual', 'direct'].includes(body.outreachTone) ? body.outreachTone : undefined
+-    const approvalMode = typeof body.approvalMode === 'boolean' ? body.approvalMode : undefined
+-    const dailySendLimit = typeof body.dailySendLimit === 'number' && body.dailySendLimit > 0 ? Math.min(body.dailySendLimit, 500) : undefined
+-    const playbook = typeof body.playbook === 'string' ? body.playbook || null : undefined
+-
+     const data: Record<string, unknown> = {}
+-    if (targetIndustries !== undefined) data.targetIndustries = targetIndustries
+-    if (targetGeos !== undefined) data.targetGeos = targetGeos
+-    if (excludedIndustries !== undefined) data.excludedIndustries = excludedIndustries
+-    if (minEmployees !== undefined) data.minEmployees = minEmployees
+-    if (maxEmployees !== undefined) data.maxEmployees = maxEmployees
+-    if (mustHaveEmail !== undefined) data.mustHaveEmail = mustHaveEmail
+-    if (businessType !== undefined) data.businessType = businessType
+-    if (outreachTone !== undefined) data.outreachTone = outreachTone
+-    if (approvalMode !== undefined) data.approvalMode = approvalMode
+-    if (dailySendLimit !== undefined) data.dailySendLimit = dailySendLimit
+-    if (playbook !== undefined) data.playbook = playbook
++    if (body.targetIndustries !== undefined) data.targetIndustries = body.targetIndustries
++    if (body.targetGeos !== undefined) data.targetGeos = body.targetGeos
++    if (body.excludedIndustries !== undefined) data.excludedIndustries = body.excludedIndustries
++    if (body.minEmployees !== undefined) data.minEmployees = body.minEmployees
++    if (body.maxEmployees !== undefined) data.maxEmployees = body.maxEmployees
++    if (body.mustHaveEmail !== undefined) data.mustHaveEmail = body.mustHaveEmail
++    if (body.businessType !== undefined) data.businessType = body.businessType || null
++    if (body.outreachTone !== undefined) data.outreachTone = body.outreachTone
++    if (body.approvalMode !== undefined) data.approvalMode = body.approvalMode
++    if (body.dailySendLimit !== undefined) data.dailySendLimit = body.dailySendLimit
++    if (body.playbook !== undefined) data.playbook = body.playbook || null
+ 
+     const icp = await prisma.workspaceICP.upsert({
+       where: { workspaceId },
+@@ -581,18 +631,17 @@
+ // example (isExample=true) prospects so the dashboard is never empty on day 1.
+ workspaceRouter.post(
+   '/:id/seed',
++  validate(seedWorkspaceSchema),
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+     const workspaceId = req.params.id as string
++    const { playbookId, includeExamples } = req.body as z.infer<typeof seedWorkspaceSchema>
+ 
+     const membership = await prisma.membership.findFirst({
+       where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+     })
+     if (!membership) throw new ApiError(403, 'Must be owner or admin')
+ 
+-    const playbookId: string | null = typeof req.body?.playbookId === 'string' ? req.body.playbookId : null
+-    const includeExamples: boolean = req.body?.includeExamples !== false
+-
+     // Mark onboarding complete
+     await prisma.workspace.update({ where: { id: workspaceId }, data: { onboardingCompleted: true } })
+ 
+diff -ruN acaos_base_hardened/acaos/docs/HARDENING_WAVE_2_2026-06-19.md acaos_work2/acaos/docs/HARDENING_WAVE_2_2026-06-19.md
+--- acaos_base_hardened/acaos/docs/HARDENING_WAVE_2_2026-06-19.md	1970-01-01 00:00:00.000000000 +0000
++++ acaos_work2/acaos/docs/HARDENING_WAVE_2_2026-06-19.md	2026-06-19 00:38:47.299111489 +0000
+@@ -0,0 +1,110 @@
++# Hardening Wave 2 — Request Boundaries and Mutation Safety
++
++Date: 2026-06-19
++
++This pass continues the stabilization work from the first hardened archive. The focus is API mutation safety: every high-traffic route should reject malformed input at the HTTP boundary before the value can reach Prisma, queues, SMTP/IMAP, Stripe, or discovery providers.
++
++## What changed
++
++### Central validation helpers
++
++- Improved `apps/api/src/lib/validate.ts` error messages so object-level refinements no longer return a leading empty path.
++- Made `workspaceIdField` trim and enforce a maximum length.
++- Added a shared `idField` for route schemas that accept arrays of IDs.
++
++### Leads
++
++Converted these routes to central Zod validation:
++
++- `POST /api/leads`
++- `POST /api/leads/import`
++- `PATCH /api/leads/:id`
++- `POST /api/leads/bulk-delete`
++- `POST /api/leads/bulk-stage`
++- `POST /api/leads/bulk-assign`
++- `PATCH /api/leads/:id/drafts/:draftId`
++
++Important behavior change: lead imports now reject malformed rows instead of silently dropping rows with missing `businessName`. This is safer for production because users see bad input immediately instead of discovering missing leads later.
++
++### Campaigns
++
++Converted campaign updates and sends to central validation:
++
++- `PATCH /api/campaigns/:id`
++- `POST /api/campaigns/:id/send`
++
++`leadIds` are now validated as strings before they can reach Prisma. The send payload is also pinned to the shared `SendCampaignRequest` contract.
++
++### Billing
++
++Converted checkout and portal payloads to central validation:
++
++- `POST /api/billing/checkout`
++- `POST /api/billing/portal`
++
++Checkout still resolves the Stripe price server-side from the safe plan enum only.
++
++### Mailbox
++
++Converted mailbox mutation payloads to central validation:
++
++- `POST /api/mailbox/send-test`
++- `POST /api/mailbox/sync`
++
++Also added domain syntax validation to `GET /api/mailbox/check-domain` before DNS resolution.
++
++### Workspaces
++
++Converted user-facing workspace mutations to central validation:
++
++- `POST /api/workspaces`
++- `POST /api/workspaces/:id/members`
++- `POST /api/workspaces/:id/invites`
++- `PUT /api/workspaces/:id/email-config`
++- `PUT /api/workspaces/:id/icp`
++- `POST /api/workspaces/:id/seed`
++
++Email configuration validation remains compatible with common form behavior: blank host/user/password/port fields normalize to `null`, and numeric port strings are accepted.
++
++### Prospects
++
++Converted core prospect mutation routes to central validation:
++
++- `POST /api/prospects`
++- `PATCH /api/prospects/:id`
++- `POST /api/prospects/:id/outcome`
++
++Also tightened `POST /api/prospects/discover` constraints for list sizes, employee ranges, source length, and discovery limit.
++
++### Tests
++
++Updated `tests/routes-leads.test.ts` to cover the new safer import behavior and reject non-string IDs before Prisma calls are made.
++
++## Validation performed
++
++Passed:
++
++```bash
++npm run check:boundaries
++```
++
++Could not complete without dependencies installed:
++
++```bash
++npm run typecheck
++npm test
++```
++
++The archive does not include `node_modules`, so TypeScript stops at the missing Node type definitions before checking the modified API files.
++
++## Recommended next pass
++
++1. Run `npm ci && npm run typecheck && npm test` in a normal developer environment.
++2. Finish converting the remaining long-tail mutation routes:
++   - `jobs.ts`
++   - `signals.ts`
++   - `outcomes.ts`
++   - `ingest.ts`
++   - remaining intent sub-actions in `prospects.ts`
++3. Add end-to-end tests for invalid payloads through the web UI forms.
++4. Add a small OpenAPI contract export from the Zod schemas so contractors and frontend work can share the same boundary definitions.
+diff -ruN acaos_base_hardened/acaos/tests/routes-leads.test.ts acaos_work2/acaos/tests/routes-leads.test.ts
+--- acaos_base_hardened/acaos/tests/routes-leads.test.ts	2026-06-19 00:37:50.940827543 +0000
++++ acaos_work2/acaos/tests/routes-leads.test.ts	2026-06-19 00:34:37.613737560 +0000
+@@ -84,8 +84,14 @@
+   const res = await server.request('/api/leads/import', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, leads }) })
+   assert.equal(res.status, 400)
+ })
+-test('POST /import creates valid rows and reports the count', async () => {
+-  const res = await server.request('/api/leads/import', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, leads: [{ businessName: 'A' }, { businessName: 'B' }, { notName: 'skip' }] }) })
++test('POST /import rejects malformed rows instead of silently dropping them', async () => {
++  const res = await server.request('/api/leads/import', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, leads: [{ businessName: 'A' }, { notName: 'skip' }] }) })
++  assert.equal(res.status, 400)
++  assert.equal(prisma.callsTo('lead', 'createMany').length, 0)
++})
++
++test('POST /import creates validated rows and reports the count', async () => {
++  const res = await server.request('/api/leads/import', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, leads: [{ businessName: 'A' }, { businessName: 'B' }] }) })
+   assert.equal(res.status, 200)
+   assert.equal(res.body.created, 2)
+ })
+@@ -114,6 +120,12 @@
+   const res = await server.request('/api/leads/bulk-delete', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, ids }) })
+   assert.equal(res.status, 400)
+ })
++test('bulk-delete rejects non-string IDs before Prisma receives them', async () => {
++  const res = await server.request('/api/leads/bulk-delete', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, ids: ['a', 123] }) })
++  assert.equal(res.status, 400)
++  assert.equal(prisma.callsTo('lead', 'deleteMany').length, 0)
++})
++
+ test('bulk-stage rejects an invalid stage', async () => {
+   const res = await server.request('/api/leads/bulk-stage', { method: 'POST', headers: jsonAuth(), body: body({ workspaceId: OWNED, ids: ['a'], stage: 'BOGUS' }) })
+   assert.equal(res.status, 400)

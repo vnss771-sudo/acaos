@@ -8,7 +8,15 @@ import { providerFetch, ProviderHttpError } from '../packages/backend-core/src/l
 import { CircuitBreaker, CircuitOpenError } from '../packages/backend-core/src/lib/circuit.ts'
 
 const origFetch = globalThis.fetch
-afterEach(() => { globalThis.fetch = origFetch })
+const ENV_KEYS = ['EXTERNAL_HTTP_RETRIES', 'EXTERNAL_HTTP_TIMEOUT_MS', 'APOLLO_RETRIES', 'APOLLO_TIMEOUT_MS']
+const origEnv: Record<string, string | undefined> = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
+afterEach(() => {
+  globalThis.fetch = origFetch
+  for (const k of ENV_KEYS) {
+    if (origEnv[k] === undefined) delete process.env[k]
+    else process.env[k] = origEnv[k]
+  }
+})
 
 // Queue of responses/errors; each fetch call shifts the next. A function entry
 // is invoked (to throw); a Response entry is returned. Tracks the call count.
@@ -75,6 +83,32 @@ test('rejects an over-large response by Content-Length', async () => {
     providerFetch('https://x.test', {}, { provider: 'test', maxBytes: 1000 }),
     (e: unknown) => e instanceof ProviderHttpError && e.kind === 'oversize',
   )
+})
+
+test('EXTERNAL_HTTP_RETRIES env var sets the default retry count', async () => {
+  process.env.EXTERNAL_HTTP_RETRIES = '0'
+  const s = stub([new Response('', { status: 503 })])
+  const res = await providerFetch('https://x.test', {}, { provider: 'test', timeoutMs: 100 })
+  assert.equal(res.status, 503)
+  assert.equal(s.calls(), 1) // 0 retries → single attempt
+})
+
+test('a per-provider envPrefix retry knob overrides the global one', async () => {
+  process.env.EXTERNAL_HTTP_RETRIES = '0'
+  process.env.APOLLO_RETRIES = '1'
+  const s = stub([new Response('', { status: 503 })])
+  const res = await providerFetch('https://x.test', {}, { provider: 'apollo', envPrefix: 'APOLLO', timeoutMs: 100 })
+  assert.equal(res.status, 503)
+  assert.equal(s.calls(), 2) // APOLLO_RETRIES=1 wins over EXTERNAL_HTTP_RETRIES=0
+})
+
+test('a pre-aborted caller signal short-circuits before fetching', async () => {
+  const s = stub([new Response('{}', { status: 200 })])
+  await assert.rejects(
+    providerFetch('https://x.test', { signal: AbortSignal.abort() }, FAST),
+    (e: unknown) => e instanceof ProviderHttpError && e.kind === 'network',
+  )
+  assert.equal(s.calls(), 0)
 })
 
 test('an open circuit breaker short-circuits before fetching', async () => {

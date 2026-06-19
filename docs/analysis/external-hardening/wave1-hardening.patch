@@ -1,0 +1,858 @@
+--- a/docs/HARDENING_IMPLEMENTATION_2026-06-19.md
++++ b/docs/HARDENING_IMPLEMENTATION_2026-06-19.md
+@@ -0,0 +1,136 @@
++# Hardening Implementation Report — 2026-06-19
++
++## Scope completed
++
++This patch focuses on the highest-risk stabilization items identified in the architecture review:
++
++1. External provider calls must not hang API/worker capacity indefinitely.
++2. AI-generated JSON must be validated before persistence or workflow branching.
++3. High-use AI HTTP endpoints need consistent schema-based request validation.
++4. Safety checks need regression tests.
++
++## Code changes
++
++### External provider resilience
++
++Added `packages/backend-core/src/lib/externalHttp.ts`, a dependency-free fetch wrapper that provides:
++
++- request timeout via `AbortController`
++- bounded retries with exponential backoff
++- retry handling for `408`, `409`, `425`, `429`, and `5xx`
++- typed `ExternalHttpTimeoutError`
++
++Provider calls now use the wrapper in:
++
++- `apps/api/src/services/apollo.ts`
++- `apps/api/src/services/hunter.ts`
++- `apps/api/src/lib/prospectSources.ts`
++
++Environment knobs added by convention:
++
++- `EXTERNAL_HTTP_TIMEOUT_MS`
++- `EXTERNAL_HTTP_RETRIES`
++- `APOLLO_TIMEOUT_MS`
++- `APOLLO_RETRIES`
++- `HUNTER_TIMEOUT_MS`
++- `HUNTER_RETRIES`
++- `GOOGLE_PLACES_TIMEOUT_MS`
++- `GOOGLE_PLACES_RETRIES`
++
++### Strict AI JSON validation
++
++Added Zod result schemas and parser helpers in `packages/backend-core/src/services/openai.ts`:
++
++- `leadResearchResultSchema`
++- `outreachResultSchema`
++- `replyAnalysisResultSchema`
++- `parseLeadResearchJson`
++- `parseOutreachJson`
++- `parseReplyAnalysisJson`
++
++The parsers throw `ApiError(502, ...)` when model output is invalid, partial, extra-shaped, or semantically unsafe. This fails closed and lets BullMQ retry jobs instead of silently writing nulls or moving leads to the wrong workflow stage.
++
++Validated AI parsing is now used by:
++
++- `apps/worker/src/worker.ts`
++- `apps/worker/src/processors.ts`
++- `apps/api/src/routes/prospects.ts`
++- `scripts/eval-outreach.ts`
++
++### Targeted API request validation
++
++`apps/api/src/routes/ai.ts` now uses Zod schemas for:
++
++- `POST /api/ai/research`
++- `POST /api/ai/outreach`
++- `POST /api/ai/reply-analysis`
++
++The schemas centralize trimming, required fields, max lengths, and error reporting.
++
++### Regression tests added
++
++Added tests:
++
++- `tests/ai-json-validation.test.ts`
++- `tests/external-http.test.ts`
++
++These cover strict AI result parsing, retry behavior, and timeout errors.
++
++## Validation performed
++
++Passed:
++
++```bash
++npm run check:boundaries
++```
++
++Result:
++
++```text
++✓ Boundary check passed — worker does not import apps/api.
++```
++
++Attempted:
++
++```bash
++npm run typecheck
++```
++
++Blocked by missing installed dependencies in the uploaded archive:
++
++```text
++error TS2688: Cannot find type definition file for 'node'.
++```
++
++This is expected because the archive did not include `node_modules`. Run this after `npm ci`:
++
++```bash
++npm run typecheck
++npm test
++npm run test:db
++npm run test:redis
++npm run build
++```
++
++## Remaining recommended work
++
++1. Expand schema validation across the remaining mutation routes, especially:
++   - lead import/create/update
++   - prospect import/update/outcome
++   - mailbox config update
++   - billing checkout/portal actions
++
++2. Add provider-level metrics:
++   - provider request counts
++   - timeout counts
++   - retry counts
++   - circuit-open counts
++
++3. Add idempotency keys for Stripe checkout creation and any future provider mutations.
++
++4. Add a production smoke test that exercises:
++   - `/api/live`
++   - `/api/ready`
++   - `/metrics`
++   - job enqueue/poll lifecycle
++   - one mocked AI parse path
+--- a/scripts/eval-outreach.ts
++++ b/scripts/eval-outreach.ts
+@@ -10,7 +10,7 @@
+  * Without a key it skips (exit 0) so it never blocks CI; run it locally or in a
+  * keyed CI job to catch regressions in what customers actually receive.
+  */
+-import { generateOutreach, type OutreachInput } from '../apps/api/src/services/openai.js'
++import { generateOutreach, parseOutreachJson, type OutreachInput } from '../apps/api/src/services/openai.js'
+ 
+ type Case = {
+   name: string
+@@ -73,11 +73,11 @@
+ 
+ function evaluate(c: Case, raw: string): Finding[] {
+   const findings: Finding[] = []
+-  let parsed: { subject?: string; email?: string; followup?: string }
++  let parsed: ReturnType<typeof parseOutreachJson>
+   try {
+-    parsed = JSON.parse(raw)
+-  } catch {
+-    return [{ case: c.name, severity: 'FAIL', message: 'output was not valid JSON' }]
++    parsed = parseOutreachJson(raw)
++  } catch (err) {
++    return [{ case: c.name, severity: 'FAIL', message: err instanceof Error ? err.message : 'output was not valid JSON' }]
+   }
+   const email = (parsed.email ?? '').trim()
+   const subject = (parsed.subject ?? '').trim()
+@@ -145,9 +145,9 @@
+       const warns = findings.filter((f) => f.severity === 'WARN').length
+       console.log(fails ? `❌ ${fails} fail, ${warns} warn` : warns ? `⚠️  ${warns} warn` : '✅ pass')
+       try {
+-        const p = JSON.parse(raw)
++        const p = parseOutreachJson(raw)
+         console.log(`    subject: ${p.subject}`)
+-        console.log(`    email:   ${String(p.email).replace(/\s+/g, ' ').slice(0, 200)}…\n`)
++        console.log(`    email:   ${p.email.replace(/\s+/g, ' ').slice(0, 200)}…\n`)
+       } catch { /* reported above */ }
+     } catch (err) {
+       allFindings.push({ case: c.name, severity: 'FAIL', message: `generation threw: ${err instanceof Error ? err.message : String(err)}` })
+--- a/tests/ai-json-validation.test.ts
++++ b/tests/ai-json-validation.test.ts
+@@ -0,0 +1,45 @@
++import { test } from 'node:test'
++import assert from 'node:assert/strict'
++import {
++  parseLeadResearchJson,
++  parseOutreachJson,
++  parseReplyAnalysisJson,
++} from '../packages/backend-core/src/services/openai.ts'
++import { ApiError } from '../packages/backend-core/src/lib/errors.ts'
++
++test('parseLeadResearchJson accepts the exact contract returned by the research prompt', () => {
++  const parsed = parseLeadResearchJson(JSON.stringify({
++    aiSummary: 'Acme appears to run field-service work and likely has scheduling friction.',
++    outreachAngle: 'Coordinating crews across multiple jobs',
++    qualificationSignals: ['Field-service category', 'Operational coordination likely'],
++    icpScore: 82,
++    hiringSignals: false,
++    digitalMaturity: 'medium',
++    estimatedTeamSize: '10-50',
++  }))
++
++  assert.equal(parsed.icpScore, 82)
++  assert.equal(parsed.digitalMaturity, 'medium')
++})
++
++test('parseOutreachJson fails closed on missing required AI draft fields', () => {
++  assert.throws(
++    () => parseOutreachJson(JSON.stringify({ subject: 'scheduling' })),
++    (err: unknown) => err instanceof ApiError && err.statusCode === 502
++  )
++})
++
++test('parseReplyAnalysisJson rejects unknown workflow classifications', () => {
++  assert.throws(
++    () => parseReplyAnalysisJson(JSON.stringify({
++      classification: 'MAYBE_INTERESTED',
++      confidence: 80,
++      summary: 'They asked for details.',
++      suggestedAction: 'Reply with details.',
++      urgency: 'this_week',
++      keyQuote: 'send more info',
++      isAutoReply: false,
++    })),
++    (err: unknown) => err instanceof ApiError && err.statusCode === 502
++  )
++})
+--- a/tests/external-http.test.ts
++++ b/tests/external-http.test.ts
+@@ -0,0 +1,46 @@
++import { test, afterEach } from 'node:test'
++import assert from 'node:assert/strict'
++import { fetchWithTimeout, ExternalHttpTimeoutError } from '../packages/backend-core/src/lib/externalHttp.ts'
++
++const originalFetch = globalThis.fetch
++
++afterEach(() => {
++  globalThis.fetch = originalFetch
++})
++
++test('fetchWithTimeout retries retryable provider responses and returns the final response', async () => {
++  let calls = 0
++  globalThis.fetch = (async () => {
++    calls += 1
++    return new Response(calls === 1 ? 'busy' : 'ok', { status: calls === 1 ? 503 : 200 })
++  }) as typeof fetch
++
++  const res = await fetchWithTimeout('https://provider.test/search', {}, {
++    label: 'provider-test',
++    timeoutMs: 100,
++    retries: 1,
++    retryDelayMs: 1,
++  })
++
++  assert.equal(res.status, 200)
++  assert.equal(await res.text(), 'ok')
++  assert.equal(calls, 2)
++})
++
++test('fetchWithTimeout converts aborted provider hangs into a typed timeout error', async () => {
++  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
++    await new Promise((_resolve, reject) => {
++      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
++    })
++    throw new Error('unreachable')
++  }) as typeof fetch
++
++  await assert.rejects(
++    () => fetchWithTimeout('https://provider.test/hang', {}, {
++      label: 'provider-timeout',
++      timeoutMs: 1,
++      retries: 0,
++    }),
++    (err: unknown) => err instanceof ExternalHttpTimeoutError && err.label === 'provider-timeout'
++  )
++})
+--- a/packages/backend-core/src/lib/externalHttp.ts
++++ b/packages/backend-core/src/lib/externalHttp.ts
+@@ -0,0 +1,123 @@
++// Bounded fetch wrapper for external providers.
++//
++// Native fetch has no default timeout. Provider calls that forget AbortController
++// can pin API/worker capacity indefinitely during DNS/TLS/socket hangs. Keep the
++// helper dependency-free so it can be used by both API-only integrations and
++// backend-core services.
++
++export type ExternalFetchOptions = {
++  /** Human-readable provider name used in thrown timeout messages. */
++  label?: string
++  /** Request timeout. Defaults to EXTERNAL_HTTP_TIMEOUT_MS or 15s. */
++  timeoutMs?: number
++  /** Number of retries after the first attempt. Defaults to 1. */
++  retries?: number
++  /** Initial backoff delay between retries. Defaults to 250ms. */
++  retryDelayMs?: number
++  /** HTTP statuses worth retrying. Defaults to 408, 409, 425, 429 and 5xx. */
++  retryStatuses?: number[]
++}
++
++export class ExternalHttpTimeoutError extends Error {
++  constructor(public readonly label: string, public readonly timeoutMs: number) {
++    super(`${label} request timed out after ${timeoutMs}ms`)
++    this.name = 'ExternalHttpTimeoutError'
++  }
++}
++
++function defaultTimeoutMs(): number {
++  const raw = Number(process.env.EXTERNAL_HTTP_TIMEOUT_MS || 15_000)
++  return Number.isFinite(raw) && raw > 0 ? raw : 15_000
++}
++
++function defaultRetries(): number {
++  const raw = Number(process.env.EXTERNAL_HTTP_RETRIES ?? 1)
++  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 1
++}
++
++function retryableStatus(status: number, explicit?: number[]): boolean {
++  if (explicit?.includes(status)) return true
++  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
++}
++
++function retryableError(err: unknown): boolean {
++  if (err instanceof ExternalHttpTimeoutError) return true
++  if (!(err instanceof Error)) return false
++  // Node/undici network failures commonly surface as TypeError("fetch failed").
++  return err.name === 'AbortError' || err.name === 'TypeError'
++}
++
++function sleep(ms: number): Promise<void> {
++  return new Promise(resolve => setTimeout(resolve, ms))
++}
++
++function withAbortTimeout(init: RequestInit, timeoutMs: number, label: string): { init: RequestInit; clear: () => void } {
++  const controller = new AbortController()
++  const parentSignal = init.signal
++
++  if (parentSignal) {
++    if (parentSignal.aborted) controller.abort(parentSignal.reason)
++    else parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), { once: true })
++  }
++
++  const timer = setTimeout(() => controller.abort(new ExternalHttpTimeoutError(label, timeoutMs)), timeoutMs)
++  timer.unref?.()
++
++  return {
++    init: { ...init, signal: controller.signal },
++    clear: () => clearTimeout(timer),
++  }
++}
++
++/**
++ * Fetch with explicit timeout and bounded retries.
++ *
++ * The returned Response is the final provider response. Non-OK responses are not
++ * converted to exceptions so callers can preserve existing provider-specific
++ * error handling; only network/timeout failures throw.
++ */
++export async function fetchWithTimeout(
++  input: string | URL,
++  init: RequestInit = {},
++  options: ExternalFetchOptions = {}
++): Promise<Response> {
++  const label = options.label ?? (typeof input === 'string' ? input : input.hostname)
++  const timeoutMs = options.timeoutMs ?? defaultTimeoutMs()
++  const retries = options.retries ?? defaultRetries()
++  const retryDelayMs = options.retryDelayMs ?? 250
++
++  let lastError: unknown
++
++  for (let attempt = 0; attempt <= retries; attempt++) {
++    const wrapped = withAbortTimeout(init, timeoutMs, label)
++    try {
++      const res = await fetch(input, wrapped.init)
++
++      if (attempt < retries && retryableStatus(res.status, options.retryStatuses)) {
++        // Drain the body before retrying so undici can reuse/free the connection.
++        // Keep the timeout active while draining; a stalled response body is just
++        // as dangerous as a stalled response header.
++        await res.arrayBuffer().catch(() => undefined)
++        wrapped.clear()
++        await sleep(retryDelayMs * Math.pow(2, attempt))
++        continue
++      }
++
++      wrapped.clear()
++      return res
++    } catch (err) {
++      wrapped.clear()
++      const abortedByTimeout = err instanceof ExternalHttpTimeoutError
++        || (err instanceof Error && err.name === 'AbortError')
++
++      lastError = abortedByTimeout
++        ? new ExternalHttpTimeoutError(label, timeoutMs)
++        : err
++
++      if (attempt >= retries || !retryableError(lastError)) throw lastError
++      await sleep(retryDelayMs * Math.pow(2, attempt))
++    }
++  }
++
++  throw lastError
++}
+--- a/packages/backend-core/src/services/openai.ts
++++ b/packages/backend-core/src/services/openai.ts
+@@ -1,4 +1,5 @@
+ import OpenAI from 'openai'
++import { z } from 'zod'
+ import { ApiError } from '../lib/errors.js'
+ import { hasEnv } from '../lib/env.js'
+ import { openAiBreaker, CircuitOpenError } from '../lib/circuit.js'
+@@ -17,6 +18,86 @@
+ function model() {
+   return process.env.OPENAI_MODEL || 'gpt-4o-mini'
+ }
++
++const boundedString = (max: number) => z.string().trim().min(1).max(max)
++
++export const leadResearchResultSchema = z.object({
++  aiSummary: boundedString(1_500),
++  outreachAngle: boundedString(300),
++  qualificationSignals: z.array(boundedString(300)).min(0).max(5),
++  icpScore: z.number().finite().min(0).max(100),
++  hiringSignals: z.boolean(),
++  digitalMaturity: z.enum(['low', 'medium', 'high']),
++  estimatedTeamSize: z.enum(['1-10', '10-50', '50-200', '200-500', '500+']),
++}).strict()
++
++export const outreachResultSchema = z.object({
++  subject: boundedString(120),
++  email: boundedString(2_000),
++  followup: boundedString(1_500),
++}).strict()
++
++export const replyAnalysisResultSchema = z.object({
++  classification: z.enum([
++    'INTERESTED',
++    'NOT_INTERESTED',
++    'NEEDS_MORE_INFO',
++    'NOT_NOW',
++    'OUT_OF_OFFICE',
++    'REFERRAL',
++  ]),
++  confidence: z.number().finite().min(0).max(100),
++  summary: boundedString(1_000),
++  suggestedAction: boundedString(1_000),
++  urgency: z.enum(['immediate', 'this_week', 'this_month', 'nurture', 'never']),
++  keyQuote: z.string().trim().max(300),
++  isAutoReply: z.boolean(),
++}).strict()
++
++export type LeadResearchResult = z.infer<typeof leadResearchResultSchema>
++export type OutreachResult = z.infer<typeof outreachResultSchema>
++export type ReplyAnalysisResult = z.infer<typeof replyAnalysisResultSchema>
++
++function formatZodIssues(err: z.ZodError): string {
++  return err.issues
++    .map(issue => `${issue.path.join('.') || 'root'}: ${issue.message}`)
++    .slice(0, 5)
++    .join('; ')
++}
++
++/**
++ * Strictly validates model JSON before it reaches persistence or workflow
++ * branches. A malformed/partial model response is treated as a 502 provider
++ * fault so BullMQ can retry instead of silently writing nulls or wrong stages.
++ */
++function parseAiJson<T>(raw: string, schema: z.ZodType<T>, label: string): T {
++  let parsed: unknown
++  try {
++    parsed = JSON.parse(raw)
++  } catch {
++    throw new ApiError(502, `${label} returned invalid JSON`)
++  }
++
++  const result = schema.safeParse(parsed)
++  if (!result.success) {
++    throw new ApiError(502, `${label} JSON failed validation: ${formatZodIssues(result.error)}`)
++  }
++
++  return result.data
++}
++
++export function parseLeadResearchJson(raw: string): LeadResearchResult {
++  return parseAiJson(raw, leadResearchResultSchema, 'AI lead research')
++}
++
++export function parseOutreachJson(raw: string): OutreachResult {
++  return parseAiJson(raw, outreachResultSchema, 'AI outreach')
++}
++
++export function parseReplyAnalysisJson(raw: string): ReplyAnalysisResult {
++  return parseAiJson(raw, replyAnalysisResultSchema, 'AI reply analysis')
++}
++
+ 
+ async function chat(system: string, user: string): Promise<string> {
+   try {
+--- a/apps/worker/src/processors.ts
++++ b/apps/worker/src/processors.ts
+@@ -15,7 +15,7 @@
+ import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
+ import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
+ import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
+-import { generateOutreach } from '@acaos/backend-core/services/openai.js'
++import { generateOutreach, parseOutreachJson } from '@acaos/backend-core/services/openai.js'
+ import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
+ import { checkAndIncrementAiUsage } from '@acaos/backend-core/lib/limits.js'
+ import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
+@@ -375,8 +375,7 @@
+             outreachTone: icp.outreachTone ?? undefined,
+           } : undefined,
+         })
+-        const parsed = JSON.parse(raw) as { subject?: string; email?: string; followup?: string }
+-        if (!parsed.subject || !parsed.email) { skipped++; continue }
++        const parsed = parseOutreachJson(raw)
+         subject = parsed.subject
+         body    = parsed.email
+ 
+--- a/apps/worker/src/worker.ts
++++ b/apps/worker/src/worker.ts
+@@ -3,7 +3,14 @@
+ import { connection, getQueue } from './lib/queue.js'
+ import { startHealthServer } from './health.js'
+ import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
+-import { generateLeadResearch, generateOutreach, analyzeReply } from '@acaos/backend-core/services/openai.js'
++import {
++  generateLeadResearch,
++  generateOutreach,
++  analyzeReply,
++  parseLeadResearchJson,
++  parseOutreachJson,
++  parseReplyAnalysisJson,
++} from '@acaos/backend-core/services/openai.js'
+ import { prisma } from '@acaos/backend-core/lib/prisma.js'
+ import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
+ import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
+@@ -28,9 +35,6 @@
+   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
+ }
+ 
+-function parseJson<T>(raw: string, fallback: T): T {
+-  try { return JSON.parse(raw) } catch { return fallback }
+-}
+ 
+ async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
+   const model = await prisma.scoringModel.findUnique({
+@@ -62,15 +66,7 @@
+ 
+     await job.updateProgress(60)
+ 
+-    const parsed = parseJson<{
+-      aiSummary?: string
+-      outreachAngle?: string
+-      qualificationSignals?: string[]
+-      icpScore?: number
+-      hiringSignals?: boolean
+-      digitalMaturity?: string
+-      estimatedTeamSize?: string
+-    }>(raw, {})
++    const parsed = parseLeadResearchJson(raw)
+ 
+     const enrichedLead = {
+       businessName: lead.businessName,
+@@ -131,7 +127,7 @@
+ 
+     await job.updateProgress(80)
+ 
+-    const parsed = parseJson<{ subject?: string; email?: string; followup?: string }>(raw, {})
++    const parsed = parseOutreachJson(raw)
+ 
+     if (parsed.subject && parsed.email) {
+       await prisma.outreachDraft.create({
+@@ -169,15 +165,7 @@
+     const raw = await analyzeReply(replyBody)
+     await job.updateProgress(70)
+ 
+-    const parsed = parseJson<{
+-      classification?: string
+-      confidence?: number
+-      summary?: string
+-      suggestedAction?: string
+-      urgency?: string
+-      keyQuote?: string
+-      isAutoReply?: boolean
+-    }>(raw, {})
++    const parsed = parseReplyAnalysisJson(raw)
+ 
+     if (leadId && parsed.classification) {
+       if (!parsed.isAutoReply) {
+--- a/apps/api/src/lib/prospectSources.ts
++++ b/apps/api/src/lib/prospectSources.ts
+@@ -4,6 +4,7 @@
+  */
+ 
+ import { apolloSearchBreaker } from './circuit.js'
++import { fetchWithTimeout } from '@acaos/backend-core/lib/externalHttp.js'
+ 
+ export type ProspectSearchInput = {
+   industries?: string[]
+@@ -112,7 +113,7 @@
+     }
+ 
+     return apolloSearchBreaker.call(async () => {
+-      const res = await fetch('https://api.apollo.io/v1/mixed_companies/search', {
++      const res = await fetchWithTimeout('https://api.apollo.io/v1/mixed_companies/search', {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+@@ -120,6 +121,10 @@
+           'Cache-Control': 'no-cache',
+         },
+         body: JSON.stringify(body),
++      }, {
++        label: 'apollo-search',
++        timeoutMs: Number(process.env.APOLLO_TIMEOUT_MS || process.env.EXTERNAL_HTTP_TIMEOUT_MS || 15_000),
++        retries: Number(process.env.APOLLO_RETRIES ?? process.env.EXTERNAL_HTTP_RETRIES ?? 1),
+       })
+ 
+       if (!res.ok) {
+@@ -170,7 +175,7 @@
+     // Let failures propagate (the discover route records a FAILED DiscoveryRun and
+     // returns a clear 502) rather than swallowing them into an empty result, which
+     // is indistinguishable from "no matches".
+-    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
++    const res = await fetchWithTimeout('https://places.googleapis.com/v1/places:searchText', {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+@@ -182,6 +187,10 @@
+         ].join(','),
+       },
+       body: JSON.stringify({ textQuery, pageSize: limit }),
++    }, {
++      label: 'google-places-search',
++      timeoutMs: Number(process.env.GOOGLE_PLACES_TIMEOUT_MS || process.env.EXTERNAL_HTTP_TIMEOUT_MS || 15_000),
++      retries: Number(process.env.GOOGLE_PLACES_RETRIES ?? process.env.EXTERNAL_HTTP_RETRIES ?? 1),
+     })
+ 
+     if (!res.ok) {
+--- a/apps/api/src/routes/ai.ts
++++ b/apps/api/src/routes/ai.ts
+@@ -1,4 +1,5 @@
+ import { Router } from 'express'
++import { z } from 'zod'
+ import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
+ import { asyncHandler, ApiError } from '../lib/http.js'
+ import { aiRateLimit } from '../middleware/rateLimit.js'
+@@ -12,6 +13,44 @@
+ const MAX_NOTES = 2_000
+ const MAX_REPLY = 10_000
+ 
++const workspaceIdField = z.string().trim().min(1, 'workspaceId required').max(100)
++const aiOptionalText = (max: number) => z.string().trim().max(max).optional()
++
++const researchBodySchema = z.object({
++  workspaceId: workspaceIdField,
++  businessName: z.string().trim().min(1, 'businessName is required').max(MAX_NAME),
++  website: aiOptionalText(500),
++  category: aiOptionalText(200),
++  city: aiOptionalText(200),
++  notes: aiOptionalText(MAX_NOTES),
++})
++
++const outreachBodySchema = z.object({
++  workspaceId: workspaceIdField,
++  businessName: z.string().trim().min(1, 'businessName is required').max(MAX_NAME),
++  category: aiOptionalText(200),
++  city: aiOptionalText(200),
++  contactName: aiOptionalText(200),
++  aiSummary: aiOptionalText(1_500),
++  outreachAngle: aiOptionalText(300),
++  notes: aiOptionalText(MAX_NOTES),
++})
++
++const replyAnalysisBodySchema = z.object({
++  workspaceId: workspaceIdField,
++  replyBody: z.string().trim().min(1, 'replyBody is required').max(MAX_REPLY, `replyBody must be at most ${MAX_REPLY} characters`),
++})
++
++function parseBody<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
++  const result = schema.safeParse(body)
++  if (!result.success) {
++    const msg = result.error.issues.map((issue) => `${issue.path.join('.') || 'body'}: ${issue.message}`).join('; ')
++    throw new ApiError(400, msg)
++  }
++  return result.data
++}
++
++
+ export const aiRouter = Router()
+ aiRouter.use(requireAuth)
+ aiRouter.use(requireVerifiedEmail)
+@@ -21,8 +60,8 @@
+   '/research',
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const body = parseBody(researchBodySchema, req.body)
++    const { workspaceId } = body
+ 
+     const member = await userBelongsToWorkspace(user.id, workspaceId)
+     if (!member) throw new ApiError(403, 'Access denied')
+@@ -35,19 +74,12 @@
+     })
+     if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+ 
+-    const businessName = String(req.body?.businessName || '').trim()
+-    if (!businessName) throw new ApiError(400, 'businessName is required')
+-    if (businessName.length > MAX_NAME) throw new ApiError(400, `businessName must be at most ${MAX_NAME} characters`)
+-
+-    const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : undefined
+-    if (notes && notes.length > MAX_NOTES) throw new ApiError(400, `notes must be at most ${MAX_NOTES} characters`)
+-
+     const data = await generateLeadResearch({
+-      businessName,
+-      website: typeof req.body?.website === 'string' ? req.body.website.trim() : undefined,
+-      category: typeof req.body?.category === 'string' ? req.body.category.trim() : undefined,
+-      city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
+-      notes,
++      businessName: body.businessName,
++      website: body.website,
++      category: body.category,
++      city: body.city,
++      notes: body.notes,
+       icp
+     })
+ 
+@@ -59,8 +91,8 @@
+   '/outreach',
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const body = parseBody(outreachBodySchema, req.body)
++    const { workspaceId } = body
+ 
+     const member = await userBelongsToWorkspace(user.id, workspaceId)
+     if (!member) throw new ApiError(403, 'Access denied')
+@@ -73,17 +105,14 @@
+     })
+     if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+ 
+-    const businessName = String(req.body?.businessName || '').trim()
+-    if (!businessName) throw new ApiError(400, 'businessName is required')
+-
+     const data = await generateOutreach({
+-      businessName,
+-      category: typeof req.body?.category === 'string' ? req.body.category.trim() : undefined,
+-      city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
+-      contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() : undefined,
+-      aiSummary: typeof req.body?.aiSummary === 'string' ? req.body.aiSummary.trim() : undefined,
+-      outreachAngle: typeof req.body?.outreachAngle === 'string' ? req.body.outreachAngle.trim() : undefined,
+-      notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() : undefined,
++      businessName: body.businessName,
++      category: body.category,
++      city: body.city,
++      contactName: body.contactName,
++      aiSummary: body.aiSummary,
++      outreachAngle: body.outreachAngle,
++      notes: body.notes,
+       icp
+     })
+ 
+@@ -95,18 +124,14 @@
+   '/reply-analysis',
+   asyncHandler(async (req, res) => {
+     const user = (req as AuthedRequest).user
+-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
+-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
++    const body = parseBody(replyAnalysisBodySchema, req.body)
++    const { workspaceId } = body
+ 
+     const member = await userBelongsToWorkspace(user.id, workspaceId)
+     if (!member) throw new ApiError(403, 'Access denied')
+     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
+ 
+-    const replyBody = String(req.body?.replyBody || '').trim()
+-    if (!replyBody) throw new ApiError(400, 'replyBody is required')
+-    if (replyBody.length > MAX_REPLY) throw new ApiError(400, `replyBody must be at most ${MAX_REPLY} characters`)
+-
+-    const data = await analyzeReply(replyBody)
++    const data = await analyzeReply(body.replyBody)
+     res.json({ result: data })
+   })
+ )
+--- a/apps/api/src/routes/prospects.ts
++++ b/apps/api/src/routes/prospects.ts
+@@ -23,7 +23,7 @@
+ import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
+ import { createOutreachIntentForRecommendation, buildIntentDraftInput } from '../lib/outreachIntent.js'
+ import { materializeOutreachIntent } from '../lib/materializeIntent.js'
+-import { generateOutreach } from '../services/openai.js'
++import { generateOutreach, parseOutreachJson } from '../services/openai.js'
+ import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
+ import { getPack } from '../lib/packs/index.js'
+ import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
+@@ -925,8 +925,7 @@
+     : undefined
+ 
+   const raw = await generateOutreach(buildIntentDraftInput({ prospect, recommendation, intent, icp }))
+-  let parsed: { subject?: string; email?: string; followup?: string }
+-  try { parsed = JSON.parse(raw) } catch { throw new ApiError(502, 'AI returned an invalid draft') }
++  const parsed = parseOutreachJson(raw)
+ 
+   const updated = await prisma.outreachIntent.update({
+     where: { id: intent.id },
+--- a/apps/api/src/services/apollo.ts
++++ b/apps/api/src/services/apollo.ts
+@@ -4,6 +4,7 @@
+ import { ApiError } from '../lib/http.js'
+ import { hasEnv } from '../lib/env.js'
+ import { apolloBreaker } from '../lib/circuit.js'
++import { fetchWithTimeout } from '@acaos/backend-core/lib/externalHttp.js'
+ 
+ export type EnrichmentSignal = {
+   type: string
+@@ -63,7 +64,7 @@
+       ? { domain: prospect.domain }
+       : { name: prospect.companyName }
+ 
+-    const res = await fetch('https://api.apollo.io/v1/organizations/enrich', {
++    const res = await fetchWithTimeout('https://api.apollo.io/v1/organizations/enrich', {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+@@ -71,6 +72,10 @@
+         'Cache-Control': 'no-cache',
+       },
+       body: JSON.stringify(body),
++    }, {
++      label: 'apollo-enrich',
++      timeoutMs: Number(process.env.APOLLO_TIMEOUT_MS || process.env.EXTERNAL_HTTP_TIMEOUT_MS || 15_000),
++      retries: Number(process.env.APOLLO_RETRIES ?? process.env.EXTERNAL_HTTP_RETRIES ?? 1),
+     })
+ 
+     if (!res.ok) return { signals: [], updates: {} }
+--- a/apps/api/src/services/hunter.ts
++++ b/apps/api/src/services/hunter.ts
+@@ -1,4 +1,6 @@
+ // Hunter.io domain-search: given a company domain, find the best contact email.
++import { fetchWithTimeout } from '@acaos/backend-core/lib/externalHttp.js'
++
+ // Used as a post-discovery enrichment step when a prospect has no contactEmail.
+ 
+ type HunterContact = {
+@@ -24,7 +26,11 @@
+   url.searchParams.set('type', 'personal')
+ 
+   try {
+-    const res = await fetch(url.toString())
++    const res = await fetchWithTimeout(url, {}, {
++      label: 'hunter-domain-search',
++      timeoutMs: Number(process.env.HUNTER_TIMEOUT_MS || process.env.EXTERNAL_HTTP_TIMEOUT_MS || 15_000),
++      retries: Number(process.env.HUNTER_RETRIES ?? process.env.EXTERNAL_HTTP_RETRIES ?? 1),
++    })
+     if (!res.ok) return null
+ 
+     const data = await res.json() as {

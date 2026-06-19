@@ -30,7 +30,7 @@
 ## Tickets
 
 ### P0 — Reliability / safety blockers
-- **T1 · Shared provider HTTP client (FA-01).** New `packages/backend-core/src/lib/providerHttp.ts` (`providerFetch(url, init, { provider, timeoutMs?, retries?, maxBytes?, breaker? })`): `AbortSignal.timeout` (default ~12s), retry only transient (408/429/5xx/network) with backoff, response-size bound, optional circuit breaker, structured logging of provider/status/latency/attempts; throws a normalized `ProviderHttpError` on timeout/network/oversize. Route the provider calls in `prospectSources.ts`, `services/apollo.ts`, `services/hunter.ts` through it. **(implemented on this branch)**
+- **T1 · Shared provider HTTP client (FA-01).** New `packages/backend-core/src/lib/providerHttp.ts` (`providerFetch(url, init, { provider, timeoutMs?, retries?, maxBytes?, envPrefix?, breaker? })`): clearable `unref`'d abort timeout (default 12s), retry only transient (408/425/429/5xx/network) with backoff + `Retry-After`, response-size bound, optional circuit breaker, structured logging of provider/status/latency/attempts; throws a normalized `ProviderHttpError` on timeout/network/oversize. Timeout & retry are env-configurable (`${envPrefix}_TIMEOUT_MS`/`_RETRIES` → `EXTERNAL_HTTP_TIMEOUT_MS`/`_RETRIES` → default), and a caller-supplied `AbortSignal` is propagated. Route the provider calls in `prospectSources.ts` (Apollo search, Google Places), `services/apollo.ts`, `services/hunter.ts` (find + verify) through it. **(implemented on this branch — PR #111)**
 - **T2 · Strict AI-output schemas (FA-03).** New `packages/backend-core/src/schemas/aiOutputs.ts` (zod `.strict()` + length caps); validate inside `openai.ts` (single choke point); update worker/processors/`ai.ts` callers; invalid output → controlled job failure + telemetry + "needs human review" fallback.
 - **T3 · Route-validation coverage (FA-02).** Add zod + `validate()` to every mutation endpoint missing it (full gaps: `leads`, `billing`, `outcomes`, `ingest`, `ai`; partials elsewhere); bounded pagination/query schemas; export DTOs from schemas; CI guard failing on an unvalidated mutation route. Execute per-router.
 
@@ -43,6 +43,31 @@
 
 ### P2 — Operational scale & polish
 - Provider cost/quota weighting; scheduled cleanup jobs (expired tokens, old processed events); dashboards/alerts; frontend polish (stale `useApi.ts` comment, Nginx CSP `connect-src`, generated client types); runbook refresh.
+
+## External hardening waves — T2/T3 source material
+Two externally-produced patches are preserved verbatim under
+`docs/analysis/external-hardening/` (`wave1-hardening.patch`,
+`wave2-hardening.patch`). They independently implement much of T2 and T3 and are
+the reference to **adapt** (not `git apply` — they were cut against a pre-#110
+snapshot and edit the old `apps/api/src/services/{apollo,hunter}.ts` locations,
+so they conflict with #110/#111).
+
+- **Wave 1** — FA-03 (T2): strict zod schemas + `parseLeadResearchJson` /
+  `parseOutreachJson` / `parseReplyAnalysisJson` in `openai.ts`, fail-closed with
+  `ApiError(502)`, wired into worker/processors/prospects/`eval-outreach`. Also
+  zod validation for `routes/ai.ts`. (Its FA-01 `externalHttp.ts`/`fetchWithTimeout`
+  is **superseded by our `providerFetch`** — discard; its env-knob + parent-signal
+  ideas were folded into `providerFetch`.)
+- **Wave 2** — FA-02 (T3): `validate()` + zod across `billing`, `campaigns`,
+  `leads` (7 routes), `mailbox`, `prospects` (POST/PATCH/outcome + tightened
+  `discover`), `workspaces` (6 routes), plus `validate.ts` `idField`/bounded
+  `workspaceIdField` and shared-type conformance asserts. **Still TODO** (not in
+  the patch): `jobs`, `signals`, `outcomes`, `ingest`, remaining prospect intent
+  sub-actions, and the CI guard.
+
+**Decision (2026-06-19):** port T2 + T3 from these waves **after #110 + #111
+merge** to master, adapting to the relocated backend-core files and avoiding the
+`prospects.ts` conflict with #110.
 
 ## Sequencing
 1. Merge the enrichment work (PR #110) — T1 builds on its relocated provider files.

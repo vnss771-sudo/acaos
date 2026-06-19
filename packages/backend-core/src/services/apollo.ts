@@ -78,7 +78,7 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
         'Cache-Control': 'no-cache',
       },
       body: JSON.stringify(body),
-    }, { provider: 'apollo-enrich' })
+    }, { provider: 'apollo-enrich', envPrefix: 'APOLLO' })
 
     if (!res.ok) return { signals: [], updates: {} }
 
