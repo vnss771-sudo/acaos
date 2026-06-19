@@ -6,6 +6,8 @@ export type User = {
   // Authoritative cross-tenant admin claim from the backend (/api/auth/me).
   // The admin UI is gated on this, never on a build-time env var.
   isPlatformAdmin?: boolean
+  // Whether the account has TOTP two-factor auth enabled (from /api/auth/me).
+  totpEnabled?: boolean
 }
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member'

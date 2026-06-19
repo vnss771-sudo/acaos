@@ -22,6 +22,11 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
   const [err, setErr] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
 
+  // MFA (TOTP) second step: set once a login responds with mfaRequired. While
+  // `mfaToken` is set we show the 6-digit code step instead of the credentials form.
+  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
@@ -77,6 +82,15 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Authentication failed')
 
+      // MFA-enabled accounts get no token on login — instead a short-lived
+      // mfaToken. Switch to the 6-digit code step; the actual token comes back
+      // from /verify-totp once the user proves a code.
+      if (data.mfaRequired) {
+        setMfaToken(data.mfaToken)
+        setMfaCode('')
+        return
+      }
+
       // The refresh token is now in an HttpOnly cookie; only the access token is
       // returned, and it is held in memory by the app (not localStorage).
       onToken(data.token)
@@ -85,6 +99,36 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
     } finally {
       setLoading(false)
     }
+  }
+
+  async function submitMfa(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setErr('')
+    try {
+      const res = await fetch(`${API}/api/auth/verify-totp`, {
+        method: 'POST',
+        credentials: 'include', // accept the HttpOnly refresh cookie the server sets
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfaToken, code: mfaCode.trim() })
+      })
+      const data = await res.json()
+      if (res.status === 401) throw new Error('Incorrect code. Please try again.')
+      if (!res.ok) throw new Error(data.error || 'Verification failed')
+      // Completes the MFA login — same token path as a normal sign-in.
+      onToken(data.token)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Verification failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function cancelMfa() {
+    setMfaToken(null)
+    setMfaCode('')
+    setErr('')
+    setPassword('')
   }
 
   const isForgotOrReset = mode === 'forgot' || mode === 'reset'
@@ -103,6 +147,64 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
         </div>
 
         <div style={{ ...s.card, padding: 28 }}>
+          {/* MFA (TOTP) second step — shown once login responds with mfaRequired */}
+          {mfaToken ? (
+            <>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ color: '#f1f5f9', fontWeight: 600, fontSize: 16, marginBottom: 4 }}>
+                  Two-factor authentication
+                </div>
+                <div style={{ color: '#64748b', fontSize: 13 }}>
+                  Enter your 6-digit authentication code from your authenticator app.
+                </div>
+              </div>
+              <form onSubmit={submitMfa} style={{ display: 'grid', gap: 16 }}>
+                <div>
+                  <label style={s.label} htmlFor="authscreen-mfa-code">Authentication code</label>
+                  <input
+                    id="authscreen-mfa-code"
+                    style={{ ...s.input, letterSpacing: '0.4em', textAlign: 'center', fontSize: 18 }}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    value={mfaCode}
+                    onChange={e => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000"
+                    autoFocus
+                    required
+                  />
+                </div>
+
+                {err && (
+                  <div style={{
+                    background: '#450a0a', border: '1px solid #7f1d1d', borderRadius: 6,
+                    padding: '10px 12px', color: '#fca5a5', fontSize: 13
+                  }}>
+                    {err}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  style={{ ...s.btn, width: '100%', padding: '12px', opacity: loading || mfaCode.length < 6 ? 0.7 : 1 }}
+                  disabled={loading || mfaCode.length < 6}
+                >
+                  {loading ? 'Verifying…' : 'Verify'}
+                </button>
+              </form>
+              <div style={{ marginTop: 16, textAlign: 'center' }}>
+                <button
+                  onClick={cancelMfa}
+                  style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer' }}
+                >
+                  ← Back to sign in
+                </button>
+              </div>
+            </>
+          ) : (
+          <>
           {/* Invite banner */}
           {inviteToken && !isForgotOrReset && (
             <div style={{
@@ -263,6 +365,8 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
                 ← Back to sign in
               </button>
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

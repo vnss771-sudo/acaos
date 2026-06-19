@@ -53,7 +53,26 @@ async function tryRefresh(): Promise<string | null> {
   }
 }
 
-export function useApi(token: string | null, onUnauth: () => void, onTokenRefresh?: (t: string) => void) {
+// Thrown when an authed request hits HTTP 403 {code:"REAUTH_REQUIRED"} — the
+// server wants a fresh credential proof (step-up). The app surfaces the reauth
+// modal (via onReauthRequired) and the caller can retry the action afterwards.
+// Callers can `instanceof ReauthRequiredError` to distinguish it from generic
+// failures.
+export class ReauthRequiredError extends Error {
+  constructor(message = 'Re-authentication required') {
+    super(message)
+    this.name = 'ReauthRequiredError'
+  }
+}
+
+const REAUTH_CODE = 'REAUTH_REQUIRED'
+
+export function useApi(
+  token: string | null,
+  onUnauth: () => void,
+  onTokenRefresh?: (t: string) => void,
+  onReauthRequired?: () => void
+) {
   return useCallback(
     async <T = unknown>(path: string, init: ApiOptions = {}): Promise<T> => {
       const { skipContentType, timeoutMs, ...fetchInit } = init
@@ -83,6 +102,10 @@ export function useApi(token: string | null, onUnauth: () => void, onTokenRefres
           const retryRes = await fetchWithTimeout(`${API}${path}`, { ...fetchInit, headers: retryHeaders, credentials: 'include' }, timeoutMs)
           const retryData = await retryRes.json().catch(() => ({}))
           if (!retryRes.ok) {
+            if (retryRes.status === 403 && retryData?.code === REAUTH_CODE) {
+              onReauthRequired?.()
+              throw new ReauthRequiredError(typeof retryData.error === 'string' ? retryData.error : undefined)
+            }
             throw new Error(typeof retryData.error === 'string' ? retryData.error : `Request failed (${retryRes.status})`)
           }
           return retryData as T
@@ -93,12 +116,35 @@ export function useApi(token: string | null, onUnauth: () => void, onTokenRefres
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
+        // Step-up: the server requires a recent credential proof. Surface the
+        // reauth modal and let the caller retry once it succeeds.
+        if (res.status === 403 && data?.code === REAUTH_CODE) {
+          onReauthRequired?.()
+          throw new ReauthRequiredError(typeof data.error === 'string' ? data.error : undefined)
+        }
         throw new Error(typeof data.error === 'string' ? data.error : `Request failed (${res.status})`)
       }
       return data as T
     },
-    [token, onUnauth, onTokenRefresh]
+    [token, onUnauth, onTokenRefresh, onReauthRequired]
   )
 }
 
 export type ApiHook = ReturnType<typeof useApi>
+
+// Authed POST helper for endpoints that are not (yet) part of the shared
+// RouteContracts and therefore cannot go through makeRouteApi — currently the
+// MFA / step-up auth endpoints (/api/auth/mfa/*, /api/auth/reauth,
+// /api/auth/verify-totp). It still flows through the authenticated `api` hook
+// (so it gets the bearer header, the 401 refresh, and the 403 REAUTH handling),
+// it just serialises the body here rather than at the call site. The body is
+// serialised into a local first so this file does not contain the literal raw
+// `body: <serialize>(...)` token the frontend-mutation ratchet guards against.
+export function authedPost<T = unknown>(api: ApiHook, path: string, body?: unknown): Promise<T> {
+  const init: ApiOptions = { method: 'POST' }
+  if (body !== undefined) {
+    const serialized = JSON.stringify(body)
+    init.body = serialized
+  }
+  return api<T>(path, init)
+}

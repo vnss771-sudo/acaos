@@ -1,0 +1,49 @@
+# Blackbox exporter modules for external uptime / synthetic monitoring of ACAOS.
+#
+# The blackbox_exporter probes ACAOS endpoints from OUTSIDE the app (over the
+# real network, like a user) and exposes the result to Prometheus, which is how
+# uptime is alerted on (see the `blackbox` scrape job in prometheus.yml and the
+# `acaos-uptime` rules in alerts.yml). This is the externally-observed signal
+# that complements the in-process /metrics — if the app is wedged or the edge is
+# down, /metrics won't even scrape, but the blackbox probe will fail loudly.
+#
+# Run: blackbox_exporter --config.file=blackbox.yml  (default port 9115)
+# Validate: promtool check ... is not applicable; the exporter validates on boot.
+
+modules:
+  # Liveness: any 2xx from the API's no-I/O probe means the process is up.
+  http_2xx_api:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      fail_if_not_ssl: false # set true once TLS terminates in front of the probe
+      preferred_ip_protocol: ip4
+
+  # Readiness: 200 only when DB (and reported Redis) are reachable. A 503 here
+  # with http_2xx_api still green isolates a dependency outage from a crash.
+  http_ready_api:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: false
+      preferred_ip_protocol: ip4
+
+  # Public web app (SPA served by nginx). Confirms the user-facing edge is up.
+  http_2xx_web:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: false
+      preferred_ip_protocol: ip4
+
+  # TCP connect to Postgres/Redis from the probe host (optional deep check).
+  tcp_connect:
+    prober: tcp
+    timeout: 5s

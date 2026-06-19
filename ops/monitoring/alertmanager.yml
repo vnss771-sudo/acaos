@@ -1,0 +1,68 @@
+# Alertmanager routing for ACAOS. Prometheus (prometheus.yml `alerting:`) sends
+# firing alerts here; this file decides WHO gets paged and HOW. Secrets are
+# supplied via environment expansion so nothing sensitive is committed — run
+# Alertmanager with `--config.expand-env` (or template these at deploy time):
+#
+#   SLACK_WEBHOOK_URL   Slack incoming-webhook for the #alerts channel
+#   PAGERDUTY_ROUTING_KEY  PagerDuty Events API v2 routing key (critical paging)
+#   ALERT_EMAIL_TO / SMTP_*  optional email fallback
+#
+# Validate: amtool check-config alertmanager.yml
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "${SMTP_SMARTHOST:-localhost:587}"
+  smtp_from: "${ALERT_EMAIL_FROM:-alerts@acaos.local}"
+  smtp_auth_username: "${SMTP_USER:-}"
+  smtp_auth_password: "${SMTP_PASS:-}"
+
+# Severity-based routing: critical → page (PagerDuty) + Slack; warning → Slack.
+# Alerts are grouped so a multi-target outage is one notification, not a storm.
+route:
+  receiver: slack-warning
+  group_by: ["alertname", "job", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity="critical"']
+      receiver: critical-pageduty-slack
+      group_wait: 10s
+      repeat_interval: 1h
+    - matchers: ['severity="warning"']
+      receiver: slack-warning
+
+# Don't also page for a warning when the critical for the same target is already
+# firing (e.g. ProbeSlow under EndpointDown).
+inhibit_rules:
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: ["alertname", "instance", "job"]
+
+receivers:
+  - name: slack-warning
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#alerts"
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ end }}
+
+  - name: critical-pageduty-slack
+    pagerduty_configs:
+      - routing_key: "${PAGERDUTY_ROUTING_KEY}"
+        severity: critical
+        description: "{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}"
+        send_resolved: true
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#incidents"
+        send_resolved: true
+        title: '🚨 [CRITICAL] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ end }}

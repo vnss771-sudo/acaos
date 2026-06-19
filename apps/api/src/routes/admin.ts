@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
 import { recordAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
 import type { AuthedRequest, AuthUser } from '../types/auth.js'
@@ -33,6 +33,11 @@ adminRouter.use(
     if (user.isPlatformAdmin) return next()
 
     if (user.emailVerified && emailMatchesBootstrapAdmin(user)) {
+      // Promotion is a privilege escalation — require a recent credential proof
+      // (step-up), so a long-lived stolen access token can't bootstrap admin.
+      if (!(await hasFreshAuth(user.id))) {
+        throw new ApiError(403, 'Re-authentication required to gain admin access')
+      }
       await prisma.user.update({ where: { id: user.id }, data: { isPlatformAdmin: true } })
       user.isPlatformAdmin = true
       await recordAudit({

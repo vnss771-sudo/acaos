@@ -8,6 +8,12 @@ global:
 rule_files:
   - alerts.yml
 
+# Route firing alerts to Alertmanager (ops/monitoring/alertmanager.yml).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: acaos-api
     metrics_path: /metrics
@@ -25,3 +31,48 @@ scrape_configs:
     static_configs:
       # Worker metrics are served on WORKER_HEALTH_PORT (default 9090).
       - targets: ["acaos-worker:9090"]
+
+  # ── External uptime / synthetic checks via blackbox_exporter ──────────────────
+  # The exporter (ops/monitoring/blackbox.yml) probes these URLs from outside the
+  # app and reports `probe_success` / `probe_ssl_earliest_cert_expiry`; the
+  # acaos-uptime rules in alerts.yml fire on them. The classic relabel dance sends
+  # the real target as ?target= to the exporter while keeping it as the series
+  # `instance` label.
+  - job_name: blackbox-api-live
+    metrics_path: /probe
+    params: { module: [http_2xx_api] }
+    static_configs:
+      - targets: ["https://api.example.com/api/live"] # ← set to your API base URL
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "blackbox-exporter:9115"
+
+  - job_name: blackbox-api-ready
+    metrics_path: /probe
+    params: { module: [http_ready_api] }
+    static_configs:
+      - targets: ["https://api.example.com/api/ready"] # ← set to your API base URL
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "blackbox-exporter:9115"
+
+  - job_name: blackbox-web
+    metrics_path: /probe
+    params: { module: [http_2xx_web] }
+    static_configs:
+      - targets: ["https://app.example.com/"] # ← set to your public web URL
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "blackbox-exporter:9115"

@@ -31,11 +31,15 @@ re-mint cleanly on the next refresh.
    re-login, also revoke refresh tokens (truncate/expire `RefreshToken`).
 
 ### `EMAIL_ENCRYPTION_KEY` (special — read first)
-Encrypts stored SMTP/IMAP credentials in `WorkspaceEmailConfig`. **Rotating the
-key without re-encrypting makes existing stored credentials undecryptable.**
-1. Decrypt existing configs with the old key and re-encrypt with the new key in a
-   one-off migration, **or**
-2. Clear stored credentials and require workspaces to re-enter them.
+Encrypts stored SMTP/IMAP credentials in `WorkspaceEmailConfig` **and** MFA TOTP
+secrets (`User.totpSecret`), both with AES-256-GCM. **Rotating the key without
+re-encrypting makes existing stored values undecryptable** — this breaks both
+stored mailbox credentials *and* stored TOTP secrets (affected users would have to
+re-enroll MFA).
+1. Decrypt existing configs and TOTP secrets with the old key and re-encrypt with
+   the new key in a one-off migration, **or**
+2. Clear stored credentials (require workspaces to re-enter them) and reset
+   affected users' MFA (require re-enrollment).
 Never rotate this key in place without one of the above.
 
 ### Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)

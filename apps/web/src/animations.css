@@ -1,0 +1,27 @@
+/* Shared keyframe animations.
+ *
+ * These were previously defined in inline <style> tags inside Spinner.tsx and
+ * Toast.tsx. They were moved here so the production CSP can drop
+ * 'unsafe-inline' for <style>/<link> elements (style-src-elem 'self'). Vite
+ * bundles this file and emits it as a same-origin <link> stylesheet.
+ *
+ * The animation names (spin, slideIn) are unchanged so existing inline
+ * style={{ animation: ... }} usages keep working.
+ */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

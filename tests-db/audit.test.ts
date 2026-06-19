@@ -58,7 +58,15 @@ test('ADMIN_EMAIL is a one-time bootstrap: first hit promotes the DB flag and au
   await prisma.user.update({ where: { id: user.id }, data: { emailVerified: true, isPlatformAdmin: false } })
   process.env.ADMIN_EMAIL = 'founder@acaos.test'
 
-  // First admin request: granted via the env bootstrap.
+  // Privilege escalation requires step-up (a recent credential proof). Without a
+  // fresh re-auth the bootstrap is refused — a stolen long-lived token can't self-promote.
+  const stale = await server.request('/api/admin/audit', { headers: { Authorization: bearer(user.id) } })
+  assert.equal(stale.status, 403)
+
+  // Simulate a fresh login (login/reauth set lastReauthAt) and retry.
+  await prisma.user.update({ where: { id: user.id }, data: { lastReauthAt: new Date() } })
+
+  // First admin request after fresh auth: granted via the env bootstrap.
   const res = await server.request('/api/admin/audit', { headers: { Authorization: bearer(user.id) } })
   assert.equal(res.status, 200)
 

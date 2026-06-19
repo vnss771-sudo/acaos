@@ -51,7 +51,26 @@ export function signJwt(payload: JwtPayload): string {
 }
 
 export function verifyJwt(token: string): JwtPayload {
-  return jwt.verify(token, getJwtSecret()) as JwtPayload
+  const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload & { typ?: string }
+  // A scoped token (e.g. the MFA-pending token below) must NEVER authenticate a
+  // request. Access tokens carry no `typ`; reject anything that does.
+  if (decoded.typ) throw new Error('Not an access token')
+  return { userId: decoded.userId }
+}
+
+// ── Scoped MFA-pending token ────────────────────────────────────────────────────
+// Issued after a correct password when the account has TOTP enabled, in place of
+// an access token. It only authorizes the /verify-totp step (short-lived, carries
+// `typ: 'mfa'`), and verifyJwt above rejects it as a Bearer — so possessing it
+// grants no API access until the second factor is provided.
+export function signMfaToken(userId: string): string {
+  return jwt.sign({ userId, typ: 'mfa' }, getJwtSecret(), { expiresIn: '5m' })
+}
+
+export function verifyMfaToken(token: string): JwtPayload {
+  const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload & { typ?: string }
+  if (decoded.typ !== 'mfa') throw new Error('Not an MFA token')
+  return { userId: decoded.userId }
 }
 
 export function generateRefreshToken(): string {

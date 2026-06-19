@@ -72,3 +72,32 @@ groups:
         annotations:
           summary: "Failed-job count growing on {{ $labels.queue }}"
           description: "More than 50 jobs entered the failed state in the last hour on {{ $labels.queue }}."
+
+  # External uptime, observed by the blackbox_exporter probes (prometheus.yml).
+  # These fire even when /metrics itself can't be scraped (process down, edge
+  # outage, TLS expiry) — the user-facing signal.
+  - name: acaos-uptime
+    rules:
+      - alert: EndpointDown
+        expr: probe_success == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Uptime probe failing for {{ $labels.instance }}"
+          description: "The external blackbox probe to {{ $labels.instance }} has been failing for >2m. Runbook: docs/RUNBOOKS.md#endpointdown"
+
+      - alert: ProbeSlow
+        expr: probe_http_duration_seconds > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Uptime probe slow for {{ $labels.instance }}"
+          description: "External probe to {{ $labels.instance }} has taken >2s for 10m. Runbook: docs/RUNBOOKS.md#probeslow"
+
+      - alert: TlsCertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "TLS cert for {{ $labels.instance }} expires in <14 days"
+          description: "Renew the certificate for {{ $labels.instance }}. Days left: {{ $value | printf \"%.1f\" }}. Runbook: docs/RUNBOOKS.md#tlscertexpiringsoon"
