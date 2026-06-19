@@ -67,15 +67,18 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
   useEffect(() => {
     if (!workspace) return
+    let cancelled = false
     setLoading(true)
     api<{ campaigns: Campaign[] }>(`/api/campaigns?workspaceId=${workspace.id}`)
       .then(d => {
+        if (cancelled) return
         const c = d.campaigns || []
         setCampaigns(c)
         c.forEach(camp => loadStats(camp.id))
       })
-      .catch(e => toast.error(e.message))
-      .finally(() => setLoading(false))
+      .catch(e => { if (!cancelled) toast.error(e.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [workspace?.id])
 
   useEffect(() => {
@@ -83,6 +86,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       setDomainCheck('loading')
       return
     }
+    let cancelled = false
     setDomainCheck('loading')
     api<{ config: { smtpFrom?: string | null } | null }>(`/api/workspaces/${workspace.id}/email-config`)
       .then(({ config }) => {
@@ -91,18 +95,19 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
         // Extract domain from "Name <user@domain.com>" or "user@domain.com"
         const raw = atIdx !== -1 ? smtpFrom.slice(atIdx + 1).replace(/[>\s]+$/, '').trim() : ''
         if (!raw) {
-          setDomainCheck({ hasSPF: false, hasDKIM: false })
+          if (!cancelled) setDomainCheck({ hasSPF: false, hasDKIM: false })
           return
         }
         return api<{ hasSPF: boolean; hasDKIM: boolean }>(
           `/api/mailbox/check-domain?domain=${encodeURIComponent(raw)}&workspaceId=${encodeURIComponent(workspace.id)}`
         ).then(result => {
-          setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM })
+          if (!cancelled) setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM })
         })
       })
       .catch(() => {
-        setDomainCheck({ hasSPF: false, hasDKIM: false })
+        if (!cancelled) setDomainCheck({ hasSPF: false, hasDKIM: false })
       })
+    return () => { cancelled = true }
   }, [approvalPending?.id, workspace?.id])
 
   async function create() {

@@ -77,9 +77,11 @@ export function AiTools({ api, workspace, toast }: Props) {
 
   useEffect(() => {
     if (!workspace) return
+    let cancelled = false
     api<{ leads: Lead[] }>(`/api/leads?workspaceId=${workspace.id}&limit=100`)
-      .then(d => setLeads(d.leads || []))
+      .then(d => { if (!cancelled) setLeads(d.leads || []) })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [workspace?.id])
 
   // Clear result when tab changes

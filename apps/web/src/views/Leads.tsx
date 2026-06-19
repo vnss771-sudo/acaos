@@ -367,25 +367,33 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
 
   const LIMIT = 25
 
+  // Monotonic request id: fetchLeads runs both from the effect (workspace/filter/
+  // page changes) and imperatively (after add/delete/bulk). Only the most recent
+  // call may apply its result, so a slow earlier response can't clobber a newer
+  // one (e.g. fast filter typing or a workspace switch).
+  const leadsReqRef = useRef(0)
   const fetchLeads = useCallback(() => {
     if (!workspace) return
+    const reqId = ++leadsReqRef.current
     setLoading(true)
     const params = new URLSearchParams({ workspaceId: workspace.id, page: String(page), limit: String(LIMIT) })
     if (stageFilter) params.set('stage', stageFilter)
     if (search.trim()) params.set('search', search.trim())
     api<{ leads: Lead[]; total: number }>(`/api/leads?${params}`)
-      .then(d => { setLeads(d.leads || []); setTotal(d.total || 0) })
-      .catch(e => toast.error(e.message))
-      .finally(() => setLoading(false))
+      .then(d => { if (reqId === leadsReqRef.current) { setLeads(d.leads || []); setTotal(d.total || 0) } })
+      .catch(e => { if (reqId === leadsReqRef.current) toast.error(e.message) })
+      .finally(() => { if (reqId === leadsReqRef.current) setLoading(false) })
   }, [workspace?.id, page, stageFilter, search])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
 
   useEffect(() => {
     if (!workspace) return
+    let cancelled = false
     api<{ campaigns: Campaign[] }>(`/api/campaigns?workspaceId=${workspace.id}`)
-      .then(d => setCampaigns(d.campaigns || []))
+      .then(d => { if (!cancelled) setCampaigns(d.campaigns || []) })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [workspace?.id])
 
   async function addLead() {

@@ -91,17 +91,20 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
 
   useEffect(() => {
     if (!workspace) return
+    // Drop results from a superseded workspace so a slow response for the previous
+    // workspace can't populate the current one's settings forms.
+    let cancelled = false
     setMembersLoading(true)
     api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
-      .then(d => setMembers(d.members || []))
+      .then(d => { if (!cancelled) setMembers(d.members || []) })
       .catch(() => {})
-      .finally(() => setMembersLoading(false))
+      .finally(() => { if (!cancelled) setMembersLoading(false) })
     api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
-      .then(d => setPendingInvites(d.invites || []))
+      .then(d => { if (!cancelled) setPendingInvites(d.invites || []) })
       .catch(() => {})
     api<{ icp: IcpConfig | null }>(`/api/workspaces/${workspace.id}/icp`)
       .then(d => {
-        if (d.icp) {
+        if (d.icp && !cancelled) {
           setIcp(d.icp)
           setIcpForm({
             targetIndustries: d.icp.targetIndustries.join(', '),
@@ -115,7 +118,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .catch(() => {})
     api<{ config: Record<string, unknown> | null }>(`/api/workspaces/${workspace.id}/email-config`)
       .then(d => {
-        if (d.config) {
+        if (d.config && !cancelled) {
           setEmailForm({
             smtpHost: String(d.config.smtpHost ?? ''),
             smtpPort: String(d.config.smtpPort ?? '587'),
@@ -134,6 +137,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
         }
       })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [workspace?.id])
 
   // Compliance: fetch domain check and suppression count when email config is set

@@ -65,16 +65,18 @@ export function AdminView({ api, toast }: Props) {
   const [audit, setAudit] = useState<AuditEvent[]>([])
 
   useEffect(() => {
+    let cancelled = false
     api<AdminOverview>('/api/admin/overview')
-      .then(setData)
-      .catch(() => toast.error('Failed to load admin overview'))
-      .finally(() => setLoading(false))
+      .then(d => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) toast.error('Failed to load admin overview') })
+      .finally(() => { if (!cancelled) setLoading(false) })
     api<{ queues: QueueStat[] }>('/api/admin/queue-stats')
-      .then(d => setQueues(d.queues))
+      .then(d => { if (!cancelled) setQueues(d.queues) })
       .catch(() => {})
     api<{ events: AuditEvent[] }>('/api/admin/audit?limit=50')
-      .then(d => setAudit(d.events))
+      .then(d => { if (!cancelled) setAudit(d.events) })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   if (loading) return <Spinner />

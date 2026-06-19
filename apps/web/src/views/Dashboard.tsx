@@ -302,6 +302,9 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
   useEffect(() => {
     if (!workspace) return
+    // Drop results from a superseded workspace so switching workspaces quickly
+    // doesn't render one workspace's stats under another.
+    let cancelled = false
     setLoading(true)
     Promise.all([
       api<StatsData>(`/api/stats?workspaceId=${workspace.id}`),
@@ -310,11 +313,13 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
       api<{ signals: RecentSignal[] }>(`/api/signals?workspaceId=${workspace.id}&limit=10`)
         .catch(() => ({ signals: [] }))
     ]).then(([statsData, opps, sigData]) => {
+      if (cancelled) return
       setStats(statsData)
       setHotProspects(opps.hot ?? [])
       setRecentSignals(sigData.signals ?? [])
-    }).catch(e => toast.error(e.message))
-      .finally(() => setLoading(false))
+    }).catch(e => { if (!cancelled) toast.error(e.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [workspace?.id])
 
   if (!workspace) {
