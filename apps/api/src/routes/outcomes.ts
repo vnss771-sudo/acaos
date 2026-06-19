@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { hashApiKey } from '../lib/apiKeys.js'
+import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const outcomesRouter = Router()
@@ -170,6 +171,7 @@ async function requireIngestKeyOrAuth(
 // ---------------------------------------------------------------------------
 outcomesRouter.post(
   '/',
+  apiKeyRateLimit,
   requireIngestKeyOrAuth,
   asyncHandler(async (req, res) => {
     const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false

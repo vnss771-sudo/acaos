@@ -115,3 +115,28 @@ export const syncRateLimit = createRateLimiter({
   max: 10,
   message: 'Too many sync requests. Please wait before syncing again.'
 })
+
+// Machine-to-machine ingest/outcomes endpoints authenticate via x-api-key, so a
+// leaked key should be throttled by the key itself, not just the shared per-IP
+// window (many requests can share one source IP). Falls back to IP when no key
+// is present so the limiter still applies before auth rejects the request.
+export const apiKeyRateLimit = createRateLimiter({
+  name: 'apikey',
+  windowMs: 60 * 1000,
+  max: 120,
+  message: 'API key request limit reached. Please slow down.',
+  keyFn: (req) => {
+    const key = req.headers['x-api-key']
+    const k = Array.isArray(key) ? key[0] : key
+    return k ? `k:${k}` : `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
+  }
+})
+
+// The public unsubscribe endpoint is unauthenticated and state-changing; throttle
+// it per IP independently of the general window so it can't be hammered.
+export const unsubscribeRateLimit = createRateLimiter({
+  name: 'unsub',
+  windowMs: 60 * 1000,
+  max: 20,
+  message: 'Too many unsubscribe requests. Please wait a moment.'
+})

@@ -6,6 +6,7 @@ import { enqueueResearchLead } from '../lib/queues.js'
 import { checkAndIncrementAiUsage, reserveLeadCapacity } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
+import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const ingestRouter = Router()
@@ -49,6 +50,7 @@ async function requireIngestKey(
 // ---------------------------------------------------------------------------
 ingestRouter.post(
   '/',
+  apiKeyRateLimit,
   requireIngestKey,
   asyncHandler(async (req, res) => {
     const workspace = (req as any).ingestWorkspace
