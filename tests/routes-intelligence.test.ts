@@ -70,6 +70,7 @@ function baseSpec() {
     },
     prospectOutcome: {
       findMany: async () => [{ dealValue: 12000, recordedAt: new Date() }],
+      aggregate: async () => ({ _sum: { dealValue: 12000 }, _count: 1 }),
     },
   }
 }

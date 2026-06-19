@@ -69,12 +69,6 @@ export async function scoreProspects(
   workspaceId: string,
   progress?: Progress
 ): Promise<{ workspaceId: string; updated: number; toRecommend: string[] }> {
-  const prospects = await prisma.prospect.findMany({
-    where: { workspaceId },
-    include: { signals: true },
-  }) as ScoreProspectRow[]
-  await progress?.(10)
-
   const [icp, scoringModel] = await Promise.all([
     prisma.workspaceICP.findUnique({ where: { workspaceId } }),
     prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } }),
@@ -91,41 +85,62 @@ export async function scoreProspects(
         mustHaveEmail: icp.mustHaveEmail,
       }
     : undefined
+  await progress?.(10)
 
-  // Compute all score updates in memory first (pure CPU — no DB). Collect the
-  // real (non-example) prospects that clear the auto-recommend threshold so the
-  // worker layer can enqueue recommendation generation (kept out of here to keep
-  // this processor Redis-free and unit-testable).
+  // Walk the workspace's prospects in cursor-paginated pages rather than loading
+  // every prospect (and its signals) into memory at once — bounds memory while
+  // still rescoring all of them. Collect the real (non-example) prospects that
+  // clear the auto-recommend threshold so the worker layer can enqueue
+  // recommendation generation (kept out of here to keep this processor Redis-free
+  // and unit-testable).
+  const PAGE = 500
+  const BATCH = 100 // parallel writes per page, to not overwhelm the pool
   const toRecommend: string[] = []
-  const updates = prospects.map((prospect: ScoreProspectRow) => {
-    const rawSignals = prospect.signals.map(toRawSignal)
-    const scores = calculateOpportunityScores(rawSignals, {
-      industry: prospect.industry,
-      employeeCount: prospect.employeeCount,
-      contactEmail: prospect.contactEmail,
-      contactName: prospect.contactName,
-      domain: prospect.domain,
-      location: prospect.location,
-    }, icpConfig, signalWeights ?? undefined)
-    const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
-    const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-    if (!prospect.isExample && scores.opportunityScore >= AUTO_RECOMMEND_THRESHOLD) {
-      toRecommend.push(prospect.id)
-    }
-    return prisma.prospect.update({
-      where: { id: prospect.id },
-      data: { ...scores, buyingStage, winProbability },
-    })
-  })
+  let cursor: string | undefined
+  let updated = 0
 
-  // Execute in parallel batches of 100 to avoid overwhelming the connection pool
-  const BATCH = 100
-  for (let i = 0; i < updates.length; i += BATCH) {
-    await Promise.all(updates.slice(i, i + BATCH))
+  for (;;) {
+    const page = await prisma.prospect.findMany({
+      where: { workspaceId },
+      include: { signals: true },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    }) as ScoreProspectRow[]
+    if (page.length === 0) break
+
+    const updates = page.map((prospect: ScoreProspectRow) => {
+      const rawSignals = prospect.signals.map(toRawSignal)
+      const scores = calculateOpportunityScores(rawSignals, {
+        industry: prospect.industry,
+        employeeCount: prospect.employeeCount,
+        contactEmail: prospect.contactEmail,
+        contactName: prospect.contactName,
+        domain: prospect.domain,
+        location: prospect.location,
+      }, icpConfig, signalWeights ?? undefined)
+      const buyingStage = detectBuyingStage(rawSignals, scores.opportunityScore)
+      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+      if (!prospect.isExample && scores.opportunityScore >= AUTO_RECOMMEND_THRESHOLD) {
+        toRecommend.push(prospect.id)
+      }
+      return prisma.prospect.update({
+        where: { id: prospect.id },
+        data: { ...scores, buyingStage, winProbability },
+      })
+    })
+
+    for (let i = 0; i < updates.length; i += BATCH) {
+      await Promise.all(updates.slice(i, i + BATCH))
+    }
+
+    updated += page.length
+    cursor = page[page.length - 1].id
+    if (page.length < PAGE) break
   }
 
   await progress?.(100)
-  return { workspaceId, updated: prospects.length, toRecommend }
+  return { workspaceId, updated, toRecommend }
 }
 
 /**

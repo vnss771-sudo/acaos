@@ -37,7 +37,10 @@ adminRouter.get(
             select: { leads: true, campaigns: true, memberships: true }
           }
         },
-        orderBy: { createdAt: 'desc' }
+        orderBy: { createdAt: 'desc' },
+        // Bound the cross-workspace scan — the overview shows the most recent
+        // workspaces, not an unbounded full-table load.
+        take: 500
       }),
       prisma.usageRecord.groupBy({
         by: ['workspaceId'],

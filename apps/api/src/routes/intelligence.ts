@@ -56,7 +56,6 @@ type ForecastProspectRow = {
   industry: string | null
 }
 
-type WonOutcomeRow = { dealValue: number | null; recordedAt: Date }
 type SignalCountRow = { type: string; _count: number }
 type StageCountRow = { buyingStage: string; _count: number }
 
@@ -139,12 +138,15 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
     }
   }) as ForecastProspectRow[]
 
-  const won = await prisma.prospectOutcome.findMany({
+  // Aggregate won revenue/count in SQL rather than loading every won-outcome row
+  // into memory just to sum it. (dealValue is stored in cents.)
+  const wonAgg = await prisma.prospectOutcome.aggregate({
     // Exclude outcomes recorded against example prospects once real data exists,
     // so won revenue/count isn't inflated by demo records.
     where: { workspaceId, stage: 'WON', ...(realCount > 0 ? { prospect: { isExample: false } } : {}) },
-    select: { dealValue: true, recordedAt: true }
-  }) as WonOutcomeRow[]
+    _sum: { dealValue: true },
+    _count: true,
+  })
 
   // Default deal value by rough industry category
   function defaultDealValue(industry: string | null): number {
@@ -176,8 +178,8 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
 
   const totalPipelineValue = pipeline.reduce((s: number, p: { dealValue: number }) => s + p.dealValue, 0)
   const weightedForecast = pipeline.reduce((s: number, p: { expectedRevenue: number }) => s + p.expectedRevenue, 0)
-  const wonRevenue = won.reduce((s: number, o: WonOutcomeRow) => s + (centsToDollars(o.dealValue) ?? 0), 0)
-  const wonCount = won.length
+  const wonRevenue = centsToDollars(wonAgg._sum.dealValue) ?? 0
+  const wonCount = wonAgg._count
 
   // Stage breakdown
   const stageBreakdown: Record<string, { count: number; forecast: number }> = {}
