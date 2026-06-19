@@ -24,6 +24,7 @@ import { evidenceGatedPriority } from '../lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation, buildIntentDraftInput } from '../lib/outreachIntent.js'
 import { materializeOutreachIntent } from '../lib/materializeIntent.js'
 import { generateOutreach } from '../services/openai.js'
+import { parseAiJson, OutreachDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
 import { listSources, getSource, type ProspectCandidate } from '../lib/prospectSources.js'
 import { getPack } from '../lib/packs/index.js'
 import { findContactEmail, isHunterConfigured } from '../services/hunter.js'
@@ -935,14 +936,15 @@ prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, re
     : undefined
 
   const raw = await generateOutreach(buildIntentDraftInput({ prospect, recommendation, intent, icp }))
-  let parsed: { subject?: string; email?: string; followup?: string }
-  try { parsed = JSON.parse(raw) } catch { throw new ApiError(502, 'AI returned an invalid draft') }
+  // Strict, schema-validated parse — fails closed with a 502 (AiSchemaError
+  // extends ApiError) if the model returns bad JSON or omits subject/email.
+  const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'intent-draft')
 
   const updated = await prisma.outreachIntent.update({
     where: { id: intent.id },
     data: {
-      draftSubject: parsed.subject ?? null,
-      draftBody: parsed.email ?? null,
+      draftSubject: parsed.subject,
+      draftBody: parsed.email,
       draftFollowup: parsed.followup ?? null,
       draftGeneratedAt: new Date(),
       status: 'DRAFTED',

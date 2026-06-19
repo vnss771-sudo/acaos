@@ -183,7 +183,10 @@ authRouter.get(
     const [dbUser, workspaces] = await Promise.all([
       prisma.user.findUnique({
         where: { id: authedUser.id },
-        select: { id: true, email: true, name: true, emailVerified: true }
+        // isPlatformAdmin is the authoritative cross-tenant admin claim. Surface
+        // it so the web client gates the admin UI on the backend's source of
+        // truth instead of a mutable VITE_ADMIN_EMAIL build-time guess.
+        select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true }
       }),
       prisma.workspace.findMany({
         where: { memberships: { some: { userId: authedUser.id } } },
