@@ -86,8 +86,8 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                   <span style={{ color: colors.textFaint, fontSize: 12 }}>{d.lead.email || 'no email'}</span>
                 </div>
                 <div>
-                  <label style={s.label}>Subject</label>
-                  <input
+                  <label style={s.label} htmlFor="approvals-field-0">Subject</label>
+                  <input id="approvals-field-0"
                     style={s.input}
                     value={e.subject}
                     disabled={isBusy || !canManage}
@@ -95,8 +95,8 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                   />
                 </div>
                 <div>
-                  <label style={s.label}>Body</label>
-                  <textarea
+                  <label style={s.label} htmlFor="approvals-field-1">Body</label>
+                  <textarea id="approvals-field-1"
                     style={{ ...s.textarea, minHeight: 120 }}
                     value={e.emailBody}
                     disabled={isBusy || !canManage}

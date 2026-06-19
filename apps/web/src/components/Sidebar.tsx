@@ -59,6 +59,7 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: 
             <button
               key={n.id}
               onClick={() => setView(n.id)}
+              aria-current={active ? 'page' : undefined}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '9px 20px', width: '100%',
@@ -70,7 +71,7 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: 
                 textAlign: 'left', transition: 'all 0.1s'
               }}
             >
-              <span style={{ fontSize: 13, opacity: active ? 1 : 0.7 }}>{n.icon}</span>
+              <span aria-hidden="true" style={{ fontSize: 13, opacity: active ? 1 : 0.7 }}>{n.icon}</span>
               {n.label}
             </button>
           )
@@ -78,6 +79,7 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: 
         {isAdmin && (
           <button
             onClick={() => setView('admin')}
+            aria-current={view === 'admin' ? 'page' : undefined}
             style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '9px 20px', width: '100%',
@@ -90,7 +92,7 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: 
               borderTop: `1px solid ${colors.border}`, marginTop: 8
             }}
           >
-            <span style={{ fontSize: 13 }}>⚙</span>
+            <span aria-hidden="true" style={{ fontSize: 13 }}>⚙</span>
             Admin
           </button>
         )}

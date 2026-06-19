@@ -148,8 +148,8 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
           <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
             {mode === 'signup' && (
               <div>
-                <label style={s.label}>Name</label>
-                <input
+                <label style={s.label} htmlFor="authscreen-field-0">Name</label>
+                <input id="authscreen-field-0"
                   style={s.input}
                   type="text"
                   value={name}
@@ -162,8 +162,8 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
 
             {(mode === 'login' || mode === 'signup' || mode === 'forgot') && (
               <div>
-                <label style={s.label}>Email</label>
-                <input
+                <label style={s.label} htmlFor="authscreen-field-1">Email</label>
+                <input id="authscreen-field-1"
                   style={s.input}
                   type="email"
                   value={email}
@@ -177,8 +177,8 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
 
             {(mode === 'login' || mode === 'signup' || mode === 'reset') && (
               <div>
-                <label style={s.label}>{mode === 'reset' ? 'New Password' : 'Password'}</label>
-                <input
+                <label style={s.label} htmlFor="authscreen-field-2">{mode === 'reset' ? 'New Password' : 'Password'}</label>
+                <input id="authscreen-field-2"
                   style={s.input}
                   type="password"
                   value={password}
@@ -193,8 +193,8 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
 
             {mode === 'reset' && (
               <div>
-                <label style={s.label}>Confirm New Password</label>
-                <input
+                <label style={s.label} htmlFor="authscreen-field-3">Confirm New Password</label>
+                <input id="authscreen-field-3"
                   style={s.input}
                   type="password"
                   value={confirmPassword}

@@ -209,7 +209,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button style={s.btnSm} onClick={() => setEditing(v => !v)}>{editing ? 'Cancel' : 'Edit'}</button>
-          <button style={s.btnSm} onClick={onClose}>✕</button>
+          <button style={s.btnSm} aria-label="Close detail panel" onClick={onClose}>✕</button>
         </div>
       </div>
 
@@ -225,20 +225,20 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
             { label: 'Category', field: 'category' }
           ].map(({ label, field }) => (
             <div key={field}>
-              <label style={s.label}>{label}</label>
-              <input style={s.input} value={(form as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
+              <label style={s.label} htmlFor="leads-field-0">{label}</label>
+              <input id="leads-field-0" style={s.input} value={(form as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
             </div>
           ))}
           <div>
-            <label style={s.label}>Campaign</label>
-            <select style={s.input} value={form.campaignId ?? ''} onChange={ff('campaignId')}>
+            <label style={s.label} htmlFor="leads-field-1">Campaign</label>
+            <select id="leads-field-1" style={s.input} value={form.campaignId ?? ''} onChange={ff('campaignId')}>
               <option value="">No campaign</option>
               {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div style={{ gridColumn: '1/-1' }}>
-            <label style={s.label}>Notes</label>
-            <textarea style={{ ...s.textarea, height: 80 }} value={form.notes ?? ''} onChange={ff('notes')} />
+            <label style={s.label} htmlFor="leads-field-2">Notes</label>
+            <textarea id="leads-field-2" style={{ ...s.textarea, height: 80 }} value={form.notes ?? ''} onChange={ff('notes')} />
           </div>
           <div style={{ gridColumn: '1/-1', display: 'flex', gap: 8 }}>
             <button style={s.btn} disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save Changes'}</button>
@@ -614,13 +614,13 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
               { label: 'Category', field: 'category' }
             ].map(({ label, field }) => (
               <div key={field}>
-                <label style={s.label}>{label}</label>
-                <input style={s.input} value={(form as Record<string, string>)[field]} onChange={ff(field)} />
+                <label style={s.label} htmlFor="leads-field-3">{label}</label>
+                <input id="leads-field-3" style={s.input} value={(form as Record<string, string>)[field]} onChange={ff(field)} />
               </div>
             ))}
             <div style={{ gridColumn: '1/-1' }}>
-              <label style={s.label}>Notes</label>
-              <textarea style={{ ...s.textarea, height: 60 }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+              <label style={s.label} htmlFor="leads-field-4">Notes</label>
+              <textarea id="leads-field-4" style={{ ...s.textarea, height: 60 }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -675,7 +675,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
                     <ScorePill score={lead.score} />
                   </td>
                   <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
-                    {canManage && <button style={s.btnDanger} onClick={() => deleteLead(lead.id)}>✕</button>}
+                    {canManage && <button style={s.btnDanger} aria-label={`Delete lead ${lead.businessName}`} onClick={() => deleteLead(lead.id)}>✕</button>}
                   </td>
                 </tr>
               ))}

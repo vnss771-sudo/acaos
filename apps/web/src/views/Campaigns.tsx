@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { CreateCampaignRequest, SendCampaignRequest } from '@acaos/shared'
 import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
@@ -64,6 +65,9 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       setStats(prev => ({ ...prev, [id]: d.stats }))
     } catch { /* non-fatal */ }
   }, [api])
+
+  // Dismiss the launch-approval modal with Escape (only while it's open).
+  useEscapeKey(() => setApprovalPending(null), !!approvalPending)
 
   useEffect(() => {
     if (!workspace) return
@@ -218,7 +222,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
           position: 'fixed', inset: 0, zIndex: 100,
           background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center'
         }} onClick={() => setApprovalPending(null)}>
-          <div style={{
+          <div role="dialog" aria-modal="true" aria-label="Confirm campaign launch" style={{
             background: colors.bgCard, border: `1px solid ${colors.border}`,
             borderRadius: 12, padding: 28, width: 420, maxWidth: '90vw'
           }} onClick={e => e.stopPropagation()}>
@@ -321,18 +325,18 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
           <div style={s.sectionHeader}>{editing ? 'Edit Campaign' : 'New Campaign'}</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
             <div>
-              <label style={s.label}>Campaign Name *</label>
-              <input style={s.input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Q3 Brisbane Outreach" />
+              <label style={s.label} htmlFor="campaigns-field-0">Campaign Name *</label>
+              <input id="campaigns-field-0" style={s.input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Q3 Brisbane Outreach" />
             </div>
             <div>
-              <label style={s.label}>Goal Type</label>
-              <select style={s.input} value={form.goalType} onChange={e => setForm(f => ({ ...f, goalType: e.target.value }))}>
+              <label style={s.label} htmlFor="campaigns-field-1">Goal Type</label>
+              <select id="campaigns-field-1" style={s.input} value={form.goalType} onChange={e => setForm(f => ({ ...f, goalType: e.target.value }))}>
                 {GOAL_TYPES.map(g => <option key={g} value={g}>{g.replace(/_/g, ' ')}</option>)}
               </select>
             </div>
             <div style={{ gridColumn: '1/-1' }}>
-              <label style={s.label}>Description (optional)</label>
-              <textarea style={{ ...s.textarea, height: 60 }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="What is this campaign about?" />
+              <label style={s.label} htmlFor="campaigns-field-2">Description (optional)</label>
+              <textarea id="campaigns-field-2" style={{ ...s.textarea, height: 60 }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="What is this campaign about?" />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -366,7 +370,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                   <div style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{c.name}</div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {canManage && <button style={s.btnSm} onClick={() => startEdit(c)}>Edit</button>}
-                    {canManage && <button style={s.btnDanger} onClick={() => deleteCampaign(c.id)}>✕</button>}
+                    {canManage && <button style={s.btnDanger} aria-label={`Delete campaign ${c.name}`} onClick={() => deleteCampaign(c.id)}>✕</button>}
                   </div>
                 </div>
 

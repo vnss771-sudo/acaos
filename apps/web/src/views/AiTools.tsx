@@ -224,8 +224,8 @@ export function AiTools({ api, workspace, toast }: Props) {
         {/* Lead selector for async mode */}
         {syncMode === 'async' && (
           <div style={{ marginBottom: 16 }}>
-            <label style={s.label}>Select Lead</label>
-            <select style={s.input} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)}>
+            <label style={s.label} htmlFor="aitools-field-0">Select Lead</label>
+            <select id="aitools-field-0" style={s.input} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)}>
               <option value="">— choose a lead —</option>
               {leads.map(l => <option key={l.id} value={l.id}>{l.businessName}{l.category ? ` (${l.category})` : ''}</option>)}
             </select>
@@ -236,16 +236,16 @@ export function AiTools({ api, workspace, toast }: Props) {
         {tab === 'research' && (
           <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
             <div>
-              <label style={s.label}>Business Name *</label>
-              <input style={s.input} value={inputs.businessName} onChange={set('businessName')} placeholder="Acme Plumbing Brisbane" />
+              <label style={s.label} htmlFor="aitools-field-1">Business Name *</label>
+              <input id="aitools-field-1" style={s.input} value={inputs.businessName} onChange={set('businessName')} placeholder="Acme Plumbing Brisbane" />
             </div>
             <div>
-              <label style={s.label}>Website</label>
-              <input style={s.input} value={inputs.website} onChange={set('website')} placeholder="https://acmeplumbing.com.au" />
+              <label style={s.label} htmlFor="aitools-field-2">Website</label>
+              <input id="aitools-field-2" style={s.input} value={inputs.website} onChange={set('website')} placeholder="https://acmeplumbing.com.au" />
             </div>
             <div>
-              <label style={s.label}>Notes</label>
-              <input style={s.input} value={inputs.notes} onChange={set('notes')} placeholder="Saw them at BNI, growing fast" />
+              <label style={s.label} htmlFor="aitools-field-3">Notes</label>
+              <input id="aitools-field-3" style={s.input} value={inputs.notes} onChange={set('notes')} placeholder="Saw them at BNI, growing fast" />
             </div>
           </div>
         )}
@@ -258,16 +258,16 @@ export function AiTools({ api, workspace, toast }: Props) {
               </div>
             )}
             <div>
-              <label style={s.label}>Business Name *</label>
-              <input style={s.input} value={inputs.businessName} onChange={set('businessName')} />
+              <label style={s.label} htmlFor="aitools-field-4">Business Name *</label>
+              <input id="aitools-field-4" style={s.input} value={inputs.businessName} onChange={set('businessName')} />
             </div>
             <div>
-              <label style={s.label}>Category / Industry</label>
-              <input style={s.input} value={inputs.category} onChange={set('category')} placeholder="Plumbing, Real Estate, Accounting…" />
+              <label style={s.label} htmlFor="aitools-field-5">Category / Industry</label>
+              <input id="aitools-field-5" style={s.input} value={inputs.category} onChange={set('category')} placeholder="Plumbing, Real Estate, Accounting…" />
             </div>
             <div>
-              <label style={s.label}>Personal hook / how you know them (optional)</label>
-              <input style={s.input} value={inputs.notes} onChange={set('notes')} placeholder="e.g. Met at BNI last week" />
+              <label style={s.label} htmlFor="aitools-field-6">Personal hook / how you know them (optional)</label>
+              <input id="aitools-field-6" style={s.input} value={inputs.notes} onChange={set('notes')} placeholder="e.g. Met at BNI last week" />
               <div style={{ fontSize: 11, color: colors.textFaint, marginTop: 4 }}>
                 If you have a real connection, the email will open with it — turns a cold email warm.
               </div>
@@ -277,8 +277,8 @@ export function AiTools({ api, workspace, toast }: Props) {
 
         {tab === 'reply' && (
           <div style={{ marginBottom: 16 }}>
-            <label style={s.label}>Paste Reply Email Body *</label>
-            <textarea style={{ ...s.textarea, height: 160 }} value={inputs.replyBody} onChange={set('replyBody')} placeholder="Thanks for reaching out, we're not interested right now…" />
+            <label style={s.label} htmlFor="aitools-field-7">Paste Reply Email Body *</label>
+            <textarea id="aitools-field-7" style={{ ...s.textarea, height: 160 }} value={inputs.replyBody} onChange={set('replyBody')} placeholder="Thanks for reaching out, we're not interested right now…" />
           </div>
         )}
 

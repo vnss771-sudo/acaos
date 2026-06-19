@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import type { Workspace, Prospect, Signal, Recommendation, DiscoveryRun } from '../types.js'
 import {
   BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, OUTCOME_STAGE_COLOR,
@@ -72,31 +73,31 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
       <div style={{ ...s.sectionHeader, marginBottom: 12 }}>Add Signal</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
         <div>
-          <label style={s.label}>Signal Type</label>
-          <select value={type} onChange={e => setType(e.target.value as SignalType)}
+          <label style={s.label} htmlFor="prospects-field-0">Signal Type</label>
+          <select id="prospects-field-0" value={type} onChange={e => setType(e.target.value as SignalType)}
             style={{ ...s.input, height: 40 }}>
             {SIGNAL_TYPES.map(t => <option key={t} value={t}>{SIGNAL_TYPE_LABELS[t]}</option>)}
           </select>
         </div>
         <div>
-          <label style={s.label}>Strength (0–100)</label>
-          <input type="number" min={0} max={100} value={strength}
+          <label style={s.label} htmlFor="prospects-field-1">Strength (0–100)</label>
+          <input id="prospects-field-1" type="number" min={0} max={100} value={strength}
             onChange={e => setStrength(Number(e.target.value))} style={s.input} />
         </div>
         <div>
-          <label style={s.label}>Source Reliability</label>
-          <input type="number" min={0} max={100} value={sourceReliability}
+          <label style={s.label} htmlFor="prospects-field-2">Source Reliability</label>
+          <input id="prospects-field-2" type="number" min={0} max={100} value={sourceReliability}
             onChange={e => setSourceReliability(Number(e.target.value))} style={s.input} />
         </div>
         <div>
-          <label style={s.label}>Industry Relevance</label>
-          <input type="number" min={0} max={100} value={industryRelevance}
+          <label style={s.label} htmlFor="prospects-field-3">Industry Relevance</label>
+          <input id="prospects-field-3" type="number" min={0} max={100} value={industryRelevance}
             onChange={e => setIndustryRelevance(Number(e.target.value))} style={s.input} />
         </div>
       </div>
       <div style={{ marginBottom: 8 }}>
-        <label style={s.label}>Title (optional)</label>
-        <input type="text" value={title} onChange={e => setTitle(e.target.value)}
+        <label style={s.label} htmlFor="prospects-field-4">Title (optional)</label>
+        <input id="prospects-field-4" type="text" value={title} onChange={e => setTitle(e.target.value)}
           placeholder="e.g. Hiring 5 sales reps" style={s.input} />
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -153,6 +154,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
 
   const p = detail ?? prospect
   const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
+  useEscapeKey(onClose)
 
   return (
     <div style={{
@@ -160,7 +162,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
       padding: '40px 20px', zIndex: 100, overflowY: 'auto'
     }} onClick={onClose}>
-      <div style={{
+      <div role="dialog" aria-modal="true" aria-label={`${p.companyName} details`} style={{
         ...s.card, width: '100%', maxWidth: 680,
         border: `1px solid ${TIER_COLOR[tier]}44`, maxHeight: '85vh', overflowY: 'auto'
       }} onClick={e => e.stopPropagation()}>
@@ -575,8 +577,8 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
               { k: 'contactPhone', label: 'Contact Phone', placeholder: '+1 555 1234' },
             ].map(({ k, label, placeholder }) => (
               <div key={k}>
-                <label style={s.label}>{label}</label>
-                <input
+                <label style={s.label} htmlFor="prospects-field-5">{label}</label>
+                <input id="prospects-field-5"
                   type="text"
                   value={(form as Record<string, unknown>)[k] as string ?? ''}
                   onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
@@ -587,8 +589,8 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
             ))}
           </div>
           <div style={{ marginBottom: 10 }}>
-            <label style={s.label}>Expected Deal Value ($)</label>
-            <input type="number" value={form.expectedDealValue ?? ''}
+            <label style={s.label} htmlFor="prospects-field-6">Expected Deal Value ($)</label>
+            <input id="prospects-field-6" type="number" value={form.expectedDealValue ?? ''}
               onChange={e => setForm(f => ({ ...f, expectedDealValue: e.target.value ? Number(e.target.value) : undefined }))}
               placeholder="10000" style={{ ...s.input, width: 180 }} />
           </div>

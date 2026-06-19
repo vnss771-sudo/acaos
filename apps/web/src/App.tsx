@@ -249,11 +249,11 @@ export function App() {
 
         {/* Past-due payment warning banner */}
         {activeWorkspace?.subscriptionStatus === 'past_due' && (
-          <div style={{
+          <div role="alert" style={{
             background: '#7c2d12', borderBottom: '1px solid #b45309',
             padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0
           }}>
-            <span style={{ fontSize: 16 }}>⚠</span>
+            <span aria-hidden="true" style={{ fontSize: 16 }}>⚠</span>
             <span style={{ fontSize: 13, color: '#fde68a', flex: 1 }}>
               Your last payment failed. AI features are limited until billing is updated.
             </span>

@@ -91,7 +91,7 @@ describe('Campaigns', () => {
     render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     await screen.findByText('Q3 Brisbane Outreach')
-    await userEvent.click(screen.getByRole('button', { name: '✕' }))
+    await userEvent.click(screen.getByRole('button', { name: /Delete campaign/i }))
 
     expect(api).toHaveBeenCalledWith('/api/campaigns/c1', expect.objectContaining({ method: 'DELETE' }))
     await waitFor(() => expect(screen.queryByText('Q3 Brisbane Outreach')).not.toBeInTheDocument())
