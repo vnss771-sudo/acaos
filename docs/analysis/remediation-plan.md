@@ -45,12 +45,13 @@
 - Provider cost/quota weighting; scheduled cleanup jobs (expired tokens, old processed events); dashboards/alerts; frontend polish (stale `useApi.ts` comment, Nginx CSP `connect-src`, generated client types); runbook refresh.
 
 ## External hardening waves — T2/T3 source material
-Two externally-produced patches are preserved verbatim under
+Three externally-produced patches are preserved verbatim under
 `docs/analysis/external-hardening/` (`wave1-hardening.patch`,
-`wave2-hardening.patch`). They independently implement much of T2 and T3 and are
-the reference to **adapt** (not `git apply` — they were cut against a pre-#110
-snapshot and edit the old `apps/api/src/services/{apollo,hunter}.ts` locations,
-so they conflict with #110/#111).
+`wave2-hardening.patch`, `wave3-hardening.patch`). Together they implement T2 and
+effectively all of T3, and are the reference to **adapt** (not `git apply` — they
+were cut against a pre-#110 snapshot and edit the old
+`apps/api/src/services/{apollo,hunter}.ts` locations, so they conflict with
+#110/#111).
 
 - **Wave 1** — FA-03 (T2): strict zod schemas + `parseLeadResearchJson` /
   `parseOutreachJson` / `parseReplyAnalysisJson` in `openai.ts`, fail-closed with
@@ -58,12 +59,24 @@ so they conflict with #110/#111).
   zod validation for `routes/ai.ts`. (Its FA-01 `externalHttp.ts`/`fetchWithTimeout`
   is **superseded by our `providerFetch`** — discard; its env-knob + parent-signal
   ideas were folded into `providerFetch`.)
-- **Wave 2** — FA-02 (T3): `validate()` + zod across `billing`, `campaigns`,
-  `leads` (7 routes), `mailbox`, `prospects` (POST/PATCH/outcome + tightened
-  `discover`), `workspaces` (6 routes), plus `validate.ts` `idField`/bounded
-  `workspaceIdField` and shared-type conformance asserts. **Still TODO** (not in
-  the patch): `jobs`, `signals`, `outcomes`, `ingest`, remaining prospect intent
-  sub-actions, and the CI guard.
+- **Wave 2** — FA-02 (T3, part 1): `validate()` + zod across `billing`,
+  `campaigns`, `leads` (7 routes), `mailbox`, `prospects` (POST/PATCH/outcome +
+  tightened `discover`), `workspaces` (6 routes), plus `validate.ts`
+  `idField`/bounded `workspaceIdField` and shared-type conformance asserts.
+- **Wave 3** — FA-02 (T3, part 2 — the long tail): `validate.ts` helpers
+  (`formatZodError`, `parseBody`, `parseQuery`, `validateQuery`, `optionalIdField`,
+  `positiveIntFromQuery`); validation for `jobs` (queue/jobId params + schemas;
+  also fixes bulk-research `leadId` sourcing), `signals` (query + body, enum
+  types, bounded evidence), `outcomes` (fixes `Boolean("false")===true`
+  mis-record), `ingest` (batch body + email syntax + key-rotation query), `packs`,
+  `auth` (profile + paired password change), and `prospects`
+  `import`/`import-signals`/intent bodies. New tests in
+  `routes-{ingest,outcomes,signals,prospects}`.
+
+With waves 2 + 3, T3 route validation spans **effectively every mutation route**.
+**Residual TODO** (not in any wave): the CI guard that fails on an unvalidated
+mutation route, query validation on remaining read routes, and an optional
+OpenAPI export from the zod schemas.
 
 **Decision (2026-06-19):** port T2 + T3 from these waves **after #110 + #111
 merge** to master, adapting to the relocated backend-core files and avoiding the
