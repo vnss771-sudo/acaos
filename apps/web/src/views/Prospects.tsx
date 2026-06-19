@@ -383,7 +383,21 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [workspace?.id, search])
+  // Guard against out-of-order responses: when the user types quickly, a slow
+  // earlier request must not overwrite the results of a later one. The cleanup
+  // flag drops any response from a superseded effect run.
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    setLoading(true)
+    api<{ prospects: Prospect[]; total: number }>(
+      `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
+    )
+      .then(d => { if (!cancelled) setProspects(d.prospects) })
+      .catch(e => { if (!cancelled) toast.error(e.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [workspace?.id, search])
 
   const handleAdd = async () => {
     if (!workspace || !form.companyName.trim()) return

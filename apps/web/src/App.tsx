@@ -68,7 +68,10 @@ export function App() {
 
   const { toasts, toast, removeToast } = useToast()
 
-  function logout() {
+  // Memoized so its identity is stable: `api` depends on it (useApi), and several
+  // views deliberately key data-loading effects on `api`. A fresh logout every
+  // render would churn `api` and defeat that.
+  const logout = useCallback(() => {
     // The refresh cookie is HttpOnly; the server clears it. A custom header
     // satisfies the CSRF guard.
     fetch(`${API}/api/auth/logout`, {
@@ -80,7 +83,7 @@ export function App() {
     setUser(null)
     setWorkspaces([])
     setActiveWsId(null)
-  }
+  }, [])
 
   const api = useApi(token, logout, setToken)
 

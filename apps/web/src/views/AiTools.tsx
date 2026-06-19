@@ -85,6 +85,10 @@ export function AiTools({ api, workspace, toast }: Props) {
   // Clear result when tab changes
   useEffect(() => { setResult(null); setActiveJob(null) }, [tab])
 
+  // Stop polling on unmount (e.g. switching views or workspaces mid-job) so the
+  // interval doesn't keep firing api() and setting state on an unmounted component.
+  useEffect(() => stopPolling, [])
+
   function stopPolling() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
   }
