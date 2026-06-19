@@ -70,6 +70,20 @@ test('operational chaos: approval mode is enforced before campaign enqueue', () 
   assert.ok(approvalIdx < enqueueIdx && approvedBodyIdx < enqueueIdx, 'Approval check must happen before enqueue')
 })
 
+test('operational chaos: reserved AI usage is refunded when generation fails', () => {
+  // Quota must only be spent on usable output: after reserving an AI call
+  // (checkAndIncrementAiUsage) the worker must refund it on both non-success
+  // paths — an unusable/empty draft and a thrown generation error — or failed
+  // generations silently burn a workspace's monthly AI allowance.
+  const reserveIdx = processors.indexOf("checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')")
+  const refundIdx = processors.indexOf("refundAiUsage(workspaceId, 'AI_OUTREACH')")
+  const refundCount = processors.split("refundAiUsage(workspaceId, 'AI_OUTREACH')").length - 1
+  assert.notEqual(reserveIdx, -1, 'Could not locate the AI-usage reserve')
+  assert.notEqual(refundIdx, -1, 'Missing AI-usage refund on generation failure')
+  assert.ok(refundIdx > reserveIdx, 'Refund must come after the reserve')
+  assert.ok(refundCount >= 2, 'Both failure paths (empty draft + thrown error) must refund')
+})
+
 test('operational chaos: worker must skip unapproved leads before any AI generation', () => {
   // Regression guard for the approval-mode bypass: the send loop fetches APPROVED
   // drafts only, so a lead with no included draft must be SKIPPED — never sent

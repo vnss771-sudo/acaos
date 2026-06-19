@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { hashApiKey } from '../lib/apiKeys.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -180,12 +180,14 @@ outcomesRouter.post(
     if (viaApiKey) {
       workspaceId = (req as any).resolvedWorkspaceId
     } else {
-      // JWT path — workspaceId must be in body
+      // JWT path — workspaceId must be in body. Recording an outcome retunes the
+      // shared workspace scoring model (every 7th outcome recomputes its
+      // weights), so the human path requires admin, not plain membership. The
+      // automated FieldOps ingest path (API key) is authorized by the key itself.
       workspaceId = String(req.body?.workspaceId || '').trim()
       if (!workspaceId) throw new ApiError(400, 'workspaceId required')
       const user = (req as AuthedRequest).user
-      const member = await userBelongsToWorkspace(user.id, workspaceId)
-      if (!member) throw new ApiError(403, 'Access denied')
+      await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
     }
 
     const prospectId = String(req.body?.prospectId || '').trim()

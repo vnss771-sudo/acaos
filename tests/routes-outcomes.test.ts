@@ -141,6 +141,17 @@ test('POST via JWT denies a non-member workspace', async () => {
   assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
 })
 
+test('POST via JWT denies a plain member — recording outcomes requires admin', async () => {
+  // Outcomes retune the shared scoring model, so a member (not admin) is blocked
+  // on the human path; the automated API-key path is unaffected (tested above).
+  const res = await server.request(
+    '/api/outcomes',
+    json(bearer(NON_OWNER), { workspaceId: WS, prospectId: 'p1', score: 80, replied: true })
+  )
+  assert.equal(res.status, 403)
+  assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 0)
+})
+
 test('POST rejects a prospectId that does not belong to the workspace (no data poisoning)', async () => {
   const res = await server.request('/api/outcomes', {
     method: 'POST',

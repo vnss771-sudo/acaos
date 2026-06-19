@@ -74,6 +74,19 @@ export async function checkAndIncrementAiUsage(workspaceId: string, action: Usag
   })
 }
 
+// Refund one unit of this month's AI usage for `action`. Used when an AI call
+// was reserved (checkAndIncrementAiUsage) but produced no usable result, so a
+// workspace's quota is only spent on output it can actually use — generation
+// failures are the platform's cost, not the customer's. Floors at zero (the
+// `count > 0` guard) so a refund can never create a negative balance.
+export async function refundAiUsage(workspaceId: string, action: UsageAction): Promise<void> {
+  const month = currentMonth()
+  await prisma.usageRecord.updateMany({
+    where: { workspaceId, month, action, count: { gt: 0 } },
+    data: { count: { decrement: 1 } },
+  })
+}
+
 // Per-workspace monthly discovery quota. Discovery providers use platform-level
 // API keys, so an unbounded workspace is a real cost/abuse risk. Mirrors the AI
 // check: advisory-locked read-then-increment so concurrent runs can't overshoot.
