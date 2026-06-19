@@ -33,6 +33,14 @@ before any public disclosure.
 - Refresh tokens live in an **httpOnly** cookie (`SameSite` + `Secure`
   configurable), hashed at rest. Refresh/rotate is protected by a **CSRF header**
   check layered on top of the SameSite attribute.
+- **TOTP MFA** (RFC 6238): users can enroll an authenticator app; when enabled,
+  login requires a second factor (`/api/auth/verify-totp`). The TOTP secret is
+  encrypted at rest (`EMAIL_ENCRYPTION_KEY`), and the login challenge issues a
+  scoped MFA-pending token that can't be used as an access token.
+- **Step-up re-auth**: sensitive mutations (billing checkout/portal,
+  platform-admin self-promotion, MFA disable) require a recent credential proof
+  (`requireFreshAuth`, within `STEP_UP_MAX_AGE_MIN`); refresh via
+  `/api/auth/reauth`, otherwise the route returns `403 REAUTH_REQUIRED`.
 
 ## Application hardening
 

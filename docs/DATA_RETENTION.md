@@ -2,22 +2,23 @@
 
 What ACAOS stores, how long it should be kept, and how a workspace's data is
 exported or deleted. This is the policy of record for review finding P0-2/§6.2
-("data retention policy"). Where automated enforcement does not yet exist it is
-called out as **manual** with a roadmap to a scheduled purge job.
+("data retention policy"). The documented windows are enforced automatically by a
+daily `retention-purge` worker job (`purgeExpiredData`); rows that fall outside a
+window (e.g. lifecycle-bound data) are noted in the Enforcement column.
 
 ## Retention windows
 
 | Data | Model / store | Default retention | Enforcement |
 |---|---|---|---|
-| Inbound email bodies processed for reply detection | `ProcessedEmail` | 90 days | Manual → scheduled purge (roadmap) |
+| Inbound email bodies processed for reply detection | `ProcessedEmail` | 90 days | Automated (daily purge job) |
 | Outreach drafts (AI-generated copy) | `OutreachDraft` | Life of the lead; purged with the workspace | With tenant deletion |
-| Sent-outreach records (delivery/outbox) | `OutreachSent` | 18 months (deliverability/audit) | Manual |
+| Sent-outreach records (delivery/outbox) | `OutreachSent` | 18 months (deliverability/audit) | Automated (daily purge job) |
 | AI research / enrichment results | `Lead.aiSummary`, `Signal`, `EvidenceSource` | Life of the prospect/lead | With tenant deletion |
-| Provider discovery runs | `DiscoveryRun` | 12 months | Manual |
-| Audit events | `AuditEvent` | 24 months (append-only, FK-free by design) | Manual |
-| Refresh tokens | `RefreshToken` | Expire per `REFRESH_TOKEN_DAYS`; revoked rows purged after 30 days | Expiry + purge |
-| Email-verification / password-reset tokens | `EmailVerificationToken`, `PasswordResetToken` | Until used or expired; purge after 30 days | Expiry + purge |
-| Stripe event dedupe keys | `ProcessedStripeEvent` | 12 months | Manual |
+| Provider discovery runs | `DiscoveryRun` | 12 months | Automated (daily purge job) |
+| Audit events | `AuditEvent` | 24 months (append-only, FK-free by design) | Automated (daily purge job) |
+| Refresh tokens | `RefreshToken` | Expire per `REFRESH_TOKEN_DAYS`; revoked rows purged after 30 days | Expiry + automated (daily purge job) |
+| Email-verification / password-reset tokens | `EmailVerificationToken`, `PasswordResetToken` | Until used or expired; purge after 30 days | Expiry + automated (daily purge job) |
+| Stripe event dedupe keys | `ProcessedStripeEvent` | 12 months | Automated (daily purge job) |
 | Mailbox credentials | `WorkspaceEmailConfig` | Until removed by the workspace | Encrypted at rest (`EMAIL_ENCRYPTION_KEY`) |
 
 Prompts and raw model inputs/outputs are not persisted beyond the derived fields
@@ -49,6 +50,6 @@ run via an operator script.
 
 ## Roadmap
 
-1. Scheduled purge job honouring every window above (the "Manual" rows).
+1. ~~Scheduled purge job honouring every window above.~~ **Done** — the daily `retention-purge` worker job (`purgeExpiredData` in `packages/backend-core/src/lib/retention.ts`) enforces every window; windows are overridable via `RETENTION_*` env vars. Tests: `tests-db/retention.test.ts`.
 2. One-call workspace export (structured) and transactional delete.
 3. Configurable per-plan retention windows.
