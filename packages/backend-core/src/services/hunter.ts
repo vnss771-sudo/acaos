@@ -7,6 +7,9 @@
 // best-effort and fail soft (return null) — enrichment must never hard-fail on a
 // flaky third-party lookup.
 
+import { hunterBreaker } from '../lib/circuit.js'
+import { providerFetch } from '../lib/providerHttp.js'
+
 type HunterContact = {
   email: string
   firstName?: string
@@ -37,7 +40,7 @@ export async function findContactEmail(domain: string): Promise<HunterContact | 
   url.searchParams.set('type', 'personal')
 
   try {
-    const res = await fetch(url.toString())
+    const res = await providerFetch(url.toString(), {}, { provider: 'hunter', breaker: hunterBreaker })
     if (!res.ok) return null
 
     const data = await res.json() as {
@@ -84,7 +87,7 @@ export async function verifyEmail(email: string): Promise<HunterVerification | n
   url.searchParams.set('api_key', apiKey)
 
   try {
-    const res = await fetch(url.toString())
+    const res = await providerFetch(url.toString(), {}, { provider: 'hunter', breaker: hunterBreaker })
     if (!res.ok) return null
 
     const data = await res.json() as {

@@ -8,6 +8,7 @@
 import { ApiError } from '../lib/errors.js'
 import { hasEnv } from '../lib/env.js'
 import { apolloBreaker } from '../lib/circuit.js'
+import { providerFetch } from '../lib/providerHttp.js'
 
 export type EnrichmentSignal = {
   type: string
@@ -67,7 +68,9 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
       ? { domain: prospect.domain }
       : { name: prospect.companyName }
 
-    const res = await fetch('https://api.apollo.io/v1/organizations/enrich', {
+    // Breaker is applied by the surrounding apolloBreaker.call; providerFetch
+    // adds the timeout / transient-retry / size-bound that raw fetch lacked.
+    const res = await providerFetch('https://api.apollo.io/v1/organizations/enrich', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -75,7 +78,7 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
         'Cache-Control': 'no-cache',
       },
       body: JSON.stringify(body),
-    })
+    }, { provider: 'apollo-enrich' })
 
     if (!res.ok) return { signals: [], updates: {} }
 
