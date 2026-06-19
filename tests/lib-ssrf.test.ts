@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isPrivateIp, assertPublicMailHost } from '../packages/backend-core/src/lib/ssrf.ts'
+import { isPrivateIp, assertPublicMailHost, resolvePublicMailHost } from '../packages/backend-core/src/lib/ssrf.ts'
 
 test('isPrivateIp flags private, loopback, link-local, CGNAT and metadata IPv4', () => {
   for (const ip of [
@@ -61,4 +61,26 @@ test('assertPublicMailHost accepts a literal public IP (no DNS needed) and is a 
   await assert.doesNotReject(() => assertPublicMailHost(undefined))
   await assert.doesNotReject(() => assertPublicMailHost(null))
   await assert.doesNotReject(() => assertPublicMailHost(''))
+})
+
+// resolvePublicMailHost — the connect-time pinning primitive. For a literal IP
+// it returns that IP with no servername (nothing to verify a cert against); for
+// a hostname (DNS path) it would return the resolved IP plus the original name
+// as servername. The hermetic cases below mirror the literal/localhost coverage
+// above; the resolve-to-private path is covered by the thrown ApiError contract.
+test('resolvePublicMailHost pins a literal public IP and emits no servername', async () => {
+  assert.deepEqual(await resolvePublicMailHost('8.8.8.8', 'smtpHost'), { host: '8.8.8.8' })
+  // IPv6 literals are normalized (brackets/zone stripped) and dialed as-is.
+  assert.deepEqual(await resolvePublicMailHost('[2606:4700:4700::1111]'), { host: '2606:4700:4700::1111' })
+})
+
+test('resolvePublicMailHost rejects private/loopback/metadata literals and localhost', async () => {
+  await assert.rejects(() => resolvePublicMailHost('127.0.0.1', 'smtpHost'), /private or reserved/)
+  await assert.rejects(() => resolvePublicMailHost('10.1.2.3'), /private or reserved/)
+  await assert.rejects(() => resolvePublicMailHost('[::1]'), /private or reserved/)
+  await assert.rejects(() => resolvePublicMailHost('169.254.169.254'), /private or reserved/)
+  await assert.rejects(() => resolvePublicMailHost('::ffff:10.0.0.1'), /private or reserved/)
+  await assert.rejects(() => resolvePublicMailHost('localhost'), /localhost not permitted/)
+  await assert.rejects(() => resolvePublicMailHost('mail.localhost'), /localhost not permitted/)
+  await assert.rejects(() => resolvePublicMailHost(''), /could not be resolved/)
 })

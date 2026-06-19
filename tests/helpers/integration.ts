@@ -14,6 +14,7 @@ import express, { type Router } from 'express'
 import type { Server } from 'node:http'
 import { errorHandler, notFoundHandler } from '../../apps/api/src/lib/http.ts'
 import { signJwt } from '../../packages/backend-core/src/lib/jwt.ts'
+import { clearAllTtlCaches } from '../../apps/api/src/lib/ttlCache.ts'
 
 export type PrismaMethod = (...args: any[]) => unknown
 export type FakeModel = Record<string, PrismaMethod>
@@ -75,6 +76,9 @@ export function createFakePrisma(spec: FakePrismaSpec): FakePrisma {
 /** Install a fake Prisma client for the duration of a test. */
 export function installPrisma(fake: FakePrisma): void {
   ;(globalThis as { __acaosPrisma__?: unknown }).__acaosPrisma__ = fake
+  // Drop any in-process caches (e.g. /api/stats) so a fresh fake's data is never
+  // shadowed by a value cached against the same workspace id by a prior test.
+  clearAllTtlCaches()
 }
 
 /** Remove any installed fake Prisma client. */

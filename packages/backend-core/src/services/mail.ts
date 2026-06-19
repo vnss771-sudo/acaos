@@ -3,7 +3,7 @@ import { ApiError } from '../lib/errors.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
 import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
-import { assertPublicMailHost } from '../lib/ssrf.js'
+import { resolvePublicMailHost, type PinnedHost } from '../lib/ssrf.js'
 import { suppress } from '../lib/suppressions.js'
 import { recordAudit } from '../lib/audit.js'
 
@@ -69,8 +69,11 @@ function maybeDecrypt(s: string | null | undefined): string | undefined {
   return isEncrypted(s) ? decryptSecret(s) : s
 }
 
-export function buildTransport(cfg?: SmtpConfig | null) {
-  const host = cfg?.smtpHost || getRequiredEnv('SMTP_HOST')
+export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
+  // `pin` (set for workspace-supplied hosts) carries the SSRF-validated IP to
+  // dial plus the original hostname for TLS SNI/cert verification, so nodemailer
+  // performs no second DNS lookup that could rebind to a private address.
+  const host = pin?.host || cfg?.smtpHost || getRequiredEnv('SMTP_HOST')
   const port = cfg?.smtpPort ?? Number(process.env.SMTP_PORT || 587)
   const secure = cfg?.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465)
   const user = cfg?.smtpUser || process.env.SMTP_USER
@@ -78,6 +81,7 @@ export function buildTransport(cfg?: SmtpConfig | null) {
   return nodemailer.createTransport({
     host, port, secure,
     auth: user ? { user, pass } : undefined,
+    ...(pin?.servername ? { tls: { servername: pin.servername } } : {}),
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
@@ -86,10 +90,11 @@ export function buildTransport(cfg?: SmtpConfig | null) {
 
 export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null) {
   // Workspace-supplied SMTP hosts are an SSRF surface: resolve and reject
-  // private/loopback/metadata targets immediately before connecting. Env-
-  // configured system hosts are trusted and skipped.
-  if (cfg?.smtpHost) await assertPublicMailHost(cfg.smtpHost, 'smtpHost')
-  const transporter = buildTransport(cfg)
+  // private/loopback/metadata targets, then dial the resolved IP directly so the
+  // check and the connect can't disagree (DNS-rebinding TOCTOU). Env-configured
+  // system hosts are trusted and skipped.
+  const pin = cfg?.smtpHost ? await resolvePublicMailHost(cfg.smtpHost, 'smtpHost') : undefined
+  const transporter = buildTransport(cfg, pin)
   const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
   return transporter.sendMail({ from, to, subject, html })
 }
@@ -198,9 +203,11 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     throw new ApiError(503, 'IMAP support is not installed in this environment')
   }
 
-  const host = cfg?.imapHost || getRequiredEnv('IMAP_HOST')
-  // Workspace-supplied IMAP hosts are an SSRF surface — see sendMail above.
-  if (cfg?.imapHost) await assertPublicMailHost(cfg.imapHost, 'imapHost')
+  // Workspace-supplied IMAP hosts are an SSRF surface — resolve, reject private
+  // targets, and pin the validated IP so imapflow's connect can't re-resolve to
+  // a rebind. Env-configured system hosts are trusted and dialed by name.
+  const pin = cfg?.imapHost ? await resolvePublicMailHost(cfg.imapHost, 'imapHost') : undefined
+  const host = pin?.host || cfg?.imapHost || getRequiredEnv('IMAP_HOST')
   const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
   const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
   const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')
@@ -208,6 +215,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
 
   const client = new ImapFlow({
     host, port, secure,
+    ...(pin?.servername ? { servername: pin.servername } : {}),
     auth: { user, pass },
     logger: false,
     socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 30_000),

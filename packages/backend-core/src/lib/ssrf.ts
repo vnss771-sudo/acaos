@@ -65,25 +65,39 @@ export function isPrivateIp(addr: string): boolean {
 }
 
 /**
- * Reject a user-supplied host that is, or resolves to, a non-public address.
- * Call immediately before connecting (resolve-then-use) so the check covers
- * hostnames whose DNS points inward, not just literal private IPs. A small
- * TOCTOU window remains versus full connect-time IP pinning, but this closes the
- * DNS-resolves-to-private and IPv6/mapped bypasses entirely.
+ * A validated, ready-to-connect target. `host` is the literal IP to dial; when
+ * the caller supplied a hostname, `servername` carries the original name so TLS
+ * SNI + certificate hostname verification still work against the pinned IP.
  */
-export async function assertPublicMailHost(host: string | undefined | null, field = 'host'): Promise<void> {
-  if (!host) return
+export type PinnedHost = { host: string; servername?: string }
+
+/**
+ * Validate a user-supplied host and return the exact address to connect to.
+ *
+ * This is the SSRF-safe primitive: it resolves the hostname's A/AAAA records,
+ * rejects the request if ANY resolved address is private/loopback/link-local/
+ * metadata, and then returns ONE validated IP literal for the caller to dial
+ * directly. Connecting by IP (with `servername` preserved for TLS) means the
+ * mail library performs no second DNS lookup — closing the DNS-rebinding TOCTOU
+ * window between the check and the connect. Literal-IP and IPv6/mapped bypasses
+ * are rejected up front.
+ *
+ * @throws ApiError(400) for localhost, unresolvable hosts, or any private target.
+ */
+export async function resolvePublicMailHost(host: string, field = 'host'): Promise<PinnedHost> {
   let h = host.trim().toLowerCase()
   if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1)
 
+  if (!h) throw new ApiError(400, `${field}: host could not be resolved`)
   if (h === 'localhost' || h.endsWith('.localhost')) {
     throw new ApiError(400, `${field}: localhost not permitted`)
   }
 
-  // Literal IP — classify directly, no DNS needed.
+  // Literal IP — classify directly, no DNS needed. Dial it as-is; there is no
+  // hostname to verify a certificate against, so no servername.
   if (net.isIP(h)) {
     if (isPrivateIp(h)) throw new ApiError(400, `${field}: private or reserved IP not permitted`)
-    return
+    return { host: h }
   }
 
   let records: Array<{ address: string }>
@@ -93,9 +107,25 @@ export async function assertPublicMailHost(host: string | undefined | null, fiel
     throw new ApiError(400, `${field}: host could not be resolved`)
   }
   if (records.length === 0) throw new ApiError(400, `${field}: host could not be resolved`)
+  // Reject if ANY resolved address is private — a round-robin / split-horizon
+  // record set must not let one public answer smuggle in a private sibling.
   for (const r of records) {
     if (isPrivateIp(r.address)) {
       throw new ApiError(400, `${field}: host resolves to a private or reserved address`)
     }
   }
+  // Pin to the first validated address; preserve the original hostname for TLS.
+  return { host: records[0]!.address, servername: h }
+}
+
+/**
+ * Reject a user-supplied host that is, or resolves to, a non-public address.
+ * Thin wrapper over {@link resolvePublicMailHost} for callers that only need the
+ * validation side-effect (e.g. config-save time) and not the pinned address;
+ * a no-op for empty input. Prefer {@link resolvePublicMailHost} at connect time
+ * so the resolved IP is actually the one dialed (no TOCTOU re-resolution).
+ */
+export async function assertPublicMailHost(host: string | undefined | null, field = 'host'): Promise<void> {
+  if (!host) return
+  await resolvePublicMailHost(host, field)
 }

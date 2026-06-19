@@ -70,6 +70,27 @@ test('GET / derives totalLeads from the stage funnel and surfaces the lead cap',
   assert.equal(res.body.usage.leads.used, 7)
 })
 
+test('GET / coalesces a concurrent burst into one aggregation, then serves the TTL cache', async () => {
+  // Count the by-stage aggregation so we can prove the fan-out runs once for the
+  // whole burst (single-flight) and again-within-TTL is served from cache.
+  let stageGroupBys = 0
+  const s = spec() as any
+  const baseGroupBy = s.lead.groupBy
+  s.lead.groupBy = async (a: any) => { if (a?.by?.[0] === 'stage') stageGroupBys++; return baseGroupBy(a) }
+  installPrisma(createFakePrisma(s)) // also clears any prior cache entry
+
+  const burst = await Promise.all(
+    Array.from({ length: 25 }, () => server.request(`/api/stats?workspaceId=${OWNED}`, { headers: auth() })),
+  )
+  for (const r of burst) assert.equal(r.status, 200)
+  assert.equal(stageGroupBys, 1, 'one aggregation for the concurrent burst')
+
+  const again = await server.request(`/api/stats?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(again.status, 200)
+  assert.equal(again.body.totalLeads, 7)
+  assert.equal(stageGroupBys, 1, 'follow-up within TTL served from cache')
+})
+
 test('GET /campaigns denies a non-member workspace', async () => {
   assert.equal((await server.request(`/api/stats/campaigns?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
 })
