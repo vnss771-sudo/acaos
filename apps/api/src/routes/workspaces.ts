@@ -285,9 +285,13 @@ workspaceRouter.post(
       // Escape the workspace name — it is user-controlled and must not be able to
       // inject markup into the HTML email body. The subject is plain text.
       const safeName = escapeHtml(workspace?.name ?? 'a workspace')
+      // Escape the URL for the attribute context too. The token is hex and APP_URL
+      // is operator-set, so this is defence-in-depth: a misconfigured/injected
+      // APP_URL cannot break out of the href and inject markup into the email body.
+      const safeInviteUrl = escapeHtml(inviteUrl)
       await sendMail(email, `You've been invited to join ${workspace?.name ?? 'a workspace'} on ACAOS`,
         `<p>You've been invited to join <strong>${safeName}</strong> on ACAOS as ${role === 'admin' ? 'an admin' : 'a member'}.</p>` +
-        `<p><a href="${inviteUrl}">Accept invitation</a></p>` +
+        `<p><a href="${safeInviteUrl}">Accept invitation</a></p>` +
         `<p>This link expires in 7 days. If you don't have an ACAOS account yet, you'll be asked to create one first.</p>`
       )
     } else if (process.env.NODE_ENV === 'production') {

@@ -1,5 +1,10 @@
 generator client {
   provider = "prisma-client-js"
+  // Generate the musl/openssl-3 query engine explicitly. The slim multi-stage
+  // runtime images are alpine (musl) with openssl 3; without this, generate can
+  // fall back to the openssl-1.1.x engine, which then fails at load with
+  // "libssl.so.1.1: No such file". "native" keeps local/glibc CI working.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

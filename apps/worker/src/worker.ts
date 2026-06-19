@@ -22,6 +22,8 @@ import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPol
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
 import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
+import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
+import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
 
 function log(queue: string, msg: string) {
@@ -481,6 +483,11 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
 // Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
+
+// Share circuit-breaker state with the API via Redis (reusing the BullMQ
+// connection) so a provider outage the worker trips also protects the API.
+// Fail-open: falls back to per-process state if Redis is unavailable.
+attachBreakerStore(createRedisBreakerStore(connection))
 
 // ── Liveness probe + metrics ─────────────────────────────────────────────────────
 // Bind to the platform-injected PORT when present (so Railway's healthcheck, which

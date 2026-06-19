@@ -1,5 +1,11 @@
-FROM node:22-alpine AS base
+# ── Builder ───────────────────────────────────────────────────────────────────
+# Installs the full toolchain (typescript, @types/*, prisma CLI) and compiles.
+# Nothing from this stage ships except the built dist and the generated client.
+FROM node:22-alpine AS builder
 WORKDIR /app
+
+# openssl lets `prisma generate` detect the right engine (openssl-3) on alpine.
+RUN apk add --no-cache openssl
 
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
@@ -23,12 +29,46 @@ COPY scripts ./scripts
 RUN npm run prisma:generate
 RUN npm run build -w @acaos/api
 
-EXPOSE 4000
+# ── Runtime ───────────────────────────────────────────────────────────────────
+# Production-only image: prod dependencies, compiled output, and the generated
+# Prisma client — no TypeScript compiler, no @types/*, no test tooling. This
+# shrinks the image and removes that dev-only surface from what we ship.
+FROM node:22-alpine AS runtime
+WORKDIR /app
 ENV NODE_ENV=production
+
+# The generated Prisma query engine (linux-musl-openssl-3.0.x) links against
+# libssl.so.3 / libcrypto.so.3 — install openssl so it loads at runtime.
+RUN apk add --no-cache openssl libc6-compat
+
+# Manifests first so the prod install layer caches independently of source.
+COPY package.json package-lock.json ./
+COPY packages/db/package.json ./packages/db/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend-core/package.json ./packages/backend-core/
+COPY apps/api/package.json ./apps/api/
+
+# Production dependencies only. The prisma CLI is a runtime dependency of the API
+# (start-with-migrations.mjs runs `prisma migrate deploy`), so it survives the
+# --omit=dev prune; the TypeScript compiler and type packages do not.
+RUN npm ci --omit=dev
+
+# The generated Prisma client from the builder (regenerating here would require
+# re-running the CLI; copying the already-generated client is faster and exact).
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
+
+# Compiled output + the files the runtime actually reads.
+COPY --from=builder /app/packages/backend-core/dist ./packages/backend-core/dist
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY packages/db ./packages/db
+COPY scripts ./scripts
+
+EXPOSE 4000
 
 # Drop to the unprivileged 'node' user shipped in the base image so a container
 # escape / RCE does not run as root. The app and its caches must be node-owned
-# (the startup script runs `npx prisma migrate deploy`, which needs a writable
+# (the startup script runs `prisma migrate deploy`, which needs a writable
 # HOME/npm cache).
 RUN chown -R node:node /app
 USER node

@@ -1,5 +1,11 @@
-FROM node:22-alpine AS base
+# ── Builder ───────────────────────────────────────────────────────────────────
+# Installs the full toolchain and compiles backend-core + the worker. Nothing
+# from this stage ships except the built dist and the generated Prisma client.
+FROM node:22-alpine AS builder
 WORKDIR /app
+
+# openssl lets `prisma generate` detect the right engine (openssl-3) on alpine.
+RUN apk add --no-cache openssl
 
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
@@ -23,7 +29,37 @@ COPY apps/worker ./apps/worker
 RUN npm run prisma:generate
 RUN npm run build -w @acaos/worker
 
+# ── Runtime ───────────────────────────────────────────────────────────────────
+# Production-only image: prod dependencies, compiled output, and the generated
+# Prisma client — no TypeScript compiler, no @types/*, no test tooling.
+FROM node:22-alpine AS runtime
+WORKDIR /app
 ENV NODE_ENV=production
+
+# The generated Prisma query engine (linux-musl-openssl-3.0.x) links against
+# libssl.so.3 / libcrypto.so.3 — install openssl so it loads at runtime.
+RUN apk add --no-cache openssl libc6-compat
+
+# Manifests first so the prod install layer caches independently of source.
+COPY package.json package-lock.json ./
+COPY packages/db/package.json ./packages/db/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend-core/package.json ./packages/backend-core/
+COPY apps/api/package.json ./apps/api/
+COPY apps/worker/package.json ./apps/worker/
+
+# Production dependencies only — drops the TypeScript compiler and type packages.
+RUN npm ci --omit=dev
+
+# The generated Prisma client from the builder. The worker has no prisma CLI in
+# its production tree (it never runs migrations), so the client must be copied,
+# not regenerated.
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
+
+# Compiled output.
+COPY --from=builder /app/packages/backend-core/dist ./packages/backend-core/dist
+COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 
 # The worker exposes a dependency-free liveness/metrics server (see health.ts).
 EXPOSE 9090
