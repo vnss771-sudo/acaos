@@ -64,6 +64,14 @@ model User {
   // out-of-band (not user-settable) — the gate must not rest on a mutable env
   // var alone. Defaults false so no account is admin unless explicitly granted.
   isPlatformAdmin     Boolean                 @default(false)
+  // MFA (TOTP). totpSecret is stored encrypted at rest (EMAIL_ENCRYPTION_KEY).
+  // totpEnabled flips true only after the user proves a code (activation), so a
+  // half-finished setup never forces a second factor at login.
+  totpSecret          String?
+  totpEnabled         Boolean                 @default(false)
+  // Step-up auth: timestamp of the most recent password (or MFA) proof. Sensitive
+  // mutations (billing, admin, MFA disable) require this to be recent.
+  lastReauthAt        DateTime?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
   memberships         Membership[]

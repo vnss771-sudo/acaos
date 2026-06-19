@@ -11,6 +11,33 @@ export function requireVerifiedEmail(req: Request, res: Response, next: NextFunc
   return next()
 }
 
+// True when the user has a password/MFA proof within the step-up window. Shared
+// by the requireFreshAuth middleware and ad-hoc gates (e.g. admin promotion).
+// Window configurable via STEP_UP_MAX_AGE_MIN (default 15 min).
+export async function hasFreshAuth(userId: string): Promise<boolean> {
+  const maxAgeMs = Number(process.env.STEP_UP_MAX_AGE_MIN || 15) * 60_000
+  const row = await prisma.user.findUnique({ where: { id: userId }, select: { lastReauthAt: true } })
+  const at = row?.lastReauthAt?.getTime()
+  return Boolean(at && Date.now() - at <= maxAgeMs)
+}
+
+// Step-up auth: require a RECENT password/MFA proof for sensitive mutations
+// (billing, admin, MFA disable). A 403 with `code: 'REAUTH_REQUIRED'` tells the
+// client to prompt for re-auth and retry. Must run after requireAuth.
+export function requireFreshAuth(req: Request, res: Response, next: NextFunction) {
+  const user = (req as AuthedRequest).user
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+
+  hasFreshAuth(user.id)
+    .then((fresh) => {
+      if (!fresh) {
+        return res.status(403).json({ error: 'Re-authentication required for this action', code: 'REAUTH_REQUIRED' })
+      }
+      return next()
+    })
+    .catch(next)
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const auth = req.headers.authorization
   if (!auth?.startsWith('Bearer ')) {

@@ -5,9 +5,13 @@ import {
   signJwt,
   generateRefreshToken,
   hashRefreshToken,
-  refreshTokenExpiresAt
+  refreshTokenExpiresAt,
+  signMfaToken,
+  verifyMfaToken
 } from '../lib/jwt.js'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireFreshAuth } from '../middleware/auth.js'
+import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
+import { generateTotpSecret, verifyTotp, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
@@ -34,6 +38,12 @@ async function persistRefreshToken(userId: string, refreshToken: string) {
       expiresAt: refreshTokenExpiresAt()
     }
   })
+}
+
+// Record a fresh password/MFA proof for step-up auth. Called whenever the user
+// has just proven a credential (signup, login, MFA verify, explicit re-auth).
+async function markReauth(userId: string) {
+  await prisma.user.update({ where: { id: userId }, data: { lastReauthAt: new Date() } })
 }
 
 const signupSchema = z.object({
@@ -77,6 +87,7 @@ authRouter.post(
 
     const { token, refreshToken } = issueTokens(result.user.id)
     await persistRefreshToken(result.user.id, refreshToken)
+    await markReauth(result.user.id)
 
     // Send verification email (non-blocking — don't fail signup if SMTP is down)
     sendVerificationEmail(result.user.id, result.user.email).catch(() => {})
@@ -107,14 +118,59 @@ authRouter.post(
     const ok = await bcrypt.compare(password, user.passwordHash)
     if (!ok) throw new ApiError(401, 'Invalid credentials')
 
+    // Second factor: if TOTP is enabled, the password alone yields only a scoped,
+    // short-lived MFA token (not an access token). The client must POST it back
+    // to /verify-totp with a valid code to complete the login.
+    if (user.totpEnabled) {
+      return res.json({ mfaRequired: true, mfaToken: signMfaToken(user.id) })
+    }
+
     const { token, refreshToken } = issueTokens(user.id)
     await persistRefreshToken(user.id, refreshToken)
+    await markReauth(user.id)
 
     setRefreshCookie(res, refreshToken)
     res.json({
       token,
       user: { id: user.id, email: user.email, name: user.name }
     })
+  })
+)
+
+// Complete an MFA login: verify the scoped mfaToken + a TOTP code, then issue the
+// real session. Rate-limited like login (anti brute-force on the 6-digit code).
+const verifyTotpSchema = z.object({
+  mfaToken: z.string().min(1),
+  code: z.string().min(6).max(10),
+})
+
+authRouter.post(
+  '/verify-totp',
+  authRateLimit,
+  validate(verifyTotpSchema),
+  asyncHandler(async (req, res) => {
+    const { mfaToken, code } = req.body as z.infer<typeof verifyTotpSchema>
+
+    let userId: string
+    try {
+      userId = verifyMfaToken(mfaToken).userId
+    } catch {
+      throw new ApiError(401, 'MFA session expired — please sign in again')
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } })
+    if (!user?.totpEnabled || !user.totpSecret) throw new ApiError(401, 'MFA is not enabled')
+
+    if (!verifyTotp(decryptSecret(user.totpSecret), code)) {
+      throw new ApiError(401, 'Invalid authentication code')
+    }
+
+    const { token, refreshToken } = issueTokens(user.id)
+    await persistRefreshToken(user.id, refreshToken)
+    await markReauth(user.id)
+
+    setRefreshCookie(res, refreshToken)
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name } })
   })
 )
 
@@ -186,7 +242,7 @@ authRouter.get(
         // isPlatformAdmin is the authoritative cross-tenant admin claim. Surface
         // it so the web client gates the admin UI on the backend's source of
         // truth instead of a mutable VITE_ADMIN_EMAIL build-time guess.
-        select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true }
+        select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true, totpEnabled: true }
       }),
       prisma.workspace.findMany({
         where: { memberships: { some: { userId: authedUser.id } } },
@@ -322,6 +378,92 @@ authRouter.patch(
     })
 
     res.json({ user: updated })
+  })
+)
+
+// ── MFA (TOTP) management ───────────────────────────────────────────────────────
+
+// Step 1 of enrollment: mint a secret, store it encrypted (NOT yet enabled), and
+// return it + the otpauth URI for the user's authenticator app. Enabling waits
+// for /mfa/activate so a half-finished setup never locks anyone out.
+authRouter.post(
+  '/mfa/setup',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const existing = await prisma.user.findUnique({ where: { id: user.id }, select: { totpEnabled: true } })
+    if (existing?.totpEnabled) throw new ApiError(409, 'MFA is already enabled')
+
+    const secret = generateTotpSecret()
+    await prisma.user.update({ where: { id: user.id }, data: { totpSecret: encryptSecret(secret) } })
+    res.json({ secret, otpauthUri: buildOtpauthUri(secret, user.email) })
+  })
+)
+
+const mfaCodeSchema = z.object({ code: z.string().min(6).max(10) })
+
+// Step 2: prove a code from the pending secret to flip MFA on.
+authRouter.post(
+  '/mfa/activate',
+  requireAuth,
+  validate(mfaCodeSchema),
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    const { code } = req.body as z.infer<typeof mfaCodeSchema>
+    const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { totpSecret: true, totpEnabled: true } })
+    if (dbUser?.totpEnabled) throw new ApiError(409, 'MFA is already enabled')
+    if (!dbUser?.totpSecret) throw new ApiError(400, 'Start MFA setup first')
+    if (!verifyTotp(decryptSecret(dbUser.totpSecret), code)) throw new ApiError(400, 'Invalid authentication code')
+
+    await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: true } })
+    await markReauth(user.id) // proving a code is a fresh credential
+    res.json({ ok: true })
+  })
+)
+
+// Turn MFA off — a sensitive action, so it requires step-up (recent re-auth).
+authRouter.post(
+  '/mfa/disable',
+  requireAuth,
+  requireFreshAuth,
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthedRequest).user
+    await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: false, totpSecret: null } })
+    res.json({ ok: true })
+  })
+)
+
+// ── Step-up re-authentication ────────────────────────────────────────────────────
+// Refresh the step-up clock by re-proving credentials (password, plus a TOTP code
+// when MFA is on). Sensitive routes behind requireFreshAuth call this when they
+// return REAUTH_REQUIRED.
+const reauthSchema = z.object({
+  password: z.string().min(1).max(128),
+  code: z.string().min(6).max(10).optional(),
+})
+
+authRouter.post(
+  '/reauth',
+  authRateLimit,
+  requireAuth,
+  validate(reauthSchema),
+  asyncHandler(async (req, res) => {
+    const authed = (req as AuthedRequest).user
+    const { password, code } = req.body as z.infer<typeof reauthSchema>
+    const user = await prisma.user.findUnique({ where: { id: authed.id } })
+    if (!user?.passwordHash) throw new ApiError(400, 'Cannot re-authenticate this account')
+
+    if (!(await bcrypt.compare(password, user.passwordHash))) {
+      throw new ApiError(401, 'Incorrect password')
+    }
+    if (user.totpEnabled) {
+      if (!code || !user.totpSecret || !verifyTotp(decryptSecret(user.totpSecret), code)) {
+        throw new ApiError(401, 'Invalid authentication code')
+      }
+    }
+
+    await markReauth(user.id)
+    res.json({ ok: true })
   })
 )
 
