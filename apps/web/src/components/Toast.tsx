@@ -53,7 +53,6 @@ export function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove
           </div>
         )
       })}
-      <style>{`@keyframes slideIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }`}</style>
     </div>
   )
 }
