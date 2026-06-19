@@ -11,6 +11,20 @@ export class CircuitOpenError extends Error {
   }
 }
 
+// Optional cross-process state for the breaker. Backed by Redis in production
+// (see breakerStore.ts) so that when one process (e.g. the worker) trips a
+// provider's circuit, sibling processes (the API, other replicas) stop hammering
+// it too. Every method MUST fail-open — a store error must never block a call or
+// throw — so the breaker degrades gracefully to per-process behaviour if the
+// shared store is unavailable.
+export interface BreakerStore {
+  // Epoch-ms until which this label is considered open across processes. Returns
+  // 0 (or a past timestamp) when the circuit is not shared-open.
+  getOpenUntil(label: string): Promise<number>
+  // Best-effort broadcast that this label is open until `untilMs`.
+  setOpenUntil(label: string, untilMs: number): Promise<void>
+}
+
 export class CircuitBreaker {
   private failures = 0
   private lastFailureAt = 0
@@ -20,19 +34,61 @@ export class CircuitBreaker {
   // breaker allows exactly one probe at a time.
   private probing = false
 
-  // NOTE: breaker state is in-memory and per-process. In the multi-process
-  // (api + worker, and any horizontal replicas) deployment each instance keeps
-  // its own state, so an open circuit in one process does not protect the others.
-  // This is an accepted limitation; a shared (Redis-backed) breaker would add a
-  // network round-trip to every external call. See docs/OPERATIONS.md.
+  // Optional shared store. When set, a CLOSED breaker adopts the OPEN state a
+  // sibling process has published, and broadcasts its own trips. The shared read
+  // is throttled to at most once per `syncIntervalMs` so the hot path adds at
+  // most one (fail-open) Redis GET per second per label per process — not a
+  // round-trip on every call. When unset, behaviour is purely per-process and
+  // identical to a breaker with no shared state at all.
+  private store: BreakerStore | undefined
+  private readonly syncIntervalMs: number
+  private lastSyncAt = 0
 
   constructor(
     private readonly label: string,
     private readonly threshold = 5,
-    private readonly resetAfterMs = 30_000
-  ) {}
+    private readonly resetAfterMs = 30_000,
+    opts: { store?: BreakerStore; syncIntervalMs?: number } = {}
+  ) {
+    this.store = opts.store
+    this.syncIntervalMs = opts.syncIntervalMs ?? 1_000
+  }
+
+  // Attach (or replace) the shared store after construction — used to wire the
+  // singleton breakers to Redis at startup once the connection exists.
+  setStore(store: BreakerStore | undefined): void {
+    this.store = store
+  }
+
+  // Throttled, fail-open read of the shared open-state. Lets a CLOSED breaker
+  // discover that a sibling has already opened this circuit.
+  private async syncFromStore(): Promise<void> {
+    if (!this.store) return
+    const now = Date.now()
+    if (now - this.lastSyncAt < this.syncIntervalMs) return
+    this.lastSyncAt = now
+    let openUntil = 0
+    try {
+      openUntil = await this.store.getOpenUntil(this.label)
+    } catch {
+      return // fail-open: a store error must never block calls
+    }
+    if (openUntil > now && this.state === 'CLOSED') {
+      console.warn(`[circuit:${this.label}] adopting OPEN from shared store (sibling tripped it)`)
+      this.state = 'OPEN'
+      // Align local timing so OPEN→HALF_OPEN happens when the shared window ends.
+      this.lastFailureAt = openUntil - this.resetAfterMs
+    }
+  }
+
+  private publishOpen(): void {
+    if (!this.store) return
+    void this.store.setOpenUntil(this.label, Date.now() + this.resetAfterMs).catch(() => {})
+  }
 
   async call<T>(fn: () => Promise<T>): Promise<T> {
+    await this.syncFromStore()
+
     if (this.state === 'OPEN') {
       if (Date.now() - this.lastFailureAt >= this.resetAfterMs) {
         this.state = 'HALF_OPEN'
@@ -65,6 +121,8 @@ export class CircuitBreaker {
       if (this.failures >= this.threshold) {
         console.error(`[circuit:${this.label}] OPEN after ${this.failures} failures`)
         this.state = 'OPEN'
+        // Broadcast the trip so sibling processes can adopt OPEN too.
+        this.publishOpen()
       }
       throw err
     } finally {
@@ -74,6 +132,14 @@ export class CircuitBreaker {
 
   get isOpen() { return this.state === 'OPEN' }
   get status() { return this.state }
+}
+
+// Wire a shared store onto every singleton breaker. Called once at startup (api
+// and worker) when a Redis connection is available; no-op-safe to omit.
+export function attachBreakerStore(store: BreakerStore): void {
+  for (const b of [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, stripeBreaker]) {
+    b.setStore(store)
+  }
 }
 
 // Singleton breakers — shared across requests in the same process

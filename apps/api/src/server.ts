@@ -140,6 +140,15 @@ getRedis().connect().catch((err: Error) => {
 import { initErrorReporting } from './lib/errorReporting.js'
 void initErrorReporting()
 
+// Share circuit-breaker state across processes via Redis so a provider outage
+// tripped by the worker also short-circuits the API (and vice versa). Fail-open:
+// if Redis is unavailable the breakers silently fall back to per-process state.
+import { attachBreakerStore } from './lib/circuit.js'
+import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+if (process.env.REDIS_URL) {
+  attachBreakerStore(createRedisBreakerStore(getRedis()))
+}
+
 const port = Number(process.env.PORT || 4000)
 const server = app.listen(port, () => {
   console.log(`[api] Running on http://localhost:${port} (${process.env.NODE_ENV || 'development'})`)
