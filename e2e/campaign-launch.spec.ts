@@ -70,7 +70,10 @@ test('Launching an approval-mode campaign sends { approved: true } and is accept
   await page.getByRole('button', { name: /Campaigns/ }).click()
   await expect(page.getByText('E2E Launch Campaign')).toBeVisible()
 
-  const launch = page.getByRole('button', { name: /Launch Campaign/ })
+  // Exact match on the launch button's accessible name. A loose /Launch Campaign/
+  // would also match the row's delete button (aria-label "Delete campaign E2E
+  // Launch Campaign"), since the campaign name itself contains "Launch Campaign".
+  const launch = page.getByRole('button', { name: '🚀 Launch Campaign', exact: true })
   await expect(launch).toBeEnabled() // enabled only once stats report eligible > 0
   await launch.click()
 
