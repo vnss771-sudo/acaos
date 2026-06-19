@@ -90,6 +90,62 @@ test('GET /missions reports per-mission discovery activity (runs + prospects imp
   assert.equal(discovery.discovered, 10)
 })
 
+test('GET /missions/:id returns the control-plane funnel, engagement, and learning', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const created = await server.request('/api/missions', {
+    method: 'POST', headers: jsonAuth(user.id),
+    body: JSON.stringify({ workspaceId: workspace.id, name: 'M', goalType: 'BOOK_CALL' }),
+  })
+  const missionId = created.body.mission.id as string
+  const campaignId = created.body.mission.campaignId as string
+
+  // Three discovered prospects, each with an intent at a different loop stage.
+  for (const [name, status] of [['P1', 'PROPOSED'], ['P2', 'DRAFTED'], ['P3', 'APPROVED']] as const) {
+    const p = await prisma.prospect.create({ data: { workspaceId: workspace.id, companyName: name, missionId } })
+    await prisma.outreachIntent.create({ data: { workspaceId: workspace.id, prospectId: p.id, missionId, status } })
+  }
+  // Outbox: SENT + REPLIED + BOUNCED count as delivered; FAILED does not.
+  for (const status of ['SENT', 'REPLIED', 'BOUNCED', 'FAILED']) {
+    await prisma.outreachSent.create({
+      data: { workspaceId: workspace.id, campaignId, toEmail: `${status}@x.test`, subject: 's', body: 'b', status },
+    })
+  }
+
+  const res = await server.request(`/api/missions/${missionId}`, { headers: { Authorization: bearer(user.id) } })
+  assert.equal(res.status, 200)
+
+  // Funnel derives from prospect count + intent status groupBy.
+  assert.equal(res.body.funnel.discovered, 3)
+  assert.equal(res.body.funnel.recommended, 3) // PROPOSED + DRAFTED + APPROVED
+  assert.equal(res.body.funnel.drafted, 1)
+  assert.equal(res.body.funnel.approved, 1)
+  assert.equal(res.body.funnel.sent, 0)
+
+  // Engagement derives from the linked campaign's outbox.
+  assert.equal(res.body.engagement.sent, 3) // SENT + REPLIED + BOUNCED
+  assert.equal(res.body.engagement.replied, 1)
+  assert.equal(res.body.engagement.bounced, 1)
+  assert.equal(res.body.engagement.failed, 1)
+  assert.ok(Math.abs(res.body.engagement.replyRate - 1 / 3) < 1e-9)
+  assert.equal(res.body.recentSends.length, 4)
+
+  // Send readiness + learning are present (no model trained yet).
+  assert.equal(typeof res.body.sendReadiness.ready, 'boolean')
+  assert.equal(res.body.learning.totalOutcomes, 0)
+  assert.equal(res.body.learning.updateCount, 0)
+})
+
+test('GET /missions/:id denies a non-member', async () => {
+  const a = await seedUserWithWorkspace('owner-a@x.test')
+  const b = await seedUserWithWorkspace('owner-b@x.test')
+  const created = await server.request('/api/missions', {
+    method: 'POST', headers: jsonAuth(a.user.id),
+    body: JSON.stringify({ workspaceId: a.workspace.id, name: 'M', goalType: 'BOOK_CALL' }),
+  })
+  const res = await server.request(`/api/missions/${created.body.mission.id}`, { headers: { Authorization: bearer(b.user.id) } })
+  assert.equal(res.status, 403)
+})
+
 test('PATCH /missions/:id updates status', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const created = await server.request('/api/missions', {
