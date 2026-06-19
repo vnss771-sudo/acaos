@@ -55,6 +55,10 @@ model User {
   name                String?
   passwordHash        String?
   emailVerified       Boolean                 @default(false)
+  // Platform (founder) admin access to the cross-tenant /api/admin panel. Set
+  // out-of-band (not user-settable) — the gate must not rest on a mutable env
+  // var alone. Defaults false so no account is admin unless explicitly granted.
+  isPlatformAdmin     Boolean                 @default(false)
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
   memberships         Membership[]

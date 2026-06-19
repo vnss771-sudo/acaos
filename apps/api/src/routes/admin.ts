@@ -1,21 +1,28 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { getQueueStats } from '../lib/queues.js'
-import type { AuthedRequest } from '../types/auth.js'
+import type { AuthedRequest, AuthUser } from '../types/auth.js'
 
 export const adminRouter = Router()
 adminRouter.use(requireAuth)
+// Platform-admin endpoints expose cross-tenant data, so the admin must also have
+// a verified email — not just a matching address.
+adminRouter.use(requireVerifiedEmail)
 
-function isAdminUser(email: string): boolean {
+function isAdminUser(user: AuthUser): boolean {
+  // Primary path: a non-user-settable DB flag, provisioned out-of-band. The
+  // ADMIN_EMAIL env var is kept as a bootstrap fallback so the founder account
+  // works before the flag is set, but the boundary no longer rests on it alone.
+  if (user.isPlatformAdmin) return true
   const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase()
-  return Boolean(adminEmail && email.toLowerCase() === adminEmail)
+  return Boolean(adminEmail && user.email.toLowerCase() === adminEmail)
 }
 
 adminRouter.use((req, _res, next) => {
   const user = (req as AuthedRequest).user
-  if (!isAdminUser(user.email)) throw new ApiError(403, 'Admin access required')
+  if (!isAdminUser(user)) throw new ApiError(403, 'Admin access required')
   next()
 })
 

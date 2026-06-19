@@ -206,12 +206,18 @@ workspaceRouter.post(
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
+      select: { role: true },
     })
     if (!canManage) throw new ApiError(403, 'Must be owner or admin to add members')
 
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
     const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+    // Only an owner may grant the admin role; an admin can add members only. This
+    // stops an admin from minting a second admin (lateral privilege escalation).
+    if (role === 'admin' && canManage.role !== 'owner') {
+      throw new ApiError(403, 'Only an owner can grant the admin role')
+    }
 
     if (!email) throw new ApiError(400, 'email required')
 
@@ -238,7 +244,8 @@ workspaceRouter.post(
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
+      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
+      select: { role: true },
     })
     if (!canManage) throw new ApiError(403, 'Must be owner or admin to invite members')
 
@@ -247,6 +254,10 @@ workspaceRouter.post(
     if (!isValidEmail(email)) throw new ApiError(400, 'Valid email required')
 
     const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+    // Only an owner may grant the admin role (see member-add above).
+    if (role === 'admin' && canManage.role !== 'owner') {
+      throw new ApiError(403, 'Only an owner can grant the admin role')
+    }
 
     // Check if already a member
     const existingUser = await prisma.user.findUnique({ where: { email } })
