@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
+import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, toRawSignal } from '../lib/signalEngine.js'
 import type { RawSignal } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
@@ -10,10 +10,6 @@ import type { AuthedRequest } from '../types/auth.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
-
-function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
-  return { type: s.type as RawSignal['type'], strength: s.strength, sourceReliability: s.sourceReliability, industryRelevance: s.industryRelevance, detectedAt: s.detectedAt }
-}
 
 // GET /api/signals?workspaceId=&prospectId=&type=
 signalsRouter.get('/', asyncHandler(async (req, res) => {

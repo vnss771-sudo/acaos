@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { recordAudit } from '../lib/audit.js'
-import { checkAndIncrementDiscoveryUsage } from '../lib/limits.js'
+import { checkAndIncrementDiscoveryUsage, reserveLeadCapacity } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import {
   calculateOpportunityScores,
@@ -481,7 +481,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, validate(discoverSchema)
   }
 
   if (discovered > 0) {
-    enqueueScoreProspects(workspaceId).catch(() => {})
+    enqueueScoreProspects(workspaceId).catch((err: unknown) => console.warn('[prospects] enqueue score failed:', (err as Error).message))
   }
 
   await prisma.discoveryRun.update({
@@ -511,56 +511,89 @@ prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, r
 
   const icp = await getICP(workspaceId)
 
-  let imported = 0
+  // Pre-validate and deduplicate rows before touching the DB
+  type ParsedRow = {
+    companyName: string
+    domainKey: string | null
+    meta: { industry: string | null; employeeCount: number | null; contactEmail: string | null; contactName: string | null; domain: string | null; location: string | null }
+    raw: Record<string, unknown>
+  }
+  const parsed: ParsedRow[] = []
   let skipped = 0
-  const errors: string[] = []
+  const seenDomains = new Set<string>()
+  const seenNames = new Set<string>()
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]
+  for (const row of rows) {
     const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
     if (!companyName) { skipped++; continue }
-    try {
-      const meta = {
+    const rawDomain = row.domain ? String(row.domain).trim() : null
+    const dk = normalizeDomain(rawDomain)
+    // Skip rows that duplicate a domain or company name already seen in this batch
+    const nameKey = companyName.toLowerCase()
+    if ((dk && seenDomains.has(dk)) || seenNames.has(nameKey)) { skipped++; continue }
+    if (dk) seenDomains.add(dk)
+    seenNames.add(nameKey)
+    parsed.push({
+      companyName, domainKey: dk,
+      meta: {
         industry:      row.industry      ? String(row.industry)      : null,
         employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
         contactEmail:  row.contactEmail  ? String(row.contactEmail)  : null,
         contactName:   row.contactName   ? String(row.contactName)   : null,
-        domain:        row.domain        ? String(row.domain)        : null,
+        domain:        rawDomain,
         location:      row.location      ? String(row.location)      : null,
-      }
-      const scores        = calculateOpportunityScores([], meta, icp)
-      const buyingStage   = detectBuyingStage([], scores.opportunityScore)
-      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
-
-      await prisma.prospect.create({
-        data: {
-          workspaceId,
-          companyName,
-          domain:        meta.domain,
-          domainKey:     normalizeDomain(meta.domain),
-          industry:      meta.industry,
-          employeeCount: meta.employeeCount,
-          location:      meta.location,
-          contactName:   meta.contactName,
-          contactEmail:  meta.contactEmail,
-          contactPhone:  row.contactPhone  ? String(row.contactPhone)  : null,
-          contactTitle:  row.contactTitle  ? String(row.contactTitle)  : null,
-          linkedinUrl:   row.linkedinUrl   ? String(row.linkedinUrl)   : null,
-          description:   row.description   ? String(row.description)   : null,
-          notes:         row.notes         ? String(row.notes)         : null,
-          sourceTag:     row.sourceTag     ? String(row.sourceTag)     : 'csv_import',
-          estimatedRevenue: row.estimatedRevenue ? dollarsToCents(Number(row.estimatedRevenue)) : null,
-          expectedDealValue: row.expectedDealValue ? dollarsToCents(Number(row.expectedDealValue)) : null,
-          ...scores,
-          buyingStage,
-          winProbability,
-        }
-      })
-      imported++
-    } catch (err) {
-      errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
-    }
+      },
+      raw: row,
+    })
   }
+
+  let imported = 0
+  const errors: string[] = []
+
+  // Use reserveLeadCapacity inside a transaction to enforce the plan cap with an
+  // advisory lock, preventing concurrent imports from collectively overshooting.
+  await prisma.$transaction(async (tx) => {
+    const permitted = await reserveLeadCapacity(tx, workspaceId, parsed.length)
+    const batch = parsed.slice(0, permitted)
+    skipped += parsed.length - permitted
+
+    for (let i = 0; i < batch.length; i++) {
+      const { companyName, domainKey, meta, raw } = batch[i]
+      try {
+        const scores         = calculateOpportunityScores([], meta, icp)
+        const buyingStage    = detectBuyingStage([], scores.opportunityScore)
+        const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+        await tx.prospect.create({
+          data: {
+            workspaceId,
+            companyName,
+            domain:        meta.domain,
+            domainKey,
+            industry:      meta.industry,
+            employeeCount: meta.employeeCount,
+            location:      meta.location,
+            contactName:   meta.contactName,
+            contactEmail:  meta.contactEmail,
+            contactPhone:  raw.contactPhone  ? String(raw.contactPhone)  : null,
+            contactTitle:  raw.contactTitle  ? String(raw.contactTitle)  : null,
+            linkedinUrl:   raw.linkedinUrl   ? String(raw.linkedinUrl)   : null,
+            description:   raw.description   ? String(raw.description)   : null,
+            notes:         raw.notes         ? String(raw.notes)         : null,
+            sourceTag:     raw.sourceTag     ? String(raw.sourceTag)     : 'csv_import',
+            estimatedRevenue:  raw.estimatedRevenue  ? dollarsToCents(Number(raw.estimatedRevenue))  : null,
+            expectedDealValue: raw.expectedDealValue ? dollarsToCents(Number(raw.expectedDealValue)) : null,
+            ...scores,
+            buyingStage,
+            winProbability,
+          }
+        })
+        imported++
+      } catch (err) {
+        errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
+      }
+    }
+  })
 
   res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20) })
 }))
@@ -875,7 +908,7 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
     channel: rec.bestChannel,
     signals: prospect.signals,
     missionId: prospect.missionId,
-  }).catch(() => {})
+  }).catch((err: unknown) => console.warn('[prospects] createOutreachIntent failed:', (err as Error).message))
 
   res.status(201).json(recommendation)
 }))

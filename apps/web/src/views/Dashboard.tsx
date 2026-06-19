@@ -320,7 +320,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
     }).catch(e => { if (!cancelled) toast.error(e.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [workspace?.id])
+  }, [workspace?.id, api, toast])
 
   if (!workspace) {
     return (

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
+import type { Prisma } from '@prisma/client'
 import {
   signJwt,
   verifyJwt,
@@ -61,7 +62,7 @@ authRouter.post(
     const workspaceName = buildWorkspaceName(name, email)
     const passwordHash = await bcrypt.hash(password, 10)
 
-    const result = await prisma.$transaction(async (tx: any) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const user = await tx.user.create({
         data: { email, name, passwordHash },
         select: { id: true, email: true, name: true }
@@ -184,7 +185,7 @@ authRouter.get(
     const [dbUser, workspaces] = await Promise.all([
       prisma.user.findUnique({
         where: { id: authedUser.id },
-        select: { id: true, email: true, name: true, emailVerified: true }
+        select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true }
       }),
       prisma.workspace.findMany({
         where: { memberships: { some: { userId: authedUser.id } } },
@@ -235,11 +236,10 @@ authRouter.post(
         `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
         `<p>If you didn't request this, you can safely ignore this email.</p>`
       )
-    } else if (process.env.NODE_ENV === 'production') {
-      // Never log a URL containing the raw reset token in production.
-      console.warn('[auth] SMTP not configured; password reset email was not sent')
-    } else {
+    } else if (process.env.NODE_ENV === 'development') {
       console.log(`[auth] Reset URL (SMTP not configured): ${resetUrl}`)
+    } else {
+      console.warn('[auth] SMTP not configured; password reset email was not sent')
     }
 
     res.json({ ok: true })
@@ -341,11 +341,10 @@ async function sendVerificationEmail(userId: string, email: string) {
       `<p><a href="${verifyUrl}">Verify email address</a></p>` +
       `<p>If you didn't sign up for ACAOS, you can ignore this email.</p>`
     )
-  } else if (process.env.NODE_ENV === 'production') {
-    // Never log a URL containing the raw verification token in production.
-    console.warn('[auth] SMTP not configured; verification email was not sent')
-  } else {
+  } else if (process.env.NODE_ENV === 'development') {
     console.log(`[auth] Verification URL (SMTP not configured): ${verifyUrl}`)
+  } else {
+    console.warn('[auth] SMTP not configured; verification email was not sent')
   }
 }
 

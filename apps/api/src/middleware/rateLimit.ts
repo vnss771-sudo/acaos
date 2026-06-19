@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
+import { createHash } from 'node:crypto'
 import { getRedis } from '../lib/redis.js'
 
 interface RateLimitOptions {
@@ -128,8 +129,18 @@ export const apiKeyRateLimit = createRateLimiter({
   keyFn: (req) => {
     const key = req.headers['x-api-key']
     const k = Array.isArray(key) ? key[0] : key
-    return k ? `k:${k}` : `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
+    // Hash the raw key so it never appears in Redis keys or logs
+    return k ? `k:${createHash('sha256').update(k).digest('hex').slice(0, 16)}` : `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
   }
+})
+
+// SSE ticket endpoint: tight per-user limit to prevent Redis key exhaustion
+// (each ticket occupies a Redis key for 60s; 10/min → max 10 outstanding keys).
+export const sseTicketRateLimit = createRateLimiter({
+  name: 'sseticket',
+  windowMs: 60 * 1000,
+  max: 10,
+  message: 'Too many SSE ticket requests. Please slow down.',
 })
 
 // The public unsubscribe endpoint is unauthenticated and state-changing; throttle

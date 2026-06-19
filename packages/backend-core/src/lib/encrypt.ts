@@ -8,8 +8,8 @@ const TAG_LEN = 16
 function getKey(): Buffer {
   const raw = process.env.EMAIL_ENCRYPTION_KEY || ''
   if (!raw) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('EMAIL_ENCRYPTION_KEY is required in production')
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error('EMAIL_ENCRYPTION_KEY is required outside development')
     }
     // Dev-only fallback: zeroed key so the app boots without configuration.
     // Credentials stored this way are NOT safe — always set EMAIL_ENCRYPTION_KEY.

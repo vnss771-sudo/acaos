@@ -59,6 +59,16 @@ type ForecastProspectRow = {
 type SignalCountRow = { type: string; _count: number }
 type StageCountRow = { buyingStage: string; _count: number }
 
+function defaultDealValue(industry: string | null): number {
+  if (!industry) return 5000
+  const lower = industry.toLowerCase()
+  if (lower.includes('financ') || lower.includes('insur')) return 20000
+  if (lower.includes('construct') || lower.includes('civil')) return 15000
+  if (lower.includes('tech') || lower.includes('software')) return 12000
+  if (lower.includes('logistics') || lower.includes('transport')) return 10000
+  return 5000
+}
+
 // GET /api/intelligence/opportunities?workspaceId=
 // Returns hot/warm/cold prospects with recommendations
 intelligenceRouter.get('/opportunities', asyncHandler(async (req, res) => {
@@ -147,17 +157,6 @@ intelligenceRouter.get('/forecast', asyncHandler(async (req, res) => {
     _sum: { dealValue: true },
     _count: true,
   })
-
-  // Default deal value by rough industry category
-  function defaultDealValue(industry: string | null): number {
-    if (!industry) return 5000
-    const lower = industry.toLowerCase()
-    if (lower.includes('financ') || lower.includes('insur')) return 20000
-    if (lower.includes('construct') || lower.includes('civil')) return 15000
-    if (lower.includes('tech') || lower.includes('software')) return 12000
-    if (lower.includes('logistics') || lower.includes('transport')) return 10000
-    return 5000
-  }
 
   const pipeline = prospects.map((p: ForecastProspectRow) => {
     // expectedDealValue is stored in cents; forecast math works in whole units.

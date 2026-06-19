@@ -3,6 +3,7 @@ export type User = {
   email: string
   name?: string | null
   emailVerified?: boolean
+  isPlatformAdmin?: boolean
 }
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member'

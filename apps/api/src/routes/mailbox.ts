@@ -2,10 +2,11 @@ import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
+import { mailRateLimit, syncRateLimit, generalRateLimit } from '../middleware/rateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
 import { isValidEmail } from '../lib/validation.js'
 import { promises as dns } from 'dns'
+import { assertPublicMailHost } from '../lib/ssrf.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const mailboxRouter = Router()
@@ -65,9 +66,13 @@ mailboxRouter.post(
 // Check domain DNS records for SPF/DKIM deliverability prerequisites
 mailboxRouter.get(
   '/check-domain',
+  generalRateLimit,
   asyncHandler(async (req, res) => {
     const domain = String(req.query.domain || '').trim()
     if (!domain) throw new ApiError(400, 'domain required')
+
+    // Reject private/reserved hostnames to prevent DNS-based SSRF
+    await assertPublicMailHost(domain, 'domain')
 
     let records: string[] = []
     try {

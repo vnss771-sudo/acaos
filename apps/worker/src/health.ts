@@ -2,9 +2,12 @@ import http from 'node:http'
 import { renderWorkerMetrics, METRICS_CONTENT_TYPE, type QueueDepth } from './lib/metrics.js'
 
 type HealthOptions = {
-  // Returns live BullMQ queue depths for the /metrics gauge. Optional so the
-  // health server still works (just without queue gauges) if not supplied.
   collectQueueDepths?: () => Promise<QueueDepth[]>
+  // Returns true when all BullMQ workers are running and Redis is reachable.
+  // Used by /ready so orchestrators can distinguish "alive but stalled" from
+  // "alive and processing" — a worker whose Redis connection silently died
+  // returns 200 on /live but 503 on /ready.
+  isReady?: () => boolean
 }
 
 // Minimal liveness/health + metrics HTTP server for the worker so orchestrators
@@ -16,6 +19,12 @@ export function startHealthServer(port: number, opts: HealthOptions = {}): http.
     if (req.url === '/health' || req.url === '/live') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: true, service: 'acaos-worker', timestamp: new Date().toISOString() }))
+      return
+    }
+    if (req.url === '/ready') {
+      const ready = opts.isReady ? opts.isReady() : true
+      res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: ready, service: 'acaos-worker', timestamp: new Date().toISOString() }))
       return
     }
     if (req.url === '/metrics') {

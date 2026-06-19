@@ -20,7 +20,11 @@ declare global {
  */
 export function requestContext(req: Request, res: Response, next: NextFunction): void {
   const inbound = req.headers['x-request-id']
-  const requestId = (Array.isArray(inbound) ? inbound[0] : inbound)?.trim() || randomUUID()
+  const raw = (Array.isArray(inbound) ? inbound[0] : inbound)?.trim()
+  // Allow alphanumeric + hyphens/underscores only (≤128 chars) to prevent
+  // header-injection and log-injection via CRLF or JSON-breaking characters.
+  const SAFE_ID_RE = /^[a-z0-9_-]{1,128}$/i
+  const requestId = raw && SAFE_ID_RE.test(raw) ? raw : randomUUID()
 
   req.id = requestId
   req.log = logger.child({ requestId })

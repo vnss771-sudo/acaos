@@ -6,23 +6,44 @@ import assert from 'node:assert/strict'
 import { encryptSecret, decryptSecret, isEncrypted } from '../packages/backend-core/src/lib/encrypt.ts'
 
 test('encrypt/decrypt round-trips with the dev fallback key', () => {
-  const secret = 'hunter2-smtp-password'
-  const blob = encryptSecret(secret)
-  assert.notEqual(blob, secret)
-  assert.equal(decryptSecret(blob), secret)
+  const prev = process.env.NODE_ENV
+  process.env.NODE_ENV = 'development'
+  try {
+    const secret = 'hunter2-smtp-password'
+    const blob = encryptSecret(secret)
+    assert.notEqual(blob, secret)
+    assert.equal(decryptSecret(blob), secret)
+  } finally {
+    if (prev === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prev
+  }
 })
 
 test('each encryption uses a fresh IV so ciphertexts differ', () => {
-  const a = encryptSecret('same-input')
-  const b = encryptSecret('same-input')
-  assert.notEqual(a, b)
-  assert.equal(decryptSecret(a), decryptSecret(b))
+  const prev = process.env.NODE_ENV
+  process.env.NODE_ENV = 'development'
+  try {
+    const a = encryptSecret('same-input')
+    const b = encryptSecret('same-input')
+    assert.notEqual(a, b)
+    assert.equal(decryptSecret(a), decryptSecret(b))
+  } finally {
+    if (prev === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prev
+  }
 })
 
 test('isEncrypted recognizes the iv:tag:ciphertext blob shape', () => {
-  assert.equal(isEncrypted(encryptSecret('x')), true)
-  assert.equal(isEncrypted('plain text password'), false)
-  assert.equal(isEncrypted('not:enough'), false)
+  const prev = process.env.NODE_ENV
+  process.env.NODE_ENV = 'development'
+  try {
+    assert.equal(isEncrypted(encryptSecret('x')), true)
+    assert.equal(isEncrypted('plain text password'), false)
+    assert.equal(isEncrypted('not:enough'), false)
+  } finally {
+    if (prev === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prev
+  }
 })
 
 test('decryptSecret rejects a malformed blob', () => {

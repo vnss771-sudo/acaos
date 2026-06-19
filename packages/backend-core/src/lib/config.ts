@@ -52,6 +52,7 @@ const FEATURE_GATED: Array<{ key: string; feature: string }> = [
   { key: 'OPENAI_API_KEY', feature: 'AI features (research, outreach, classification)' },
   { key: 'STRIPE_SECRET_KEY', feature: 'Billing (Stripe)' },
   { key: 'STRIPE_WEBHOOK_SECRET', feature: 'Stripe webhook validation' },
+  { key: 'METRICS_TOKEN', feature: '/metrics endpoint (unauthenticated without this — exposes usage cardinality to anyone with access to the API)' },
 ]
 
 /**

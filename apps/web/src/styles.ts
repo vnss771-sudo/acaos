@@ -15,10 +15,13 @@ export const colors = {
   blueDark: '#1d4ed8',
   blueLight: '#3b82f6',
   green: '#22c55e',
+  greenDark: '#16a34a',
   amber: '#f59e0b',
   red: '#ef4444',
   redDark: '#7f1d1d',
-  purple: '#8b5cf6'
+  purple: '#8b5cf6',
+  textSlate: '#64748b',
+  textSlateLight: '#94a3b8'
 }
 
 export const s = {
@@ -119,7 +122,7 @@ export const s = {
     padding: '10px 18px',
     borderRadius: 8,
     border: 'none',
-    background: '#16a34a',
+    background: colors.greenDark,
     color: '#fff',
     cursor: 'pointer',
     fontSize: 14,

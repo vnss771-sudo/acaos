@@ -20,7 +20,6 @@ import { AdminView } from './views/Admin.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { colors } from './styles.js'
 
-const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -185,7 +184,7 @@ export function App() {
     )
   }
 
-  const isAdmin = Boolean(ADMIN_EMAIL && user.email.toLowerCase() === ADMIN_EMAIL)
+  const isAdmin = Boolean(user.isPlatformAdmin)
 
   const VIEW_TITLE: Record<View, string> = {
     dashboard: 'Acquisition Radar',

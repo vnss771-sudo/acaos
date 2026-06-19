@@ -488,7 +488,10 @@ void initErrorReporting()
 // fixed 9090 locally/in Docker. WORKER_HEALTH_PORT overrides both.
 const healthServer = startHealthServer(
   Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
-  { collectQueueDepths },
+  {
+    collectQueueDepths,
+    isReady: () => WORKER_QUEUES.every(([, w]) => w.isRunning()),
+  },
 )
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────

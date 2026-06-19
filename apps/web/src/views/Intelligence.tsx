@@ -45,10 +45,10 @@ function ScoreDimension({ label, value }: { label: string; value: number }) {
 
 type ConfidenceTier = { label: string; color: string }
 function getConfidenceTier(score: number): ConfidenceTier {
-  if (score >= 75) return { label: 'Confirmed', color: '#22c55e' }
-  if (score >= 50) return { label: 'Likely',    color: '#3b82f6' }
-  if (score >= 30) return { label: 'Weak',       color: '#f59e0b' }
-  return                  { label: 'Needs Review', color: '#64748b' }
+  if (score >= 75) return { label: 'Confirmed',   color: colors.green }
+  if (score >= 50) return { label: 'Likely',       color: colors.blueLight }
+  if (score >= 30) return { label: 'Weak',         color: colors.amber }
+  return                  { label: 'Needs Review', color: colors.textSlate }
 }
 
 function buildWhyNow(signals: Signal[] | undefined, latestSignal: Signal | null | undefined): string | null {
@@ -93,7 +93,7 @@ function ProspectCard({ prospect, onOutcome }: { prospect: Prospect; onOutcome: 
             <span style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{prospect.companyName}</span>
             {prospect.isExample && (
               <span style={{
-                background: '#64748b22', color: '#94a3b8',
+                background: colors.textSlate + '22', color: colors.textSlateLight,
                 fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99, letterSpacing: '0.06em'
               }}>EXAMPLE</span>
             )}
@@ -333,7 +333,8 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   // Monotonic request id so a slow earlier load can't overwrite a newer one when
   // the workspace switches.
   const loadReqRef = useRef(0)
-  const load = () => {
+
+  useEffect(() => {
     if (!workspace) return
     const reqId = ++loadReqRef.current
     setLoading(true)
@@ -344,9 +345,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
       .then(([opp, fc]) => { if (reqId === loadReqRef.current) { setOpportunities(opp); setForecast(fc) } })
       .catch(e => { if (reqId === loadReqRef.current) toast.error(e.message) })
       .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
-  }
-
-  useEffect(() => { load() }, [workspace?.id])
+  }, [workspace?.id, api, toast])
 
   const handleOutcome = async (prospectId: string, stage: string) => {
     if (!workspace) return

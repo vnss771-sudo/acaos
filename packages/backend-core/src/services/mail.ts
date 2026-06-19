@@ -279,8 +279,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     // OutreachSent rows BOUNCED. Safety invariant — only addresses we ACTUALLY
     // sent outreach to (present in OutreachSent) are ever suppressed, so a stray
     // address in a DSN body can't poison the suppression list.
-    const handleBounces = Boolean(workspaceId)
-    const bounceMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length > 0) : []
+    const bounceMsgs = workspaceId ? toProcess.filter(m => m.bounceRecipients.length > 0) : []
     let bounced = 0
     const processedUids: number[] = []
     if (bounceMsgs.length > 0) {
@@ -306,7 +305,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     }
 
     // Replies = everything that isn't a handled bounce.
-    const replyMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length === 0) : toProcess
+    const replyMsgs = workspaceId ? toProcess.filter(m => m.bounceRecipients.length === 0) : toProcess
 
     // Find leads matching any of the sender addresses, scoped to the workspace
     // when known so replies can never bleed across tenant boundaries.

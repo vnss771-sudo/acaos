@@ -225,8 +225,8 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
             { label: 'Category', field: 'category' }
           ].map(({ label, field }) => (
             <div key={field}>
-              <label style={s.label} htmlFor="leads-field-0">{label}</label>
-              <input id="leads-field-0" style={s.input} value={(form as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
+              <label style={s.label} htmlFor={`leads-edit-${field}`}>{label}</label>
+              <input id={`leads-edit-${field}`} style={s.input} value={(form as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
             </div>
           ))}
           <div>
@@ -614,8 +614,8 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
               { label: 'Category', field: 'category' }
             ].map(({ label, field }) => (
               <div key={field}>
-                <label style={s.label} htmlFor="leads-field-3">{label}</label>
-                <input id="leads-field-3" style={s.input} value={(form as Record<string, string>)[field]} onChange={ff(field)} />
+                <label style={s.label} htmlFor={`leads-add-${field}`}>{label}</label>
+                <input id={`leads-add-${field}`} style={s.input} value={(form as Record<string, string>)[field]} onChange={ff(field)} />
               </div>
             ))}
             <div style={{ gridColumn: '1/-1' }}>

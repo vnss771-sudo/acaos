@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { aiRateLimit } from '../middleware/rateLimit.js'
+import { aiRateLimit, sseTicketRateLimit } from '../middleware/rateLimit.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
@@ -113,7 +113,7 @@ jobsRouter.use(requireAuth)
 
 // Issue a one-time SSE ticket (authenticated via the Authorization header).
 // The browser exchanges this for the EventSource URL above.
-jobsRouter.post('/events/ticket', asyncHandler(async (req, res) => {
+jobsRouter.post('/events/ticket', sseTicketRateLimit, asyncHandler(async (req, res) => {
   const user = (req as AuthedRequest).user
   const ticket = await issueSseTicket(user.id)
   res.json({ ticket })

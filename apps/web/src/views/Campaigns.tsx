@@ -83,7 +83,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       .catch(e => { if (!cancelled) toast.error(e.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [workspace?.id])
+  }, [workspace?.id, api, toast])
 
   useEffect(() => {
     if (!approvalPending || !workspace) {

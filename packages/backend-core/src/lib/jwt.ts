@@ -51,7 +51,7 @@ export function signJwt(payload: JwtPayload): string {
 }
 
 export function verifyJwt(token: string): JwtPayload {
-  return jwt.verify(token, getJwtSecret()) as JwtPayload
+  return jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] }) as JwtPayload
 }
 
 export function generateRefreshToken(): string {

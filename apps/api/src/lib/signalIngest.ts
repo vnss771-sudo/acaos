@@ -52,47 +52,51 @@ export async function ingestSignal(input: IngestSignalInput) {
   const detectedAt = input.detectedAt ?? new Date()
   const fp = buildSignalFingerprint(input.source, input.type, input.title ?? null, detectedAt)
 
-  let evidenceSourceId: string | null = null
-  if (input.evidence) {
-    const conf = Number(input.evidence.confidence)
-    const ev = await prisma.evidenceSource.create({
-      data: {
+  // Run evidence create + signal upsert in a single transaction so a failed
+  // upsert can never leave an orphaned EvidenceSource row.
+  return prisma.$transaction(async (tx) => {
+    let evidenceSourceId: string | null = null
+    if (input.evidence) {
+      const conf = Number(input.evidence.confidence)
+      const ev = await tx.evidenceSource.create({
+        data: {
+          workspaceId: input.workspaceId,
+          prospectId: input.prospectId,
+          provider: input.evidence.provider,
+          sourceType: input.evidence.sourceType,
+          sourceUrl: input.evidence.sourceUrl ?? input.sourceUrl ?? null,
+          observedAt: input.evidence.observedAt ?? detectedAt,
+          expiresAt: input.evidence.expiresAt ?? null,
+          confidence: Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0.5,
+          rawText: input.evidence.rawText ?? null,
+        },
+        select: { id: true },
+      })
+      evidenceSourceId = ev.id
+    }
+
+    return tx.signal.upsert({
+      where: { prospectId_fingerprint: { prospectId: input.prospectId, fingerprint: fp } },
+      create: {
         workspaceId: input.workspaceId,
         prospectId: input.prospectId,
-        provider: input.evidence.provider,
-        sourceType: input.evidence.sourceType,
-        sourceUrl: input.evidence.sourceUrl ?? input.sourceUrl ?? null,
-        observedAt: input.evidence.observedAt ?? detectedAt,
-        expiresAt: input.evidence.expiresAt ?? null,
-        confidence: Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0.5,
-        rawText: input.evidence.rawText ?? null,
+        evidenceSourceId,
+        type: input.type,
+        strength: input.strength,
+        sourceReliability: input.sourceReliability ?? 70,
+        industryRelevance: input.industryRelevance ?? 50,
+        title: input.title ?? null,
+        description: input.description ?? null,
+        sourceUrl: input.sourceUrl ?? null,
+        source: input.source,
+        fingerprint: fp,
+        detectedAt,
       },
-      select: { id: true },
+      update: {
+        strength: input.strength,
+        detectedAt,
+        ...(evidenceSourceId ? { evidenceSourceId } : {}),
+      },
     })
-    evidenceSourceId = ev.id
-  }
-
-  return prisma.signal.upsert({
-    where: { prospectId_fingerprint: { prospectId: input.prospectId, fingerprint: fp } },
-    create: {
-      workspaceId: input.workspaceId,
-      prospectId: input.prospectId,
-      evidenceSourceId,
-      type: input.type,
-      strength: input.strength,
-      sourceReliability: input.sourceReliability ?? 70,
-      industryRelevance: input.industryRelevance ?? 50,
-      title: input.title ?? null,
-      description: input.description ?? null,
-      sourceUrl: input.sourceUrl ?? null,
-      source: input.source,
-      fingerprint: fp,
-      detectedAt,
-    },
-    update: {
-      strength: input.strength,
-      detectedAt,
-      ...(evidenceSourceId ? { evidenceSourceId } : {}),
-    },
   })
 }
