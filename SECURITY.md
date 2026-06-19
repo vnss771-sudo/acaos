@@ -73,3 +73,13 @@ These are environment concerns the code can't enforce on its own:
 
 See [`docs/HARDENING_NOTES.md`](docs/HARDENING_NOTES.md) and
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for related detail.
+
+## Security evidence & runbooks
+
+- [`docs/SECURITY_ASVS_MATRIX.md`](docs/SECURITY_ASVS_MATRIX.md) — OWASP ASVS
+  control mapping (control → code → test), with status and tracked gaps.
+- [`docs/KEY_ROTATION.md`](docs/KEY_ROTATION.md) — rotation cadence and exact
+  procedure for every secret (including the `EMAIL_ENCRYPTION_KEY` re-encryption
+  caveat and self-service ingest-key rotation).
+- [`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md) — retention windows per data
+  class, plus tenant export and deletion.
