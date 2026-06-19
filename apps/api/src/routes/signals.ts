@@ -5,8 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
-import type { RawSignal } from '../lib/signalEngine.js'
-import type { SignalType } from '@prisma/client'
+import type { RawSignal, SignalType } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
 import type { AuthedRequest } from '../types/auth.js'
@@ -47,7 +46,7 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
 
   // Attach the user-facing freshness state (decay-derived) so the UI can show
   // LIVE/RECENT/STALE/EXPIRED without recomputing decay client-side.
-  const withFreshness = signals.map((s) => ({
+  const withFreshness = signals.map((s: (typeof signals)[number]) => ({
     ...s,
     freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
   }))

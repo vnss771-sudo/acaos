@@ -1,11 +1,7 @@
 // Signal intelligence engine — decay functions, opportunity scoring, buying stage detection
+import type { BuyingStage, SignalType } from '@acaos/shared'
+export type { BuyingStage, OutcomeStage, SignalType } from '@acaos/shared'
 
-export type SignalType =
-  | 'HIRING' | 'FUNDING' | 'EXPANSION' | 'TECH_ADOPTION' | 'LEADERSHIP_CHANGE'
-  | 'NEWS_MENTION' | 'PROCUREMENT' | 'BUSINESS_REGISTRATION' | 'WEBSITE_CHANGE'
-
-export type BuyingStage = 'RESEARCHING' | 'EVALUATING' | 'COMPARING' | 'PURCHASING' | 'INACTIVE'
-export type OutcomeStage = 'DISCOVERED' | 'VIEWED' | 'CONTACTED' | 'MEETING' | 'PROPOSAL' | 'WON' | 'LOST'
 
 // Exponential decay rates: strength × e^(-rate × ageDays)
 // Derived from spec: FUNDING Day30=70%, Day90=25%

@@ -158,21 +158,25 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       setDomainCheck(null)
       return
     }
+    let cancelled = false
     setDomainCheckLoading(true)
     api<{ hasSPF: boolean; hasDKIM: boolean }>(
       `/api/mailbox/check-domain?domain=${encodeURIComponent(domain)}&workspaceId=${encodeURIComponent(workspace.id)}`
     )
-      .then(result => setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM }))
-      .catch(() => setDomainCheck(null))
-      .finally(() => setDomainCheckLoading(false))
-  }, [workspace?.id, emailForm.smtpFrom])
+      .then(result => { if (!cancelled) setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM }) })
+      .catch(() => { if (!cancelled) setDomainCheck(null) })
+      .finally(() => { if (!cancelled) setDomainCheckLoading(false) })
+    return () => { cancelled = true }
+  }, [api, workspace?.id, emailForm.smtpFrom])
 
   useEffect(() => {
     if (!workspace) return
+    let cancelled = false
     api<{ suppressions: { id: string }[] }>(`/api/unsubscribe?workspaceId=${workspace.id}`)
-      .then(d => setSuppressionCount(d.suppressions?.length ?? 0))
-      .catch(() => setSuppressionCount(null))
-  }, [workspace?.id])
+      .then(d => { if (!cancelled) setSuppressionCount(d.suppressions?.length ?? 0) })
+      .catch(() => { if (!cancelled) setSuppressionCount(null) })
+    return () => { cancelled = true }
+  }, [api, workspace?.id])
 
   // Dismiss the API-key modal with Escape (only active while it's open).
   useEscapeKey(() => setNewKeyModal(null), !!newKeyModal)

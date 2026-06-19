@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import type { Workspace } from '../types.js'
+import type { BillingPlan, Workspace } from '../types.js'
 import { PLAN_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
@@ -14,7 +14,7 @@ type UsageStats = {
   totals: Record<string, number>
   total: number
   limit: number
-  plan: string
+  plan: BillingPlan
   discovery?: {
     used: number
     limit: number
@@ -25,7 +25,7 @@ type UsageStats = {
 }
 
 type BillingStatus = {
-  plan: string
+  plan: BillingPlan
   status: string
   hasSubscription: boolean
   usage?: UsageStats

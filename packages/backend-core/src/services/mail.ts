@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client'
 import nodemailer from 'nodemailer'
 import { ApiError } from '../lib/errors.js'
 import { prisma } from '../lib/prisma.js'
@@ -156,7 +157,7 @@ export async function recordProcessedReply(params: {
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // create (not upsert) so a duplicate uid throws P2002 and aborts the whole
       // transaction — the lead/outreach mutations below must not run twice.
       await tx.processedEmail.create({

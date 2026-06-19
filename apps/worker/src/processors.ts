@@ -4,7 +4,6 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import type { LeadStage } from '@prisma/client'
 import { DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
@@ -21,6 +20,7 @@ import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { randomBytes } from 'crypto'
+import type { LeadStage } from '@acaos/shared'
 
 type Progress = (n: number) => unknown
 

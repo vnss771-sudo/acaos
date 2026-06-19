@@ -20,7 +20,7 @@ const detail: MissionDetail = {
   discoveryRuns: [],
   prospects: [{ id: 'pb', companyName: 'High Co', opportunityScore: 95, buyingStage: 'PURCHASING' }],
   intents: [
-    { id: 'i1', status: 'PROPOSED', prospect: { id: 'pa', companyName: 'Low Co', opportunityScore: 40, buyingStage: 'AWARE' }, recommendation: { reasoning: 'Hiring spike detected' } },
+    { id: 'i1', status: 'PROPOSED', prospect: { id: 'pa', companyName: 'Low Co', opportunityScore: 40, buyingStage: 'RESEARCHING' }, recommendation: { reasoning: 'Hiring spike detected' } },
     { id: 'i2', status: 'DRAFTED', draftSubject: 'Quick question', draftBody: 'Hello there', prospect: { id: 'pb', companyName: 'High Co', opportunityScore: 95, buyingStage: 'PURCHASING' } },
   ],
   funnel: { discovered: 3, recommended: 2, drafted: 1, approved: 0, rejected: 0, sent: 0 },

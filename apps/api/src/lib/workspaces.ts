@@ -1,6 +1,7 @@
 import { prisma } from './prisma.js'
 import { appendSlugSuffix, buildWorkspaceSlugSeed, sanitizeWorkspaceSlug } from './validation.js'
 import { ApiError } from './http.js'
+import type { WorkspaceRole } from '@acaos/shared'
 
 export async function resolveUniqueWorkspaceSlug(name: string | undefined, email: string) {
   const base = buildWorkspaceSlugSeed(name, email)
@@ -70,8 +71,6 @@ export async function userCanManageWorkspaceBilling(userId: string, workspaceId:
 // "admin" means owner OR admin; "member" is the least-privileged role. High-risk
 // actions (bulk import/export, destructive deletes, campaign/mission control,
 // discovery/enrichment that spends provider quota) require at least admin.
-
-export type WorkspaceRole = 'owner' | 'admin' | 'member'
 
 const ROLE_RANK: Record<WorkspaceRole, number> = { member: 1, admin: 2, owner: 3 }
 

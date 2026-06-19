@@ -32,8 +32,8 @@ packages/backend-core/  Shared backend runtime (prisma, scoring, mail, queues, �
 
 ```bash
 cp .env.example .env          # fill in required values (see §5)
-npm install                   # installs all workspaces
-npm run prisma:generate       # generate the Prisma client
+npm install                   # installs all workspaces (+ postinstall generates Prisma client when schema exists)
+npm run prisma:generate       # regenerate explicitly after schema changes
 npm run prisma:migrate        # apply migrations to your dev DB
 
 # Run each in its own terminal:
@@ -60,9 +60,11 @@ What it produces:
 - `apps/worker/dist/worker.js`
 - `apps/web/dist/` — static assets
 
-Each app's build runs `prisma generate` and compiles `backend-core` first, then
-itself — so a clean `npm run build` works with no prior setup. To run a single
-service's build (as the Docker images do):
+Build no longer runs `prisma generate` implicitly. The generated client is created
+at install time (postinstall) or explicitly via `npm run prisma:generate`, and the
+build fails fast with a clear message if that prerequisite is missing. This keeps
+builds deterministic and avoids hidden network fetches during compile. To run a
+single service's build (as the Docker images do):
 
 ```bash
 npm run build -w @acaos/api       # or @acaos/worker

@@ -9,7 +9,7 @@ import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import type { AuthedRequest } from '../types/auth.js'
-import type { BillingPlan } from '@prisma/client'
+import type { BillingPlan } from '@acaos/shared'
 
 export const billingRouter = Router()
 

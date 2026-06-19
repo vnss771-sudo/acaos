@@ -13,6 +13,9 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/backend-core/package.json ./packages/backend-core/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
+# scripts/ must exist before `npm ci` because the root postinstall runs
+# scripts/postinstall.mjs (it no-ops here — no schema copied yet).
+COPY scripts ./scripts
 
 # Force dev deps even when NODE_ENV=production is injected into the build env
 # (Railway): typescript, @types/*, and the prisma CLI are devDependencies.
@@ -47,6 +50,8 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/backend-core/package.json ./packages/backend-core/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
+# Needed before `npm ci` so the root postinstall script exists (no-ops here).
+COPY scripts ./scripts
 
 # Production dependencies only — drops the TypeScript compiler and type packages.
 RUN npm ci --omit=dev

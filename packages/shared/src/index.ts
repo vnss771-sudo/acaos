@@ -19,14 +19,51 @@
 export type Assert<T extends true> = T
 export type Extends<A, B> = A extends B ? true : false
 
+// ── Shared business-domain enums ─────────────────────────────────────────────
+// Canonical type ownership lives here. Backend runtime code, route contracts,
+// and the web UI can use these without depending on Prisma's generated enum
+// exports (which are more brittle across generator/version changes).
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member'
+export type BillingPlan = 'free' | 'starter' | 'growth'
+
+export type SignalType =
+  | 'HIRING'
+  | 'FUNDING'
+  | 'EXPANSION'
+  | 'TECH_ADOPTION'
+  | 'LEADERSHIP_CHANGE'
+  | 'NEWS_MENTION'
+  | 'PROCUREMENT'
+  | 'BUSINESS_REGISTRATION'
+  | 'WEBSITE_CHANGE'
+
+export type BuyingStage = 'RESEARCHING' | 'EVALUATING' | 'COMPARING' | 'PURCHASING' | 'INACTIVE'
+
 /** Stages a prospect outcome can be recorded at (mirror of the Prisma enum). */
 export type OutcomeStage =
   | 'DISCOVERED'
+  | 'VIEWED'
   | 'CONTACTED'
   | 'MEETING'
   | 'PROPOSAL'
   | 'WON'
   | 'LOST'
+
+export type DraftStatus = 'DRAFTED' | 'APPROVED' | 'REJECTED' | 'SENT' | 'SKIPPED'
+export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
+export type DiscoveryRunStatus = 'RUNNING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED'
+export type SendStatus = 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | 'BOUNCED' | 'REPLIED'
+export type LeadStage = 'NEW' | 'RESEARCHED' | 'OUTREACH_SENT' | 'REPLIED' | 'BOOKED' | 'CLOSED' | 'DEAD'
+export type OutreachIntentStatus =
+  | 'PROPOSED'
+  | 'DRAFTED'
+  | 'APPROVED'
+  | 'QUEUED'
+  | 'SENT'
+  | 'WON'
+  | 'LOST'
+  | 'REJECTED'
 
 // ── Auth handshake (POST /api/auth/*) ─────────────────────────────────────────
 // These run in AuthScreen via raw fetch — by design: there is no bearer token
@@ -158,8 +195,6 @@ export interface SeedWorkspaceRequest {
 }
 
 // ── Missions ──────────────────────────────────────────────────────────────────
-export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
-
 // POST /api/missions — creates a Mission and its linked execution Campaign.
 export interface CreateMissionRequest {
   workspaceId: string
