@@ -28,7 +28,7 @@ Level 1 with Level 2 session/access-control controls**. Status legend:
 | V8 Data protection | Mailbox credentials encrypted at rest | ✅ | `EMAIL_ENCRYPTION_KEY`; `WorkspaceEmailConfig` |
 | V8 Data protection | Data retention & tenant deletion/export policy | 🟡 | `docs/DATA_RETENTION.md` (policy defined; automated enforcement partial) |
 | V9 Communications | TLS-only cookies; HSTS and security headers | ✅ | `apps/api/src/middleware/securityHeaders.ts`, `nginx.conf` |
-| V10 Malicious code | SSRF guard for user-configured SMTP/IMAP hosts | 🟡 | `packages/backend-core/src/lib/ssrf.ts` (DNS pinning to close TOCTOU window is a roadmap item) |
+| V10 Malicious code | SSRF guard for user-configured SMTP/IMAP hosts; connect-time DNS pinning closes the rebind TOCTOU | ✅ | `packages/backend-core/src/lib/ssrf.ts` (`resolvePublicMailHost`) wired into `services/mail.ts`; `tests/lib-ssrf.test.ts` |
 | V11 Business logic | Idempotency for webhooks & outbound sends | ✅ | `ProcessedStripeEvent`, `ProcessedEmail`, `OutreachSent` unique `(campaignId, leadId)` |
 | V12 Files & resources | Ingest batch caps; CSV export bounded & cursor-paginated | ✅ | `apps/api/src/routes/ingest.ts`, `apps/api/src/routes/leads.ts` |
 | V13 API | Per-workspace hashed ingest API keys, rotatable/revocable | ✅ | `apps/api/src/routes/ingest.ts`, `docs/KEY_ROTATION.md` |
@@ -42,8 +42,7 @@ Level 1 with Level 2 session/access-control controls**. Status legend:
 1. **MFA / passkeys** for owner & admin accounts (V2).
 2. **Step-up auth** (re-authentication) for platform-admin and billing mutations (V3).
 3. **Strict CSP** — migrate inline styles to CSS modules/tokens, drop `style-src 'unsafe-inline'` (V14).
-4. **SSRF connection pinning** — resolve-then-connect to the checked IP (or egress allow-list/proxy) to close the DNS-rebinding TOCTOU window (V10).
-5. **Automated retention enforcement** — scheduled purge jobs for the windows in `docs/DATA_RETENTION.md` (V8).
+4. **Automated retention enforcement** — scheduled purge jobs for the windows in `docs/DATA_RETENTION.md` (V8).
 
 ## How to keep this matrix honest
 

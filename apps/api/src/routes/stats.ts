@@ -5,12 +5,22 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { getScoreTier } from '../lib/scoring.js'
+import { createTtlCache } from '../lib/ttlCache.js'
 import type { AuthedRequest } from '../types/auth.js'
 
 export const statsRouter = Router()
 statsRouter.use(requireAuth)
 
 const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
+
+// The dashboard summary is read-hot and fans out to ~7 aggregation queries. It
+// is the steepest p99 climber under concurrency (see the load-test report), so
+// we coalesce concurrent requests for the same workspace and serve the result
+// for a short TTL. Authorization is checked per-request BEFORE this cache, so a
+// cached payload is only ever returned to a verified member of that workspace.
+// STATS_CACHE_TTL_MS=0 ⇒ pure single-flight (no stale reads).
+const STATS_CACHE_TTL_MS = Number(process.env.STATS_CACHE_TTL_MS ?? 5_000)
+const statsCache = createTtlCache<Record<string, unknown>>(STATS_CACHE_TTL_MS)
 
 statsRouter.get(
   '/',
@@ -22,6 +32,15 @@ statsRouter.get(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
+    const payload = await statsCache.get(workspaceId, () => buildStats(workspaceId))
+    res.json(payload)
+  })
+)
+
+// The workspace-scoped aggregation behind GET /api/stats. Pure read of
+// workspace data (no per-user fields), so its result is safe to cache/share
+// across members of the same workspace.
+async function buildStats(workspaceId: string): Promise<Record<string, unknown>> {
     const [
       stageCounts,
       campaignCount,
@@ -88,7 +107,7 @@ statsRouter.get(
       scoreDistribution[tier] += row._count._all
     }
 
-    res.json({
+    return {
       totalLeads,
       campaignCount,
       funnel,
@@ -109,9 +128,8 @@ statsRouter.get(
         // leads.limit is already the lapse-aware cap, normalized to -1 = unlimited.
         maxLeads: usageData.leads.limit
       }
-    })
-  })
-)
+    }
+}
 
 statsRouter.get(
   '/campaigns',
