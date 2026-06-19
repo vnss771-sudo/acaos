@@ -40,7 +40,8 @@
     "nodemailer": "^9.0.1",
     "imapflow": {
       "nodemailer": "^9.0.1"
-    }
+    },
+    "ioredis": "5.11.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
