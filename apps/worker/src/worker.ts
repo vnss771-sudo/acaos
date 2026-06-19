@@ -180,7 +180,16 @@ const replyWorker = new Worker(
     }>(raw, {})
 
     if (leadId && parsed.classification) {
-      if (!parsed.isAutoReply) {
+      // Read the lead first: the job payload is the only source of `leadId`, so
+      // confirm the row exists (and capture its workspace) before any write, and
+      // scope the stage update by workspaceId so a forged/mis-routed job can't
+      // flip a lead in another tenant.
+      const lead = await prisma.lead.findUnique({
+        where: { id: leadId },
+        select: { workspaceId: true, score: true }
+      })
+
+      if (lead && !parsed.isAutoReply) {
         const stageMap: Record<string, LeadStage> = {
           INTERESTED: 'REPLIED',
           NOT_INTERESTED: 'DEAD',
@@ -191,16 +200,9 @@ const replyWorker = new Worker(
         }
         const newStage = stageMap[parsed.classification]
         if (newStage) {
-          await prisma.lead.update({ where: { id: leadId }, data: { stage: newStage } })
+          await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
         }
-      }
 
-      const lead = await prisma.lead.findUnique({
-        where: { id: leadId },
-        select: { workspaceId: true, score: true }
-      })
-
-      if (lead && !parsed.isAutoReply) {
         const model = await prisma.scoringModel.upsert({
           where: { workspaceId: lead.workspaceId },
           create: {
@@ -321,8 +323,10 @@ const recommendWorker = new Worker(
     const { prospectId, workspaceId } = job.data as { prospectId: string; workspaceId: string }
     log('generate-recommendations', `Generating for prospectId=${prospectId}`)
 
-    const prospect = await prisma.prospect.findUnique({
-      where: { id: prospectId },
+    // Scope by the payload workspaceId so a mis-routed job can't read a prospect
+    // from — and cross-attach a recommendation/intent to — another tenant.
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: prospectId, workspaceId },
       include: { signals: true }
     })
     if (!prospect) throw new Error(`Prospect ${prospectId} not found`)

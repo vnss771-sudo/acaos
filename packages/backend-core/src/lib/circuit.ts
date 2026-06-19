@@ -15,6 +15,16 @@ export class CircuitBreaker {
   private failures = 0
   private lastFailureAt = 0
   private state: State = 'CLOSED'
+  // True while a single HALF_OPEN probe is in flight. Prevents a thundering herd
+  // of concurrent probes all hitting a still-recovering provider — a correct
+  // breaker allows exactly one probe at a time.
+  private probing = false
+
+  // NOTE: breaker state is in-memory and per-process. In the multi-process
+  // (api + worker, and any horizontal replicas) deployment each instance keeps
+  // its own state, so an open circuit in one process does not protect the others.
+  // This is an accepted limitation; a shared (Redis-backed) breaker would add a
+  // network round-trip to every external call. See docs/OPERATIONS.md.
 
   constructor(
     private readonly label: string,
@@ -30,6 +40,15 @@ export class CircuitBreaker {
       } else {
         throw new CircuitOpenError(this.label, this.resetAfterMs)
       }
+    }
+
+    // In HALF_OPEN, admit exactly one probe; reject everyone else until it
+    // resolves so we don't slam a provider that may still be down.
+    if (this.state === 'HALF_OPEN') {
+      if (this.probing) {
+        throw new CircuitOpenError(this.label, this.resetAfterMs)
+      }
+      this.probing = true
     }
 
     try {
@@ -48,6 +67,8 @@ export class CircuitBreaker {
         this.state = 'OPEN'
       }
       throw err
+    } finally {
+      this.probing = false
     }
   }
 
@@ -59,4 +80,5 @@ export class CircuitBreaker {
 export const openAiBreaker      = new CircuitBreaker('openai',         5, 30_000)
 export const apolloBreaker      = new CircuitBreaker('apollo-enrich',  5, 60_000)
 export const apolloSearchBreaker = new CircuitBreaker('apollo-search', 5, 60_000)
+export const googlePlacesBreaker = new CircuitBreaker('google-places', 5, 60_000)
 export const stripeBreaker      = new CircuitBreaker('stripe',         5, 30_000)

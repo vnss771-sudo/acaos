@@ -4,6 +4,7 @@
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
 import { apolloBreaker } from '../lib/circuit.js'
+import { fetchWithTimeout } from '../lib/fetchWithTimeout.js'
 
 export type EnrichmentSignal = {
   type: string
@@ -63,7 +64,7 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
       ? { domain: prospect.domain }
       : { name: prospect.companyName }
 
-    const res = await fetch('https://api.apollo.io/v1/organizations/enrich', {
+    const res = await fetchWithTimeout('https://api.apollo.io/v1/organizations/enrich', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -73,6 +74,12 @@ export async function enrichProspect(prospect: EnrichableProspect): Promise<Enri
       body: JSON.stringify(body),
     })
 
+    // Transient failures (rate-limit / 5xx) must throw so the circuit breaker
+    // counts them and can trip; a "not found" (any other non-ok) is a legitimate
+    // empty enrichment, not a fault.
+    if (res.status === 429 || res.status >= 500) {
+      throw new Error(`Apollo enrich ${res.status}`)
+    }
     if (!res.ok) return { signals: [], updates: {} }
 
     const data = await res.json() as { organization?: ApolloOrg }
