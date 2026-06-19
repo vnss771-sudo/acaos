@@ -94,3 +94,59 @@ export function calibrate(outcomes: Outcome[]): CalibrateResult {
     icpUpdate,
   }
 }
+
+// ── Calibration "why" trace ─────────────────────────────────────────────────
+// calibrate() answers "what are the new weights?". diffCalibration() answers
+// "what changed and did it help?" — the self-auditing layer. Pure + testable so
+// the worker can persist a trace into ScoringModel.performanceMetrics and tests
+// can assert the maths without a database.
+
+export type WeightChange = {
+  type: string
+  from: number | null // null = newly weighted this run
+  to: number | null   // null = no longer weighted this run
+  delta: number       // to - from (absent side treated as 0)
+}
+
+export type CalibrationDiff = {
+  previousWinRate: number | null
+  newWinRate: number
+  winRateDelta: number | null   // null on the first calibration (no prior)
+  improved: boolean | null      // null on the first calibration
+  weightChanges: WeightChange[] // only the types whose weight actually moved
+  changedCount: number
+}
+
+export type PriorCalibration = {
+  signalWeights?: Record<string, number> | null
+  winRate?: number | null
+}
+
+/**
+ * Compare the previously-persisted calibration against a fresh result: which
+ * signal weights moved (and by how much), and whether the baseline win rate
+ * improved. `previous` is null/empty on the very first calibration, in which
+ * case win-rate deltas are null and every weight is reported as a `from: null`
+ * introduction.
+ */
+export function diffCalibration(previous: PriorCalibration | null, next: CalibrateResult): CalibrationDiff {
+  const prevWeights = previous?.signalWeights ?? {}
+  const nextWeights = next.signalWeights ?? {}
+
+  const types = new Set<string>([...Object.keys(prevWeights), ...Object.keys(nextWeights)])
+  const weightChanges: WeightChange[] = []
+  for (const type of types) {
+    const from = type in prevWeights ? prevWeights[type] : null
+    const to = type in nextWeights ? nextWeights[type] : null
+    if (from === to) continue // unchanged (covers equal numbers)
+    weightChanges.push({ type, from, to, delta: (to ?? 0) - (from ?? 0) })
+  }
+  weightChanges.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+
+  const previousWinRate = previous?.winRate ?? null
+  const newWinRate = next.stats.baselineWinRate
+  const winRateDelta = previousWinRate === null ? null : newWinRate - previousWinRate
+  const improved = winRateDelta === null ? null : winRateDelta >= 0
+
+  return { previousWinRate, newWinRate, winRateDelta, improved, weightChanges, changedCount: weightChanges.length }
+}
