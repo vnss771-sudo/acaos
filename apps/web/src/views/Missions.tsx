@@ -182,6 +182,52 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
   )
 }
 
+// Guided walkthrough overlay for the mission loop. Purely orientational: each
+// step's done/current state is derived from the same funnel/readiness/engagement
+// data the hub already loads, and the "Next" line points at the control already
+// on screen — so it guides a new operator without hiding or duplicating anything.
+function MissionGuide({ detail }: { detail: MissionDetail }) {
+  const steps = [
+    { label: 'Discover', done: detail.funnel.discovered > 0, hint: 'Use “Discover prospects” to find companies that match your ICP.' },
+    { label: 'Score & recommend', done: detail.funnel.recommended > 0, hint: 'Hit “Score & recommend” to turn prospects into outreach recommendations.' },
+    { label: 'Review & approve', done: detail.funnel.approved > 0, hint: 'Generate a draft for each recommendation in the action queue, then approve the keepers.' },
+    { label: 'Ready to send', done: detail.sendReadiness.ready, hint: 'Clear the send-readiness checks below (SMTP + compliance details).' },
+    { label: 'Engaged', done: detail.engagement.sent > 0, hint: 'Run the campaign — replies and learning appear under Engagement.' },
+  ]
+  const currentIdx = steps.findIndex(s => !s.done)
+  const current = currentIdx === -1 ? null : steps[currentIdx]
+
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        {steps.map((st, i) => {
+          const isCurrent = i === currentIdx
+          const color = st.done ? colors.green : isCurrent ? colors.blue : colors.textFaint
+          return (
+            <React.Fragment key={st.label}>
+              {i > 0 && <span aria-hidden style={{ color: colors.border, fontSize: 12 }}>›</span>}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color, fontWeight: isCurrent ? 700 : 500 }}>
+                <span style={{
+                  width: 16, height: 16, borderRadius: 99, border: `1.5px solid ${color}`,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700,
+                }}>{st.done ? '✓' : i + 1}</span>
+                {st.label}
+              </span>
+            </React.Fragment>
+          )
+        })}
+      </div>
+      {current ? (
+        <div style={{ color: colors.textMuted, fontSize: 12 }}>
+          <strong style={{ color: colors.text }}>Next:</strong> {current.hint}
+        </div>
+      ) : (
+        <div style={{ color: colors.green, fontSize: 12 }}>✓ Full loop complete — this mission is discovering, sending, and learning.</div>
+      )}
+    </div>
+  )
+}
+
 // The mission control plane: playbook, discovery history, owned prospects, and
 // the actionable outreach queue scoped to this mission. Lazy-loaded on expand.
 function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook; missionId: string; toast: ToastHook; canManage: boolean }) {
@@ -236,6 +282,9 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
 
   return (
     <div style={panel}>
+      {/* Guided walkthrough: where this mission is in the loop + what's next */}
+      <MissionGuide detail={detail} />
+
       {/* Operator-loop funnel strip */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {funnelStages.map(st => (

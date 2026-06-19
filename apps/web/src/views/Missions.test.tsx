@@ -79,6 +79,32 @@ describe('MissionsView control plane', () => {
     expect(screen.getByText(/Scoring model updated 2× from 14 outcomes/)).toBeInTheDocument()
   })
 
+  test('the guided stepper points to the next incomplete step', async () => {
+    const api = makeApi()
+    await expandDetails(api)
+    // discovered + recommended are done but approved is 0 → "Review & approve" is next.
+    expect(screen.getByText(/then approve the keepers/)).toBeInTheDocument()
+  })
+
+  test('the guided stepper reports completion when the whole loop is done', async () => {
+    const doneDetail: MissionDetail = {
+      ...detail,
+      funnel: { discovered: 5, recommended: 5, drafted: 3, approved: 3, rejected: 0, sent: 3 },
+      sendReadiness: { ready: true, checks: [] },
+      engagement: { sent: 3, replied: 2, bounced: 0, failed: 0, replyRate: 0.66 },
+    }
+    const api = vi.fn((path: string) => {
+      if (path === '/api/missions?workspaceId=ws1') return Promise.resolve({ missions: [mission] })
+      if (path === '/api/missions/m1') return Promise.resolve(doneDetail)
+      return Promise.resolve({})
+    })
+    render(<MissionsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+    await screen.findByText('Q3 Roofers')
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+    await screen.findByText('Send readiness')
+    expect(screen.getByText(/Full loop complete/)).toBeInTheDocument()
+  })
+
   test('Score & recommend posts to the mission score endpoint', async () => {
     const api = makeApi()
     await expandDetails(api)
