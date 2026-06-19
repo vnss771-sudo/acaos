@@ -113,8 +113,8 @@ A `DiscoveryRun` model records every run (status, counts, error code/message); b
 
 ### Medium priority (important before scaling)
 
-**6. Worker shares backend code via cross-package file imports**
-The worker imports runtime utilities directly from `apps/api/src/lib/` (e.g. `prisma`, `scoring`, `signalEngine`, `mail`, `suppressions`). It now compiles and type-checks cleanly, but this couples the worker build to the API's source layout. Fix: extract shared backend logic into a `packages/backend-core` workspace that both `api` and `worker` depend on. (Typed request contracts already live in `packages/shared`.)
+**6. Worker shares backend code via cross-package file imports — Resolved ✓**
+Shared backend runtime logic (`prisma`, `scoring`, `signalEngine`, `mail`, `suppressions`, etc.) now lives in the `packages/backend-core` workspace, which both `api` and `worker` depend on. The worker no longer reaches into `apps/api/src/`; `npm run check:boundaries` enforces this in CI. (Typed request contracts live in `packages/shared`.) ✓ Resolved.
 
 **7. Discovery providers use platform-level API keys — quota enforced + surfaced**
 Apollo, Google Places, and Hunter keys are set once for the whole platform, but discovery is metered per workspace with a monthly quota (`checkAndIncrementDiscoveryUsage`: free 25 / starter 500 / growth unlimited; `429` when exceeded) and every run is recorded in `DiscoveryRun`. Usage vs. plan limits (AI, discovery, leads) is now shown on the Billing page. ✓ Resolved. Remaining: per-provider cost weighting.
@@ -137,8 +137,9 @@ apps/
   web/        React + Vite frontend
   worker/     BullMQ background job worker
 packages/
-  db/         Prisma schema and migrations (PostgreSQL)
-  shared/     Typed API contracts shared by api + web (single source of truth)
+  backend-core/  Shared backend runtime (prisma, scoring, mail, queues…) used by api + worker
+  db/            Prisma schema and migrations (PostgreSQL)
+  shared/        Typed API contracts shared by api + web (single source of truth)
 tests/        API integration test suite (tsx + node:test)
 e2e/          Playwright browser smoke tests (real UI against real servers)
 ```
