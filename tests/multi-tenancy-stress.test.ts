@@ -31,7 +31,6 @@ import { leadsRouter } from '../apps/api/src/routes/leads.ts'
 import { campaignsRouter } from '../apps/api/src/routes/campaigns.ts'
 import { ingestRouter } from '../apps/api/src/routes/ingest.ts'
 import { workspaceRouter } from '../apps/api/src/routes/workspaces.ts'
-import { prospectsRouter } from '../apps/api/src/routes/prospects.ts'
 import {
   getCachedWorkspace,
   setCachedWorkspace,
@@ -319,7 +318,6 @@ describe('B. Campaign isolation', () => {
   ]
 
   let prismaA: FakePrisma
-  let prismaB: FakePrisma
   let server: TestServer
 
   before(async () => {

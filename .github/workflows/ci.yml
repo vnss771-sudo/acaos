@@ -27,6 +27,11 @@ jobs:
       - name: Check package boundaries
         run: npm run check:boundaries
 
+      # Lint runs without type information, so no Prisma client is needed — keep
+      # it early and cheap alongside the boundary check.
+      - name: Lint (ESLint)
+        run: npm run lint
+
       # The Prisma client must be generated before typecheck — the route and
       # worker layers depend on its generated types.
       - name: Generate Prisma client

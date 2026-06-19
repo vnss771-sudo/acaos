@@ -9,13 +9,9 @@ import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/l
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import type { LeadStage } from '@prisma/client'
 import {
-  calculateOpportunityScores,
-  detectBuyingStage,
-  calcWinProbability,
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import type { SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
 import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'

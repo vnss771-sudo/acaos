@@ -1,6 +1,6 @@
 import React from 'react'
 import type { View, Workspace } from '../types.js'
-import { PLAN_LABELS, STAGE_COLOR } from '../types.js'
+import { PLAN_LABELS } from '../types.js'
 import { colors } from '../styles.js'
 
 type NavItem = { id: View; label: string; icon: string }

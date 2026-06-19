@@ -41,14 +41,6 @@ async function getWorkspacePlan(workspaceId: string, client: Db = prisma): Promi
   return resolvePlan(ws?.plan)
 }
 
-async function getMonthlyAiCount(workspaceId: string): Promise<number> {
-  const month = currentMonth()
-  const records = await prisma.usageRecord.findMany({
-    where: { workspaceId, month, action: { in: AI_ACTIONS } }
-  })
-  return (records as Array<{ count: number }>).reduce((s: number, r: { count: number }) => s + r.count, 0)
-}
-
 export async function checkAndIncrementAiUsage(workspaceId: string, action: UsageAction): Promise<void> {
   const plan = await getWorkspacePlan(workspaceId)
   const { aiCallsPerMonth } = PLAN_LIMITS[plan]

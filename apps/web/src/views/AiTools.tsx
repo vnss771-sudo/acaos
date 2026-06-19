@@ -156,7 +156,6 @@ export function AiTools({ api, workspace, toast }: Props) {
     setActiveJob(null)
     try {
       const endpointMap = { research: 'research', outreach: 'outreach', reply: 'analyze-reply' }
-      const queue = tab === 'reply' ? 'analyze-reply' : `${tab === 'research' ? 'research' : 'generate'}-lead`
       const body: Record<string, string> = { leadId: selectedLeadId }
       if (tab === 'reply') body.replyBody = inputs.replyBody
 

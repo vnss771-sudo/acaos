@@ -168,7 +168,6 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
 
   async function enqueue(type: 'research' | 'outreach') {
     try {
-      const queueMap = { research: 'research-lead', outreach: 'generate-outreach' }
       const d = await api<{ jobId: string; queue: string }>(`/api/jobs/${type}`, {
         method: 'POST',
         body: JSON.stringify({ leadId: lead.id })
@@ -514,7 +513,8 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }

@@ -942,7 +942,6 @@ describe('H. Path and parameter injection adversarial', () => {
     })
     assert.equal(r.status, 403)
     // Response is JSON, not HTML — script cannot execute
-    const contentType = 'application/json'
     assert.ok(
       JSON.stringify(r.body).includes('"error"') || r.status === 403,
       'Response must be structured JSON'

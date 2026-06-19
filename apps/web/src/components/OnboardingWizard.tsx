@@ -85,7 +85,9 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
     dailySendLimit: 50,
     approvalMode: true
   })
-  const [includeExamples, setIncludeExamples] = useState(true)
+  // Example opportunities are always seeded during onboarding so the dashboard
+  // is never empty on day one; there is no UI toggle to disable them yet.
+  const includeExamples = true
   const [saving, setSaving] = useState(false)
 
   function selectPlaybook(pb: Playbook) {
@@ -179,8 +181,6 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
         {step === 3 && selectedPlaybook && (
           <Step3
             playbook={selectedPlaybook}
-            includeExamples={includeExamples}
-            onToggleExamples={setIncludeExamples}
             onContinue={() => handleStep3Continue(false)}
             onSkip={() => handleStep3Continue(true)}
             saving={saving}
@@ -188,7 +188,6 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
         )}
         {step === 4 && (
           <Step4
-            icpForm={icpForm}
             onComplete={onComplete}
           />
         )}
@@ -398,15 +397,11 @@ function Step2({
 
 function Step3({
   playbook,
-  includeExamples,
-  onToggleExamples,
   onContinue,
   onSkip,
   saving
 }: {
   playbook: Playbook
-  includeExamples: boolean
-  onToggleExamples: (v: boolean) => void
   onContinue: () => void
   onSkip: () => void
   saving: boolean
@@ -502,10 +497,8 @@ function Step3({
 }
 
 function Step4({
-  icpForm,
   onComplete
 }: {
-  icpForm: IcpForm
   onComplete: () => void
 }) {
   const checks = [

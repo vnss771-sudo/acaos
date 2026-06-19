@@ -5,7 +5,7 @@
 // lead creation against the database — the real plan-bypass surface, including
 // the lapsed-subscription downgrade.
 
-import { test, beforeEach, afterEach } from 'node:test'
+import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkAndIncrementAiUsage,

@@ -6,7 +6,10 @@ export function normalizeEmail(value: string) {
 }
 
 export function isValidEmail(value: string) {
-  // Reject control characters (including null bytes) before pattern matching
+  // Reject control characters (including null bytes) before pattern matching.
+  // The control-char range in this regex is the whole point, so the lint rule
+  // that flags control chars in regexes is intentionally disabled here.
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(value)) return false
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
 }

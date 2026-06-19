@@ -18,7 +18,6 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync } from 'node:fs'
-import path from 'node:path'
 
 const SCHEMA = 'packages/db/prisma/schema.prisma'
 const SERVER = 'apps/api/dist/server.js'
