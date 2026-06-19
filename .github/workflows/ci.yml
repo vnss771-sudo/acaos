@@ -84,12 +84,19 @@ jobs:
 
       # Scan the real images we ship (this catches OS/package CVEs in the actual
       # deployed dependency set, which `npm audit --omit=dev` does not).
+      #
+      # skip-dirs excludes the npm CLI that the node base image bundles
+      # (/usr/local/lib/node_modules/npm). Its vendored dependencies are not part
+      # of our application's dependency set — we never invoke npm against
+      # untrusted input at runtime — and they are remediated by base-image bumps,
+      # not by anything in this repo. Our own app deps under /app are still scanned.
       - name: Scan API image (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: acaos-api
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          skip-dirs: usr/local/lib/node_modules/npm
           exit-code: '1'
       - name: Scan worker image (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -97,6 +104,7 @@ jobs:
           image-ref: acaos-worker
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          skip-dirs: usr/local/lib/node_modules/npm
           exit-code: '1'
 
   # Database-backed integration tests against a real PostgreSQL service.
