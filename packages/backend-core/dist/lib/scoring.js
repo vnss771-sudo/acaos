@@ -7,10 +7,10 @@ export const DEFAULT_SCORING_WEIGHTS = {
     tech: 0.12,
     growth: 0.12,
     contact: 0.08,
-    messageRelevance: 0.08,
+    messageRelevance: 0.07,
     channelFit: 0.05,
     timingFit: 0.02,
-    dataFreshness: 0.00
+    dataFreshness: 0.01
 };
 // Target ICP: field-service companies (civil, electrical, plumbing, landscaping, etc.)
 const ICP_PRIMARY = ['civil', 'electrical', 'plumbing', 'landscaping', 'facilities', 'hvac',

@@ -40,7 +40,7 @@ export function signJwt(payload) {
     return jwt.sign(payload, getJwtSecret(), { expiresIn });
 }
 export function verifyJwt(token) {
-    return jwt.verify(token, getJwtSecret());
+    return jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] });
 }
 export function generateRefreshToken() {
     return crypto.randomBytes(40).toString('hex');

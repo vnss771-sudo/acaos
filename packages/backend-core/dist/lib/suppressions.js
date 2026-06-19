@@ -12,11 +12,19 @@ export async function suppress(workspaceId, email, reason = 'UNSUBSCRIBED') {
         update: { reason }
     });
 }
+/**
+ * Resolve which of `emails` are suppressed for a workspace and return a predicate
+ * that normalizes its argument before checking. Returning a predicate (rather than
+ * a raw Set of already-normalized addresses) removes a footgun: callers used to be
+ * able to do `set.has(rawMixedCaseEmail)` and get a false negative, sending to a
+ * suppressed address. Now the normalization lives on both sides of the comparison.
+ */
 export async function bulkCheckSuppression(workspaceId, emails) {
     const normalised = emails.map(e => e.toLowerCase().trim());
     const hits = await prisma.suppression.findMany({
         where: { workspaceId, email: { in: normalised } },
         select: { email: true }
     });
-    return new Set(hits.map((h) => h.email));
+    const set = new Set(hits.map((h) => h.email));
+    return (email) => set.has(email.toLowerCase().trim());
 }

@@ -26,7 +26,10 @@ export const EVENT_BASE_WEIGHTS = {
 };
 // Decayed signal strength accounting for age
 export function decayedStrength(signal) {
-    const ageDays = (Date.now() - signal.detectedAt.getTime()) / 86400000;
+    // Clamp age at 0 so a future-dated detectedAt (clock skew / bad ingest) can't
+    // make exp(-rate*ageDays) > 1 and inflate strength above its base. Matches the
+    // clamp in freshnessState so the score and the freshness label always agree.
+    const ageDays = Math.max(0, (Date.now() - signal.detectedAt.getTime()) / 86400000);
     const rate = SIGNAL_DECAY_RATES[signal.type] ?? 0.01;
     return signal.strength * Math.exp(-rate * ageDays);
 }
@@ -153,13 +156,23 @@ function calcFitScore(meta, icp) {
 }
 // Main scoring formula: geometric mean of 4 dimensions
 export function calculateOpportunityScores(signals, meta, icp, signalWeights) {
-    const intentScore = Math.round(calcIntentScore(signals, signalWeights));
-    const fitScore = Math.round(calcFitScore(meta, icp));
-    const timingScore = Math.round(calcTimingScore(signals));
-    const confidenceScore = Math.round(calcConfidenceScore(signals));
-    const product = intentScore * fitScore * timingScore * confidenceScore;
+    // Compute the geometric mean from the raw (unrounded) dimension values, then
+    // round only for display. Rounding each factor *before* multiplying created a
+    // cliff: a dimension of 0.49 rounded to 0 and collapsed the whole composite to
+    // 0, while 0.50 rounded to 1 — a large jump across a meaningless boundary.
+    const intentRaw = calcIntentScore(signals, signalWeights);
+    const fitRaw = calcFitScore(meta, icp);
+    const timingRaw = calcTimingScore(signals);
+    const confidenceRaw = calcConfidenceScore(signals);
+    const product = intentRaw * fitRaw * timingRaw * confidenceRaw;
     const opportunityScore = Math.round(Math.min(100, Math.max(0, Math.pow(product, 0.25))));
-    return { intentScore, fitScore, timingScore, confidenceScore, opportunityScore };
+    return {
+        intentScore: Math.round(intentRaw),
+        fitScore: Math.round(fitRaw),
+        timingScore: Math.round(timingRaw),
+        confidenceScore: Math.round(confidenceRaw),
+        opportunityScore,
+    };
 }
 // Buying stage detection from signal patterns
 export function detectBuyingStage(signals, opportunityScore) {

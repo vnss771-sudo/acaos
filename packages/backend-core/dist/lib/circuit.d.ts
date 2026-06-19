@@ -10,6 +10,7 @@ export declare class CircuitBreaker {
     private failures;
     private lastFailureAt;
     private state;
+    private probing;
     constructor(label: string, threshold?: number, resetAfterMs?: number);
     call<T>(fn: () => Promise<T>): Promise<T>;
     get isOpen(): boolean;
@@ -18,5 +19,6 @@ export declare class CircuitBreaker {
 export declare const openAiBreaker: CircuitBreaker;
 export declare const apolloBreaker: CircuitBreaker;
 export declare const apolloSearchBreaker: CircuitBreaker;
+export declare const googlePlacesBreaker: CircuitBreaker;
 export declare const stripeBreaker: CircuitBreaker;
 export {};

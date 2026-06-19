@@ -122,8 +122,10 @@ export async function recordProcessedReply(params) {
                 data: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
             });
             if (advance) {
-                await tx.lead.update({
-                    where: { id: lead.id },
+                // Scope writes by workspaceId (in scope here) as defense-in-depth so a
+                // mis-attributed lead id can never mutate another tenant's row.
+                await tx.lead.updateMany({
+                    where: { id: lead.id, workspaceId },
                     data: { stage: 'REPLIED', lastContactedAt: new Date() },
                 });
             }
@@ -131,7 +133,7 @@ export async function recordProcessedReply(params) {
             // CLOSED lead that replies still deserves an accurate outreach record.
             if (lead) {
                 await tx.outreachSent.updateMany({
-                    where: { leadId: lead.id, status: 'SENT' },
+                    where: { leadId: lead.id, workspaceId, status: 'SENT' },
                     data: { status: 'REPLIED', repliedAt: new Date() },
                 });
             }
@@ -219,8 +221,7 @@ export async function syncMailboxOnce(cfg, workspaceId) {
         // OutreachSent rows BOUNCED. Safety invariant — only addresses we ACTUALLY
         // sent outreach to (present in OutreachSent) are ever suppressed, so a stray
         // address in a DSN body can't poison the suppression list.
-        const handleBounces = Boolean(workspaceId);
-        const bounceMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length > 0) : [];
+        const bounceMsgs = workspaceId ? toProcess.filter(m => m.bounceRecipients.length > 0) : [];
         let bounced = 0;
         const processedUids = [];
         if (bounceMsgs.length > 0) {
@@ -245,7 +246,7 @@ export async function syncMailboxOnce(cfg, workspaceId) {
             }
         }
         // Replies = everything that isn't a handled bounce.
-        const replyMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length === 0) : toProcess;
+        const replyMsgs = workspaceId ? toProcess.filter(m => m.bounceRecipients.length === 0) : toProcess;
         // Find leads matching any of the sender addresses, scoped to the workspace
         // when known so replies can never bleed across tenant boundaries.
         const addresses = [...new Set(replyMsgs.map(m => m.fromAddress))];
