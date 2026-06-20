@@ -67,7 +67,7 @@ export class CircuitBreaker {
     const now = Date.now()
     if (now - this.lastSyncAt < this.syncIntervalMs) return
     this.lastSyncAt = now
-    let openUntil = 0
+    let openUntil: number
     try {
       openUntil = await this.store.getOpenUntil(this.label)
     } catch {
