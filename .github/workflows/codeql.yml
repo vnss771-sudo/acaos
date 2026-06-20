@@ -41,3 +41,9 @@ jobs:
           # This keeps the wiring honest with docs/GITHUB_ADMIN.md instead of
           # hard-disabling the upload in code.
           upload: ${{ vars.ENABLE_CODE_SCANNING == 'true' }}
+          # The CodeQL *database* upload is a separate feature that ALSO requires
+          # code scanning enabled on the repo (otherwise it logs a "code scanning is
+          # not enabled" failed-upload warning on every default-branch run). Gate it
+          # on the same flag so a repo without GHAS stays warning-free; it activates
+          # together with the SARIF upload once ENABLE_CODE_SCANNING=true.
+          upload-database: ${{ vars.ENABLE_CODE_SCANNING == 'true' }}
