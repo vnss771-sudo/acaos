@@ -30,16 +30,18 @@ A 99.5% availability/success target over 28 days allows **~3h 22m** of downtime 
 - **Budget exhausted (≤ 0):** freeze non-critical deploys until the burn stops
   and budget recovers; every incident gets a written follow-up.
 
-Fast-burn alerting (consuming budget far faster than linear) is what the
-`critical` rules (`ApiHigh5xxRate`, `EndpointDown`) approximate today; a formal
-multi-window burn-rate rule is a future refinement.
+Fast-burn alerting is now enforced with formal 1h/6h burn-rate rules:
+`ApiSuccessBudgetBurn`, `ApiAvailabilityBudgetBurn`, and `WebAvailabilityBudgetBurn`.
+These complement the symptom alerts (`ApiHigh5xxRate`, `EndpointDown`) with direct
+error-budget protection.
 
 ## How the alerts map to SLOs
 
 | Alert | Defends SLO | Severity |
 |---|---|---|
 | `EndpointDown`, `ApiTargetDown`, `WorkerTargetDown` | 1, 4 (availability) | critical |
-| `ApiHigh5xxRate` | 2 (success rate) | critical |
+| `ApiHigh5xxRate`, `ApiSuccessBudgetBurn` | 2 (success rate) | critical |
+| `ApiAvailabilityBudgetBurn`, `WebAvailabilityBudgetBurn` | 1, 4 (availability) | critical |
 | `ApiHighLatencyP99`, `ProbeSlow` | 3 (latency) | warning |
 | `ApiSaturation` | 3 (latency, leading indicator) | warning |
 | `SendCampaignBacklog` | 5 (freshness) | critical |

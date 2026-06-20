@@ -61,10 +61,11 @@ What it produces:
 - `apps/web/dist/` — static assets
 
 Build no longer runs `prisma generate` implicitly. The generated client is created
-at install time (postinstall) or explicitly via `npm run prisma:generate`, and the
-build fails fast with a clear message if that prerequisite is missing. This keeps
-builds deterministic and avoids hidden network fetches during compile. To run a
-single service's build (as the Docker images do):
+at install time (postinstall) or explicitly via `npm run prisma:generate`. In a
+restricted/offline environment the repo installs a checked-in Prisma **offline stub**
+so typecheck/build/unit gates still run deterministically; real DB access still
+requires a real generated client before starting the API/worker or running DB-backed
+suites. To run a single service's build (as the Docker images do):
 
 ```bash
 npm run build -w @acaos/api       # or @acaos/worker
@@ -195,3 +196,17 @@ identically from `src` and `dist`. The API keeps thin re-export shims at the old
 ```bash
 npm run pack        # writes dist-pack/acaos-source.zip (tracked files only)
 ```
+
+---
+
+## Release metadata
+
+```bash
+npm run release:metadata
+npm run release:metadata:env
+npm run smoke:deploy -- --api-url https://api.example.com --worker-url https://worker.example.com
+```
+
+Docker/release pipelines stamp `ACAOS_RELEASE_VERSION`, `ACAOS_RELEASE_SHA`, and
+`ACAOS_BUILD_TIME` into the API and worker so `/api/ready`, `/ready`, `/metrics`,
+and the `X-Acaos-Release-Id` header all describe the running release.

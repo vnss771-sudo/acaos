@@ -43,6 +43,17 @@ path. Distinguish from `EndpointDown` (which proves user impact):
    outage cascading. Roll back if deploy-correlated; otherwise mitigate the
    dependency.
 
+
+## ApiSuccessBudgetBurn / ApiAvailabilityBudgetBurn / WebAvailabilityBudgetBurn
+Formal multi-window burn-rate alert. Error budget is being consumed much faster
+than linear, so treat this as an incident even if the service is not fully down.
+1. Confirm whether the burn is **API 5xx**, **API uptime**, or **web uptime**.
+2. Check recent deploys first; if correlated, roll back immediately.
+3. Use the release metadata (`X-Acaos-Release-Id`, `/api/ready`, `/ready`) to
+   confirm every target is on the intended release and there is no mixed rollout.
+4. Mitigate the immediate cause (dependency, capacity, edge/network), then keep
+   non-critical deploys frozen until the burn returns to baseline.
+
 ## ApiHighLatencyP99 / ProbeSlow
 p99 > 1.5s for 10m (or external probe > 2s). 
 1. Grafana → p99-by-route; isolate the slow route. `/api/stats` is cached

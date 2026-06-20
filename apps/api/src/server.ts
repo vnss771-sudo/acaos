@@ -30,22 +30,32 @@ import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
 import { captureError } from './lib/observability.js'
+import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
+import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
+import { logger } from '@acaos/backend-core/lib/logger.js'
+import { getRedis } from './lib/redis.js'
+import { initErrorReporting } from './lib/errorReporting.js'
+import { attachBreakerStore } from './lib/circuit.js'
+import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 
-// Fail fast on a misconfigured deploy rather than surfacing it as a runtime 503.
 validateConfig()
 
+const SERVICE = 'acaos-api'
+const metadata = getRuntimeMetadata(SERVICE)
 const app = express()
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
+app.use((_req, res, next) => {
+  res.setHeader('X-Acaos-Release-Id', metadata.releaseId)
+  next()
+})
 app.use(compression())
 app.use(securityHeaders)
 app.use(requestContext)
 app.use(metricsMiddleware)
 
 app.use(cors({
-  // In production, allow only explicitly configured origins. In dev, reflect
-  // the request origin for convenience.
   origin: isProduction()
     ? (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin))
     : true,
@@ -57,10 +67,6 @@ app.use(cors({
 app.use('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }))
 app.use(express.json({ limit: '1mb' }))
 
-// Prometheus scrape endpoint. Registered before the rate limiter so frequent
-// scrapes aren't throttled. When METRICS_TOKEN is set it must be presented as a
-// bearer token (scrapers usually reach this over a private network, but the token
-// closes it off on public ingresses); when unset, the endpoint is open (dev).
 app.get('/metrics', (req, res) => {
   const token = process.env.METRICS_TOKEN?.trim()
   if (token && req.headers.authorization !== `Bearer ${token}`) {
@@ -73,37 +79,50 @@ app.get('/metrics', (req, res) => {
 
 app.use(generalRateLimit)
 
-// Liveness: cheap, never touches the database — safe for frequent probes.
 app.get('/api/live', (_req, res) => {
-  res.json({ ok: true, service: 'acaos-api', timestamp: new Date().toISOString() })
+  res.json({
+    ok: true,
+    service: SERVICE,
+    releaseId: metadata.releaseId,
+    version: metadata.version,
+    commit: metadata.commit,
+    timestamp: new Date().toISOString(),
+  })
 })
 
-// Readiness: checks required config + DB connectivity. Suitable for deployment
-// gates (e.g. Kubernetes readinessProbe or Render healthcheck). Redis is probed
-// and reported for operator visibility, but is non-fatal: the rate limiter
-// degrades to an in-process fallback, so a cache blip must not pull a serving
-// pod out of rotation.
 app.get('/api/ready', async (_req, res) => {
   const report = getReadinessReport()
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
-
   const ok = report.ready && dbOk
-  res.status(ok ? 200 : 503).json({ ok, db: dbOk, redis: redisOk, config: report })
-})
 
-// Readiness / health: verifies the database is reachable; reports Redis too.
-app.get('/api/health', async (_req, res) => {
-  const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
-
-  const status = dbOk ? 200 : 503
-  res.status(status).json({
-    ok: dbOk,
+  res.status(ok ? 200 : 503).json({
+    ok,
+    ready: ok,
     db: dbOk,
     redis: redisOk,
-    service: 'acaos-api',
-    version: process.env.npm_package_version || '1.3.0',
-    env: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString()
+    config: report,
+    service: SERVICE,
+    releaseId: metadata.releaseId,
+    version: metadata.version,
+    commit: metadata.commit,
+    timestamp: new Date().toISOString(),
+  })
+})
+
+app.get('/api/health', async (_req, res) => {
+  const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
+  const ok = dbOk
+  res.status(ok ? 200 : 503).json({
+    ok,
+    db: dbOk,
+    redis: redisOk,
+    service: SERVICE,
+    releaseId: metadata.releaseId,
+    version: metadata.version,
+    commit: metadata.commit,
+    buildTime: metadata.buildTime,
+    env: metadata.environment,
+    timestamp: new Date().toISOString(),
   })
 })
 
@@ -129,55 +148,49 @@ app.use('/api/unsubscribe', unsubscribeRouter)
 app.use(notFoundHandler)
 app.use(errorHandler)
 
-// Eagerly connect Redis so rate limiting and SSE tickets use the real store
-// from the first request rather than falling back to the per-process Map.
-import { getRedis } from './lib/redis.js'
 getRedis().connect().catch((err: Error) => {
-  console.warn('[redis] Initial connection failed — rate limiting will use in-process fallback:', err.message)
+  logger.warn('api redis initial connection failed', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
 })
 
-// Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise).
-import { initErrorReporting } from './lib/errorReporting.js'
 void initErrorReporting()
 
-// Share circuit-breaker state across processes via Redis so a provider outage
-// tripped by the worker also short-circuits the API (and vice versa). Fail-open:
-// if Redis is unavailable the breakers silently fall back to per-process state.
-import { attachBreakerStore } from './lib/circuit.js'
-import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 if (process.env.REDIS_URL) {
   attachBreakerStore(createRedisBreakerStore(getRedis()))
 }
 
 const port = Number(process.env.PORT || 4000)
 const server = app.listen(port, () => {
-  console.log(`[api] Running on http://localhost:${port} (${process.env.NODE_ENV || 'development'})`)
+  logLifecycleEvent(SERVICE, 'deploy', { port, url: `http://localhost:${port}` })
+  logLifecycleEvent(SERVICE, 'startup', { port, url: `http://localhost:${port}` })
 })
 
+let shuttingDown = false
+
 async function shutdown(signal: string) {
-  console.log(`[api] ${signal} received — shutting down gracefully`)
+  if (shuttingDown) return
+  shuttingDown = true
+  logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'begin' })
+
   server.close(async () => {
     await prisma.$disconnect()
-    console.log('[api] Shutdown complete')
+    logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })
     process.exit(0)
   })
+
   setTimeout(() => {
-    console.error('[api] Forced exit after timeout')
+    logLifecycleEvent(SERVICE, 'crash', { signal, reason: 'forced-exit-after-timeout' })
     process.exit(1)
   }, 10_000).unref()
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))
 
-// Never let an escaped promise rejection silently terminate the process
-// (Node aborts on unhandled rejections). Log it; a crashed request is handled
-// by the error middleware, so this is a last-resort safety net.
 process.on('unhandledRejection', (reason) => {
-  console.error('[api] Unhandled promise rejection:', reason)
+  logLifecycleEvent(SERVICE, 'crash', { source: 'unhandledRejection', reason: reason instanceof Error ? reason.message : String(reason) })
   captureError(reason, { source: 'unhandledRejection' })
 })
 process.on('uncaughtException', (err) => {
-  console.error('[api] Uncaught exception:', err)
+  logLifecycleEvent(SERVICE, 'crash', { source: 'uncaughtException', err: err.message })
   captureError(err, { source: 'uncaughtException' })
 })

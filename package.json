@@ -10,7 +10,7 @@
     "dev:api": "npm --workspace @acaos/api run dev",
     "dev:worker": "npm --workspace @acaos/worker run dev",
     "dev": "echo Run dev:web, dev:api and dev:worker in separate terminals",
-    "prisma:generate": "npm --workspace @acaos/db run prisma:generate",
+    "prisma:generate": "node scripts/prisma-client.mjs generate",
     "prisma:migrate": "npm --workspace @acaos/db run prisma:migrate",
     "build": "npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
     "check:boundaries": "node scripts/check-boundaries.mjs",
@@ -43,7 +43,10 @@
     "verify:services": "npm run test:db && npm run test:redis",
     "verify:clean": "bash scripts/verify-clean-build.sh",
     "postinstall": "node scripts/postinstall.mjs",
-    "release:preflight": "bash scripts/release-checklist.sh"
+    "release:preflight": "bash scripts/release-checklist.sh",
+    "smoke:deploy": "node scripts/smoke-deploy.mjs",
+    "release:metadata": "node scripts/release-metadata.mjs",
+    "release:metadata:env": "node scripts/release-metadata.mjs --env"
   },
   "overrides": {
     "nodemailer": "^9.0.1",
@@ -67,5 +70,6 @@
     "globals": "^17.6.0",
     "tsx": "^4.22.4",
     "typescript-eslint": "^8.61.1"
-  }
+  },
+  "version": "1.3.0"
 }

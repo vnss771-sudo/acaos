@@ -39,6 +39,34 @@ groups:
           summary: "API sustained in-flight requests high"
           description: "In-flight requests have averaged >100 for 10m — consider scaling out or raising the DB pool."
 
+      - alert: ApiSuccessBudgetBurn
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1h]))
+              / clamp_min(sum(rate(http_requests_total[1h])), 1)
+          ) > (14.4 * 0.005)
+          and
+          (
+            sum(rate(http_requests_total{status=~"5.."}[6h]))
+              / clamp_min(sum(rate(http_requests_total[6h])), 1)
+          ) > (6 * 0.005)
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "API success-rate budget burning fast"
+          description: "The API 5xx ratio is consuming the 99.5% success budget too quickly across the 1h/6h burn windows."
+
+      - alert: ApiAvailabilityBudgetBurn
+        expr: |
+          (1 - avg_over_time(probe_success{job="blackbox-api-live"}[1h])) > (14.4 * 0.005)
+          and
+          (1 - avg_over_time(probe_success{job="blackbox-api-live"}[6h])) > (6 * 0.005)
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "API availability budget burning fast"
+          description: "The external API uptime SLO is burning too quickly across the 1h/6h windows."
+
   - name: acaos-worker
     rules:
       - alert: WorkerTargetDown
@@ -85,6 +113,17 @@ groups:
         annotations:
           summary: "Uptime probe failing for {{ $labels.instance }}"
           description: "The external blackbox probe to {{ $labels.instance }} has been failing for >2m. Runbook: docs/RUNBOOKS.md#endpointdown"
+
+      - alert: WebAvailabilityBudgetBurn
+        expr: |
+          (1 - avg_over_time(probe_success{job="blackbox-web"}[1h])) > (14.4 * 0.005)
+          and
+          (1 - avg_over_time(probe_success{job="blackbox-web"}[6h])) > (6 * 0.005)
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "Web availability budget burning fast"
+          description: "The web-app uptime SLO is burning too quickly across the 1h/6h windows."
 
       - alert: ProbeSlow
         expr: probe_http_duration_seconds > 2

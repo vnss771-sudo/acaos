@@ -16,10 +16,13 @@ fi
 echo "[1/3] Verify repo"
 npm run verify
 
-echo "[2/3] Build tracked-files source archive"
+echo "[2/4] Build tracked-files source archive"
 npm run pack
 
-echo "[3/3] Release guidance"
+echo "[3/4] Preview immutable release metadata"
+npm run release:metadata
+
+echo "[4/4] Release guidance"
 if [[ -n "$TAG" ]]; then
   echo "Ready to publish: git tag $TAG && git push origin $TAG"
 else

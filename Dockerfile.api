@@ -3,6 +3,10 @@
 # Nothing from this stage ships except the built dist and the generated client.
 FROM node:22-alpine AS builder
 WORKDIR /app
+ARG ACAOS_RELEASE_VERSION=0.0.0-dev
+ARG ACAOS_RELEASE_SHA=unknown
+ARG ACAOS_BUILD_TIME=unknown
+ENV ACAOS_RELEASE_VERSION=$ACAOS_RELEASE_VERSION ACAOS_RELEASE_SHA=$ACAOS_RELEASE_SHA ACAOS_BUILD_TIME=$ACAOS_BUILD_TIME
 
 # openssl lets `prisma generate` detect the right engine (openssl-3) on alpine.
 RUN apk add --no-cache openssl
@@ -38,7 +42,10 @@ RUN npm run build -w @acaos/api
 # shrinks the image and removes that dev-only surface from what we ship.
 FROM node:22-alpine AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
+ARG ACAOS_RELEASE_VERSION=0.0.0-dev
+ARG ACAOS_RELEASE_SHA=unknown
+ARG ACAOS_BUILD_TIME=unknown
+ENV NODE_ENV=production ACAOS_RELEASE_VERSION=$ACAOS_RELEASE_VERSION ACAOS_RELEASE_SHA=$ACAOS_RELEASE_SHA ACAOS_BUILD_TIME=$ACAOS_BUILD_TIME
 
 # The generated Prisma query engine (linux-musl-openssl-3.0.x) links against
 # libssl.so.3 / libcrypto.so.3 — install openssl so it loads at runtime.
@@ -82,7 +89,7 @@ USER node
 # Liveness from inside the container (Node 22 has global fetch). Honors the
 # platform-injected PORT (Railway sets 8080), falling back to the EXPOSEd 4000.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Safe startup: versioned migrate (with one-time auto-baseline), then start.
 # Never `prisma db push` in production — it can drop data on a schema change.

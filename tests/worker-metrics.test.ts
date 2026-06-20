@@ -1,6 +1,3 @@
-// Pure-logic tests for the worker's Prometheus metrics: job outcome counters, the
-// processing-duration histogram, and injected BullMQ queue-depth gauges.
-
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -19,8 +16,8 @@ test('incJob counts per queue and result', () => {
 })
 
 test('duration histogram is cumulative with sum and count', () => {
-  observeJobDuration('research-lead', 0.2)  // <= 0.25
-  observeJobDuration('research-lead', 3)    // <= 5
+  observeJobDuration('research-lead', 0.2)
+  observeJobDuration('research-lead', 3)
   const out = renderWorkerMetrics()
   assert.match(out, /worker_job_duration_seconds_bucket\{queue="research-lead",le="0.25"\} 1/)
   assert.match(out, /worker_job_duration_seconds_bucket\{queue="research-lead",le="5"\} 2/)
@@ -38,11 +35,13 @@ test('renders injected queue-depth gauges per state', () => {
   assert.match(out, /bullmq_queue_jobs\{queue="send-campaign",state="failed"\} 1/)
 })
 
-test('includes HELP/TYPE headers and process gauges', () => {
+test('includes HELP/TYPE headers, build info, and process gauges', () => {
   const out = renderWorkerMetrics()
   assert.match(out, /# TYPE worker_jobs_total counter/)
   assert.match(out, /# TYPE worker_job_duration_seconds histogram/)
   assert.match(out, /# TYPE bullmq_queue_jobs gauge/)
+  assert.match(out, /acaos_build_info\{service="acaos-worker"/)
   assert.match(out, /process_resident_memory_bytes \d+/)
+  assert.match(out, /nodejs_process_start_time_seconds \d+/)
   assert.match(out, /nodejs_process_uptime_seconds /)
 })

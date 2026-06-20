@@ -1,25 +1,55 @@
 import http from 'node:http'
+import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { renderWorkerMetrics, METRICS_CONTENT_TYPE, type QueueDepth } from './lib/metrics.js'
 
 type HealthOptions = {
-  // Returns live BullMQ queue depths for the /metrics gauge. Optional so the
-  // health server still works (just without queue gauges) if not supplied.
   collectQueueDepths?: () => Promise<QueueDepth[]>
+  isReady?: () => boolean | Promise<boolean>
 }
 
-// Minimal liveness/health + metrics HTTP server for the worker so orchestrators
-// can probe it (a wedged worker otherwise looks "up") and Prometheus can scrape
-// background-job metrics. Dependency-free; 200 on /health|/live, Prometheus text
-// on /metrics, 404 otherwise.
+const SERVICE = 'acaos-worker'
+
 export function startHealthServer(port: number, opts: HealthOptions = {}): http.Server {
   const server = http.createServer((req, res) => {
+    const metadata = getRuntimeMetadata(SERVICE)
+    res.setHeader('X-Acaos-Release-Id', metadata.releaseId)
+
     if (req.url === '/health' || req.url === '/live') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, service: 'acaos-worker', timestamp: new Date().toISOString() }))
+      res.end(JSON.stringify({ ok: true, service: SERVICE, releaseId: metadata.releaseId, version: metadata.version, commit: metadata.commit, timestamp: new Date().toISOString() }))
       return
     }
+
+    if (req.url === '/ready') {
+      Promise.resolve(opts.isReady ? opts.isReady() : true)
+        .then((ready) => {
+          res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            ok: ready,
+            service: SERVICE,
+            ready,
+            releaseId: metadata.releaseId,
+            version: metadata.version,
+            commit: metadata.commit,
+            timestamp: new Date().toISOString(),
+          }))
+        })
+        .catch(() => {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            ok: false,
+            service: SERVICE,
+            ready: false,
+            releaseId: metadata.releaseId,
+            version: metadata.version,
+            commit: metadata.commit,
+            timestamp: new Date().toISOString(),
+          }))
+        })
+      return
+    }
+
     if (req.url === '/metrics') {
-      // Same optional bearer-token gate as the API's /metrics.
       const token = process.env.METRICS_TOKEN?.trim()
       if (token && req.headers.authorization !== `Bearer ${token}`) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
@@ -34,16 +64,16 @@ export function startHealthServer(port: number, opts: HealthOptions = {}): http.
       if (!collect) { finish([]); return }
       collect()
         .then(finish)
-        .catch(() => finish([])) // never fail a scrape over a Redis hiccup
+        .catch(() => finish([]))
       return
     }
+
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Not found' }))
   })
   server.listen(port, () => {
     console.log(`[worker] health server listening on :${port}`)
   })
-  // Don't let the health server keep the process alive on its own.
   server.unref()
   return server
 }

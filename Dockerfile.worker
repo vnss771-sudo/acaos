@@ -3,6 +3,10 @@
 # from this stage ships except the built dist and the generated Prisma client.
 FROM node:22-alpine AS builder
 WORKDIR /app
+ARG ACAOS_RELEASE_VERSION=0.0.0-dev
+ARG ACAOS_RELEASE_SHA=unknown
+ARG ACAOS_BUILD_TIME=unknown
+ENV ACAOS_RELEASE_VERSION=$ACAOS_RELEASE_VERSION ACAOS_RELEASE_SHA=$ACAOS_RELEASE_SHA ACAOS_BUILD_TIME=$ACAOS_BUILD_TIME
 
 # openssl lets `prisma generate` detect the right engine (openssl-3) on alpine.
 RUN apk add --no-cache openssl
@@ -37,7 +41,10 @@ RUN npm run build -w @acaos/worker
 # Prisma client — no TypeScript compiler, no @types/*, no test tooling.
 FROM node:22-alpine AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
+ARG ACAOS_RELEASE_VERSION=0.0.0-dev
+ARG ACAOS_RELEASE_SHA=unknown
+ARG ACAOS_BUILD_TIME=unknown
+ENV NODE_ENV=production ACAOS_RELEASE_VERSION=$ACAOS_RELEASE_VERSION ACAOS_RELEASE_SHA=$ACAOS_RELEASE_SHA ACAOS_BUILD_TIME=$ACAOS_BUILD_TIME
 
 # The generated Prisma query engine (linux-musl-openssl-3.0.x) links against
 # libssl.so.3 / libcrypto.so.3 — install openssl so it loads at runtime.
@@ -77,6 +84,6 @@ USER node
 # Liveness from inside the container against the worker's own health server
 # (same port precedence as startHealthServer: WORKER_HEALTH_PORT, then PORT, 9090).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT||process.env.PORT||9090)+'/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT||process.env.PORT||9090)+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["npm", "--workspace", "@acaos/worker", "run", "start"]

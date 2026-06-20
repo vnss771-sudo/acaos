@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// Produce a clean source archive of the repo — tracked files only (no
-// node_modules, dist, .env, or .git), via `git archive`. Output: dist-pack/.
-//
-//   npm run pack    →  dist-pack/acaos-source.zip
-//
-// The archive reflects committed HEAD, so commit before packing to include
-// your latest changes.
-
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -15,8 +7,15 @@ import { dirname, join } from 'node:path'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, 'dist-pack')
 const out = join(outDir, 'acaos-source.zip')
+const manifest = join(outDir, 'release-manifest.json')
 
 mkdirSync(outDir, { recursive: true })
+
+execFileSync(process.execPath, [
+  join(root, 'scripts/release-metadata.mjs'),
+  '--manifest',
+  manifest,
+], { cwd: root, stdio: 'inherit' })
 
 execFileSync(
   'git',
@@ -26,4 +25,5 @@ execFileSync(
 
 const mb = (statSync(out).size / 1024 / 1024).toFixed(2)
 console.log(`\n✓ Wrote ${out} (${mb} MB) — tracked files only, extracts to acaos/`)
+console.log(`✓ Wrote ${manifest}`)
 console.log('  Build it with the steps in BUILD.md (npm install → prisma:generate → build).')

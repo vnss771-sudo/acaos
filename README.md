@@ -70,6 +70,7 @@ npm run loadtest       # smoke load test (see docs/OPERATIONS.md)
 npm run typecheck      # TypeScript check (shared + api + web + worker)
 npm run prisma:generate
 npm run prisma:migrate
+npm run release:metadata
 ```
 
 ---
@@ -89,6 +90,14 @@ See `.env.example` for the full list with comments. Required in production:
 | `APP_URL` | Public URL of the web app — used in email links |
 
 ---
+
+## Release metadata and smoke
+
+- `npm run release:metadata` → JSON release metadata
+- `npm run release:metadata:env` → shell/env export format
+- `npm run smoke:deploy -- --api-url ... --worker-url ...` → readiness + release drift gate
+
+API and worker responses include `X-Acaos-Release-Id`; health/readiness payloads expose the canonical `releaseId`.
 
 ## CI/CD
 
