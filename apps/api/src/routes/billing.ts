@@ -8,7 +8,6 @@ import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
-import type { AuthedRequest } from '../types/auth.js'
 import type { BillingPlan } from '@acaos/shared'
 
 export const billingRouter = Router()
@@ -28,7 +27,7 @@ billingRouter.post(
   requireAuth,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId, plan } = parseBody(checkoutSchema, req)
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
@@ -55,7 +54,7 @@ billingRouter.get(
   '/status',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
@@ -82,7 +81,7 @@ billingRouter.post(
   requireAuth,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseBody(workspaceBodySchema, req)
 
     const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)

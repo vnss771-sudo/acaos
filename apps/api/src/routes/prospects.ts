@@ -32,7 +32,6 @@ import { dollarsToCents, centsToDollars } from '../lib/money.js'
 import { escCsv } from '../lib/csv.js'
 import { validate, workspaceIdField } from '../lib/validate.js'
 import { z } from 'zod'
-import type { AuthedRequest } from '../types/auth.js'
 import type { Assert, Extends, DiscoverProspectsRequest } from '@acaos/shared'
 
 export const prospectsRouter = Router()
@@ -100,7 +99,7 @@ prospectsRouter.get('/', asyncHandler(async (req, res) => {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const page  = Math.max(1, parseInt(req.query.page  as string) || 1)
@@ -181,7 +180,7 @@ prospectsRouter.get('/sources', asyncHandler(async (_req, res) => {
 prospectsRouter.get('/discovery-runs', asyncHandler(async (req, res) => {
   const workspaceId = String(req.query.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const runs = await prisma.discoveryRun.findMany({
@@ -198,7 +197,7 @@ prospectsRouter.get('/discovery-runs', asyncHandler(async (req, res) => {
 
 // GET /api/prospects/export?workspaceId=&format=csv
 prospectsRouter.get('/export', asyncHandler(async (req, res) => {
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   const workspaceId = String(req.query.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
@@ -253,7 +252,7 @@ prospectsRouter.get('/export', asyncHandler(async (req, res) => {
 prospectsRouter.get('/intents', asyncHandler(async (req, res) => {
   const workspaceId = String(req.query.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
   const limit = Math.min(Number(req.query.limit ?? 25), 100)
@@ -283,7 +282,7 @@ prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const rawSignals = prospect.signals.map(toRawSignal)
@@ -315,7 +314,7 @@ prospectsRouter.post('/discover', requireVerifiedEmail, validate(discoverSchema)
   const body = req.body as z.infer<typeof discoverSchema>
   const workspaceId = body.workspaceId
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   // Optionally scope the run to a mission so the mission control plane owns its
@@ -507,7 +506,7 @@ prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, r
   if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
   if (rows.length > 1000) throw new ApiError(400, 'Maximum 1000 rows per import')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   const icp = await getICP(workspaceId)
@@ -582,7 +581,7 @@ prospectsRouter.post('/import-signals', requireVerifiedEmail, asyncHandler(async
   if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
   if (rows.length > 500) throw new ApiError(400, 'Maximum 500 rows per import')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   let prospectsCreated = 0
@@ -659,7 +658,7 @@ prospectsRouter.post('/', asyncHandler(async (req, res) => {
   if (!workspaceId)          throw new ApiError(400, 'workspaceId required')
   if (!req.body.companyName) throw new ApiError(400, 'companyName required')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
   const meta = {
@@ -710,7 +709,7 @@ prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
   const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const allowed = [
@@ -742,7 +741,7 @@ prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!existing) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, existing.workspaceId, 'admin')
 
   await prisma.prospect.delete({ where: { id: req.params.id as string } })
@@ -757,7 +756,7 @@ prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const rawSignals     = prospect.signals.map(toRawSignal)
@@ -785,7 +784,7 @@ prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   // Example prospects are fictional — recording outcomes against them would feed
@@ -834,7 +833,7 @@ prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const rawSignals = prospect.signals.map(toRawSignal)
@@ -890,7 +889,7 @@ prospectsRouter.get('/:id/intents', asyncHandler(async (req, res) => {
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
   const intents = await prisma.outreachIntent.findMany({
@@ -909,7 +908,7 @@ prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, re
   })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
 
   const intent = await prisma.outreachIntent.findUnique({ where: { id: req.params.intentId as string } })
@@ -956,7 +955,7 @@ prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, re
 // Stage 4: approve/reject an intent's drafted outreach. Approval locks the
 // evidence + text already captured on the intent (the auditable snapshot).
 prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, res) => {
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
   if (intent.status !== 'DRAFTED') {
     throw new ApiError(409, `Cannot approve an intent that is ${intent.status.toLowerCase()} — generate a draft first`)
@@ -981,7 +980,7 @@ prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, 
 }))
 
 prospectsRouter.post('/:id/intents/:intentId/reject', asyncHandler(async (req, res) => {
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
   if (['SENT', 'WON', 'LOST'].includes(intent.status)) {
     throw new ApiError(409, `Cannot reject a ${intent.status.toLowerCase()} intent`)
@@ -999,7 +998,7 @@ prospectsRouter.post('/:id/intents/:intentId/reject', asyncHandler(async (req, r
 // APPROVED draft in a campaign, linked back to the intent. After this, launch
 // the campaign via the normal send path (which stamps provenance + flips SENT).
 prospectsRouter.post('/:id/intents/:intentId/materialize', asyncHandler(async (req, res) => {
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
   if (intent.status !== 'APPROVED') {
     throw new ApiError(409, `Intent must be approved before sending — it is ${intent.status.toLowerCase()}`)
@@ -1033,7 +1032,7 @@ prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
   const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
   if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-  const userId = (req as AuthedRequest).user.id
+  const userId = req.user!.id
   await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
 
   if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot be enriched — add real prospects first')

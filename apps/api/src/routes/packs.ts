@@ -5,7 +5,6 @@ import { prisma } from '../lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { listPacks, getPack } from '../lib/packs/index.js'
 import { recordAudit } from '../lib/audit.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const packsRouter = Router()
 packsRouter.use(requireAuth)
@@ -25,7 +24,7 @@ packsRouter.get('/:id', asyncHandler(async (req, res) => {
 // Apply a pack's ICP preset to a workspace (onboarding shortcut). The operator
 // can still edit their ICP afterwards; this just seeds it from the vertical.
 packsRouter.post('/:id/apply', asyncHandler(async (req, res) => {
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   const workspaceId = String(req.body?.workspaceId || '').trim()
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')

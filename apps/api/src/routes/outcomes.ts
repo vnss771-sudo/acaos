@@ -7,7 +7,6 @@ import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { hashApiKey } from '../lib/apiKeys.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const outcomesRouter = Router()
 
@@ -202,7 +201,7 @@ outcomesRouter.post(
       // automated FieldOps ingest path (API key) is authorized by the key itself.
       if (!parsed.workspaceId) throw new ApiError(400, 'workspaceId required')
       workspaceId = parsed.workspaceId
-      const user = (req as AuthedRequest).user
+      const user = req.user!
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
     }
 
@@ -283,7 +282,7 @@ outcomesRouter.get(
     } else {
       workspaceId = String(req.query.workspaceId || '').trim()
       if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-      const user = (req as AuthedRequest).user
+      const user = req.user!
       const member = await userBelongsToWorkspace(user.id, workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
     }
@@ -310,7 +309,7 @@ outcomesRouter.post(
   '/model/reset',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = String(req.body?.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
