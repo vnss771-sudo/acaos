@@ -46,7 +46,11 @@ Enable these repository features in GitHub settings:
 - Dependabot alerts
 - Dependabot security updates
 - Dependency graph
-- Code scanning
+- Code scanning — after enabling, set the repository variable
+  `ENABLE_CODE_SCANNING=true` so the CodeQL workflow uploads its SARIF results
+  to the Security tab. Until that variable is set the analysis still runs on
+  every PR but does not upload (upload would 403 and redden CI before code
+  scanning is on).
 - Secret scanning, if your plan supports it
 
 ## First run after enabling
