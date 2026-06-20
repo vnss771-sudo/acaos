@@ -67,17 +67,16 @@ export class CircuitBreaker {
     const now = Date.now()
     if (now - this.lastSyncAt < this.syncIntervalMs) return
     this.lastSyncAt = now
-    let openUntil: number
     try {
-      openUntil = await this.store.getOpenUntil(this.label)
+      const openUntil = await this.store.getOpenUntil(this.label)
+      if (openUntil > now && this.state === 'CLOSED') {
+        console.warn(`[circuit:${this.label}] adopting OPEN from shared store (sibling tripped it)`)
+        this.state = 'OPEN'
+        // Align local timing so OPEN→HALF_OPEN happens when the shared window ends.
+        this.lastFailureAt = openUntil - this.resetAfterMs
+      }
     } catch {
       return // fail-open: a store error must never block calls
-    }
-    if (openUntil > now && this.state === 'CLOSED') {
-      console.warn(`[circuit:${this.label}] adopting OPEN from shared store (sibling tripped it)`)
-      this.state = 'OPEN'
-      // Align local timing so OPEN→HALF_OPEN happens when the shared window ends.
-      this.lastFailureAt = openUntil - this.resetAfterMs
     }
   }
 
