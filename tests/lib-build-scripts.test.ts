@@ -51,3 +51,18 @@ test('postinstall skips cleanly when the schema is not in the install context', 
   assert.equal(r.status, 0)
   assert.match(r.stdout, /schema not present/)
 })
+
+// Regression: the web image build copies scripts/ but NEITHER the Prisma schema
+// NOR the offline-stub source (packages/db). postinstall must exit 0 there —
+// previously it tried to install the stub and crashed with ENOENT on the missing
+// stub source, failing `npm ci` and the web Docker build.
+test('postinstall exits 0 when neither schema nor offline-stub source is present (web build)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acaos-web-'))
+  mkdirSync(join(dir, 'scripts'), { recursive: true })
+  cpSync(join(root, 'scripts', 'postinstall.mjs'), join(dir, 'scripts', 'postinstall.mjs'))
+  cpSync(join(root, 'scripts', 'prisma-client.mjs'), join(dir, 'scripts', 'prisma-client.mjs'))
+  // Intentionally do NOT create packages/db/prisma/{schema,offline-client}.
+  const r = run(join(dir, 'scripts', 'postinstall.mjs'))
+  assert.equal(r.status, 0, r.stderr)
+  assert.doesNotMatch(r.stderr, /ENOENT/)
+})

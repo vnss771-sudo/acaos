@@ -44,6 +44,13 @@ function clearStubMarkers() {
 }
 
 function installOfflineStub(reason) {
+  // Defensive: a context without the stub source (e.g. the web image build, which
+  // copies neither the Prisma schema nor packages/db) must NOT crash the install.
+  // There's nothing to hydrate and nothing that needs Prisma there.
+  if (!fs.existsSync(stubSource)) {
+    log('Offline stub source not present in this context; skipping stub install.')
+    return
+  }
   const details = {
     mode: 'offline-stub',
     reason,
@@ -56,14 +63,17 @@ function installOfflineStub(reason) {
   log('Installed offline Prisma stub.')
 }
 
+// 'skip' = Prisma isn't applicable in this install context (no schema/CLI — e.g.
+// the web build or a prod-only install); 'ok' = real client generated;
+// 'fail' = generation was attempted but failed (restricted/offline).
 function runGenerate() {
   if (!fs.existsSync(schema)) {
     log('Skipping Prisma client generation: schema not present in this install context.')
-    return true
+    return 'skip'
   }
   if (!fs.existsSync(prismaBin)) {
     log('Skipping Prisma client generation: Prisma CLI not installed in this dependency set.')
-    return true
+    return 'skip'
   }
   log('Generating Prisma client...')
   const result = spawnSync(process.execPath, [prismaBin, 'generate', '--schema', schema], {
@@ -71,7 +81,7 @@ function runGenerate() {
     stdio: 'inherit',
     env: process.env,
   })
-  return (result.status ?? 1) === 0
+  return (result.status ?? 1) === 0 ? 'ok' : 'fail'
 }
 
 const command = process.argv[2] ?? 'generate'
@@ -93,8 +103,13 @@ if (process.env.ACAOS_SKIP_PRISMA_POSTINSTALL === '1') {
   process.exit(0)
 }
 
-const ok = runGenerate()
-if (ok && hasClient()) {
+const outcome = runGenerate()
+// Prisma not applicable in this context (e.g. the web image build): exit cleanly
+// WITHOUT attempting a stub install — there is no schema and no stub to hydrate.
+if (outcome === 'skip') {
+  process.exit(0)
+}
+if (outcome === 'ok' && hasClient()) {
   clearStubMarkers()
   log('Prisma client ready.')
   process.exit(0)
