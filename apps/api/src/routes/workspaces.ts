@@ -14,7 +14,6 @@ import { escapeHtml } from '../lib/html.js'
 import { encryptSecret } from '../lib/encrypt.js'
 import { assertPublicMailHost } from '../lib/ssrf.js'
 import { normalizeEmail, isValidEmail } from '../lib/validation.js'
-import type { AuthedRequest } from '../types/auth.js'
 import type { SignalType } from '../lib/signalEngine.js'
 import { evictCachedWorkspace } from '../lib/ingestCache.js'
 
@@ -37,7 +36,7 @@ workspaceRouter.use(requireAuth)
 workspaceRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const rows = await prisma.workspace.findMany({
       where: { memberships: { some: { userId: user.id } } },
       select: {
@@ -59,7 +58,7 @@ workspaceRouter.get(
 workspaceRouter.post(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const name = normalizeOptionalString(req.body?.name)
     const requestedSlug = normalizeOptionalString(req.body?.slug)
 
@@ -83,7 +82,7 @@ workspaceRouter.post(
 workspaceRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -120,7 +119,7 @@ workspaceRouter.patch(
   '/:id',
   validate(updateWorkspaceSchema),
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
     const existing = await prisma.workspace.findUnique({ where: { id: workspaceId } })
     if (!existing) throw new ApiError(404, 'Workspace not found')
@@ -161,7 +160,7 @@ workspaceRouter.patch(
 workspaceRouter.post(
   '/:id/billing-portal',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const allowed = await userCanManageWorkspaceBilling(user.id, req.params.id as string)
     if (!allowed) throw new ApiError(403, 'Access denied')
 
@@ -181,7 +180,7 @@ workspaceRouter.post(
 workspaceRouter.get(
   '/:id/members',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const membersWorkspaceId = req.params.id as string
     const membership = await prisma.membership.findFirst({
       where: { userId: user.id, workspaceId: membersWorkspaceId },
@@ -202,7 +201,7 @@ workspaceRouter.get(
 workspaceRouter.post(
   '/:id/members',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -243,7 +242,7 @@ workspaceRouter.post(
 workspaceRouter.post(
   '/:id/invites',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -311,7 +310,7 @@ workspaceRouter.post(
 workspaceRouter.get(
   '/:id/invites',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -332,7 +331,7 @@ workspaceRouter.get(
 workspaceRouter.delete(
   '/:id/invites/:inviteId',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -351,7 +350,7 @@ workspaceRouter.delete(
 workspaceRouter.delete(
   '/:id/members/:userId',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
     const targetUserId = req.params.userId as string
 
@@ -375,7 +374,7 @@ workspaceRouter.delete(
 workspaceRouter.post(
   '/:id/api-key/rotate',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -403,7 +402,7 @@ workspaceRouter.post(
 workspaceRouter.get(
   '/:id/email-config',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -434,7 +433,7 @@ workspaceRouter.get(
 workspaceRouter.put(
   '/:id/email-config',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -489,7 +488,7 @@ workspaceRouter.put(
 workspaceRouter.get(
   '/:id/icp',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const membership = await prisma.membership.findFirst({
@@ -506,7 +505,7 @@ workspaceRouter.get(
 workspaceRouter.put(
   '/:id/icp',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -569,7 +568,7 @@ workspaceRouter.put(
 workspaceRouter.delete(
   '/:id/api-key',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const canManage = await prisma.membership.findFirst({
@@ -602,7 +601,7 @@ function seededScore(companyName: string, salt: number, range: number, base: num
 workspaceRouter.post(
   '/:id/seed',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = req.params.id as string
 
     const membership = await prisma.membership.findFirst({

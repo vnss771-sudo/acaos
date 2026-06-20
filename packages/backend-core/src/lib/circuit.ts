@@ -2,6 +2,8 @@
 // CLOSED → normal operation. After `threshold` consecutive failures, trips OPEN.
 // After `resetAfterMs` of silence, probes with HALF_OPEN. Success → CLOSED.
 
+import { logger } from './logger.js'
+
 type State = 'CLOSED' | 'OPEN' | 'HALF_OPEN'
 
 export class CircuitOpenError extends Error {
@@ -74,7 +76,7 @@ export class CircuitBreaker {
       return // fail-open: a store error must never block calls
     }
     if (openUntil > now && this.state === 'CLOSED') {
-      console.warn(`[circuit:${this.label}] adopting OPEN from shared store (sibling tripped it)`)
+      logger.warn('circuit adopting OPEN from shared store (sibling tripped it)', { circuit: this.label, state: 'OPEN' })
       this.state = 'OPEN'
       // Align local timing so OPEN→HALF_OPEN happens when the shared window ends.
       this.lastFailureAt = openUntil - this.resetAfterMs
@@ -92,7 +94,7 @@ export class CircuitBreaker {
     if (this.state === 'OPEN') {
       if (Date.now() - this.lastFailureAt >= this.resetAfterMs) {
         this.state = 'HALF_OPEN'
-        console.warn(`[circuit:${this.label}] probing after ${this.resetAfterMs / 1000}s`)
+        logger.warn('circuit probing', { circuit: this.label, state: 'HALF_OPEN', afterSeconds: this.resetAfterMs / 1000 })
       } else {
         throw new CircuitOpenError(this.label, this.resetAfterMs)
       }
@@ -110,7 +112,7 @@ export class CircuitBreaker {
     try {
       const result = await fn()
       if (this.state !== 'CLOSED') {
-        console.log(`[circuit:${this.label}] recovered`)
+        logger.info('circuit recovered', { circuit: this.label, state: 'CLOSED' })
         this.failures = 0
         this.state = 'CLOSED'
       }
@@ -119,7 +121,7 @@ export class CircuitBreaker {
       this.failures++
       this.lastFailureAt = Date.now()
       if (this.failures >= this.threshold) {
-        console.error(`[circuit:${this.label}] OPEN after ${this.failures} failures`)
+        logger.error('circuit OPEN', { circuit: this.label, state: 'OPEN', failures: this.failures })
         this.state = 'OPEN'
         // Broadcast the trip so sibling processes can adopt OPEN too.
         this.publishOpen()

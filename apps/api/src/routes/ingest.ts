@@ -9,7 +9,6 @@ import { checkAndIncrementAiUsage, reserveLeadCapacity } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
-import type { AuthedRequest } from '../types/auth.js'
 import type { Prisma } from '@prisma/client'
 
 export const ingestRouter = Router()
@@ -177,7 +176,7 @@ keyRouter.use(requireAuth)
 keyRouter.post(
   '/rotate',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
@@ -198,7 +197,7 @@ keyRouter.post(
 keyRouter.delete(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })

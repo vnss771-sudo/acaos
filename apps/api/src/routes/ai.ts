@@ -6,7 +6,6 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
 import { prisma } from '../lib/prisma.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 const MAX_NAME = 200
 const MAX_NOTES = 2_000
@@ -20,7 +19,7 @@ aiRouter.use(aiRateLimit)
 aiRouter.post(
   '/research',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
@@ -58,7 +57,7 @@ aiRouter.post(
 aiRouter.post(
   '/outreach',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
@@ -94,7 +93,7 @@ aiRouter.post(
 aiRouter.post(
   '/reply-analysis',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 

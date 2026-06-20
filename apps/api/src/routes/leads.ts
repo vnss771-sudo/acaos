@@ -9,7 +9,6 @@ import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
-import type { AuthedRequest } from '../types/auth.js'
 import type { Prisma } from '@prisma/client'
 import type { LeadStage } from '@acaos/shared'
 
@@ -100,7 +99,7 @@ async function getWorkspaceWeights(workspaceId: string) {
 leadsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const q = parseQuery(listLeadsQuerySchema, req)
     const workspaceId = q.workspaceId
     const campaignId = q.campaignId
@@ -144,7 +143,7 @@ leadsRouter.get(
 leadsRouter.post(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const body = parseBody(createLeadSchema, req)
     const workspaceId = body.workspaceId
 
@@ -179,7 +178,7 @@ leadsRouter.post(
 leadsRouter.post(
   '/import',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId, leads } = parseBody(importLeadsSchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -227,7 +226,7 @@ leadsRouter.post(
 
 // Export leads as CSV
 leadsRouter.get('/export', asyncHandler(async (req, res) => {
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -276,7 +275,7 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
 leadsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id as string } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
@@ -291,7 +290,7 @@ leadsRouter.get(
 leadsRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const leadId = req.params.id as string
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
@@ -358,7 +357,7 @@ leadsRouter.patch(
 leadsRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const leadId = req.params.id as string
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
@@ -374,7 +373,7 @@ leadsRouter.delete(
 leadsRouter.post(
   '/bulk-delete',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId, ids } = parseBody(bulkDeleteSchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -390,7 +389,7 @@ leadsRouter.post(
 leadsRouter.post(
   '/bulk-stage',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId, ids, stage } = parseBody(bulkStageSchema, req)
     if (!isLeadStage(stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
 
@@ -408,7 +407,7 @@ leadsRouter.post(
 leadsRouter.post(
   '/bulk-assign',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const parsed = parseBody(bulkAssignSchema, req)
     const { workspaceId, ids } = parsed
     const campaignId = parsed.campaignId || null
@@ -432,7 +431,7 @@ leadsRouter.post(
 leadsRouter.get(
   '/:id/drafts',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const leadId = req.params.id as string
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
@@ -453,7 +452,7 @@ leadsRouter.get(
 leadsRouter.get(
   '/approvals/pending',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -473,7 +472,7 @@ leadsRouter.get(
 leadsRouter.post(
   '/:id/drafts/:draftId/approve',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { id: leadId, draftId } = req.params as { id: string; draftId: string }
     const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
@@ -496,7 +495,7 @@ leadsRouter.post(
 leadsRouter.post(
   '/:id/drafts/:draftId/reject',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { id: leadId, draftId } = req.params as { id: string; draftId: string }
     const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
@@ -520,7 +519,7 @@ leadsRouter.post(
 leadsRouter.patch(
   '/:id/drafts/:draftId',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { id: leadId, draftId } = req.params as { id: string; draftId: string }
     const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } })
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')

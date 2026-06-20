@@ -6,7 +6,6 @@ import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage, OutcomeStage } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { centsToDollars } from '../lib/money.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
@@ -15,7 +14,7 @@ intelligenceRouter.use(requireAuth)
 async function requireWorkspace(req: import('express').Request): Promise<string> {
   const workspaceId = req.query.workspaceId as string
   if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
     throw new ApiError(403, 'Workspace access denied')
   }

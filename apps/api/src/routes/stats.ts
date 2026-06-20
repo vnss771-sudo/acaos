@@ -6,7 +6,6 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { getScoreTier } from '../lib/scoring.js'
 import { createTtlCache } from '../lib/ttlCache.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const statsRouter = Router()
 statsRouter.use(requireAuth)
@@ -25,7 +24,7 @@ const statsCache = createTtlCache<Record<string, unknown>>(STATS_CACHE_TTL_MS)
 statsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
@@ -134,7 +133,7 @@ async function buildStats(workspaceId: string): Promise<Record<string, unknown>>
 statsRouter.get(
   '/campaigns',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 

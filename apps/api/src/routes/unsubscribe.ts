@@ -6,7 +6,6 @@ import { suppress } from '../lib/suppressions.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { unsubscribeRateLimit } from '../middleware/rateLimit.js'
 import { escapeHtml } from '../lib/html.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const unsubscribeRouter = Router()
 
@@ -84,7 +83,7 @@ unsubscribeRouter.get(
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
-    const userId = (req as AuthedRequest).user.id
+    const userId = req.user!.id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
     const suppressions = await prisma.suppression.findMany({

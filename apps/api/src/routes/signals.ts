@@ -8,7 +8,6 @@ import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, fres
 import type { RawSignal, SignalType } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
@@ -28,7 +27,7 @@ const listSignalsQuerySchema = z.object({
 signalsRouter.get('/', asyncHandler(async (req, res) => {
   const { workspaceId, prospectId, type, limit } = parseQuery(listSignalsQuerySchema, req)
 
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
     throw new ApiError(403, 'Workspace access denied')
   }
@@ -86,7 +85,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   const { workspaceId, prospectId, type, strength, title, description, sourceUrl,
     sourceReliability, industryRelevance } = body
 
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
@@ -159,7 +158,7 @@ signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const signal = await prisma.signal.findUnique({ where: { id: signalId } })
   if (!signal) throw new ApiError(404, 'Signal not found')
 
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   await assertMinimumWorkspaceRole(user.id, signal.workspaceId, 'admin')
 
   await prisma.signal.delete({ where: { id: signalId } })
