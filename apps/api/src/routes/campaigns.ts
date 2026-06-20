@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { isProduction } from '../lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '../lib/audit.js'
+import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Assert, CreateCampaignRequest, Extends, LeadStage } from '@acaos/shared'
 
 export const campaignsRouter = Router()
@@ -105,6 +106,7 @@ campaignsRouter.post(
       data: { workspaceId, name, goalType, description }
     })
 
+    invalidateWorkspaceStats(workspaceId) // new campaign changes dashboard campaignCount
     res.status(201).json({ campaign })
   })
 )
@@ -360,6 +362,8 @@ campaignsRouter.delete(
     await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
 
     await prisma.campaign.delete({ where: { id: campaignId } })
+    // Deleting a campaign changes campaignCount and (via cascade) lead totals/funnel.
+    invalidateWorkspaceStats(existing.workspaceId)
     res.json({ ok: true })
   })
 )

@@ -7,6 +7,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { hashApiKey } from '../lib/apiKeys.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
+import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 
 export const outcomesRouter = Router()
 
@@ -261,6 +262,8 @@ outcomesRouter.post(
         }
       })
       weightsUpdated = true
+      // Retuned weights change the scoringModel block in the dashboard summary.
+      invalidateWorkspaceStats(workspaceId)
     }
 
     res.status(201).json({ recorded: true, weightsUpdated, totalOutcomes })
