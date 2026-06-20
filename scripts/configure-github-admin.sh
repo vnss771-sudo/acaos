@@ -23,9 +23,11 @@ gh variable set ENABLE_CODE_SCANNING \
 
 echo "Creating environments..."
 gh api --method PUT "/repos/${REPO}/environments/staging" >/dev/null
+echo "✓ Environment staging"
 gh api --method PUT "/repos/${REPO}/environments/production" >/dev/null
+echo "✓ Environment production"
 
-echo "Set staging variables and secrets..."
+echo "Setting staging variables and secrets..."
 read -rsp "METRICS_TOKEN (staging, optional): " STAGING_METRICS_TOKEN
 echo
 read -rp "SMOKE_API_URL (staging): " STAGING_SMOKE_API_URL
@@ -35,9 +37,10 @@ gh variable set SMOKE_API_URL --env staging --repo "${REPO}" --body "${STAGING_S
 gh variable set SMOKE_WORKER_URL --env staging --repo "${REPO}" --body "${STAGING_SMOKE_WORKER_URL}"
 if [[ -n "${STAGING_METRICS_TOKEN}" ]]; then
   printf '%s' "${STAGING_METRICS_TOKEN}" | gh secret set METRICS_TOKEN --env staging --repo "${REPO}" --body -
+  echo "✓ staging secret METRICS_TOKEN"
 fi
 
-echo "Set production variables and secrets..."
+echo "Setting production variables and secrets..."
 read -rsp "METRICS_TOKEN (production, optional): " PROD_METRICS_TOKEN
 echo
 read -rp "SMOKE_API_URL (production): " PROD_SMOKE_API_URL
@@ -47,6 +50,7 @@ gh variable set SMOKE_API_URL --env production --repo "${REPO}" --body "${PROD_S
 gh variable set SMOKE_WORKER_URL --env production --repo "${REPO}" --body "${PROD_SMOKE_WORKER_URL}"
 if [[ -n "${PROD_METRICS_TOKEN}" ]]; then
   printf '%s' "${PROD_METRICS_TOKEN}" | gh secret set METRICS_TOKEN --env production --repo "${REPO}" --body -
+  echo "✓ production secret METRICS_TOKEN"
 fi
 
 echo "Verifying configuration..."
