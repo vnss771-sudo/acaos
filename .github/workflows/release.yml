@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref (branch, tag, or SHA) to package
+        required: true
+        default: main
+        type: string
+      publish:
+        description: Publish or refresh the GitHub Release asset for an existing tag
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: Existing semver tag to publish when publish=true (for example v1.2.3)
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.release_tag || inputs.ref }}
+  cancel-in-progress: false
+
+# Least privilege at the top; the one job that needs to publish a Release grants
+# itself contents: write explicitly.
+permissions: {}
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  package:
+    name: Package release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    environment:
+      name: ${{ github.event_name == 'push' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Package the exact source being released. On a tag push that's the tag;
+          # on a publish dispatch, package the release_tag itself (NOT an arbitrary
+          # ref) so the published asset always matches the tag it's attached to;
+          # otherwise (artifact-only dispatch) package the requested ref.
+          ref: ${{ github.event_name == 'push' && github.ref || (inputs.publish && inputs.release_tag) || inputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Resolve release target
+        id: release_target
+        shell: bash
+        # Inputs are passed via env (never interpolated into the script body) to
+        # avoid shell injection from workflow_dispatch input values.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            tag="${GITHUB_REF_NAME}"
+            publish="true"
+          else
+            tag="$INPUT_RELEASE_TAG"
+            publish="$INPUT_PUBLISH"
+          fi
+
+          if [[ "$publish" == "true" && -z "$tag" ]]; then
+            echo "::error::release_tag is required when publish=true for workflow_dispatch."
+            exit 1
+          fi
+
+          if [[ -n "$tag" && ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag must look like v1.2.3 or v1.2.3-rc.1."
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Verify release candidate
+        run: npm run verify
+
+      - name: Build release archive
+        run: npm run pack
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acaos-source-${{ steps.release_target.outputs.tag || github.sha }}
+          path: dist-pack/acaos-source.zip
+          retention-days: 14
+
+      - name: Publish GitHub Release asset
+        if: ${{ steps.release_target.outputs.publish == 'true' }}
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ steps.release_target.outputs.tag }}
+          RELEASE_ASSET_PATH: dist-pack/acaos-source.zip
+          RELEASE_ASSET_NAME: acaos-source.zip
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = process.env.RELEASE_ASSET_PATH;
+            const assetName = process.env.RELEASE_ASSET_NAME;
+            const tag = process.env.RELEASE_TAG;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            let release;
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              release = existing.data;
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              const created = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name: tag,
+                generate_release_notes: true,
+              });
+              release = created.data;
+            }
+
+            const duplicate = release.assets.find((asset) => asset.name === assetName);
+            if (duplicate) {
+              await github.rest.repos.deleteReleaseAsset({
+                owner,
+                repo,
+                asset_id: duplicate.id,
+              });
+            }
+
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: release.id,
+              name: assetName,
+              headers: {
+                'content-type': 'application/zip',
+                'content-length': String(fs.statSync(path).size),
+              },
+              data: fs.readFileSync(path),
+            });

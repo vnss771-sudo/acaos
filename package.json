@@ -40,7 +40,8 @@
     "verify": "npm run prisma:generate && npm run check:boundaries && npm run check:frontend-mutations && npm run lint && npm run typecheck && npm test && npm run test:web && npm run build",
     "verify:services": "npm run test:db && npm run test:redis",
     "verify:clean": "bash scripts/verify-clean-build.sh",
-    "postinstall": "node scripts/postinstall.mjs"
+    "postinstall": "node scripts/postinstall.mjs",
+    "release:preflight": "bash scripts/release-checklist.sh"
   },
   "overrides": {
     "nodemailer": "^9.0.1",

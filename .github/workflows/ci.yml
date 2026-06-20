@@ -4,17 +4,35 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+
+# Supersede in-progress runs for the same PR so pushes don't pile up. Only cancel
+# for pull_request events — never cancel a push on the default branch, whose run
+# builds/scans the real production images and is a release-relevant signal.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege by default; no job needs write access to the repo.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
 
 jobs:
   verify:
+    name: Static and unit gates
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -54,106 +72,157 @@ jobs:
   # Compile exactly the production artifacts after generating Prisma once up
   # front. Build itself stays offline/deterministic and must not download engines.
   build:
+    name: Production build (root)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
+
       - name: Install dependencies
         run: npm ci
+
       - name: Generate Prisma client
         run: npm run prisma:generate
+
       - name: Production build (backend-core → api → worker → web)
         run: npm run build
-      # Railway builds each service from its own directory, not the repo root, so
-      # per-app build scripts must not rely on `-w`/root workspace context.
-      # Build api and worker standalone to catch that class of deploy failure.
-      - name: Build api standalone (mirrors per-service deploy)
-        working-directory: apps/api
-        run: npm run build
-      - name: Build worker standalone (mirrors per-service deploy)
-        working-directory: apps/worker
+
+  # Railway builds each service from its own directory, not the repo root, so
+  # per-app build scripts must not rely on `-w`/root workspace context. Build api
+  # and worker standalone (matrix) to catch that class of deploy failure.
+  standalone-build:
+    name: Standalone build (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: api
+            working_directory: apps/api
+          - app: worker
+            working_directory: apps/worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Build ${{ matrix.app }} standalone
+        working-directory: ${{ matrix.working_directory }}
         run: npm run build
 
-  # Prove the build-determinism contract introduced by the A+ pass: with the
-  # postinstall Prisma generate SUPPRESSED (as in early Docker layers / prod-only
-  # installs), the documented explicit path — prisma:generate, then an offline
-  # `npm run build` that never downloads engines — must still produce the
-  # artifacts. (The guard's fail-fast-when-client-missing behavior is unit-tested
-  # in tests/lib-build-scripts.test.ts.)
+  # Prove the build-determinism contract: with the postinstall Prisma generate
+  # SUPPRESSED (as in early Docker layers / prod-only installs), the documented
+  # explicit path — prisma:generate, then an offline `npm run build` that never
+  # downloads engines — must still produce the artifacts. (The guard's
+  # fail-fast-when-client-missing behavior is unit-tested in
+  # tests/lib-build-scripts.test.ts.)
   build-deterministic:
+    name: Deterministic offline build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       ACAOS_SKIP_PRISMA_POSTINSTALL: '1'
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
+
       - name: Install dependencies (postinstall Prisma generate suppressed)
         run: npm ci
+
       - name: Generate Prisma client explicitly
         run: npm run prisma:generate
+
       - name: Deterministic build (offline; no implicit generate)
         run: npm run build
 
-  # Build the real production Docker images (what Railway deploys). Each
-  # Dockerfile COPYs only a subset of the monorepo, so a missing workspace COPY
-  # (e.g. packages/backend-core) fails here instead of in production.
+  # Build the real production Docker images (what Railway deploys) as a matrix.
+  # Each Dockerfile COPYs only a subset of the monorepo, so a missing workspace
+  # COPY (e.g. packages/backend-core) fails here instead of in production.
   docker:
+    name: Docker image (${{ matrix.image }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: Dockerfile.api
+            tag: acaos-api
+            runtime_smoke: true
+            runtime_scan: true
+          - image: worker
+            dockerfile: Dockerfile.worker
+            tag: acaos-worker
+            runtime_smoke: true
+            runtime_scan: true
+          - image: web
+            dockerfile: Dockerfile.web
+            tag: acaos-web
+            runtime_smoke: false
+            runtime_scan: false
     steps:
       - uses: actions/checkout@v4
-      - name: Build API image
-        run: docker build -f Dockerfile.api -t acaos-api .
-      - name: Build worker image
-        run: docker build -f Dockerfile.worker -t acaos-worker .
-      # Build the web image too — a broken COPY in Dockerfile.web would otherwise
-      # only surface at deploy time.
-      - name: Build web image
-        run: docker build -f Dockerfile.web -t acaos-web .
 
-      # Boot-smoke the real images. `docker build` proves the image assembles, but
+      - name: Build ${{ matrix.image }} image
+        run: docker build -f ${{ matrix.dockerfile }} -t ${{ matrix.tag }} .
+
+      # Boot-smoke the real image. `docker build` proves the image assembles, but
       # NOT that it runs — a multi-stage image can build clean yet fail at startup
       # if the generated Prisma client or a compiled module doesn't resolve in the
-      # production-only node_modules. These run the actual shipped images far
-      # enough to load the Prisma client and a compiled dist module, catching that
-      # class of deploy-time failure here. (A dummy DATABASE_URL satisfies client
+      # production-only node_modules. (A dummy DATABASE_URL satisfies client
       # construction; nothing connects.)
-      - name: Smoke-test API image (runtime module resolution)
+      - name: Smoke-test runtime image (module resolution)
+        if: ${{ matrix.runtime_smoke }}
         run: |
-          docker run --rm -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db --entrypoint node acaos-api \
-            -e "import('@prisma/client').then(m => { new m.PrismaClient(); console.log('api: prisma client ok') })"
-          docker run --rm --entrypoint node acaos-api \
-            -e "import('/app/apps/api/dist/lib/html.js').then(m => { if (typeof m.escapeHtml !== 'function') process.exit(1); console.log('api: compiled dist ok') })"
-      - name: Smoke-test worker image (runtime module resolution)
-        run: |
-          docker run --rm -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db --entrypoint node acaos-worker \
-            -e "import('@prisma/client').then(m => { new m.PrismaClient(); console.log('worker: prisma client ok') })"
+          case "${{ matrix.image }}" in
+            api)
+              docker run --rm -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db --entrypoint node ${{ matrix.tag }} \
+                -e "import('@prisma/client').then(m => { new m.PrismaClient(); console.log('api: prisma client ok') }).catch(e => { console.error(e); process.exit(1) })"
+              docker run --rm --entrypoint node ${{ matrix.tag }} \
+                -e "import('/app/apps/api/dist/lib/html.js').then(m => { if (typeof m.escapeHtml !== 'function') process.exit(1); console.log('api: compiled dist ok') }).catch(e => { console.error(e); process.exit(1) })"
+              ;;
+            worker)
+              docker run --rm -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db --entrypoint node ${{ matrix.tag }} \
+                -e "import('@prisma/client').then(m => { new m.PrismaClient(); console.log('worker: prisma client ok') }).catch(e => { console.error(e); process.exit(1) })"
+              ;;
+            *)
+              echo "No runtime smoke configured for ${{ matrix.image }}"
+              ;;
+          esac
 
-      # Scan the real images we ship (this catches OS/package CVEs in the actual
+      # Scan the real images we ship (catches OS/package CVEs in the actual
       # deployed dependency set, which `npm audit --omit=dev` does not).
-      #
-      # skip-dirs excludes the npm CLI that the node base image bundles
-      # (/usr/local/lib/node_modules/npm). Its vendored dependencies are not part
-      # of our application's dependency set — we never invoke npm against
-      # untrusted input at runtime — and they are remediated by base-image bumps,
-      # not by anything in this repo. Our own app deps under /app are still scanned.
-      - name: Scan API image (Trivy)
+      # skip-dirs excludes the npm CLI the node base image bundles — not part of
+      # our app's dependency set, remediated by base-image bumps. Our /app deps
+      # are still scanned.
+      - name: Scan runtime image (Trivy)
+        if: ${{ matrix.runtime_scan }}
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: acaos-api
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          skip-dirs: usr/local/lib/node_modules/npm
-          exit-code: '1'
-      - name: Scan worker image (Trivy)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: acaos-worker
+          image-ref: ${{ matrix.tag }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           skip-dirs: usr/local/lib/node_modules/npm
@@ -161,7 +230,9 @@ jobs:
 
   # Database-backed integration tests against a real PostgreSQL service.
   verify-db:
+    name: Database integration
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -186,8 +257,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -203,20 +275,25 @@ jobs:
       # schema edit landed without a matching migration), fail here rather than
       # letting `prisma migrate dev` generate a surprise migration later.
       - name: Check for schema drift
-        run: >-
-          npx prisma migrate diff
-          --from-url "$DATABASE_URL"
-          --to-schema-datamodel packages/db/prisma/schema.prisma
-          --exit-code
-          && echo "No schema drift."
-          || (echo "::error::Schema drift detected: schema.prisma does not match the migration history. Run 'prisma migrate dev' and commit the generated migration." && exit 1)
+        run: |
+          if npx prisma migrate diff \
+            --from-url "$DATABASE_URL" \
+            --to-schema-datamodel packages/db/prisma/schema.prisma \
+            --exit-code; then
+            echo "No schema drift."
+          else
+            echo "::error::Schema drift detected: schema.prisma does not match the migration history. Run 'prisma migrate dev' and commit the generated migration."
+            exit 1
+          fi
 
       - name: Database-backed tests
         run: npm run test:db
 
   # Redis + PostgreSQL backed integration tests (real BullMQ queue).
   verify-redis:
+    name: Redis integration
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -251,8 +328,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -269,7 +347,9 @@ jobs:
   # End-to-end browser smoke tests. Boots the real API + web servers and drives
   # the UI to catch frontend<->backend contract regressions the unit suites miss.
   verify-e2e:
+    name: Browser smoke tests
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16
@@ -301,14 +381,23 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Generate Prisma client
         run: npm run prisma:generate
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
@@ -323,3 +412,40 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # Stable aggregation gate for branch protection. Matrix job names (e.g.
+  # "Docker image (web)") change as the matrix evolves, so branch protection
+  # should require ONLY this single "required" check — it fails if any needed
+  # job did not succeed (skipped is allowed).
+  required:
+    name: required
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 5
+    needs:
+      - verify
+      - build
+      - standalone-build
+      - build-deterministic
+      - docker
+      - verify-db
+      - verify-redis
+      - verify-e2e
+    steps:
+      - name: Fail if any required job failed
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          node - <<'EOF'
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const bad = Object.entries(needs).filter(([, job]) => !['success', 'skipped'].includes(job.result));
+          if (bad.length > 0) {
+            console.error('Required CI jobs failed:');
+            for (const [name, job] of bad) {
+              console.error(`- ${name}: ${job.result}`);
+            }
+            process.exit(1);
+          }
+          console.log('All required CI jobs passed.');
+          EOF

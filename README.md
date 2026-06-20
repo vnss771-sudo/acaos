@@ -90,6 +90,12 @@ See `.env.example` for the full list with comments. Required in production:
 
 ---
 
+## CI/CD
+
+- CI and release workflow guidance: `docs/CI_CD.md`
+- Local release preflight: `npm run release:preflight -- v1.2.3`
+
+
 ## Known issues — remaining work before public launch
 
 These are open items from the engineering release-gate review. Fixed items are not listed here.
