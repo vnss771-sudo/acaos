@@ -107,25 +107,16 @@ jobs:
         run: npm run pack
 
       # Software Bill of Materials for the released source tree, so consumers and
-      # auditors can see exactly which dependencies ship in a given release.
-      #
-      # BLOCKED in the hardening worktree: anchore/sbom-action must be pinned to a
-      # full 40-char commit SHA (the check:workflow-pinning gate rejects tags), and
-      # that SHA could not be resolved here (GitHub API egress was rate-limited).
-      # Do NOT guess the SHA. To enable, resolve and pin it, then uncomment:
-      #
-      #   gh api repos/anchore/sbom-action/git/refs/tags/v0.17.9 \
-      #     --jq '.object.sha as $s | if .object.type=="tag"
-      #       then (gh api repos/anchore/sbom-action/git/tags/$s --jq .object.sha)
-      #       else $s end'
-      #
-      # - name: Generate SBOM (SPDX JSON)
-      #   uses: anchore/sbom-action@<RESOLVED_40_CHAR_SHA> # v0.17.9
-      #   with:
-      #     path: .
-      #     format: spdx-json
-      #     output-file: dist-pack/acaos-sbom.spdx.json
-      #     artifact-name: acaos-sbom.spdx.json
+      # auditors can see exactly which dependencies ship in a given release. Pinned
+      # to a full commit SHA per the check:workflow-pinning gate; the checksum step
+      # below picks the SBOM up automatically.
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@df80a981bc0e7c93f351eab5f43b39e5ea173d5f # v0.17.9
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist-pack/acaos-sbom.spdx.json
+          artifact-name: acaos-sbom.spdx.json
 
       # Tamper-evident checksums for every release artifact. Consumers verify with
       # `sha256sum -c SHA256SUMS.txt`. Computed over the files that exist; the SBOM
