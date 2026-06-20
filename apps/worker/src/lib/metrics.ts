@@ -1,15 +1,14 @@
 // Dependency-free Prometheus metrics for the worker: background-job outcome
-// counters, a job-processing-duration histogram, and live BullMQ queue-depth
-// gauges. Served from the worker health server at /metrics so a backed-up queue
-// (e.g. send-campaign) is visible/alertable instead of silently invisible.
+// counters, processing-duration histogram, BullMQ queue-depth gauges, and
+// immutable build/runtime metadata.
+
+import { getBuildInfoLabels, getProcessStartTimeSeconds } from '@acaos/backend-core/lib/release.js'
 
 type JobResult = 'completed' | 'failed'
 
+const SERVICE = 'acaos-worker'
 const DURATION_BUCKETS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60]
-
-// counter: worker_jobs_total{queue,result}
 const jobTotals = new Map<string, { queue: string; result: JobResult; value: number }>()
-// histogram: per queue → cumulative buckets + sum + count
 type Hist = { queue: string; buckets: number[]; sum: number; count: number }
 const jobDurations = new Map<string, Hist>()
 
@@ -33,7 +32,6 @@ export function observeJobDuration(queue: string, seconds: number): void {
   }
 }
 
-/** Test-only: clear accumulated counters/histograms. */
 export function resetWorkerMetrics(): void {
   jobTotals.clear()
   jobDurations.clear()
@@ -77,9 +75,17 @@ export function renderWorkerMetrics(depths: QueueDepth[] = []): string {
     }
   }
 
+  lines.push('# HELP acaos_build_info Immutable build and release metadata.')
+  lines.push('# TYPE acaos_build_info gauge')
+  lines.push(`acaos_build_info${lbl(getBuildInfoLabels(SERVICE))} 1`)
+
   lines.push('# HELP process_resident_memory_bytes Resident memory size in bytes.')
   lines.push('# TYPE process_resident_memory_bytes gauge')
   lines.push(`process_resident_memory_bytes ${process.memoryUsage().rss}`)
+
+  lines.push('# HELP nodejs_process_start_time_seconds Process start time in unix seconds.')
+  lines.push('# TYPE nodejs_process_start_time_seconds gauge')
+  lines.push(`nodejs_process_start_time_seconds ${getProcessStartTimeSeconds()}`)
 
   lines.push('# HELP nodejs_process_uptime_seconds Process uptime in seconds.')
   lines.push('# TYPE nodejs_process_uptime_seconds gauge')

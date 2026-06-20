@@ -61,10 +61,11 @@ What it produces:
 - `apps/web/dist/` — static assets
 
 Build no longer runs `prisma generate` implicitly. The generated client is created
-at install time (postinstall) or explicitly via `npm run prisma:generate`, and the
-build fails fast with a clear message if that prerequisite is missing. This keeps
-builds deterministic and avoids hidden network fetches during compile. To run a
-single service's build (as the Docker images do):
+at install time (postinstall) or explicitly via `npm run prisma:generate`. In a
+restricted/offline environment the repo installs a checked-in Prisma **offline stub**
+so typecheck/build/unit gates still run deterministically; real DB access still
+requires a real generated client before starting the API/worker or running DB-backed
+suites. To run a single service's build (as the Docker images do):
 
 ```bash
 npm run build -w @acaos/api       # or @acaos/worker
@@ -105,6 +106,19 @@ docker build -f Dockerfile.web    -t acaos-web    .
 
 Each Dockerfile copies only the workspaces it needs (incl. `packages/backend-core`),
 runs `npm ci --include=dev`, generates the Prisma client, and builds that service.
+
+### Release identity and rollout gate
+
+Every packaging run writes `dist-pack/release-manifest.json`. Use it as the source of truth
+for staged rollout verification:
+
+```bash
+npm run pack
+npm run release:smoke -- --manifest dist-pack/release-manifest.json --api-url https://api.example.com --worker-url https://worker.example.com
+```
+
+The GitHub `Post-deploy smoke` workflow can do the same remotely, sourcing `SMOKE_API_URL`
+and `SMOKE_WORKER_URL` from the selected environment.
 
 ---
 
@@ -152,9 +166,12 @@ operator guide: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 ## 6. Verify (CI gates)
 
 ```bash
-npm run verify             # one-shot: boundaries + mutations + lint + typecheck + tests + web + build
+npm run verify             # one-shot: prisma + boundaries + mutations + pinning + monitoring + lint + typecheck + tests + web + build
 # …or run individual gates:
-npm run check:boundaries   # worker must not import apps/api (architectural guard)
+npm run check:boundaries          # worker must not import apps/api (architectural guard)
+npm run check:frontend-mutations  # frontend mutations go through the typed route client
+npm run check:workflow-pinning    # every GitHub Action is pinned to a full commit SHA
+npm run check:monitoring-assets   # alerts/runbooks/SLO/dashboard stay coherent
 npm run typecheck          # shared + backend-core + api + web + worker
 npm run test               # fast unit/integration suite (no external services)
 npm run test:coverage      # same, with the 80/65/80 coverage gate
@@ -166,6 +183,13 @@ npm run test:e2e           # Playwright (run npm run test:e2e:install once first
 
 Test/`tsx` commands carry `NODE_OPTIONS=--conditions=acaos-src` so they resolve
 `@acaos/backend-core` to source — no build required to run the suites.
+
+CI runs all of the above behind a single stable `required` status check, plus
+matrix Docker image builds, CodeQL, and Dependabot. See
+[`docs/CI_CD.md`](docs/CI_CD.md) for the workflow contract and
+[`docs/GITHUB_ADMIN.md`](docs/GITHUB_ADMIN.md) for the one-time repo settings
+(branch protection, environments, security features). Cut a release with
+`npm run release:preflight -- vX.Y.Z` (see `docs/CI_CD.md`).
 
 ---
 
@@ -195,3 +219,17 @@ identically from `src` and `dist`. The API keeps thin re-export shims at the old
 ```bash
 npm run pack        # writes dist-pack/acaos-source.zip (tracked files only)
 ```
+
+---
+
+## Release metadata
+
+```bash
+npm run release:metadata
+npm run release:metadata:env
+npm run smoke:deploy -- --api-url https://api.example.com --worker-url https://worker.example.com
+```
+
+Docker/release pipelines stamp `ACAOS_RELEASE_VERSION`, `ACAOS_RELEASE_SHA`, and
+`ACAOS_BUILD_TIME` into the API and worker so `/api/ready`, `/ready`, `/metrics`,
+and the `X-Acaos-Release-Id` header all describe the running release.

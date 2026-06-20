@@ -2,7 +2,7 @@
   "name": "@acaos/db",
   "private": true,
   "scripts": {
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "node ../../scripts/prisma-client.mjs generate",
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {

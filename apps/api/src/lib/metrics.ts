@@ -1,23 +1,20 @@
 // Dependency-free Prometheus metrics. Exposes HTTP request counts, a latency
-// histogram, and in-flight gauge in the text exposition format (v0.0.4) so a
-// standard Prometheus/Grafana stack can scrape /metrics — no prom-client needed.
+// histogram, provider-call counters, in-flight gauge, and build/runtime metadata
+// in the text exposition format (v0.0.4) so Prometheus can scrape /metrics.
+
+import { getBuildInfoLabels, getProcessStartTimeSeconds } from '@acaos/backend-core/lib/release.js'
 
 type Labels = Record<string, string>
 
+const SERVICE = 'acaos-api'
 const DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
 
-// counter: http_requests_total{method,route,status}
 const requestTotals = new Map<string, { labels: Labels; value: number }>()
-// counter: provider_calls_total{provider,operation,outcome} — every outbound
-// third-party HTTP call, labelled by its typed outcome, so a provider fault is
-// distinguishable from a legitimate empty result on a dashboard.
 const providerTotals = new Map<string, { labels: Labels; value: number }>()
-// histogram: per method+route → { labels, buckets[], sum, count }
 type Hist = { labels: Labels; buckets: number[]; sum: number; count: number }
 const durations = new Map<string, Hist>()
 let inFlight = 0
 
-// Stable identity for a label set (order-independent), used only for map keys.
 const idOf = (labels: Labels) =>
   Object.keys(labels).sort().map((k) => `${k}=${labels[k]}`).join('\x1f')
 
@@ -39,7 +36,6 @@ export function observeDuration(method: string, route: string, seconds: number):
   }
   h.sum += seconds
   h.count += 1
-  // Each bucket holds the cumulative count of observations <= its upper bound.
   for (let i = 0; i < DURATION_BUCKETS.length; i++) {
     if (seconds <= DURATION_BUCKETS[i]) h.buckets[i] += 1
   }
@@ -57,7 +53,6 @@ export function setInFlight(n: number): void { inFlight = n }
 export function incInFlight(): void { inFlight++ }
 export function decInFlight(): void { inFlight = Math.max(0, inFlight - 1) }
 
-/** Test-only: clear all accumulated metrics. */
 export function resetMetrics(): void {
   requestTotals.clear()
   durations.clear()
@@ -65,13 +60,10 @@ export function resetMetrics(): void {
   inFlight = 0
 }
 
-// Escape a Prometheus label value (backslash, double-quote, newline).
 function esc(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
 }
 
-// Render labels in the given insertion order (Prometheus is order-independent,
-// but a stable, conventional order keeps output readable — e.g. le last).
 function fmtLabels(labels: Labels): string {
   const keys = Object.keys(labels)
   if (keys.length === 0) return ''
@@ -108,9 +100,17 @@ export function renderMetrics(): string {
   lines.push('# TYPE http_requests_in_flight gauge')
   lines.push(`http_requests_in_flight ${inFlight}`)
 
+  lines.push('# HELP acaos_build_info Immutable build and release metadata.')
+  lines.push('# TYPE acaos_build_info gauge')
+  lines.push(`acaos_build_info${fmtLabels(getBuildInfoLabels(SERVICE))} 1`)
+
   lines.push('# HELP process_resident_memory_bytes Resident memory size in bytes.')
   lines.push('# TYPE process_resident_memory_bytes gauge')
   lines.push(`process_resident_memory_bytes ${process.memoryUsage().rss}`)
+
+  lines.push('# HELP nodejs_process_start_time_seconds Process start time in unix seconds.')
+  lines.push('# TYPE nodejs_process_start_time_seconds gauge')
+  lines.push(`nodejs_process_start_time_seconds ${getProcessStartTimeSeconds()}`)
 
   lines.push('# HELP nodejs_process_uptime_seconds Process uptime in seconds.')
   lines.push('# TYPE nodejs_process_uptime_seconds gauge')

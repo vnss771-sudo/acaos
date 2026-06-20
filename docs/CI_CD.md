@@ -105,3 +105,33 @@ build — i.e. `npm run verify`), builds the tracked-files source archive, and
 prints the tag push command. Note this is the no-services gate: it does **not**
 reproduce the DB/Redis/Docker/e2e CI jobs, so a green preflight is necessary but
 not sufficient — the PR's CI `required` check is the authority.
+
+## Release metadata and deploy smoke
+
+`release.yml` now computes immutable release metadata, writes `dist-pack/release-manifest.json`, and carries that metadata into packaging. Docker builds stamp `ACAOS_RELEASE_VERSION`, `ACAOS_RELEASE_SHA`, and `ACAOS_BUILD_TIME` into the API and worker images.
+
+`post-deploy-smoke.yml` is a manual deploy-gate workflow that runs `npm run smoke:deploy` against the API `/api/ready` and worker `/ready` endpoints, optionally enforcing `--expect-version` and `--expect-commit`, and fails on API/worker release drift.
+
+## Environment variables for rollout smoke
+
+Define these GitHub **environment variables** per environment:
+
+- `SMOKE_API_URL`
+- `SMOKE_WORKER_URL`
+- `SMOKE_WEB_URL` (optional)
+
+And this optional **environment secret**:
+
+- `METRICS_TOKEN`
+
+
+## Post-deploy smoke workflow inputs
+
+The workflow accepts these optional inputs for strict promotion checks:
+
+- `expected_version`
+- `expected_commit`
+- `expected_release_id`
+
+Use them when promoting a packaged artifact so the deployed API/worker must match
+the release metadata exactly, not just return a 200.

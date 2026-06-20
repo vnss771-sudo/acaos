@@ -35,14 +35,21 @@ import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.j
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
+import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
+import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
+import { logger } from '@acaos/backend-core/lib/logger.js'
 import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
 import type { LeadStage } from '@acaos/shared'
 
+const SERVICE = 'acaos-worker'
+const metadata = getRuntimeMetadata(SERVICE)
+let shuttingDown = false
+
 function log(queue: string, msg: string) {
-  console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)
+  logger.info(msg, { queue, service: SERVICE, releaseId: metadata.releaseId })
 }
 
 async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
@@ -519,13 +526,19 @@ attachBreakerStore(createRedisBreakerStore(connection))
 // fixed 9090 locally/in Docker. WORKER_HEALTH_PORT overrides both.
 const healthServer = startHealthServer(
   Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
-  { collectQueueDepths },
+  {
+    collectQueueDepths,
+    isReady: () => !shuttingDown && connection.status === 'ready',
+  },
 )
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
+  if (shuttingDown) return
+  shuttingDown = true
+  logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'begin' })
   healthServer.close()
-  console.log(`[worker] ${signal} received — shutting down`)
+
   await Promise.all([
     researchWorker.close(),
     outreachWorker.close(),
@@ -538,23 +551,21 @@ async function shutdown(signal: string) {
     retentionWorker.close(),
   ])
   await prisma.$disconnect()
-  console.log('[worker] Shutdown complete')
+  logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })
   process.exit(0)
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT',  () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT',  () => void shutdown('SIGINT'))
 
-// Last-resort safety net: an escaped rejection/exception would otherwise crash
-// the worker silently. Log and forward to the error transport (BullMQ keeps
-// in-flight jobs durable, so a restart re-processes them).
 process.on('unhandledRejection', (reason) => {
-  console.error('[worker] Unhandled promise rejection:', reason)
+  logLifecycleEvent(SERVICE, 'crash', { source: 'worker.unhandledRejection', reason: reason instanceof Error ? reason.message : String(reason) })
   captureError(reason, { source: 'worker.unhandledRejection' })
 })
 process.on('uncaughtException', (err) => {
-  console.error('[worker] Uncaught exception:', err)
+  logLifecycleEvent(SERVICE, 'crash', { source: 'worker.uncaughtException', err: err.message })
   captureError(err, { source: 'worker.uncaughtException' })
 })
 
-console.log('[worker] Started — listening on 9 queues (research-lead, generate-outreach, analyze-reply, sync-mailbox, score-prospects, generate-recommendations, calibrate-scoring, send-campaign, retention-purge)')
+logLifecycleEvent(SERVICE, 'deploy', { queueCount: WORKER_QUEUES.length })
+logLifecycleEvent(SERVICE, 'startup', { queueCount: WORKER_QUEUES.length, releaseId: metadata.releaseId })

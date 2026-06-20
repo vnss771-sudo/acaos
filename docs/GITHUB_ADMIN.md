@@ -28,12 +28,16 @@ Create these environments:
 ### `staging`
 - No production secrets.
 - Optional reviewer gate.
-- Used by manual packaging runs in `Release`.
+- Add environment variables `SMOKE_API_URL` and `SMOKE_WORKER_URL`.
+- Optional: add `SMOKE_WEB_URL` and secret `METRICS_TOKEN` for deeper smoke coverage.
+- Used by manual packaging runs in `Release` and `Post-deploy smoke`.
 
 ### `production`
 - Add required reviewers from the release-owning group.
 - Restrict secrets to the production deploy/release path only.
-- Used by semver tag releases in `Release`.
+- Add environment variables `SMOKE_API_URL` and `SMOKE_WORKER_URL`.
+- Optional: add `SMOKE_WEB_URL` and secret `METRICS_TOKEN`.
+- Used by semver tag releases in `Release` and `Post-deploy smoke`.
 
 ## Security features
 
@@ -52,3 +56,4 @@ Enable these repository features in GitHub settings:
 3. Trigger `CI`, `CodeQL`, and a manual `Release` dry run.
 4. Protect the default branch with the `required` check.
 5. Verify Dependabot opens grouped PRs for npm, Docker, and GitHub Actions.
+6. Run `Post-deploy smoke` once against `staging`, then once against `production`, and confirm the runtime reports the intended `releaseId`.
