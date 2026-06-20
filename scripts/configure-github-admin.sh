@@ -4,6 +4,18 @@ set -euo pipefail
 REPO="${REPO:-vnss771-sudo/acaos}"
 BRANCH="${BRANCH:-$(gh repo view "${REPO}" --json defaultBranchRef --jq '.defaultBranchRef.name')}"
 
+set_env_secret() {
+  local env_name="$1"
+  local secret_name="$2"
+  local secret_value="$3"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  chmod 600 "${tmp_file}"
+  printf '%s' "${secret_value}" >"${tmp_file}"
+  gh secret set "${secret_name}" --env "${env_name}" --repo "${REPO}" <"${tmp_file}"
+  rm -f "${tmp_file}"
+}
+
 echo "Configuring branch protection for ${REPO}:${BRANCH}..."
 gh api \
   --method PUT \
@@ -22,9 +34,9 @@ gh variable set ENABLE_CODE_SCANNING \
   --body "true"
 
 echo "Creating environments..."
-gh api --method PUT "/repos/${REPO}/environments/staging" >/dev/null
+gh api --method PUT "/repos/${REPO}/environments/staging"
 echo "✓ Environment staging"
-gh api --method PUT "/repos/${REPO}/environments/production" >/dev/null
+gh api --method PUT "/repos/${REPO}/environments/production"
 echo "✓ Environment production"
 
 echo "Setting staging variables and secrets..."
@@ -36,7 +48,7 @@ read -rp "SMOKE_WORKER_URL (staging): " STAGING_SMOKE_WORKER_URL
 gh variable set SMOKE_API_URL --env staging --repo "${REPO}" --body "${STAGING_SMOKE_API_URL}"
 gh variable set SMOKE_WORKER_URL --env staging --repo "${REPO}" --body "${STAGING_SMOKE_WORKER_URL}"
 if [[ -n "${STAGING_METRICS_TOKEN}" ]]; then
-  printf '%s' "${STAGING_METRICS_TOKEN}" | gh secret set METRICS_TOKEN --env staging --repo "${REPO}" --body -
+  set_env_secret "staging" "METRICS_TOKEN" "${STAGING_METRICS_TOKEN}"
   echo "✓ staging secret METRICS_TOKEN"
 fi
 
@@ -49,7 +61,7 @@ read -rp "SMOKE_WORKER_URL (production): " PROD_SMOKE_WORKER_URL
 gh variable set SMOKE_API_URL --env production --repo "${REPO}" --body "${PROD_SMOKE_API_URL}"
 gh variable set SMOKE_WORKER_URL --env production --repo "${REPO}" --body "${PROD_SMOKE_WORKER_URL}"
 if [[ -n "${PROD_METRICS_TOKEN}" ]]; then
-  printf '%s' "${PROD_METRICS_TOKEN}" | gh secret set METRICS_TOKEN --env production --repo "${REPO}" --body -
+  set_env_secret "production" "METRICS_TOKEN" "${PROD_METRICS_TOKEN}"
   echo "✓ production secret METRICS_TOKEN"
 fi
 
