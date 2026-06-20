@@ -306,7 +306,7 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
                   onChange={e => setConfirmPassword(e.target.value)}
                   placeholder="Repeat password"
                   required
-                  minLength={8}
+                  minLength={12}
                   autoComplete="new-password"
                 />
               </div>

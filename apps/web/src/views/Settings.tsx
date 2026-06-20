@@ -439,7 +439,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                 value={(passwordForm as Record<string, string>)[field]}
                 onChange={e => setPasswordForm(f => ({ ...f, [field]: e.target.value }))}
                 autoComplete={autocomplete}
-                minLength={field !== 'currentPassword' ? 8 : undefined}
+                minLength={field !== 'currentPassword' ? 12 : undefined}
               />
             </div>
           ))}
