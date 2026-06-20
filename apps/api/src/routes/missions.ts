@@ -9,6 +9,7 @@ import { recordAudit } from '../lib/audit.js'
 import { getPack } from '../lib/packs/index.js'
 import { enqueueScoreProspects } from '../lib/queues.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
+import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Assert, CreateMissionRequest, Extends, MissionStatus, UpdateMissionRequest } from '@acaos/shared'
 import type { Prisma } from '@prisma/client'
 
@@ -246,6 +247,8 @@ missionsRouter.post(
         include: { campaign: { include: { _count: { select: { leads: true } } } } },
       })
     })
+
+    invalidateWorkspaceStats(workspaceId) // mission creates a campaign → changes campaignCount
 
     void recordAudit({
       workspaceId, actorUserId: user.id, type: 'mission.create',

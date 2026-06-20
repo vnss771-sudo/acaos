@@ -45,3 +45,6 @@ e2e/.auth/
 
 # Packaged source archives
 dist-pack/
+
+# Claude Code agent worktrees (transient, harness-managed)
+.claude/worktrees/

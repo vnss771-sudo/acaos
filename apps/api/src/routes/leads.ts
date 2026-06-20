@@ -9,6 +9,7 @@ import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
+import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Prisma } from '@prisma/client'
 import type { LeadStage } from '@acaos/shared'
 
@@ -170,6 +171,7 @@ leadsRouter.post(
     const score = computeLeadScore(leadData, weights)
 
     const lead = await prisma.lead.create({ data: { ...leadData, score } })
+    invalidateWorkspaceStats(workspaceId) // new lead changes totals/funnel/recent
     res.status(201).json({ lead })
   })
 )
@@ -220,6 +222,7 @@ leadsRouter.post(
       const result = await tx.lead.createMany({ data: rows, skipDuplicates: false })
       return result.count
     })
+    if (created > 0) invalidateWorkspaceStats(workspaceId) // bulk import shifts totals/funnel
     res.json({ created })
   })
 )
@@ -349,6 +352,7 @@ leadsRouter.patch(
     }
 
     const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
+    invalidateWorkspaceStats(lead.workspaceId) // stage/score/campaign edits move funnel & top leads
     res.json({ lead: updated })
   })
 )
@@ -365,6 +369,7 @@ leadsRouter.delete(
     await assertMinimumWorkspaceRole(user.id, lead.workspaceId, 'admin')
 
     await prisma.lead.delete({ where: { id: leadId } })
+    invalidateWorkspaceStats(lead.workspaceId) // removing a lead changes totals/funnel
     res.json({ ok: true })
   })
 )
@@ -381,6 +386,7 @@ leadsRouter.post(
     const result = await prisma.lead.deleteMany({
       where: { id: { in: ids }, workspaceId }
     })
+    if (result.count > 0) invalidateWorkspaceStats(workspaceId) // bulk delete changes totals/funnel
     res.json({ deleted: result.count })
   })
 )
@@ -399,6 +405,7 @@ leadsRouter.post(
       where: { id: { in: ids }, workspaceId },
       data: { stage: stage as LeadStage }
     })
+    if (result.count > 0) invalidateWorkspaceStats(workspaceId) // bulk stage change moves the funnel
     res.json({ updated: result.count })
   })
 )

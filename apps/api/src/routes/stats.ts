@@ -5,21 +5,12 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { getScoreTier } from '../lib/scoring.js'
-import { createTtlCache } from '../lib/ttlCache.js'
+import { statsCache } from '../lib/statsCache.js'
 
 export const statsRouter = Router()
 statsRouter.use(requireAuth)
 
 const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
-
-// The dashboard summary is read-hot and fans out to ~7 aggregation queries. It
-// is the steepest p99 climber under concurrency (see the load-test report), so
-// we coalesce concurrent requests for the same workspace and serve the result
-// for a short TTL. Authorization is checked per-request BEFORE this cache, so a
-// cached payload is only ever returned to a verified member of that workspace.
-// STATS_CACHE_TTL_MS=0 ⇒ pure single-flight (no stale reads).
-const STATS_CACHE_TTL_MS = Number(process.env.STATS_CACHE_TTL_MS ?? 5_000)
-const statsCache = createTtlCache<Record<string, unknown>>(STATS_CACHE_TTL_MS)
 
 statsRouter.get(
   '/',
