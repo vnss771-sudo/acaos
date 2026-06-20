@@ -4,6 +4,18 @@ These settings finish the last repo-governance gap that cannot be flipped from g
 alone. The workflows and docs in this repo assume the repository is configured as
 follows.
 
+## Optional bootstrap script
+
+To automate most one-time setup from a terminal with `gh` auth:
+
+```bash
+bash scripts/configure-github-admin.sh
+```
+
+The script configures branch protection, enables `ENABLE_CODE_SCANNING`, creates
+`staging`/`production` environments, and prompts for smoke URLs + optional
+`METRICS_TOKEN` per environment.
+
 ## Branch protection / ruleset
 
 Apply this to the default branch (`main`, or `master` if that remains the default):
