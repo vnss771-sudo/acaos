@@ -22,11 +22,14 @@ npm run pack
 echo "[3/4] Preview immutable release metadata"
 npm run release:metadata
 
-echo "[4/4] Release guidance"
+echo "[4/5] Release guidance"
 if [[ -n "$TAG" ]]; then
   echo "Ready to publish: git tag $TAG && git push origin $TAG"
 else
   echo "Pass a semver tag to print the publish command, e.g. npm run release:preflight -- v1.2.3"
 fi
+
+echo "[5/5] Post-deploy reminder"
+echo "After deploy, run: npm run release:smoke -- --manifest dist-pack/release-manifest.json --api-url <api> --worker-url <worker>"
 
 echo "Release preflight completed."

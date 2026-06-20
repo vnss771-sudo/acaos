@@ -41,6 +41,9 @@ jobs:
       - name: Check monitoring assets
         run: npm run check:monitoring-assets
 
+      - name: Check rollout contract
+        run: npm run check:rollout-contract
+
   verify:
     name: Static and unit gates
     runs-on: ubuntu-latest

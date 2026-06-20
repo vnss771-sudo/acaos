@@ -96,8 +96,10 @@ See `.env.example` for the full list with comments. Required in production:
 - `npm run release:metadata` → JSON release metadata
 - `npm run release:metadata:env` → shell/env export format
 - `npm run smoke:deploy -- --api-url ... --worker-url ...` → readiness + release drift gate
+- `npm run release:smoke -- --manifest dist-pack/release-manifest.json` → local/CI rollout gate from the packaged manifest
 
 API and worker responses include `X-Acaos-Release-Id`; health/readiness payloads expose the canonical `releaseId`.
+GitHub staged rollout checks read `SMOKE_API_URL` / `SMOKE_WORKER_URL` from the selected environment and can enforce `expected_version`, `expected_commit`, or `expected_release_id` during promotion.
 
 ## CI/CD
 
