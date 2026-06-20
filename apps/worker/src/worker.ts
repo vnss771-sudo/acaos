@@ -211,18 +211,37 @@ const replyWorker = new Worker(
           await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
         }
 
-        const model = await prisma.scoringModel.upsert({
+        // Common path is a read: the scoring model almost always already exists,
+        // so look it up first and only create on the cold path. (Was an
+        // unconditional upsert — a write + row lock on every interested reply.)
+        // The @unique(workspaceId) means a concurrent first-reply race can lose
+        // the create with P2002; re-read in that case so we still get the id.
+        let model = await prisma.scoringModel.findUnique({
           where: { workspaceId: lead.workspaceId },
-          create: {
-            workspaceId: lead.workspaceId,
-            weights: DEFAULT_SCORING_WEIGHTS,
-            performanceMetrics: {
-              totalScored: 0, totalReplied: 0, replyRate: 0,
-              avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
-            }
-          },
-          update: {}
+          select: { id: true },
         })
+        if (!model) {
+          try {
+            model = await prisma.scoringModel.create({
+              data: {
+                workspaceId: lead.workspaceId,
+                weights: DEFAULT_SCORING_WEIGHTS,
+                performanceMetrics: {
+                  totalScored: 0, totalReplied: 0, replyRate: 0,
+                  avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
+                }
+              },
+              select: { id: true },
+            })
+          } catch (err) {
+            if ((err as { code?: string }).code !== 'P2002') throw err
+            model = await prisma.scoringModel.findUnique({
+              where: { workspaceId: lead.workspaceId },
+              select: { id: true },
+            })
+          }
+        }
+        if (!model) throw new Error('scoring model unavailable after create race')
 
         const replyIntentMap: Record<string, string> = {
           INTERESTED: 'INTERESTED',

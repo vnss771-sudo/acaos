@@ -4,12 +4,18 @@ import { createHash } from 'node:crypto'
 
 let _connection: IORedis | null = null
 
-function getConnection(): IORedis {
+// The single Redis connection shared by both producers (API/worker enqueue) and,
+// since the worker reuses this factory, the worker's BullMQ consumers too — so a
+// process holds ONE connection with ONE reconnect policy instead of two divergent
+// ones. maxRetriesPerRequest:null is required by BullMQ; retryStrategy keeps a
+// long-running worker reconnecting through Redis flaps (capped backoff).
+export function getRedisConnection(): IORedis {
   if (!_connection) {
     _connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
-      lazyConnect: true
+      lazyConnect: true,
+      retryStrategy: (times: number) => Math.min(times * 1000, 10_000),
     })
     _connection.on('error', (err: Error) => {
       console.warn('[redis] Connection error:', err.message)
@@ -17,6 +23,9 @@ function getConnection(): IORedis {
   }
   return _connection
 }
+
+// Back-compat internal alias.
+const getConnection = getRedisConnection
 
 const _queues = new Map<string, Queue>()
 
