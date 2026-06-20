@@ -354,12 +354,20 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   const [discoverMissionId, setDiscoverMissionId] = useState('')
 
   useEffect(() => {
+    if (!workspace || !canManage) {
+      setDiscoverSources([])
+      return
+    }
+    let cancelled = false
     api<{ sources: { name: string; label: string; isConfigured: boolean }[] }>('/api/prospects/sources')
-      .then(d => setDiscoverSources(
-        d.sources.filter(s => s.name !== 'csv' && s.isConfigured)
-      ))
+      .then(d => {
+        if (!cancelled) {
+          setDiscoverSources(d.sources.filter(s => s.name !== 'csv' && s.isConfigured))
+        }
+      })
       .catch(() => {})
-  }, [])
+    return () => { cancelled = true }
+  }, [api, canManage, workspace?.id])
 
   useEffect(() => {
     if (!workspace) return

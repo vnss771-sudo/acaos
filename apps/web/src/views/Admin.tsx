@@ -4,13 +4,13 @@ import { Spinner } from '../components/Spinner.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { PLAN_LABELS } from '../types.js'
-import type { AuditEvent } from '../types.js'
+import type { AuditEvent, BillingPlan } from '../types.js'
 
 type WorkspaceSummary = {
   id: string
   name: string
   slug: string
-  plan: string
+  plan: BillingPlan
   subscriptionStatus: string | null
   createdAt: string
   memberCount: number
@@ -34,7 +34,7 @@ type QueueStat = { name: string; active: number; waiting: number; completed: num
 
 type Props = { api: ApiHook; toast: ToastHook }
 
-function planColor(plan: string) {
+function planColor(plan: BillingPlan) {
   if (plan === 'growth') return colors.green
   if (plan === 'starter') return colors.blue
   return colors.textFaint

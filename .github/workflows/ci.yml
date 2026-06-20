@@ -51,9 +51,8 @@ jobs:
       - name: Frontend tests (Vitest)
         run: npm run test:web
 
-  # Mirror the production deploy exactly: a clean `npm run build` with NO prior
-  # `prisma generate`, so build-ordering bugs (e.g. backend-core compiling before
-  # the Prisma client exists) fail here instead of in Railway.
+  # Compile exactly the production artifacts after generating Prisma once up
+  # front. Build itself stays offline/deterministic and must not download engines.
   build:
     runs-on: ubuntu-latest
     steps:
@@ -64,6 +63,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Generate Prisma client
+        run: npm run prisma:generate
       - name: Production build (backend-core → api → worker → web)
         run: npm run build
       # Railway builds each service from its own directory, not the repo root, so

@@ -10,13 +10,14 @@ import { getPack } from '../lib/packs/index.js'
 import { enqueueScoreProspects } from '../lib/queues.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import type { AuthedRequest } from '../types/auth.js'
-import type { Assert, Extends, CreateMissionRequest, UpdateMissionRequest } from '@acaos/shared'
+import type { Assert, CreateMissionRequest, Extends, MissionStatus, UpdateMissionRequest } from '@acaos/shared'
+import type { Prisma } from '@prisma/client'
 
 export const missionsRouter = Router()
 missionsRouter.use(requireAuth)
 
 const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] as const
-const MISSION_STATUSES = ['DRAFT', 'DISCOVERING', 'REVIEWING', 'ACTIVE', 'PAUSED', 'COMPLETE'] as const
+const MISSION_STATUSES = ['DRAFT', 'DISCOVERING', 'REVIEWING', 'ACTIVE', 'PAUSED', 'COMPLETE'] as const satisfies readonly MissionStatus[]
 
 const createMissionSchema = z.object({
   workspaceId: workspaceIdField,
@@ -53,7 +54,7 @@ missionsRouter.get(
 
     // Per-mission discovery activity: how many runs sourced prospects for this
     // mission and how many prospects they imported in total.
-    const missionIds = missions.map(m => m.id)
+    const missionIds = missions.map((m: (typeof missions)[number]) => m.id)
     const discoveryByMission = new Map<string, { runs: number; discovered: number }>()
     if (missionIds.length > 0) {
       const grouped = await prisma.discoveryRun.groupBy({
@@ -69,7 +70,7 @@ missionsRouter.get(
 
     // Per-mission execution outcomes from the linked campaign's outbox — the
     // mission as a control plane shows what actually happened, not just leads.
-    const campaignIds = missions.map(m => m.campaignId).filter((id): id is string => Boolean(id))
+    const campaignIds = missions.map((m: (typeof missions)[number]) => m.campaignId).filter((id: string | null): id is string => Boolean(id))
     const statsByCampaign = new Map<string, { sent: number; replied: number; failed: number; bounced: number; pendingDrafts: number }>()
     const get = (cid: string) => {
       let s = statsByCampaign.get(cid)
@@ -100,7 +101,7 @@ missionsRouter.get(
     }
     const zero = { sent: 0, replied: 0, failed: 0, bounced: 0, pendingDrafts: 0 }
     const zeroDiscovery = { runs: 0, discovered: 0 }
-    const withStats = missions.map(m => ({
+    const withStats = missions.map((m: (typeof missions)[number]) => ({
       ...m,
       stats: m.campaignId ? (statsByCampaign.get(m.campaignId) ?? zero) : zero,
       discovery: discoveryByMission.get(m.id) ?? zeroDiscovery,
@@ -176,7 +177,7 @@ missionsRouter.get(
       prisma.scoringModel.findUnique({ where: { workspaceId: mission.workspaceId }, select: { updateCount: true, lastWeightUpdate: true } }),
       prisma.scoringOutcome.count({ where: { workspaceId: mission.workspaceId } }),
     ])
-    intents.sort((a, b) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
+    intents.sort((a: { prospect?: { opportunityScore?: number | null } | null }, b: { prospect?: { opportunityScore?: number | null } | null }) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
 
     // Operator-loop funnel: discovered → recommended → drafted → approved → sent.
     const byStatus = new Map<string, number>(
@@ -231,7 +232,7 @@ missionsRouter.post(
       .filter(Boolean)
       .join('\n') || null
 
-    const mission = await prisma.$transaction(async (tx) => {
+    const mission = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const campaign = await tx.campaign.create({
         data: { workspaceId, name, goalType, description },
       })

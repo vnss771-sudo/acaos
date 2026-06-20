@@ -10,6 +10,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import type { AuthedRequest } from '../types/auth.js'
+import type { Prisma } from '@prisma/client'
 
 export const ingestRouter = Router()
 
@@ -127,7 +128,7 @@ ingestRouter.post(
     // insert runs inside a transaction that first reserves plan capacity under a
     // per-workspace lock, so an ingest key cannot exceed the workspace's lead
     // cap (rows beyond the remaining quota are truncated and reported as skipped).
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const allowed = await reserveLeadCapacity(tx, workspace.id, rows.length)
       const out = []
       for (const data of rows.slice(0, allowed)) {

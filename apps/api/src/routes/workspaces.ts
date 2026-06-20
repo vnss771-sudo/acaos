@@ -48,7 +48,7 @@ workspaceRouter.get(
       },
       orderBy: { createdAt: 'asc' }
     })
-    const workspaces = rows.map((w) => {
+    const workspaces = rows.map((w: (typeof rows)[number]) => {
       const { memberships, ...rest } = w as typeof w & { memberships?: Array<{ role: string }> }
       return { ...rest, role: normalizeWorkspaceRole(memberships?.[0]?.role) }
     })

@@ -12,6 +12,10 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/backend-core/package.json ./packages/backend-core/
 COPY apps/api/package.json ./apps/api/
+# scripts/ must be present before `npm ci` because the root postinstall runs
+# scripts/postinstall.mjs (Prisma client generation). It no-ops here since the
+# schema isn't copied yet, then runs for real after the explicit generate below.
+COPY scripts ./scripts
 
 # Force dev deps even when the platform injects NODE_ENV=production into the
 # build env (Railway does): typescript, @types/*, and the prisma CLI live in
@@ -24,7 +28,6 @@ COPY packages/shared ./packages/shared
 # compiles it during its build, and resolves it from dist at runtime.
 COPY packages/backend-core ./packages/backend-core
 COPY apps/api ./apps/api
-COPY scripts ./scripts
 
 RUN npm run prisma:generate
 RUN npm run build -w @acaos/api
@@ -47,6 +50,9 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/backend-core/package.json ./packages/backend-core/
 COPY apps/api/package.json ./apps/api/
+# Needed before `npm ci` so the root postinstall script exists (it no-ops here:
+# no schema present, so it skips Prisma generation).
+COPY scripts ./scripts
 
 # Production dependencies only. The prisma CLI is a runtime dependency of the API
 # (start-with-migrations.mjs runs `prisma migrate deploy`), so it survives the
@@ -58,11 +64,11 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
-# Compiled output + the files the runtime actually reads.
+# Compiled output + the files the runtime actually reads. (scripts/ was already
+# copied before the prod install above.)
 COPY --from=builder /app/packages/backend-core/dist ./packages/backend-core/dist
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY packages/db ./packages/db
-COPY scripts ./scripts
 
 EXPOSE 4000
 

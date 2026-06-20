@@ -4,6 +4,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY apps/web/package.json ./apps/web/
+# scripts/ must exist before `npm ci` so the root postinstall script is present
+# (it no-ops here — the Prisma schema isn't part of the web build context).
+COPY scripts ./scripts
 
 # --include=dev so vite/typescript (devDependencies) are present for the build
 # even when NODE_ENV=production is injected into the build env (Railway).

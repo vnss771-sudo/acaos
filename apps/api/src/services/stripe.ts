@@ -2,6 +2,7 @@ import Stripe from 'stripe'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
 import { stripeBreaker } from '../lib/circuit.js'
+import type { BillingPlan } from '@acaos/shared'
 
 function getStripe() {
   if (!hasEnv(['STRIPE_SECRET_KEY'])) {
@@ -15,7 +16,7 @@ function getStripe() {
 }
 
 // Paid plans eligible for Stripe checkout (the `free` tier is never purchased).
-export type CheckoutPlan = 'starter' | 'growth'
+export type CheckoutPlan = Exclude<BillingPlan, 'free'>
 
 // Resolve the Stripe price id for a plan from server-side config only. The
 // client never supplies a price id directly (it would let a user point checkout

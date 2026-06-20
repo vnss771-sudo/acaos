@@ -74,5 +74,6 @@ export async function materializeOutreachIntent(args: {
   // Link the intent so the send path (Stage 5) can find + stamp it.
   await prisma.outreachIntent.update({ where: { id: intent.id }, data: { leadId, campaignId } })
 
+  if (!leadId) throw new Error('materializeOutreachIntent invariant: leadId was not resolved')
   return { leadId, campaignId, draftId: draft.id }
 }

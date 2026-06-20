@@ -10,8 +10,7 @@ import { isProduction } from '../lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
-import type { LeadStage } from '@prisma/client'
-import type { Assert, Extends, CreateCampaignRequest } from '@acaos/shared'
+import type { Assert, CreateCampaignRequest, Extends, LeadStage } from '@acaos/shared'
 
 export const campaignsRouter = Router()
 campaignsRouter.use(requireAuth)

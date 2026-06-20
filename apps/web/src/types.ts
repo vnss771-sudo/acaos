@@ -1,3 +1,31 @@
+import type {
+  BillingPlan,
+  BuyingStage,
+  DiscoveryRunStatus,
+  DraftStatus,
+  LeadStage,
+  MissionStatus,
+  OutcomeStage,
+  OutreachIntentStatus,
+  SendStatus,
+  SignalType,
+  WorkspaceRole,
+} from '@acaos/shared'
+
+export type {
+  BillingPlan,
+  BuyingStage,
+  DiscoveryRunStatus,
+  DraftStatus,
+  LeadStage,
+  MissionStatus,
+  OutcomeStage,
+  OutreachIntentStatus,
+  SendStatus,
+  SignalType,
+  WorkspaceRole,
+} from '@acaos/shared'
+
 export type User = {
   id: string
   email: string
@@ -10,13 +38,11 @@ export type User = {
   totpEnabled?: boolean
 }
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member'
-
 export type Workspace = {
   id: string
   name: string
   slug: string
-  plan: string
+  plan: BillingPlan
   subscriptionStatus?: string | null
   createdAt?: string
   ingestApiKey?: string | null
@@ -29,7 +55,7 @@ export type Workspace = {
 
 export type WorkspaceMember = {
   id: string
-  role: string
+  role: WorkspaceRole
   user: { id: string; email: string; name?: string | null }
 }
 
@@ -63,7 +89,7 @@ export type AuditEvent = {
 export type DiscoveryRun = {
   id: string
   source: string
-  status: string // RUNNING | SUCCEEDED | FAILED
+  status: DiscoveryRunStatus
   resultCount: number
   importedCount: number
   skippedCount: number
@@ -72,8 +98,6 @@ export type DiscoveryRun = {
   startedAt: string
   finishedAt?: string | null
 }
-
-export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
 
 export type Mission = {
   id: string
@@ -97,12 +121,12 @@ export type MissionProspect = {
   companyName: string
   industry?: string | null
   opportunityScore: number
-  buyingStage: string
+  buyingStage: BuyingStage
 }
 
 export type MissionIntent = {
   id: string
-  status: string
+  status: OutreachIntentStatus
   messageAngle?: string | null
   channel?: string | null
   evidenceSnapshot?: unknown
@@ -137,7 +161,7 @@ export type MissionSend = {
   id: string
   toEmail: string
   subject: string
-  status: string
+  status: SendStatus
   replyIntent?: string | null
   sentAt: string
   repliedAt?: string | null
@@ -176,7 +200,7 @@ export type Lead = {
   aiSummary?: string | null
   outreachAngle?: string | null
   score: number
-  stage: string
+  stage: LeadStage
   campaignId?: string | null
   lastContactedAt?: string | null
   createdAt?: string
@@ -187,7 +211,7 @@ export type OutreachDraft = {
   subject: string
   emailBody: string
   followup?: string | null
-  status: string  // DRAFTED | APPROVED | REJECTED | SENT | SKIPPED
+  status: DraftStatus
   reviewedAt?: string | null
   createdAt: string
 }
@@ -211,7 +235,7 @@ export type UsageData = {
   totals: { AI_RESEARCH: number; AI_OUTREACH: number; AI_REPLY: number }
   total: number
   limit: number   // -1 = unlimited
-  plan: string
+  plan: BillingPlan
   maxLeads: number  // -1 = unlimited
 }
 
@@ -237,8 +261,8 @@ export type StatsData = {
 
 export type View = 'dashboard' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'approvals' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
 
-export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
-export type Stage = typeof STAGES[number]
+export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const satisfies readonly LeadStage[]
+export type Stage = LeadStage
 
 export const STAGE_COLOR: Record<string, string> = {
   NEW: '#475569',
@@ -264,18 +288,11 @@ export function getScoreTier(score: number): 'HOT' | 'WARM' | 'COLD' {
 
 export const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] as const
 
-export const PLAN_LABELS: Record<string, string> = {
+export const PLAN_LABELS: Record<BillingPlan, string> = {
   free: 'Free',
   starter: 'Starter',
   growth: 'Growth'
 }
-
-export type SignalType =
-  | 'HIRING' | 'FUNDING' | 'EXPANSION' | 'TECH_ADOPTION' | 'LEADERSHIP_CHANGE'
-  | 'NEWS_MENTION' | 'PROCUREMENT' | 'BUSINESS_REGISTRATION' | 'WEBSITE_CHANGE'
-
-export type BuyingStage = 'RESEARCHING' | 'EVALUATING' | 'COMPARING' | 'PURCHASING' | 'INACTIVE'
-export type OutcomeStage = 'DISCOVERED' | 'VIEWED' | 'CONTACTED' | 'MEETING' | 'PROPOSAL' | 'WON' | 'LOST'
 
 export type Signal = {
   id: string

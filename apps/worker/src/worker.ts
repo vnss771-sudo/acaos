@@ -26,7 +26,6 @@ import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
-import type { LeadStage } from '@prisma/client'
 import {
   generateRuleBasedRecommendation,
   toRawSignal,
@@ -40,6 +39,7 @@ import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
+import type { LeadStage } from '@acaos/shared'
 
 function log(queue: string, msg: string) {
   console.log(`[${queue}] ${new Date().toISOString()} ${msg}`)

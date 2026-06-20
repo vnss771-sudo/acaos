@@ -10,7 +10,8 @@ import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
 import type { AuthedRequest } from '../types/auth.js'
-import type { LeadStage } from '@prisma/client'
+import type { Prisma } from '@prisma/client'
+import type { LeadStage } from '@acaos/shared'
 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
@@ -21,7 +22,11 @@ async function assertCampaignInWorkspace(campaignId: string | null | undefined, 
   if (!campaign) throw new ApiError(400, 'campaignId not found in this workspace')
 }
 
-const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD']
+const VALID_STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const satisfies readonly LeadStage[]
+
+function isLeadStage(value: string): value is LeadStage {
+  return VALID_STAGES.includes(value as LeadStage)
+}
 const MAX_SHORT = 200
 const MAX_NOTES = 2_000
 const MAX_AI = 5_000
@@ -110,7 +115,7 @@ leadsRouter.get(
     const where = {
       workspaceId,
       ...(campaignId ? { campaignId } : {}),
-      ...(stage && VALID_STAGES.includes(stage) ? { stage: stage as LeadStage } : {}),
+      ...(stage && isLeadStage(stage) ? { stage } : {}),
       ...(search ? {
         OR: [
           { businessName: { contains: search, mode: 'insensitive' as const } },
@@ -205,7 +210,7 @@ leadsRouter.post(
     // Reserve capacity and insert atomically under a per-workspace lock so the
     // batch as a whole is checked against the plan cap (not just "already full"),
     // and concurrent imports cannot race past the limit.
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const allowed = await reserveLeadCapacity(tx, workspaceId, rows.length)
       if (allowed < rows.length) {
         throw new ApiError(
@@ -323,7 +328,7 @@ leadsRouter.patch(
       updates.businessName = body.businessName.trim()
     }
     if (typeof body.stage === 'string') {
-      if (!VALID_STAGES.includes(body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
+      if (!isLeadStage(body.stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
       updates.stage = body.stage
     }
     if (typeof body.campaignId === 'string') {
@@ -387,7 +392,7 @@ leadsRouter.post(
   asyncHandler(async (req, res) => {
     const user = (req as AuthedRequest).user
     const { workspaceId, ids, stage } = parseBody(bulkStageSchema, req)
-    if (!VALID_STAGES.includes(stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
+    if (!isLeadStage(stage)) throw new ApiError(400, `stage must be one of: ${VALID_STAGES.join(', ')}`)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 

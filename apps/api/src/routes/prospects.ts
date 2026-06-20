@@ -267,7 +267,7 @@ prospectsRouter.get('/intents', asyncHandler(async (req, res) => {
     },
   })
   // Surface the strongest opportunities first.
-  intents.sort((a, b) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
+  intents.sort((a: { prospect?: { opportunityScore?: number | null } | null }, b: { prospect?: { opportunityScore?: number | null } | null }) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
   res.json({ intents })
 }))
 

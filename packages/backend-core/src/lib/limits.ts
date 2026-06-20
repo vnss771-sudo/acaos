@@ -1,5 +1,6 @@
 // Plan enforcement: AI call limits and lead count caps per billing tier
 import type { PrismaClient, Prisma } from '@prisma/client'
+import type { BillingPlan } from '@acaos/shared'
 import { prisma } from './prisma.js'
 import { ApiError } from './errors.js'
 import { estimateDiscoveryCost, type DiscoveryCostBreakdown } from './discoveryCost.js'
@@ -17,7 +18,7 @@ const PLAN_LIMITS = {
   growth: { aiCallsPerMonth: Infinity, maxLeads: Infinity, discoveriesPerMonth: Infinity }
 } as const
 
-type Plan = keyof typeof PLAN_LIMITS
+type Plan = BillingPlan
 
 function currentMonth(): string {
   // Use UTC so the monthly quota window rolls over at the same instant for every
@@ -51,7 +52,7 @@ export async function checkAndIncrementAiUsage(workspaceId: string, action: Usag
   // advisory lock, so concurrent requests can't both pass the check and exceed
   // the limit (the previous plain read-then-upsert had a check-then-increment
   // race). The lock is released automatically when the transaction ends.
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`
 
     if (isFinite(aiCallsPerMonth)) {
@@ -95,7 +96,7 @@ export async function checkAndIncrementDiscoveryUsage(workspaceId: string): Prom
   const { discoveriesPerMonth } = PLAN_LIMITS[plan]
   const month = currentMonth()
 
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`disc:${workspaceId}`}))`
 
     if (isFinite(discoveriesPerMonth)) {

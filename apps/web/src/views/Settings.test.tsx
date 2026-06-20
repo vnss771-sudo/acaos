@@ -35,11 +35,12 @@ function renderSettings(api: ReturnType<typeof vi.fn>, over: Partial<React.Compo
 afterEach(() => vi.restoreAllMocks())
 
 describe('Settings', () => {
-  test('shows the (disabled) email and workspace info', () => {
+  test('shows the (disabled) email and workspace info', async () => {
     renderSettings(makeApi())
     expect(screen.getByDisplayValue('sarah@northwind.test')).toBeDisabled()
-    expect(screen.getByText('42')).toBeInTheDocument()  // total leads
-    expect(screen.getByText('Growth')).toBeInTheDocument() // capitalised plan
+    expect(screen.getByText('42')).toBeInTheDocument()
+    expect(screen.getByText('Growth')).toBeInTheDocument()
+    expect(await screen.findByText('No members yet.')).toBeInTheDocument()
   })
 
   test('saving the profile PATCHes and calls onUserUpdate', async () => {

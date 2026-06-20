@@ -27,12 +27,12 @@ function makeApi(overrides?: (path: string) => unknown) {
 }
 
 describe('ProspectsView', () => {
-  test('shows an empty state when no workspace is selected', () => {
+  test('shows an empty state when no workspace is selected', async () => {
     const api = makeApi()
     render(<ProspectsView api={api as never} workspace={null} toast={toast as never} canManage />)
     expect(screen.getByText('No workspace selected')).toBeInTheDocument()
-    // sources endpoint is fetched regardless of workspace; prospects endpoint is not
     expect(api).not.toHaveBeenCalledWith(expect.stringContaining('/api/prospects?workspaceId'))
+    await waitFor(() => expect(api).not.toHaveBeenCalledWith('/api/prospects/sources'))
   })
 
   test('fetches and renders prospects with their opportunity score', async () => {

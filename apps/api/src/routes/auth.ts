@@ -257,7 +257,7 @@ authRouter.get(
         orderBy: { createdAt: 'asc' }
       })
     ])
-    const withRole = workspaces.map((w) => {
+    const withRole = workspaces.map((w: (typeof workspaces)[number]) => {
       const { memberships, ...rest } = w as typeof w & { memberships?: Array<{ role: string }> }
       return { ...rest, role: normalizeWorkspaceRole(memberships?.[0]?.role) }
     })
