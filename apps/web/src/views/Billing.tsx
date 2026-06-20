@@ -9,6 +9,18 @@ import type { ToastHook } from '../hooks/useToast.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
 
+// Defense in depth: the checkout/portal URL is produced by our own backend, but
+// we still only ever redirect to Stripe over HTTPS, so a buggy or tampered
+// response can never become an open redirect to an attacker-controlled host.
+function toStripeUrl(url: string): string {
+  const u = new URL(url)
+  const host = u.hostname
+  if (u.protocol !== 'https:' || !(host === 'stripe.com' || host.endsWith('.stripe.com'))) {
+    throw new Error('Unexpected checkout URL')
+  }
+  return u.toString()
+}
+
 type UsageStats = {
   month: string
   totals: Record<string, number>
@@ -90,7 +102,7 @@ export function Billing({ api, workspace, toast }: Props) {
       // from the plan so a client can't point checkout at an arbitrary price.
       const plan = priceKey === 'growth' ? 'growth' : 'starter'
       const d = await route('POST /api/billing/checkout', { body: { workspaceId: workspace.id, plan } })
-      window.location.href = d.url
+      window.location.href = toStripeUrl(d.url)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Checkout failed') }
     finally { setCheckoutLoading('') }
   }
@@ -100,7 +112,7 @@ export function Billing({ api, workspace, toast }: Props) {
     setPortalLoading(true)
     try {
       const d = await route('POST /api/billing/portal', { body: { workspaceId: workspace.id } })
-      window.location.href = d.url
+      window.location.href = toStripeUrl(d.url)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not open billing portal') }
     finally { setPortalLoading(false) }
   }

@@ -70,6 +70,9 @@ export function validateConfig(): void {
         console.warn(`[config] ${key} not set — ${feature} will be unavailable`)
       }
     }
+    if (!process.env.METRICS_TOKEN?.trim()) {
+      console.warn('[config] METRICS_TOKEN not set — /metrics is disabled in production (set it to enable authenticated scraping)')
+    }
     if (getAllowedOrigins().length === 0) {
       // Warn but don't crash — CORS middleware will reject cross-origin requests
       // regardless. This allows the API to start before the web frontend URL is known.

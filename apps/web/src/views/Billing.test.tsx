@@ -25,7 +25,7 @@ afterEach(() => {
 function apiFor(status: { plan: string; status: string; hasSubscription: boolean }, extra: Record<string, unknown> = {}) {
   return vi.fn((path: string, _init?: unknown) => {
     if (path.startsWith('/api/billing/status')) return Promise.resolve(status)
-    if (path === '/api/billing/checkout') return Promise.resolve({ url: 'https://checkout.stripe/sess_1' })
+    if (path === '/api/billing/checkout') return Promise.resolve({ url: 'https://checkout.stripe.com/c/pay/sess_1' })
     return Promise.resolve(extra)
   })
 }
@@ -51,7 +51,7 @@ describe('Billing', () => {
     const checkoutCall = api.mock.calls.find(c => c[0] === '/api/billing/checkout')!
     const body = JSON.parse((checkoutCall[1] as { body: string }).body)
     expect(body.workspaceId).toBe('ws1')
-    expect(window.location.href).toBe('https://checkout.stripe/sess_1')
+    expect(window.location.href).toBe('https://checkout.stripe.com/c/pay/sess_1')
   })
 
   test('an active subscription shows Manage Subscription and hides upgrade cards', async () => {
