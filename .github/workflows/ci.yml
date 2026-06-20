@@ -83,6 +83,12 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
+      # Typecheck is only a real gate against the genuine generated Prisma types.
+      # If generate degraded to the offline `any`-typed stub (e.g. no network for
+      # the engine download), fail loudly instead of green-washing typecheck.
+      - name: Assert real Prisma client (not the offline stub)
+        run: npm run check:prisma-real
+
       - name: Typecheck (shared + backend-core + api + web + worker)
         run: npm run typecheck
 

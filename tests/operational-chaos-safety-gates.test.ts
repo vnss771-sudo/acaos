@@ -36,7 +36,7 @@ test('operational chaos: OutreachSent must uniquely identify campaign+lead sends
 })
 
 test('operational chaos: send flow should reserve an outbox row before SMTP dispatch', () => {
-  const sendMailIdx = processors.indexOf('await sendMail(')
+  const sendMailIdx = processors.indexOf('await sendMailFn(')
   const createIdx = processors.indexOf('prisma.outreachSent.create')
   assert.notEqual(sendMailIdx, -1, 'Could not locate sendMail call')
   assert.notEqual(createIdx, -1, 'Could not locate outreachSent.create')
@@ -56,7 +56,7 @@ test('operational chaos: send-campaign queue should use deterministic jobId/dedu
 
 test('operational chaos: suppression check must happen before sendMail', () => {
   const suppressionIdx = processors.indexOf('bulkCheckSuppression')
-  const sendMailIdx = processors.indexOf('await sendMail(')
+  const sendMailIdx = processors.indexOf('await sendMailFn(')
   assert.ok(suppressionIdx !== -1 && sendMailIdx !== -1, 'Could not locate suppression or sendMail')
   assert.ok(suppressionIdx < sendMailIdx, 'Suppression check must run before SMTP dispatch')
 })
@@ -128,7 +128,7 @@ test('operational chaos: daily send cap counts delivered SENT rows only', () => 
 test('operational chaos: worker re-checks mission stop before SMTP dispatch', () => {
   const loopIdx = processors.indexOf('for (let i = 0; i < leads.length; i++)')
   const blockIdx = processors.indexOf('await getMissionSendBlockReason(campaignId)', loopIdx)
-  const sendMailIdx = processors.indexOf('await sendMail(', loopIdx)
+  const sendMailIdx = processors.indexOf('await sendMailFn(', loopIdx)
   assert.ok(loopIdx !== -1 && blockIdx !== -1 && sendMailIdx !== -1, 'worker mission stop check missing')
   assert.ok(blockIdx < sendMailIdx, 'worker must check mission status before SMTP dispatch')
 })
