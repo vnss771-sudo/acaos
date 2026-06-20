@@ -35,4 +35,9 @@ jobs:
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           category: /language:javascript-typescript
-          upload: false
+          # Upload SARIF to code scanning only once the operator has enabled it on
+          # the repo (set repo variable ENABLE_CODE_SCANNING=true). Until then the
+          # upload would 403 and redden CI; analysis still runs every PR regardless.
+          # This keeps the wiring honest with docs/GITHUB_ADMIN.md instead of
+          # hard-disabling the upload in code.
+          upload: ${{ vars.ENABLE_CODE_SCANNING == 'true' }}

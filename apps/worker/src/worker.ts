@@ -539,6 +539,15 @@ async function shutdown(signal: string) {
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'begin' })
   healthServer.close()
 
+  // Watchdog: if a wedged BullMQ/Prisma close blocks the await below, force-exit
+  // so the platform can restart us instead of the process hanging through SIGTERM
+  // indefinitely (mirrors the API's shutdown timeout).
+  const forceExit = setTimeout(() => {
+    logLifecycleEvent(SERVICE, 'crash', { signal, reason: 'forced-exit-after-timeout' })
+    process.exit(1)
+  }, 10_000)
+  forceExit.unref()
+
   await Promise.all([
     researchWorker.close(),
     outreachWorker.close(),
@@ -551,6 +560,7 @@ async function shutdown(signal: string) {
     retentionWorker.close(),
   ])
   await prisma.$disconnect()
+  clearTimeout(forceExit)
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })
   process.exit(0)
 }

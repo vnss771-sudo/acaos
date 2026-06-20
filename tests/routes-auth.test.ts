@@ -134,7 +134,7 @@ function refreshCookieFrom(headers: Headers): string | null {
 // --- signup ---
 
 test('signup creates user + workspace + owner membership; refresh token only in an HttpOnly cookie', async () => {
-  const res = await post('/api/auth/signup', { email: 'New@Acme.test ', password: 'sup3rsecret' })
+  const res = await post('/api/auth/signup', { email: 'New@Acme.test ', password: 'sup3rsecret1' })
   assert.equal(res.status, 201)
   assert.ok(res.body.token)
   // The refresh token must NOT be exposed to JS via the body...
@@ -156,7 +156,7 @@ test('signup rejects a weak password', async () => {
 
 test('signup rejects a duplicate email', async () => {
   users.push({ id: 'u-existing', email: 'dupe@acme.test', passwordHash: 'x' })
-  const res = await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret' })
+  const res = await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret1' })
   assert.equal(res.status, 409)
 })
 

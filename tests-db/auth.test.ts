@@ -55,7 +55,7 @@ function refreshCookieFrom(headers: Headers): string | null {
 }
 
 test('signup persists user, workspace, owner membership, and a refresh token', async () => {
-  const res = await post('/api/auth/signup', { email: 'Founder@Acme.test', password: 'sup3rsecret', name: 'Fred' })
+  const res = await post('/api/auth/signup', { email: 'Founder@Acme.test', password: 'sup3rsecret1', name: 'Fred' })
   assert.equal(res.status, 201)
 
   const user = await prisma.user.findUnique({
@@ -76,23 +76,23 @@ test('signup persists user, workspace, owner membership, and a refresh token', a
 })
 
 test('signup is rejected for a duplicate email (unique constraint upheld)', async () => {
-  await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret' })
-  const res = await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret' })
+  await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret1' })
+  const res = await post('/api/auth/signup', { email: 'dupe@acme.test', password: 'sup3rsecret1' })
   assert.equal(res.status, 409)
   assert.equal(await prisma.user.count(), 1)
 })
 
 test('two signups produce distinct, unique workspace slugs', async () => {
-  await post('/api/auth/signup', { email: 'a@acme.test', password: 'sup3rsecret', name: 'Acme' })
-  await post('/api/auth/signup', { email: 'b@acme.test', password: 'sup3rsecret', name: 'Acme' })
+  await post('/api/auth/signup', { email: 'a@acme.test', password: 'sup3rsecret1', name: 'Acme' })
+  await post('/api/auth/signup', { email: 'b@acme.test', password: 'sup3rsecret1', name: 'Acme' })
   const slugs = await prisma.workspace.findMany({ select: { slug: true } })
   assert.equal(slugs.length, 2)
   assert.notEqual(slugs[0].slug, slugs[1].slug)
 })
 
 test('login then refresh rotates the cookie: old revoked, new usable', async () => {
-  await post('/api/auth/signup', { email: 'rot@acme.test', password: 'sup3rsecret' })
-  const login = await post('/api/auth/login', { email: 'rot@acme.test', password: 'sup3rsecret' })
+  await post('/api/auth/signup', { email: 'rot@acme.test', password: 'sup3rsecret1' })
+  const login = await post('/api/auth/login', { email: 'rot@acme.test', password: 'sup3rsecret1' })
   assert.equal(login.status, 200)
 
   const first = refreshCookieFrom(login.headers)

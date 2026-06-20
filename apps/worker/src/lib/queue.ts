@@ -11,13 +11,6 @@ export const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:
 connection.on('error', (err: Error) => console.error('[redis] Error:', err.message))
 connection.on('connect', () => console.log('[redis] Connected'))
 
-export const defaultJobOptions = {
-  attempts: 3,
-  backoff: { type: 'exponential' as const, delay: 5_000 },
-  removeOnComplete: { count: 100, age: 24 * 60 * 60 },
-  removeOnFail: { count: 200, age: 7 * 24 * 60 * 60 }
-}
-
 // Named queue registry — all 7 queues the worker listens on
 export const QUEUE_NAMES = [
   'research-lead',

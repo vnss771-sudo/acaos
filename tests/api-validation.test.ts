@@ -26,9 +26,10 @@ test('isValidEmail accepts simple valid email and rejects malformed value', () =
 
 // ── Password ──────────────────────────────────────────────────────────────────
 test('validatePassword enforces minimum length', () => {
-  assert.equal(validatePassword('short'), 'Password must be at least 8 characters')
-  assert.equal(validatePassword('long-enough'), '')
-  assert.equal(validatePassword('exactly8'), '')
+  assert.equal(validatePassword('short'), 'Password must be at least 12 characters')
+  assert.equal(validatePassword('elevenchars'), 'Password must be at least 12 characters') // 11 chars
+  assert.equal(validatePassword('exactly12chr'), '') // 12 chars
+  assert.equal(validatePassword('a-longer-passphrase'), '')
 })
 
 // ── String helpers ────────────────────────────────────────────────────────────

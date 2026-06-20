@@ -90,9 +90,9 @@ test('chaos: normalizeEmail handles extreme whitespace', () => {
 // ---------------------------------------------------------------------------
 // Password — adversarial inputs
 // ---------------------------------------------------------------------------
-test('chaos: password — exactly 7 chars fails, 8 passes', () => {
-  assert.notEqual(validatePassword('1234567'), '')
-  assert.equal(validatePassword('12345678'), '')
+test('chaos: password — 11 chars fails, 12 passes', () => {
+  assert.notEqual(validatePassword('12345678901'), '')
+  assert.equal(validatePassword('123456789012'), '')
 })
 
 test('chaos: password — null byte and unicode edge cases do not throw', () => {
@@ -100,9 +100,9 @@ test('chaos: password — null byte and unicode edge cases do not throw', () => 
   for (const p of tricky) assert.doesNotThrow(() => validatePassword(p), `threw on: ${JSON.stringify(p)}`)
 })
 
-test('chaos: password — whitespace-only 8 chars passes length check (trimming is caller responsibility)', () => {
+test('chaos: password — whitespace-only at min length passes length check (trimming is caller responsibility)', () => {
   // validatePassword only checks length — callers must trim before calling
-  assert.equal(validatePassword('        '), '')
+  assert.equal(validatePassword(' '.repeat(12)), '')
 })
 
 test('chaos: password — very long password does not throw', () => {
