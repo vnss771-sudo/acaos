@@ -183,3 +183,7 @@ conformance assertions, so validation and contract can't silently drift.
 pluggable error-capture seam with an optional Sentry transport, structured JSON
 logs with request-id correlation, and a dependency-free load-test harness
 (`npm run loadtest`). Full operator guide: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
+## GitHub automation
+
+GitHub automation is now split into four layers: `CI`, `CodeQL`, `Dependabot`, and `Release`. The repo-side contract lives in [`docs/CI_CD.md`](docs/CI_CD.md), and the last non-git repository settings are documented in [`docs/GITHUB_ADMIN.md`](docs/GITHUB_ADMIN.md).

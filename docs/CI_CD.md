@@ -1,9 +1,14 @@
 # CI/CD
 
-This repo now uses two GitHub Actions workflows:
+This repo uses four GitHub-native automation layers:
 
-- `CI` — every push to `main`/`master`, every pull request, and manual runs.
+- `CI` — push/PR/manual verification with a stable `required` status check.
+- `CodeQL` — scheduled and PR-time static security analysis for JavaScript/TypeScript.
+- `Dependabot` — grouped npm, Docker, and GitHub Actions updates.
 - `Release` — semver tags (`v*.*.*`) and manual packaging runs.
+
+The last GitHub UI actions that cannot be stored in git are documented in
+[`GITHUB_ADMIN.md`](./GITHUB_ADMIN.md).
 
 ## Required branch protection check
 
@@ -16,6 +21,8 @@ That job is a stable aggregator for the full CI graph. Individual matrix jobs ca
 ## CI design
 
 `CI` enforces:
+- workflow action pinning (full-length commit SHAs) + monitoring/runbook/dashboard
+  asset consistency (the `repo-hardening` job)
 - dependency install via `npm ci`
 - npm cache via `actions/setup-node`
 - Prisma generation before any TypeScript or build step
@@ -33,6 +40,19 @@ That job is a stable aggregator for the full CI graph. Individual matrix jobs ca
 - Playwright browser smoke tests with cached Playwright browser binaries
 - a stable `required` aggregator job that fails if any of the above did not
   succeed — this is the single check to require in branch protection
+
+## Security automation
+
+### Code scanning
+`CodeQL` runs on pushes, pull requests, a weekly schedule, and manual dispatch.
+It analyzes the JavaScript/TypeScript source tree with GitHub's
+`security-and-quality` query suite. (Requires GitHub code scanning to be enabled
+for the repo — see [`GITHUB_ADMIN.md`](./GITHUB_ADMIN.md).)
+
+### Dependency and workflow updates
+`Dependabot` is configured for npm workspaces at the repo root, GitHub Actions
+workflow dependencies, and Docker base-image references. Updates are grouped to
+reduce PR noise while still letting security fixes land quickly.
 
 ## Release flow
 

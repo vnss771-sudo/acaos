@@ -1,0 +1,54 @@
+# GitHub Admin Checklist
+
+These settings finish the last repo-governance gap that cannot be flipped from git
+alone. The workflows and docs in this repo assume the repository is configured as
+follows.
+
+## Branch protection / ruleset
+
+Apply this to the default branch (`main`, or `master` if that remains the default):
+
+- Require a pull request before merging.
+- Require approvals before merging.
+- Dismiss stale approvals when new commits are pushed.
+- Require status checks before merging.
+- Mark **`required`** as the single mandatory status check.
+- Require branches to be up to date before merging.
+- Block force pushes.
+- Block branch deletion.
+- Include administrators.
+
+Why `required`? The CI matrix intentionally fans out into variable job names. The
+stable `required` aggregator gives branch protection one durable check name.
+
+## Environments
+
+Create these environments:
+
+### `staging`
+- No production secrets.
+- Optional reviewer gate.
+- Used by manual packaging runs in `Release`.
+
+### `production`
+- Add required reviewers from the release-owning group.
+- Restrict secrets to the production deploy/release path only.
+- Used by semver tag releases in `Release`.
+
+## Security features
+
+Enable these repository features in GitHub settings:
+
+- Dependabot alerts
+- Dependabot security updates
+- Dependency graph
+- Code scanning
+- Secret scanning, if your plan supports it
+
+## First run after enabling
+
+1. Merge this branch.
+2. Enable the settings above in the GitHub UI.
+3. Trigger `CI`, `CodeQL`, and a manual `Release` dry run.
+4. Protect the default branch with the `required` check.
+5. Verify Dependabot opens grouped PRs for npm, Docker, and GitHub Actions.
