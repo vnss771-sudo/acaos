@@ -14,12 +14,16 @@ const OWNER = 'owner1'
 const MEMBER = 'member1'
 const WS = 'ws1'
 
-// owner/admin gate for billing
+// Membership lookup for the billing owner/admin gate. The role gate now resolves
+// the caller's role via getWorkspaceRole (a plain {userId, workspaceId} lookup
+// reading `role`), so the fake returns the role per user rather than keying off a
+// role-filtered query shape.
 function billingMember(a: any) {
-  const { userId, workspaceId, role } = a?.where ?? {}
+  const { userId, workspaceId } = a?.where ?? {}
   if (workspaceId !== WS) return null
-  if (role?.in) return userId === OWNER ? { id: 'm' } : null // owner/admin-only query
-  return userId === OWNER ? { id: 'm' } : { id: 'm' }
+  if (userId === OWNER) return { id: 'm', role: 'owner' }
+  if (userId === MEMBER) return { id: 'm', role: 'member' }
+  return null
 }
 
 function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: null, plan: 'free', stripeSubscriptionId: null }, lastReauthAt: Date | null = new Date()) {

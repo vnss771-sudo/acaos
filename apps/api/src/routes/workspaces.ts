@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { ensureWorkspaceSlug, userCanManageWorkspaceBilling, normalizeWorkspaceRole } from '../lib/workspaces.js'
+import { ensureWorkspaceSlug, userCanManageWorkspaceBilling, normalizeWorkspaceRole, invalidateWorkspaceMembership } from '../lib/workspaces.js'
 import { normalizeOptionalString } from '../lib/validation.js'
 import { validate, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
@@ -230,6 +230,9 @@ workspaceRouter.post(
     if (existing) throw new ApiError(409, 'User is already a member of this workspace')
 
     await prisma.membership.create({ data: { userId: invitee.id, workspaceId, role } })
+    // The invitee may have a cached `null` role for this workspace from a prior
+    // denied check — drop it so they're admitted immediately.
+    invalidateWorkspaceMembership(invitee.id, workspaceId)
 
     res.status(201).json({ member: { email: invitee.email, name: invitee.name, role } })
   })
@@ -363,6 +366,8 @@ workspaceRouter.delete(
     if (!targetMembership) throw new ApiError(404, 'Member not found')
 
     await prisma.membership.delete({ where: { id: targetMembership.id } })
+    // Drop the removed member's cached role so they're denied immediately.
+    invalidateWorkspaceMembership(targetUserId, workspaceId)
     res.json({ ok: true })
   })
 )
