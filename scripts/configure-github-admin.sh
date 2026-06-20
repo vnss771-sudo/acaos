@@ -16,11 +16,6 @@ gh api \
   -F required_pull_request_reviews[required_approving_review_count]=1 \
   -F restrictions=
 
-echo "Setting repository variable ENABLE_CODE_SCANNING=true..."
-gh variable set ENABLE_CODE_SCANNING \
-  --repo "${REPO}" \
-  --body "true"
-
 echo "Creating environments..."
 gh api --method PUT "/repos/${REPO}/environments/staging" >/dev/null
 gh api --method PUT "/repos/${REPO}/environments/production" >/dev/null

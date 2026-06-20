@@ -12,9 +12,9 @@ To automate most one-time setup from a terminal with `gh` auth:
 bash scripts/configure-github-admin.sh
 ```
 
-The script configures branch protection, enables `ENABLE_CODE_SCANNING`, creates
-`staging`/`production` environments, and prompts for smoke URLs + optional
-`METRICS_TOKEN` per environment.
+The script configures branch protection, creates `staging`/`production`
+environments, and prompts for smoke URLs + optional `METRICS_TOKEN` per
+environment.
 
 ## Branch protection / ruleset
 
@@ -58,11 +58,8 @@ Enable these repository features in GitHub settings:
 - Dependabot alerts
 - Dependabot security updates
 - Dependency graph
-- Code scanning — after enabling, set the repository variable
-  `ENABLE_CODE_SCANNING=true` so the CodeQL workflow uploads its SARIF results
-  to the Security tab. Until that variable is set the analysis still runs on
-  every PR but does not upload (upload would 403 and redden CI before code
-  scanning is on).
+- Code scanning — once enabled in GitHub settings, the CodeQL workflow is
+  already configured to upload its SARIF results to the Security tab.
 - Secret scanning, if your plan supports it
 
 ## First run after enabling
