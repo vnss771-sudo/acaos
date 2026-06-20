@@ -46,6 +46,8 @@ export function parseParams<T extends z.ZodTypeAny>(schema: T, req: { params: un
 
 // Common field schemas reused across routes
 export const emailField = z.string().trim().email('Valid email required').max(254)
-export const passwordField = z.string().min(8, 'Password must be at least 8 characters').max(128)
+// Mirrors the 12-char floor enforced by validatePassword() so the schema-layer
+// rejection and the explicit policy check agree (no "8 here, 12 there" drift).
+export const passwordField = z.string().min(12, 'Password must be at least 12 characters').max(128)
 export const workspaceIdField = z.string().min(1, 'workspaceId required')
 export const nonEmptyString = z.string().trim().min(1)

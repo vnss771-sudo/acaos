@@ -196,8 +196,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       toast.error('Passwords do not match')
       return
     }
-    if (passwordForm.newPassword.length < 8) {
-      toast.error('Password must be at least 8 characters')
+    if (passwordForm.newPassword.length < 12) {
+      toast.error('Password must be at least 12 characters')
       return
     }
     setSavingPassword(true)
