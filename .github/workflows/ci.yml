@@ -77,6 +77,29 @@ jobs:
         working-directory: apps/worker
         run: npm run build
 
+  # Prove the build-determinism contract introduced by the A+ pass: with the
+  # postinstall Prisma generate SUPPRESSED (as in early Docker layers / prod-only
+  # installs), the documented explicit path — prisma:generate, then an offline
+  # `npm run build` that never downloads engines — must still produce the
+  # artifacts. (The guard's fail-fast-when-client-missing behavior is unit-tested
+  # in tests/lib-build-scripts.test.ts.)
+  build-deterministic:
+    runs-on: ubuntu-latest
+    env:
+      ACAOS_SKIP_PRISMA_POSTINSTALL: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies (postinstall Prisma generate suppressed)
+        run: npm ci
+      - name: Generate Prisma client explicitly
+        run: npm run prisma:generate
+      - name: Deterministic build (offline; no implicit generate)
+        run: npm run build
+
   # Build the real production Docker images (what Railway deploys). Each
   # Dockerfile COPYs only a subset of the monorepo, so a missing workspace COPY
   # (e.g. packages/backend-core) fails here instead of in production.
