@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { ensureWorkspaceSlug, normalizeWorkspaceRole } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { normalizeOptionalString } from '../../lib/validation.js'
+import { recordAudit } from '../../lib/audit.js'
 import { validate, nonEmptyString } from '../../lib/validate.js'
 import { z } from 'zod'
 import { createBillingPortalSession } from '../../services/stripe.js'
@@ -134,6 +135,13 @@ export function registerCoreRoutes(workspaceRouter: Router) {
         where: { id: workspaceId },
         data: updates,
         select: { id: true, name: true, slug: true, plan: true, senderBusinessName: true, senderPostalAddress: true }
+      })
+
+      // Audit the settings change — log only which fields changed, never the values
+      // (sender business name / postal address are tenant PII).
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'workspace.updated',
+        entityType: 'workspace', entityId: workspaceId, metadata: { fields: Object.keys(updates) },
       })
 
       res.json({ workspace })
