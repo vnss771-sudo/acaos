@@ -11,7 +11,7 @@ import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Prisma } from '@prisma/client'
-import type { LeadStage } from '@acaos/shared'
+import type { Assert, CreateLeadRequest, Extends, ImportLeadsRequest, LeadStage } from '@acaos/shared'
 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
@@ -57,6 +57,10 @@ const importLeadsSchema = z.object({
   workspaceId: workspaceIdField,
   leads: z.array(z.any()).min(1, 'leads array required').max(500, 'Maximum 500 leads per import'),
 })
+
+// Compile-time guards: the validated requests must satisfy the shared contracts.
+type _CreateLeadConforms = Assert<Extends<z.infer<typeof createLeadSchema>, CreateLeadRequest>>
+type _ImportLeadsConforms = Assert<Extends<z.infer<typeof importLeadsSchema>, ImportLeadsRequest>>
 const idList = z.array(z.string()).min(1, 'ids array required')
 const bulkDeleteSchema = z.object({ workspaceId: workspaceIdField, ids: idList.max(200, 'Maximum 200 leads per bulk delete') })
 const bulkStageSchema = z.object({ workspaceId: workspaceIdField, ids: idList.max(200, 'Maximum 200 leads per bulk update'), stage: z.string().trim().min(1) })
