@@ -30,7 +30,7 @@ import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis } from './processors.js'
 import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
@@ -42,7 +42,6 @@ import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
-import type { LeadStage } from '@acaos/shared'
 
 const SERVICE = 'acaos-worker'
 const metadata = getRuntimeMetadata(SERVICE)
@@ -189,116 +188,10 @@ const replyWorker = new Worker(
     // fail closed (throw → retry) rather than silently mis-route a lead.
     const parsed = parseAiJson(ReplyAnalysisOutputSchema, raw, 'analyze-reply')
 
-    if (leadId) {
-      // Read the lead first: the job payload is the only source of `leadId`, so
-      // confirm the row exists (and capture its workspace) before any write, and
-      // scope the stage update by workspaceId so a forged/mis-routed job can't
-      // flip a lead in another tenant.
-      const lead = await prisma.lead.findUnique({
-        where: { id: leadId },
-        select: { workspaceId: true, score: true }
-      })
-
-      // Stamp the AI-derived reply metadata onto the send that just flipped to
-      // REPLIED, so the Inbox can show the classification, summary, and suggested
-      // action. Done for every classification (incl. auto-replies). We never
-      // persist the raw reply body — only these derived fields.
-      if (lead) {
-        const target = await prisma.outreachSent.findFirst({
-          where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
-          orderBy: { repliedAt: 'desc' },
-          select: { id: true },
-        })
-        if (target) {
-          await prisma.outreachSent.update({
-            where: { id: target.id },
-            data: {
-              replyIntent: parsed.classification,
-              replySummary: parsed.summary ?? null,
-              replyKeyQuote: parsed.keyQuote ?? null,
-              replySuggestedAction: parsed.suggestedAction ?? null,
-              replyUrgency: parsed.urgency ?? null,
-              replyConfidence: parsed.confidence != null ? Math.round(parsed.confidence) : null,
-              replyIsAutoReply: parsed.isAutoReply ?? false,
-            },
-          })
-        }
-      }
-
-      if (lead && !parsed.isAutoReply) {
-        const stageMap: Record<string, LeadStage> = {
-          INTERESTED: 'REPLIED',
-          NOT_INTERESTED: 'DEAD',
-          NEEDS_MORE_INFO: 'REPLIED',
-          NOT_NOW: 'REPLIED',
-          REFERRAL: 'REPLIED',
-          OUT_OF_OFFICE: 'OUTREACH_SENT'
-        }
-        const newStage = stageMap[parsed.classification]
-        if (newStage) {
-          await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
-        }
-
-        // Common path is a read: the scoring model almost always already exists,
-        // so look it up first and only create on the cold path. (Was an
-        // unconditional upsert — a write + row lock on every interested reply.)
-        // The @unique(workspaceId) means a concurrent first-reply race can lose
-        // the create with P2002; re-read in that case so we still get the id.
-        let model = await prisma.scoringModel.findUnique({
-          where: { workspaceId: lead.workspaceId },
-          select: { id: true },
-        })
-        if (!model) {
-          try {
-            model = await prisma.scoringModel.create({
-              data: {
-                workspaceId: lead.workspaceId,
-                weights: DEFAULT_SCORING_WEIGHTS,
-                performanceMetrics: {
-                  totalScored: 0, totalReplied: 0, replyRate: 0,
-                  avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
-                }
-              },
-              select: { id: true },
-            })
-          } catch (err) {
-            if ((err as { code?: string }).code !== 'P2002') throw err
-            model = await prisma.scoringModel.findUnique({
-              where: { workspaceId: lead.workspaceId },
-              select: { id: true },
-            })
-          }
-        }
-        if (!model) throw new Error('scoring model unavailable after create race')
-
-        const replyIntentMap: Record<string, string> = {
-          INTERESTED: 'INTERESTED',
-          NOT_INTERESTED: 'NOT_INTERESTED',
-          NEEDS_MORE_INFO: 'NEED_MORE_INFO',
-          NOT_NOW: 'NEED_MORE_INFO',
-          REFERRAL: 'INTERESTED',
-          OUT_OF_OFFICE: 'NOT_INTERESTED'
-        }
-
-        const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(parsed.classification)
-
-        await prisma.scoringOutcome.create({
-          data: {
-            workspaceId: lead.workspaceId,
-            leadId,
-            // Lead-sourced outcome — there is no Prospect. (Previously this
-            // wrote the Lead id into prospectId, corrupting the column.)
-            prospectId: null,
-            score: lead.score,
-            replied,
-            replyIntent: replyIntentMap[parsed.classification] ?? null,
-            messageRelevance: replied ? 0.8 : 0.2,
-            channelUsed: 'EMAIL',
-            scoringModelId: model.id
-          }
-        })
-      }
-    }
+    // Apply the parsed classification's DB effects (lead stage, reply metadata on
+    // the send, scoring outcome). Extracted to processors.applyReplyAnalysis so the
+    // logic is unit-tested against a real DB without OpenAI/BullMQ.
+    if (leadId) await applyReplyAnalysis(leadId, parsed)
 
     await job.updateProgress(100)
     log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)

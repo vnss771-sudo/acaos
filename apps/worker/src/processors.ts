@@ -15,7 +15,7 @@ import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEn
 import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
-import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput } from '@acaos/backend-core/lib/aiSchemas.js'
+import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
@@ -583,4 +583,113 @@ export async function sendCampaignBatch(
 
   await progress?.(100)
   return { campaignId, sent, skipped, failed }
+}
+
+// ── analyze-reply: apply a parsed reply classification ────────────────────────
+// The DB effects of the analyze-reply job, extracted from worker.ts so they can be
+// tested against a real database without OpenAI or BullMQ. worker.ts calls the AI,
+// parses (fail-closed), then hands the parsed result here. Behavior-preserving.
+export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOutput): Promise<void> {
+  // Read the lead first: confirm it exists + capture its workspace, and scope every
+  // write by workspaceId so a forged/mis-routed job can't touch another tenant.
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { workspaceId: true, score: true },
+  })
+  if (!lead) return
+
+  // Stamp AI-derived reply metadata onto the send that just flipped to REPLIED so
+  // the Inbox can show classification/summary/suggested action — for every
+  // classification, incl. auto-replies. The raw reply body is never persisted.
+  const target = await prisma.outreachSent.findFirst({
+    where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
+    orderBy: { repliedAt: 'desc' },
+    select: { id: true },
+  })
+  if (target) {
+    await prisma.outreachSent.update({
+      where: { id: target.id },
+      data: {
+        replyIntent: parsed.classification,
+        replySummary: parsed.summary ?? null,
+        replyKeyQuote: parsed.keyQuote ?? null,
+        replySuggestedAction: parsed.suggestedAction ?? null,
+        replyUrgency: parsed.urgency ?? null,
+        replyConfidence: parsed.confidence != null ? Math.round(parsed.confidence) : null,
+        replyIsAutoReply: parsed.isAutoReply ?? false,
+      },
+    })
+  }
+
+  // Auto-replies (OOO/bounce-like) carry no buying intent — record them on the send
+  // (above) but never advance the lead or feed the scoring model.
+  if (parsed.isAutoReply) return
+
+  const stageMap: Record<string, LeadStage> = {
+    INTERESTED: 'REPLIED',
+    NOT_INTERESTED: 'DEAD',
+    NEEDS_MORE_INFO: 'REPLIED',
+    NOT_NOW: 'REPLIED',
+    REFERRAL: 'REPLIED',
+    OUT_OF_OFFICE: 'OUTREACH_SENT',
+  }
+  const newStage = stageMap[parsed.classification]
+  if (newStage) {
+    await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
+  }
+
+  // Common path is a read: the scoring model almost always already exists. The
+  // @unique(workspaceId) means a concurrent first-reply race can lose the create
+  // with P2002; re-read in that case so we still get the id.
+  let model = await prisma.scoringModel.findUnique({
+    where: { workspaceId: lead.workspaceId },
+    select: { id: true },
+  })
+  if (!model) {
+    try {
+      model = await prisma.scoringModel.create({
+        data: {
+          workspaceId: lead.workspaceId,
+          weights: DEFAULT_SCORING_WEIGHTS,
+          performanceMetrics: {
+            totalScored: 0, totalReplied: 0, replyRate: 0,
+            avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0,
+          },
+        },
+        select: { id: true },
+      })
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'P2002') throw err
+      model = await prisma.scoringModel.findUnique({
+        where: { workspaceId: lead.workspaceId },
+        select: { id: true },
+      })
+    }
+  }
+  if (!model) throw new Error('scoring model unavailable after create race')
+
+  const replyIntentMap: Record<string, string> = {
+    INTERESTED: 'INTERESTED',
+    NOT_INTERESTED: 'NOT_INTERESTED',
+    NEEDS_MORE_INFO: 'NEED_MORE_INFO',
+    NOT_NOW: 'NEED_MORE_INFO',
+    REFERRAL: 'INTERESTED',
+    OUT_OF_OFFICE: 'NOT_INTERESTED',
+  }
+  const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(parsed.classification)
+
+  await prisma.scoringOutcome.create({
+    data: {
+      workspaceId: lead.workspaceId,
+      leadId,
+      // Lead-sourced outcome — there is no Prospect.
+      prospectId: null,
+      score: lead.score,
+      replied,
+      replyIntent: replyIntentMap[parsed.classification] ?? null,
+      messageRelevance: replied ? 0.8 : 0.2,
+      channelUsed: 'EMAIL',
+      scoringModelId: model.id,
+    },
+  })
 }
