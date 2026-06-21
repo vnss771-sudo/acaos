@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { colors } from '../../styles.js'
 
 export type Column<T> = {
@@ -58,6 +58,10 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange
   const selectable = !!selectedKeys && !!onToggleRow
   const allSelected = selectable && rows.length > 0 && rows.every(r => selectedKeys!.has(rowKey(r)))
   const totalCols = columns.length + (selectable ? 1 : 0)
+  // Inline styles can't carry :hover; clickable rows highlight via React state
+  // (same approach as the Dashboard quick-action buttons). Only the hovered row
+  // is tracked, and only when rows are clickable.
+  const [hoverKey, setHoverKey] = useState<string | null>(null)
 
   const toggleSort = (col: Column<T>) => {
     if (!col.sortable || !onSortChange) return
@@ -114,7 +118,13 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange
               <tr
                 key={key}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                style={{ cursor: onRowClick ? 'pointer' : 'default' }}
+                onMouseEnter={onRowClick ? () => setHoverKey(key) : undefined}
+                onMouseLeave={onRowClick ? () => setHoverKey(null) : undefined}
+                style={{
+                  cursor: onRowClick ? 'pointer' : 'default',
+                  background: onRowClick && hoverKey === key ? colors.bgSurface : 'transparent',
+                  transition: onRowClick ? 'background 0.15s' : undefined,
+                }}
               >
                 {selectable && (
                   <td style={{ ...tdBase, textAlign: 'center' }} onClick={e => e.stopPropagation()}>

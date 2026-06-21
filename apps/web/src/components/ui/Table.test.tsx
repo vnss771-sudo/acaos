@@ -27,6 +27,26 @@ describe('Table', () => {
     expect(onRowClick).toHaveBeenCalledWith(rows[1])
   })
 
+  test('hovering a clickable row highlights it and still fires onRowClick', () => {
+    const onRowClick = vi.fn()
+    render(<Table columns={columns} rows={rows} rowKey={r => r.id} onRowClick={onRowClick} />)
+    const cell = screen.getByText('Acme')
+    const row = cell.closest('tr') as HTMLTableRowElement
+    fireEvent.mouseEnter(row)
+    expect(row.style.background).not.toBe('transparent')
+    fireEvent.mouseLeave(row)
+    expect(row.style.background).toBe('transparent')
+    fireEvent.click(cell)
+    expect(onRowClick).toHaveBeenCalledWith(rows[0])
+  })
+
+  test('rows without onRowClick are not highlighted on hover', () => {
+    render(<Table columns={columns} rows={rows} rowKey={r => r.id} />)
+    const row = screen.getByText('Acme').closest('tr') as HTMLTableRowElement
+    fireEvent.mouseEnter(row)
+    expect(row.style.background).toBe('transparent')
+  })
+
   test('renders the empty state when there are no rows', () => {
     render(<Table columns={columns} rows={[]} rowKey={r => r.id} empty="Nothing here" />)
     expect(screen.getByText('Nothing here')).toBeInTheDocument()
