@@ -21,6 +21,14 @@ type Props<T> = {
   sort?: SortState
   onSortChange?: (next: SortState) => void
   empty?: React.ReactNode
+  /**
+   * Multi-select support. When both `selectedKeys` and `onToggleRow` are passed,
+   * a leading checkbox column is rendered (with a header select-all driven by
+   * `onToggleAll`). Checkbox clicks are isolated from `onRowClick`.
+   */
+  selectedKeys?: Set<string>
+  onToggleRow?: (key: string, row: T) => void
+  onToggleAll?: () => void
 }
 
 const thBase: React.CSSProperties = {
@@ -44,9 +52,13 @@ const tdBase: React.CSSProperties = {
 
 // Generic data table. Wrapped in an overflow-x container so it scrolls instead of
 // breaking layout on narrow screens (the zero-risk responsive default). Sorting is
-// controlled by the caller via `sort`/`onSortChange`; bulk-select is intentionally
-// deferred to the Prospects grid (Milestone 3) where it's actually needed.
-export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange, empty }: Props<T>) {
+// controlled by the caller via `sort`/`onSortChange`. Optional multi-select adds a
+// leading checkbox column (see `selectedKeys`/`onToggleRow`/`onToggleAll`).
+export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange, empty, selectedKeys, onToggleRow, onToggleAll }: Props<T>) {
+  const selectable = !!selectedKeys && !!onToggleRow
+  const allSelected = selectable && rows.length > 0 && rows.every(r => selectedKeys!.has(rowKey(r)))
+  const totalCols = columns.length + (selectable ? 1 : 0)
+
   const toggleSort = (col: Column<T>) => {
     if (!col.sortable || !onSortChange) return
     const dir: 'asc' | 'desc' = sort?.key === col.key && sort.dir === 'asc' ? 'desc' : 'asc'
@@ -58,6 +70,16 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            {selectable && (
+              <th style={{ ...thBase, width: 36, textAlign: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() => onToggleAll?.()}
+                  aria-label="Select all rows"
+                />
+              </th>
+            )}
             {columns.map(col => {
               const active = sort?.key === col.key
               return (
@@ -81,24 +103,37 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} style={{ ...tdBase, textAlign: 'center', color: colors.textFaint, padding: '32px 12px' }}>
+              <td colSpan={totalCols} style={{ ...tdBase, textAlign: 'center', color: colors.textFaint, padding: '32px 12px' }}>
                 {empty ?? 'No data'}
               </td>
             </tr>
           ) : (
-            rows.map(row => (
+            rows.map(row => {
+              const key = rowKey(row)
+              return (
               <tr
-                key={rowKey(row)}
+                key={key}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
                 style={{ cursor: onRowClick ? 'pointer' : 'default' }}
               >
+                {selectable && (
+                  <td style={{ ...tdBase, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedKeys!.has(key)}
+                      onChange={() => onToggleRow!(key, row)}
+                      aria-label={`Select row ${key}`}
+                    />
+                  </td>
+                )}
                 {columns.map(col => (
                   <td key={col.key} style={{ ...tdBase, textAlign: col.align ?? 'left' }}>
                     {col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? '')}
                   </td>
                 ))}
               </tr>
-            ))
+              )
+            })
           )}
         </tbody>
       </table>
