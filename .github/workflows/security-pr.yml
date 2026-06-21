@@ -22,8 +22,8 @@ jobs:
   # and post a human-readable summary on the PR.
   dependency-review:
     name: Dependency review
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     permissions:
       contents: read
       # Required for the action to post/update its summary comment on the PR.
