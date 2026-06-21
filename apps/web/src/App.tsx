@@ -9,6 +9,7 @@ import { Drawer } from './components/ui/Drawer.js'
 import { AuthScreen } from './components/AuthScreen.js'
 import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
+import { CommandPalette } from './components/CommandPalette.js'
 import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
 import { colors } from './styles.js'
@@ -301,6 +302,23 @@ export function App() {
             </h1>
           </div>
 
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Command palette hint — also opens it on click. */}
+          <button
+            type="button"
+            aria-label="Open command palette"
+            title="Command palette"
+            onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, background: '#0b1220',
+              border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.textFaint,
+              cursor: 'pointer', fontSize: 12, padding: '5px 10px',
+            }}
+          >
+            <span aria-hidden="true">⌘K</span>
+            <span style={{ color: colors.textMuted }}>Search</span>
+          </button>
+
           {/* Workspace switcher */}
           {workspaces.length > 1 && (
             <select
@@ -314,6 +332,7 @@ export function App() {
               {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           )}
+          </div>
         </header>
 
         {/* Past-due payment warning banner */}
@@ -365,6 +384,9 @@ export function App() {
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Global ⌘K / Ctrl+K / "/" command palette — jump to any screen. */}
+      <CommandPalette setView={setView} isAdmin={isAdmin} />
 
       {/* Onboarding wizard — shown once per workspace until dismissed. Hidden for
           members: it performs workspace seed/ICP writes that require admin. */}
