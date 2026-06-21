@@ -30,7 +30,7 @@ export type TtlCache<T> = {
 
 const registry = new Set<TtlCache<unknown>>()
 
-export function createTtlCache<T>(ttlMs: number): TtlCache<T> {
+export function createTtlCache<T>(ttlMs: number, now: () => number = Date.now): TtlCache<T> {
   const store = new Map<string, CacheEntry<T>>()
   const inflight = new Map<string, Promise<T>>()
 
@@ -38,14 +38,14 @@ export function createTtlCache<T>(ttlMs: number): TtlCache<T> {
     async get(key, loader) {
       if (ttlMs > 0) {
         const hit = store.get(key)
-        if (hit && hit.expiresAt > Date.now()) return hit.value
+        if (hit && hit.expiresAt > now()) return hit.value
       }
       const pending = inflight.get(key)
       if (pending) return pending
 
       const load = loader()
         .then((value) => {
-          if (ttlMs > 0) store.set(key, { value, expiresAt: Date.now() + ttlMs })
+          if (ttlMs > 0) store.set(key, { value, expiresAt: now() + ttlMs })
           return value
         })
         .finally(() => {

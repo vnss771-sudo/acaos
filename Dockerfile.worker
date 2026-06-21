@@ -38,6 +38,9 @@ COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 
 RUN npm run prisma:generate
+# Fail the image build if generate fell back to the offline any-typed stub
+# (e.g. engine download blocked) — a shipped image must have the real client.
+RUN npm run check:prisma-real
 RUN npm run build -w @acaos/worker
 
 # ── Runtime ───────────────────────────────────────────────────────────────────

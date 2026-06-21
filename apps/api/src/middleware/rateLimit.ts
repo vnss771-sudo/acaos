@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
+import { createHash } from 'node:crypto'
 import { getRedis } from '../lib/redis.js'
 
 interface RateLimitOptions {
@@ -128,7 +129,10 @@ export const apiKeyRateLimit = createRateLimiter({
   keyFn: (req) => {
     const key = req.headers['x-api-key']
     const k = Array.isArray(key) ? key[0] : key
-    return k ? `k:${k}` : `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
+    // Hash the API key before using it as a Redis key so the raw secret never
+    // lands in the Redis keyspace, MONITOR output, metrics, or backups.
+    if (k) return `k:${createHash('sha256').update(k).digest('hex')}`
+    return `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
   }
 })
 
