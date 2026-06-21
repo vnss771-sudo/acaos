@@ -3,6 +3,7 @@ import type { UpdateDraftRequest } from '@acaos/shared'
 import type { OutreachDraft, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Card } from '../components/ui/Card.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -20,6 +21,8 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
   const [loading, setLoading] = useState(true)
   const [edits, setEdits] = useState<Record<string, { subject: string; emailBody: string }>>({})
   const [busy, setBusy] = useState<Record<string, boolean>>({})
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [batchRunning, setBatchRunning] = useState(false)
 
   const load = useCallback(() => {
     if (!workspace) return
@@ -38,7 +41,29 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
   }
 
   function setBusyFor(id: string, v: boolean) { setBusy(prev => ({ ...prev, [id]: v })) }
-  function remove(id: string) { setDrafts(prev => prev.filter(d => d.id !== id)) }
+  function remove(id: string) {
+    setDrafts(prev => prev.filter(d => d.id !== id))
+    setSelected(prev => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  function toggle(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const allSelected = drafts.length > 0 && selected.size === drafts.length
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(drafts.map(d => d.id)))
+  }
 
   async function save(d: PendingDraft) {
     const e = edits[d.id]
@@ -53,15 +78,43 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
     finally { setBusyFor(d.id, false) }
   }
 
+  // Single source of truth for applying a decision to one draft. Used by both the
+  // per-card buttons and the batch bar (which loops it over the selection — the
+  // backend has no batch endpoint, so this calls the existing per-draft route).
+  async function runDecision(d: PendingDraft, action: 'approve' | 'reject') {
+    if (action === 'approve' && edited(d)) {
+      const e = edits[d.id]!
+      const body: UpdateDraftRequest = { subject: e.subject, emailBody: e.emailBody }
+      await route('PATCH /api/leads/:id/drafts/:draftId', { params: { id: d.lead.id, draftId: d.id }, body })
+    }
+    await route('POST /api/leads/:id/drafts/:draftId/:action', { params: { id: d.lead.id, draftId: d.id, action } })
+    remove(d.id)
+  }
+
   async function decide(d: PendingDraft, action: 'approve' | 'reject') {
     setBusyFor(d.id, true)
     try {
-      if (action === 'approve' && edited(d)) await save(d)
-      await route('POST /api/leads/:id/drafts/:draftId/:action', { params: { id: d.lead.id, draftId: d.id, action } })
-      remove(d.id)
+      await runDecision(d, action)
       toast.success(action === 'approve' ? 'Approved — ready to send' : 'Rejected')
     } catch (err) { toast.error(err instanceof Error ? err.message : `${action} failed`) }
     finally { setBusyFor(d.id, false) }
+  }
+
+  async function batchDecide(action: 'approve' | 'reject') {
+    const targets = drafts.filter(d => selected.has(d.id))
+    if (targets.length === 0 || batchRunning) return
+    setBatchRunning(true)
+    let ok = 0
+    let failed = 0
+    for (const d of targets) {
+      setBusyFor(d.id, true)
+      try { await runDecision(d, action); ok++ }
+      catch { failed++ }
+      finally { setBusyFor(d.id, false) }
+    }
+    setBatchRunning(false)
+    if (ok > 0) toast.success(`${ok} ${action === 'approve' ? 'approved — ready to send' : 'rejected'}`)
+    if (failed > 0) toast.error(`${failed} could not be ${action === 'approve' ? 'approved' : 'rejected'}`)
   }
 
   if (!workspace) return null
@@ -78,13 +131,48 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
         <EmptyState message="No drafts awaiting review. Approved drafts send on the next campaign run." />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {canManage && (
+            <Card style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: colors.textMuted, fontSize: 13 }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all drafts" />
+                Select all
+              </label>
+              <span style={{ color: colors.textFaint, fontSize: 12 }}>{selected.size} selected</span>
+              <div style={{ flex: 1 }} />
+              <button
+                style={{ ...s.btnSm, background: '#7f1d1d', opacity: selected.size === 0 || batchRunning ? 0.5 : 1 }}
+                disabled={selected.size === 0 || batchRunning}
+                onClick={() => batchDecide('reject')}
+              >
+                Reject selected
+              </button>
+              <button
+                style={{ ...s.btn, background: '#16a34a', opacity: selected.size === 0 || batchRunning ? 0.5 : 1 }}
+                disabled={selected.size === 0 || batchRunning}
+                onClick={() => batchDecide('approve')}
+              >
+                Approve selected
+              </button>
+            </Card>
+          )}
           {drafts.map(d => {
             const e = edits[d.id] ?? { subject: d.subject, emailBody: d.emailBody }
             const isBusy = busy[d.id]
             return (
-              <div key={d.id} style={{ ...s.card, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Card key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                  <span style={{ color: colors.text, fontWeight: 700, fontSize: 14 }}>{d.lead.businessName}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {canManage && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(d.id)}
+                        disabled={isBusy}
+                        onChange={() => toggle(d.id)}
+                        aria-label={`Select ${d.lead.businessName}`}
+                      />
+                    )}
+                    <span style={{ color: colors.text, fontWeight: 700, fontSize: 14 }}>{d.lead.businessName}</span>
+                  </span>
                   <span style={{ color: colors.textFaint, fontSize: 12 }}>{d.lead.email || 'no email'}</span>
                 </div>
                 <div>
@@ -116,7 +204,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                     </button>
                   </div>
                 )}
-              </div>
+              </Card>
             )
           })}
         </div>
