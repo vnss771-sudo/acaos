@@ -23,6 +23,7 @@ import {
   RetentionPurgePayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
+import { isFeatureEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
@@ -64,6 +65,7 @@ const researchWorker = new Worker(
   'research-lead',
   async (job) => {
     const { leadId, workspaceId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
+    if (!isFeatureEnabled('ai')) { log('research-lead', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('research-lead', `Processing leadId=${leadId}`)
 
     // Tenant-scoped fetch: never act on a lead outside the job's workspace.
@@ -127,6 +129,7 @@ const outreachWorker = new Worker(
   'generate-outreach',
   async (job) => {
     const { leadId, workspaceId } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
+    if (!isFeatureEnabled('ai')) { log('generate-outreach', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('generate-outreach', `Processing leadId=${leadId}`)
 
     // Tenant-scoped fetch: never act on a lead outside the job's workspace.
@@ -178,6 +181,7 @@ const replyWorker = new Worker(
   'analyze-reply',
   async (job) => {
     const { replyBody, leadId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
+    if (!isFeatureEnabled('ai')) { log('analyze-reply', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('analyze-reply', `Processing${leadId ? ` leadId=${leadId}` : ''}`)
 
     await job.updateProgress(10)
@@ -205,6 +209,7 @@ const mailboxWorker = new Worker(
   'sync-mailbox',
   async (job) => {
     const { workspaceId, autoSync } = parseJobPayload(SyncMailboxPayloadSchema, 'sync-mailbox', job.data)
+    if (!isFeatureEnabled('mailboxSync')) { log('sync-mailbox', 'skipped: FEATURE_MAILBOX_SYNC disabled'); return { skipped: true, reason: 'FEATURE_MAILBOX_SYNC disabled' } }
     const { syncMailboxOnce, isMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
 
     if (autoSync) {
@@ -346,6 +351,7 @@ const sendCampaignWorker = new Worker(
   'send-campaign',
   async (job) => {
     const { campaignId, workspaceId, leadIds } = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', job.data)
+    if (!isFeatureEnabled('send')) { log('send-campaign', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled', sent: 0, skipped_count: leadIds?.length ?? 0 } }
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
     const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
     log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`)

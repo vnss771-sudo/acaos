@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { requireFeature } from '../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
@@ -54,6 +55,7 @@ const replyAnalysisSchema = z.object({
 export const aiRouter = Router()
 aiRouter.use(requireAuth)
 aiRouter.use(requireVerifiedEmail)
+aiRouter.use(requireFeature('ai'))
 aiRouter.use(aiRateLimit)
 
 aiRouter.post(

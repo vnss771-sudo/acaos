@@ -1,5 +1,6 @@
 import type { Router } from 'express'
 import { requireVerifiedEmail } from '../../middleware/auth.js'
+import { requireFeature } from '../../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../../lib/http.js'
 import { recordAudit } from '../../lib/audit.js'
 import { checkAndIncrementDiscoveryUsage } from '../../lib/limits.js'
@@ -35,7 +36,7 @@ const importProspectsSchema = z.object({
 export function registerDiscoveryRoutes(prospectsRouter: Router) {
   // POST /api/prospects/discover — pull companies from a source using the workspace
   // ICP, falling back to the mission's playbook preset when scoped to a mission.
-  prospectsRouter.post('/discover', requireVerifiedEmail, validate(discoverSchema), asyncHandler(async (req, res) => {
+  prospectsRouter.post('/discover', requireVerifiedEmail, requireFeature('discovery'), validate(discoverSchema), asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof discoverSchema>
     const workspaceId = body.workspaceId
 

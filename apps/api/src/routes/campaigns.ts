@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
+import { requireFeature } from '../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -277,6 +278,7 @@ campaignsRouter.get(
 campaignsRouter.post(
   '/:id/send',
   requireVerifiedEmail,
+  requireFeature('send'),
   validate(sendCampaignSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!

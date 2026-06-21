@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
+import { requireFeature } from '../middleware/featureGate.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
@@ -76,6 +77,7 @@ mailboxRouter.post(
 mailboxRouter.post(
   '/sync',
   requireVerifiedEmail,
+  requireFeature('mailboxSync'),
   syncRateLimit,
   asyncHandler(async (req, res) => {
     const user = req.user!
