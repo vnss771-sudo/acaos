@@ -16,6 +16,7 @@ import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
 import { clampInt } from '../../lib/validation.js'
 import { normalizeDomain, withDollars, getICP } from './helpers.js'
+import { recordAudit } from '../../lib/audit.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
 
@@ -303,6 +304,10 @@ export function registerCrudRoutes(prospectsRouter: Router) {
       },
     })
 
+    void recordAudit({
+      workspaceId, actorUserId: userId, type: 'prospect.created',
+      entityType: 'prospect', entityId: created.id,
+    })
     res.status(201).json(withDollars({ ...created, tier: getOpportunityTier(created.opportunityScore) }))
   }))
 
@@ -335,6 +340,10 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     if ('domain' in data) data.domainKey = normalizeDomain(data.domain as string | null)
 
     const updated = await prisma.prospect.update({ where: { id: req.params.id as string }, data })
+    void recordAudit({
+      workspaceId: existing.workspaceId, actorUserId: userId, type: 'prospect.updated',
+      entityType: 'prospect', entityId: existing.id, metadata: { fields: Object.keys(data) },
+    })
     res.json(withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }))
   }))
 
@@ -347,6 +356,10 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     await assertMinimumWorkspaceRole(userId, existing.workspaceId, 'admin')
 
     await prisma.prospect.delete({ where: { id: req.params.id as string } })
+    void recordAudit({
+      workspaceId: existing.workspaceId, actorUserId: userId, type: 'prospect.deleted',
+      entityType: 'prospect', entityId: existing.id,
+    })
     res.json({ ok: true })
   }))
 }

@@ -136,6 +136,10 @@ campaignsRouter.post(
     })
 
     invalidateWorkspaceStats(workspaceId) // new campaign changes dashboard campaignCount
+    void recordAudit({
+      workspaceId, actorUserId: user.id, type: 'campaign.created',
+      entityType: 'campaign', entityId: campaign.id,
+    })
     res.status(201).json({ campaign })
   })
 )
@@ -186,6 +190,10 @@ campaignsRouter.patch(
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updatable fields provided')
 
     const campaign = await prisma.campaign.update({ where: { id: campaignId }, data: updates })
+    void recordAudit({
+      workspaceId: existing.workspaceId, actorUserId: user.id, type: 'campaign.updated',
+      entityType: 'campaign', entityId: campaignId, metadata: { fields: Object.keys(updates) },
+    })
     res.json({ campaign })
   })
 )
@@ -398,6 +406,10 @@ campaignsRouter.delete(
     await prisma.campaign.delete({ where: { id: campaignId } })
     // Deleting a campaign changes campaignCount and (via cascade) lead totals/funnel.
     invalidateWorkspaceStats(existing.workspaceId)
+    void recordAudit({
+      workspaceId: existing.workspaceId, actorUserId: user.id, type: 'campaign.deleted',
+      entityType: 'campaign', entityId: campaignId,
+    })
     res.json({ ok: true })
   })
 )

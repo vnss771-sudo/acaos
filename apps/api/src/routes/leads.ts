@@ -176,6 +176,10 @@ leadsRouter.post(
 
     const lead = await prisma.lead.create({ data: { ...leadData, score } })
     invalidateWorkspaceStats(workspaceId) // new lead changes totals/funnel/recent
+    void recordAudit({
+      workspaceId, actorUserId: user.id, type: 'lead.created',
+      entityType: 'lead', entityId: lead.id,
+    })
     res.status(201).json({ lead })
   })
 )
@@ -227,6 +231,12 @@ leadsRouter.post(
       return result.count
     })
     if (created > 0) invalidateWorkspaceStats(workspaceId) // bulk import shifts totals/funnel
+    if (created > 0) {
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'lead.imported',
+        entityType: 'lead', metadata: { created },
+      })
+    }
     res.json({ created })
   })
 )
@@ -357,6 +367,10 @@ leadsRouter.patch(
 
     const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
     invalidateWorkspaceStats(lead.workspaceId) // stage/score/campaign edits move funnel & top leads
+    void recordAudit({
+      workspaceId: lead.workspaceId, actorUserId: user.id, type: 'lead.updated',
+      entityType: 'lead', entityId: leadId, metadata: { fields: Object.keys(updates) },
+    })
     res.json({ lead: updated })
   })
 )
@@ -374,6 +388,10 @@ leadsRouter.delete(
 
     await prisma.lead.delete({ where: { id: leadId } })
     invalidateWorkspaceStats(lead.workspaceId) // removing a lead changes totals/funnel
+    void recordAudit({
+      workspaceId: lead.workspaceId, actorUserId: user.id, type: 'lead.deleted',
+      entityType: 'lead', entityId: leadId,
+    })
     res.json({ ok: true })
   })
 )
@@ -391,6 +409,12 @@ leadsRouter.post(
       where: { id: { in: ids }, workspaceId }
     })
     if (result.count > 0) invalidateWorkspaceStats(workspaceId) // bulk delete changes totals/funnel
+    if (result.count > 0) {
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'lead.bulk_deleted',
+        entityType: 'lead', metadata: { deleted: result.count },
+      })
+    }
     res.json({ deleted: result.count })
   })
 )
@@ -410,6 +434,12 @@ leadsRouter.post(
       data: { stage: stage as LeadStage }
     })
     if (result.count > 0) invalidateWorkspaceStats(workspaceId) // bulk stage change moves the funnel
+    if (result.count > 0) {
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'lead.bulk_stage_updated',
+        entityType: 'lead', metadata: { updated: result.count, stage },
+      })
+    }
     res.json({ updated: result.count })
   })
 )
@@ -434,6 +464,12 @@ leadsRouter.post(
       where: { id: { in: ids }, workspaceId },
       data: { campaignId }
     })
+    if (result.count > 0) {
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'lead.bulk_assigned',
+        entityType: 'lead', metadata: { updated: result.count, campaignId },
+      })
+    }
     res.json({ updated: result.count })
   })
 )
