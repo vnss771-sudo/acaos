@@ -30,7 +30,7 @@ describe('AuthScreen', () => {
     const { container } = render(<AuthScreen onToken={onToken} />)
 
     await userEvent.type(screen.getByPlaceholderText('you@example.com'), 'Sarah@Northwind.test')
-    await userEvent.type(screen.getByPlaceholderText('Enter your password'), 'hunter2hunter')
+    await userEvent.type(screen.getByPlaceholderText('Password'), 'hunter2hunter')
     await userEvent.click(container.querySelector('button[type="submit"]')!) // the form submit, not the mode toggle
 
     const [url, init] = (fetchMock as any).mock.calls[0]
@@ -51,7 +51,7 @@ describe('AuthScreen', () => {
     const { container } = render(<AuthScreen onToken={onToken} />)
 
     await userEvent.type(screen.getByPlaceholderText('you@example.com'), 'a@b.test')
-    await userEvent.type(screen.getByPlaceholderText('Enter your password'), 'wrongpassword')
+    await userEvent.type(screen.getByPlaceholderText('Password'), 'wrongpassword')
     await userEvent.click(container.querySelector('button[type="submit"]')!)
 
     expect(await screen.findByText('Invalid credentials')).toBeInTheDocument()

@@ -6,9 +6,11 @@ name: Security (PR supply-chain gate)
 # - secret scanning here targets the PR diff before it can merge.
 # Branch/push gates (build, image scan, audit) live in ci.yml; do not duplicate
 # them here.
+#
+# PR-only trigger: dependency-review needs a PR base/head pair to diff against,
+# so workflow_dispatch is intentionally omitted (a manual run has no PR context).
 on:
   pull_request:
-  workflow_dispatch:
 
 concurrency:
   group: security-pr-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -22,8 +24,8 @@ jobs:
   # and post a human-readable summary on the PR.
   dependency-review:
     name: Dependency review
-    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       # Required for the action to post/update its summary comment on the PR.

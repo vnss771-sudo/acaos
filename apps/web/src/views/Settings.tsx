@@ -432,8 +432,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             { label: 'Confirm New Password', field: 'confirmPassword', autocomplete: 'new-password' }
           ].map(({ label, field, autocomplete }) => (
             <div key={field}>
-              <label style={s.label} htmlFor="settings-field-2">{label}</label>
-              <input id="settings-field-2"
+              <label style={s.label} htmlFor={`settings-field-${field}`}>{label}</label>
+              <input id={`settings-field-${field}`}
                 style={s.input}
                 type="password"
                 value={(passwordForm as Record<string, string>)[field]}
