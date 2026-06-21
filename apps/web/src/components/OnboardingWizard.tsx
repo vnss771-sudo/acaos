@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react'
 import type { SeedWorkspaceRequest, UpdateIcpRequest } from '@acaos/shared'
 import { makeRouteApi } from '../lib/routeApi.js'
 import { colors, s } from '../styles.js'
+import { Grid } from './ui/Grid.js'
 import type { Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -319,7 +320,7 @@ function Step2({
           />
         </div>
 
-        <div style={s.grid2 as React.CSSProperties}>
+        <Grid cols={2}>
           <div>
             <label style={{ ...s.label }}>Outreach tone</label>
             <select
@@ -343,7 +344,7 @@ function Step2({
               onChange={e => set('dailySendLimit', Number(e.target.value))}
             />
           </div>
-        </div>
+        </Grid>
 
         <div
           style={{
