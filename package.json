@@ -53,7 +53,8 @@
     "release:preflight": "bash scripts/release-checklist.sh",
     "smoke:deploy": "node scripts/smoke-deploy.mjs",
     "release:metadata": "node scripts/release-metadata.mjs",
-    "release:metadata:env": "node scripts/release-metadata.mjs --env"
+    "release:metadata:env": "node scripts/release-metadata.mjs --env",
+    "doctor": "node scripts/doctor.mjs"
   },
   "overrides": {
     "nodemailer": "^9.0.1",

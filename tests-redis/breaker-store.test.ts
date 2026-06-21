@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import IORedis from 'ioredis'
 import { createRedisBreakerStore } from '../packages/backend-core/src/lib/breakerStore.ts'
 import { CircuitBreaker } from '../packages/backend-core/src/lib/circuit.ts'
-import { flushRedis } from './helpers/env.ts'
+import { flushRedis } from './helpers/redis.ts'
 
 const redis = new IORedis(process.env.REDIS_URL as string, { maxRetriesPerRequest: null })
 after(async () => { await redis.quit() })
