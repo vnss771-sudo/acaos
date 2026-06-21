@@ -4,23 +4,18 @@
 // end against a live Redis, plus the real Prisma layer. Requires both
 // DATABASE_URL and REDIS_URL; provisioned by scripts/test-redis-local.sh
 // locally and the `verify-redis` CI job.
+//
+// The Redis preflight import comes BEFORE the database fixtures so a missing
+// REDIS_URL fails with the Redis-specific message first (the DB fixture import
+// throws on a missing DATABASE_URL at load time).
 
-import IORedis from 'ioredis'
+import './requireRedis.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from '../../tests-db/helpers/db.ts'
+import { flushRedis } from './redis.ts'
 
 export { prisma, resetDb, disconnect, seedUserWithWorkspace }
 export { startTestServer, bearer, type TestServer } from '../../tests/helpers/integration.ts'
-
-if (!process.env.REDIS_URL) {
-  throw new Error('REDIS_URL is required for the Redis-backed test tier (see npm run test:redis:local).')
-}
-
-/** Clear all queued jobs so each test starts from an empty Redis. */
-export async function flushRedis(): Promise<void> {
-  const client = new IORedis(process.env.REDIS_URL as string, { maxRetriesPerRequest: null })
-  await client.flushdb()
-  await client.quit()
-}
+export { flushRedis }
 
 /** Reset both backing stores between tests. */
 export async function resetAll(): Promise<void> {
