@@ -198,6 +198,27 @@ authRouter.post(
       data: { revokedAt: now },
     })
     if (result.count === 0) {
+      // Reuse detection: if the presented token EXISTS but is already revoked, it's
+      // a replay of a rotated/revoked refresh token — a theft signal. Revoke the
+      // user's entire refresh-token set (the long-lived credential) and audit it.
+      // (Trade-off: a rare benign simultaneous-refresh race can also trip this and
+      // force re-login; bounded by the shared-cookie + single-flight client model.)
+      const replayed = await prisma.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { userId: true, revokedAt: true },
+      })
+      if (replayed?.revokedAt) {
+        await prisma.refreshToken.updateMany({
+          where: { userId: replayed.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        })
+        void recordAudit({
+          actorUserId: replayed.userId,
+          type: 'refresh_token.reuse_detected',
+          entityType: 'user',
+          entityId: replayed.userId,
+        })
+      }
       throw new ApiError(401, 'Refresh token invalid or expired')
     }
     // Fetch token record to obtain userId (already atomically revoked above)
@@ -533,10 +554,15 @@ async function sendVerificationEmail(userId: string, email: string) {
   }
 }
 
-authRouter.get(
-  '/verify-email/:token',
+// Single-use credential tokens are carried in the POST body, not the URL path,
+// so they can't leak via API access logs / reverse-proxy logs / APM traces.
+const tokenBodySchema = z.object({ token: z.string().trim().min(1, 'Token required').max(512) })
+
+authRouter.post(
+  '/verify-email',
+  validate(tokenBodySchema),
   asyncHandler(async (req, res) => {
-    const rawToken = String(req.params.token || '').trim()
+    const rawToken = (req.body as z.infer<typeof tokenBodySchema>).token
     const tokenHash = hashRefreshToken(rawToken)
 
     // Atomic conditional update — only one concurrent request can win (count === 1)
@@ -592,14 +618,15 @@ authRouter.get(
 )
 
 authRouter.post(
-  '/invite/:token/accept',
+  '/invite/accept',
   requireAuth,
   // Don't grant workspace access to an account that hasn't proven control of
   // its mailbox — a verified email is a precondition for joining a workspace.
   requireVerifiedEmail,
+  validate(tokenBodySchema),
   asyncHandler(async (req, res) => {
     const authedUser = req.user!
-    const rawToken = String(req.params.token || '').trim()
+    const rawToken = (req.body as z.infer<typeof tokenBodySchema>).token
     const tokenHash = hashRefreshToken(rawToken)
 
     const invite = await prisma.workspaceInvite.findUnique({ where: { tokenHash } })
