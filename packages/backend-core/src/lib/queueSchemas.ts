@@ -9,16 +9,19 @@ import { UnrecoverableError } from 'bullmq'
 
 const id = z.string().min(1)
 
+// workspaceId is REQUIRED on lead-scoped jobs: the processor fetches the lead by
+// `id + workspaceId` so a stale/replayed/forged job can never operate on a lead
+// outside its tenant. Every in-code producer already passes it.
 export const ResearchLeadPayloadSchema = z.object({
   leadId: id,
-  workspaceId: id.optional(),
+  workspaceId: id,
   initiatedByUserId: id.optional(),
 })
 export type ResearchLeadPayload = z.infer<typeof ResearchLeadPayloadSchema>
 
 export const GenerateOutreachPayloadSchema = z.object({
   leadId: id,
-  workspaceId: id.optional(),
+  workspaceId: id,
   initiatedByUserId: id.optional(),
 })
 export type GenerateOutreachPayload = z.infer<typeof GenerateOutreachPayloadSchema>

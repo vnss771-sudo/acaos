@@ -4,6 +4,7 @@ import { UnrecoverableError } from 'bullmq'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
+  GenerateOutreachPayloadSchema,
   AnalyzeReplyPayloadSchema,
   SyncMailboxPayloadSchema,
   ScoreProspectsPayloadSchema,
@@ -28,6 +29,21 @@ test('parseJobPayload: throws a non-retryable UnrecoverableError on a malformed 
       return true
     },
   )
+})
+
+test('parseJobPayload: lead-scoped jobs REQUIRE workspaceId (tenant scope)', () => {
+  // The worker fetches the lead by id + workspaceId, so a payload without a
+  // workspace must fail fast rather than letting a job run unscoped.
+  for (const [schema, queue] of [
+    [ResearchLeadPayloadSchema, 'research-lead'],
+    [GenerateOutreachPayloadSchema, 'generate-outreach'],
+  ] as const) {
+    assert.throws(
+      () => parseJobPayload(schema, queue, { leadId: 'lead_1' }),
+      (err: unknown) => err instanceof UnrecoverableError && /workspaceId/.test((err as Error).message),
+      `${queue} must reject a payload missing workspaceId`,
+    )
+  }
 })
 
 test('parseJobPayload: rejects an empty leadId (min length)', () => {

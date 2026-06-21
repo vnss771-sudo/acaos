@@ -14,6 +14,7 @@ import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/wo
 import { listSources } from '../../lib/prospectSources.js'
 import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
+import { clampInt } from '../../lib/validation.js'
 import { normalizeDomain, withDollars, getICP } from './helpers.js'
 
 export function registerCrudRoutes(prospectsRouter: Router) {
@@ -25,8 +26,8 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     const userId = req.user!.id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-    const page  = Math.max(1, parseInt(req.query.page  as string) || 1)
-    const limit = Math.min(100, parseInt(req.query.limit as string) || 25)
+    const page  = clampInt(req.query.page,  { min: 1, max: 1_000_000, fallback: 1 })
+    const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 25 })
     const skip  = (page - 1) * limit
 
     const tierFilter    = req.query.tier    as string | undefined
@@ -178,7 +179,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     const userId = req.user!.id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-    const limit = Math.min(Number(req.query.limit ?? 25), 100)
+    const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 25 })
     const intents = await prisma.outreachIntent.findMany({
       where: { workspaceId, status: { in: ['PROPOSED', 'DRAFTED', 'APPROVED'] } },
       orderBy: { createdAt: 'desc' },

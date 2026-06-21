@@ -57,7 +57,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     await checkAndIncrementDiscoveryUsage(workspaceId)
 
     const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
-    const limit = Math.min(Number(body.limit ?? 25), 50)
+    const limit = body.limit ?? 25 // bounded to 1..50 by discoverSchema
 
     // Layered targeting: explicit request → workspace ICP → mission playbook preset.
     const pack = missionPlaybookId ? getPack(missionPlaybookId) : undefined

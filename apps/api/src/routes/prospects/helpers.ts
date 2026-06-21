@@ -17,7 +17,9 @@ export const discoverSchema = z.object({
   keywords: z.array(z.string()).optional(),
   minEmployees: z.number().int().optional(),
   maxEmployees: z.number().int().optional(),
-  limit: z.number().int().optional(),
+  // Bounded at the schema so a negative/zero/oversized value is a clean 400
+  // rather than reaching the discovery provider with a surprising page size.
+  limit: z.number().int().min(1).max(50).optional(),
 })
 type _DiscoverConforms = Assert<Extends<z.infer<typeof discoverSchema>, DiscoverProspectsRequest>>
 
