@@ -5,7 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
-import { getMonthlyUsage } from '../lib/limits.js'
+import { getMonthlyUsage, getPlanCatalog } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import { recordAudit } from '../lib/audit.js'
@@ -47,6 +47,17 @@ billingRouter.post(
     if (!session.url) throw new ApiError(502, 'Stripe checkout URL unavailable')
 
     res.json({ url: session.url })
+  })
+)
+
+// Plan catalog: the canonical per-plan limits the backend enforces. The billing
+// UI renders its comparison numbers from this so they can never drift from
+// enforcement. Auth'd (the billing page is authed) but workspace-agnostic.
+billingRouter.get(
+  '/plans',
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    res.json({ plans: getPlanCatalog() })
   })
 )
 

@@ -226,3 +226,27 @@ export function getPlanInfo(plan: string) {
   const p = resolvePlan(plan)
   return { ...PLAN_LIMITS[p], plan: p }
 }
+
+export type PlanCatalogEntry = {
+  maxLeads: number | null
+  aiCallsPerMonth: number | null
+  discoveriesPerMonth: number | null
+}
+
+// JSON-safe catalog of EVERY plan's limits (Infinity -> null = "unlimited"), so
+// the frontend renders the plan-comparison numbers from the SAME source the
+// backend enforces instead of hardcoding them (the single source of truth — see
+// GET /api/billing/plans and apps/web/src/views/Billing.tsx).
+export function getPlanCatalog(): Record<Plan, PlanCatalogEntry> {
+  const norm = (n: number): number | null => (isFinite(n) ? n : null)
+  const out = {} as Record<Plan, PlanCatalogEntry>
+  for (const plan of Object.keys(PLAN_LIMITS) as Plan[]) {
+    const l = PLAN_LIMITS[plan]
+    out[plan] = {
+      maxLeads: norm(l.maxLeads),
+      aiCallsPerMonth: norm(l.aiCallsPerMonth),
+      discoveriesPerMonth: norm(l.discoveriesPerMonth),
+    }
+  }
+  return out
+}
