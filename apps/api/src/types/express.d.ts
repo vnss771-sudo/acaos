@@ -10,6 +10,11 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser
+      // Set by requireIngestKeyOrAuth (routes/outcomes.ts) when a request is
+      // authenticated via an ingest API key: the resolved workspace and a flag
+      // marking the API-key path. Optional because the JWT path leaves them unset.
+      resolvedWorkspaceId?: string
+      resolvedViaApiKey?: boolean
     }
   }
 }

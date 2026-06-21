@@ -11,6 +11,8 @@ gh api \
   "/repos/${REPO}/branches/${BRANCH}/protection" \
   -F required_status_checks[strict]=true \
   -F required_status_checks[contexts][]=required \
+  -F "required_status_checks[contexts][]=Dependency review" \
+  -F "required_status_checks[contexts][]=Secret scan (gitleaks)" \
   -F enforce_admins=true \
   -F required_pull_request_reviews[dismiss_stale_reviews]=true \
   -F required_pull_request_reviews[required_approving_review_count]=1 \
