@@ -387,7 +387,11 @@ campaignsRouter.post(
       queue: 'send-campaign',
       eligible: cappedEligible,
       dailyCapApplied: cappedEligible < eligible,
-      message: `Sending to ${cappedEligible} lead${cappedEligible !== 1 ? 's' : ''} — poll /api/jobs/send-campaign/${job.id} for status`
+      // `eligible` is a forecast, not a guarantee: the worker re-checks the daily
+      // cap against a LIVE count at dispatch and is the single enforcer, so the
+      // number actually sent can be lower if other campaigns consumed the cap in
+      // the meantime. The message says so rather than promising an exact count.
+      message: `Queued ${cappedEligible} of ${eligible} eligible lead${eligible !== 1 ? 's' : ''} for today — the worker enforces your daily send cap at dispatch and sends any remainder on the next run. Poll /api/jobs/send-campaign/${job.id} for status.`
     })
   })
 )
