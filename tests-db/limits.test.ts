@@ -3,7 +3,8 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAndIncrementAiUsage, refundAiUsage, getMonthlyUsage } from '../packages/backend-core/src/lib/limits.ts'
+import { checkAndIncrementAiUsage, refundAiUsage, getMonthlyUsage, reserveDailySendSlot } from '../packages/backend-core/src/lib/limits.ts'
+import type { Prisma } from '@prisma/client'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
@@ -92,6 +93,50 @@ test('a lapsed growth subscription enforces the free AI cap (not just reports it
   const ok = results.filter((r) => r.status === 'fulfilled').length
   assert.ok(ok <= 15, `lapsed subscription must enforce the free cap, got ${ok}`)
   assert.ok(ok >= 1, 'some calls should still succeed under the free cap')
+})
+
+// --- daily send-cap concurrency (advisory lock) ---
+
+test('concurrent send reservations never exceed the daily cap', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const LIMIT = 5
+  const since = new Date()
+  since.setHours(0, 0, 0, 0)
+
+  // 20 concurrent reserve+claim attempts (mirrors how the worker claims a slot
+  // inside one advisory-locked transaction). At most LIMIT may create a SENDING
+  // row — without the lock, several would each read used<LIMIT and overshoot.
+  const attempts = Array.from({ length: 20 }, (_, i) =>
+    prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const ok = await reserveDailySendSlot(tx, workspace.id, LIMIT, since)
+      if (!ok) return false
+      await tx.outreachSent.create({
+        data: { workspaceId: workspace.id, toEmail: `x${i}@t.test`, subject: 's', body: 'b', status: 'SENDING' },
+      })
+      return true
+    })
+  )
+  const results = await Promise.allSettled(attempts)
+  const ok = results.filter((r) => r.status === 'fulfilled' && r.value === true).length
+
+  const created = await prisma.outreachSent.count({ where: { workspaceId: workspace.id } })
+  assert.ok(created <= LIMIT, `created ${created} must not exceed the cap ${LIMIT}`)
+  assert.equal(created, ok, 'persisted SENDING claims match successful reservations')
+  assert.ok(ok >= 1, 'some reservations should succeed')
+})
+
+test('reserveDailySendSlot counts SENT + SENDING but not FAILED', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const since = new Date()
+  since.setHours(0, 0, 0, 0)
+  const mk = (status: string) => prisma.outreachSent.create({ data: { workspaceId: workspace.id, toEmail: `${status}@t.test`, subject: 's', body: 'b', status } })
+  await mk('SENT'); await mk('SENDING'); await mk('FAILED')
+
+  // 2 consuming rows (SENT+SENDING); FAILED excluded. Cap 3 → one slot left.
+  const left = await prisma.$transaction((tx: Prisma.TransactionClient) => reserveDailySendSlot(tx, workspace.id, 3, since))
+  assert.equal(left, true)
+  const none = await prisma.$transaction((tx: Prisma.TransactionClient) => reserveDailySendSlot(tx, workspace.id, 2, since))
+  assert.equal(none, false)
 })
 
 test('the DB rejects a plan value outside the BillingPlan enum', async () => {
