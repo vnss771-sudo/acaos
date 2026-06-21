@@ -47,6 +47,9 @@ jobs:
       - name: Check compose runtime hardening
         run: npm run check:compose-hardening
 
+      - name: Check test-tier isolation
+        run: npm run check:test-tiers
+
   verify:
     name: Static and unit gates
     runs-on: ubuntu-latest
