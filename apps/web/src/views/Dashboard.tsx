@@ -4,6 +4,7 @@ import { STAGE_COLOR, TIER_COLOR, SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { GettingStarted } from '../components/GettingStarted.js'
+import { NextBestActionCard } from '../components/NextBestAction.js'
 import { OutboxHealth } from '../components/OutboxHealth.js'
 import { OutreachIntents } from '../components/OutreachIntents.js'
 import { Card } from '../components/ui/Card.js'
@@ -307,6 +308,16 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {/* Acquisition Radar — the single highest-priority action, above analytics. */}
+      {!loading && (
+        <NextBestActionCard
+          stats={stats}
+          hotCount={hotProspects.length}
+          signalCount={recentSignals.length}
+          setView={setView}
+        />
+      )}
+
       {/* Onboarding: shows send-readiness steps; hides itself once ready */}
       <GettingStarted api={api} workspaceId={workspace.id} toast={toast} setView={setView} />
 
