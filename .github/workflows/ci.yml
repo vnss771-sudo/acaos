@@ -63,6 +63,19 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -119,6 +132,19 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -152,6 +178,19 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -182,6 +221,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: package-lock.json
+
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
 
       - name: Install dependencies (postinstall Prisma generate suppressed)
         run: npm ci
@@ -303,6 +355,19 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -374,6 +439,19 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -426,6 +504,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: package-lock.json
+
+      # Cache the Prisma query-engine binaries so npm ci / prisma generate don't
+      # re-download them on every run (removes a fragile network dependency; a
+      # cache miss just falls back to the normal download).
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
 
       - name: Install dependencies
         run: npm ci
