@@ -1,7 +1,8 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
-import { ensureWorkspaceSlug, userCanManageWorkspaceBilling, normalizeWorkspaceRole } from '../../lib/workspaces.js'
+import { ensureWorkspaceSlug, normalizeWorkspaceRole } from '../../lib/workspaces.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { normalizeOptionalString } from '../../lib/validation.js'
 import { validate, nonEmptyString } from '../../lib/validate.js'
 import { z } from 'zod'
@@ -110,11 +111,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
       const existing = await prisma.workspace.findUnique({ where: { id: workspaceId } })
       if (!existing) throw new ApiError(404, 'Workspace not found')
 
-      const membership = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId: workspaceId, role: { in: ['owner', 'admin'] } },
-        select: { role: true }
-      })
-      if (!membership) throw new ApiError(403, 'Must be owner or admin to update workspace')
+      await assertWorkspacePermission(user.id, workspaceId, 'workspace:update')
 
       const updates: { name?: string; slug?: string; senderBusinessName?: string | null; senderPostalAddress?: string | null } = {}
 
@@ -147,8 +144,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
     '/:id/billing-portal',
     asyncHandler(async (req, res) => {
       const user = req.user!
-      const allowed = await userCanManageWorkspaceBilling(user.id, req.params.id as string)
-      if (!allowed) throw new ApiError(403, 'Access denied')
+      await assertWorkspacePermission(user.id, req.params.id as string, 'billing:manage')
 
       const workspace = await prisma.workspace.findUnique({
         where: { id: req.params.id as string },
@@ -171,10 +167,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
       const user = req.user!
       const workspaceId = req.params.id as string
 
-      const membership = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!membership) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'workspace:seed')
 
       const playbookId: string | null = typeof req.body?.playbookId === 'string' ? req.body.playbookId : null
       const includeExamples: boolean = req.body?.includeExamples !== false

@@ -7,6 +7,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
 import { isValidEmail } from '../lib/validation.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { promises as dns } from 'dns'
 
 export const mailboxRouter = Router()
@@ -42,10 +43,7 @@ mailboxRouter.post(
     if (!to || !isValidEmail(to)) throw new ApiError(400, 'Valid recipient email required')
 
     // Require owner or admin — test-send uses real SMTP credits
-    const member = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-    })
-    if (!member) throw new ApiError(403, 'Must be owner or admin to send test emails')
+    await assertWorkspacePermission(user.id, workspaceId, 'mail:send_test')
 
     const result = await sendMail(to, subject || 'Test', html || '<p>Hello</p>', emailCfg)
     res.json({ id: result.messageId })

@@ -1,9 +1,10 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { generateApiKey, hashApiKey } from '../../lib/apiKeys.js'
 import { evictCachedWorkspace } from '../../lib/ingestCache.js'
 import { recordAudit } from '../../lib/audit.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 
 export function registerApiKeyRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
@@ -12,10 +13,7 @@ export function registerApiKeyRoutes(workspaceRouter: Router) {
       const user = req.user!
       const workspaceId = req.params.id as string
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'api_keys:manage')
 
       // F-05: Evict old hash from cache before rotating so the revoked key stops working immediately
       const beforeRotate = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ingestApiKey: true } })
@@ -46,10 +44,7 @@ export function registerApiKeyRoutes(workspaceRouter: Router) {
       const user = req.user!
       const workspaceId = req.params.id as string
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'api_keys:manage')
 
       // F-05: Evict old hash from cache before deleting so the revoked key stops working immediately
       const existing = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ingestApiKey: true } })

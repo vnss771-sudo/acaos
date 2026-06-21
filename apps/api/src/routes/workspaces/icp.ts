@@ -3,6 +3,7 @@ import { asyncHandler, ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 import type { Assert, Extends, UpdateIcpRequest } from '@acaos/shared'
 
 // Compile-time contract for PUT /:id/icp, pinned to the shared type so the
@@ -76,10 +77,7 @@ export function registerIcpRoutes(workspaceRouter: Router) {
       const user = req.user!
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin to update ICP')
+      await assertWorkspacePermission(user.id, workspaceId, 'icp:update')
 
       const {
         targetIndustries, targetGeos, excludedIndustries,

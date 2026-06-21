@@ -50,11 +50,6 @@ export async function userHasWorkspaceAccess(userId: string, workspaceId: string
   return (await getWorkspaceRole(userId, workspaceId)) !== null
 }
 
-export async function userCanManageWorkspaceBilling(userId: string, workspaceId: string) {
-  const role = await getWorkspaceRole(userId, workspaceId)
-  return role === 'owner' || role === 'admin'
-}
-
 // ── Workspace RBAC ────────────────────────────────────────────────────────────
 // "admin" means owner OR admin; "member" is the least-privileged role. High-risk
 // actions (bulk import/export, destructive deletes, campaign/mission control,
