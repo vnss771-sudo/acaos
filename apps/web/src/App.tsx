@@ -10,6 +10,7 @@ import { AuthScreen } from './components/AuthScreen.js'
 import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { CommandPalette } from './components/CommandPalette.js'
+import { SkipLink } from './components/SkipLink.js'
 import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
 import { colors } from './styles.js'
@@ -255,6 +256,7 @@ export function App() {
       background: colors.bg, color: colors.text,
       fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif'
     }}>
+      <SkipLink />
       {isTablet ? (
         <Drawer open={navOpen} onClose={() => setNavOpen(false)}>
           <Sidebar
@@ -358,7 +360,7 @@ export function App() {
         )}
 
         {/* Main content */}
-        <main style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
+        <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
           <ErrorBoundary>
             <Suspense fallback={<ViewFallback />}>
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}

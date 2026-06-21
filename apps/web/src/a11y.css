@@ -1,0 +1,31 @@
+/* Accessibility layer. Bundled same-origin by Vite (CSP-safe, like
+ * animations.css) — these rules need real pseudo-classes (:focus,
+ * :focus-visible) that inline React styles can't express. */
+
+/* Skip link: visually hidden until focused, then pinned top-left so keyboard
+ * users can jump past the sidebar straight to the main content. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: 10px 16px;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Visible keyboard focus ring across interactive elements. Mouse users don't
+ * see it (:focus-visible), keyboard users always do. */
+:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
