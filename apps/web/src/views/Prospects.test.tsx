@@ -96,6 +96,35 @@ describe('ProspectsView', () => {
     ))
   })
 
+  test('select-all then Rescore selected loops the per-prospect endpoint', async () => {
+    const prospect2 = { ...prospect, id: 'p2', companyName: 'Apex Plumbing' } as unknown as Prospect
+    const api = makeApi((path) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [] })
+      if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect, prospect2], total: 2 })
+      if (path.endsWith('/rescore')) return Promise.resolve({})
+      return undefined
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+    await screen.findByText('Meridian Roofing')
+
+    await userEvent.click(screen.getByLabelText('Select all rows'))
+    await userEvent.click(screen.getByRole('button', { name: /Rescore selected/i }))
+
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/prospects/p1/rescore', { method: 'POST' }))
+    expect(api).toHaveBeenCalledWith('/api/prospects/p2/rescore', { method: 'POST' })
+  })
+
+  test('bulk controls are hidden for members (canManage=false)', async () => {
+    const api = makeApi((path) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [] })
+      if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect], total: 1 })
+      return undefined
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage={false} />)
+    await screen.findByText('Meridian Roofing')
+    expect(screen.queryByLabelText('Select all rows')).not.toBeInTheDocument()
+  })
+
   test('surfaces discovery run history including provider failures', async () => {
     const api = makeApi((path) => {
       if (path.includes('/discovery-runs')) return Promise.resolve({ runs: [

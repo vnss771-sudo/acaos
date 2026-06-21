@@ -353,6 +353,10 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   const [missions, setMissions] = useState<{ id: string; name: string }[]>([])
   // Optionally attribute discovered prospects to a mission (empty = unscoped).
   const [discoverMissionId, setDiscoverMissionId] = useState('')
+  // Bulk-select: ids of prospects ticked in the grid, plus an in-flight flag so
+  // the batch bar disables while a run loops the per-prospect endpoints.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkRunning, setBulkRunning] = useState(false)
 
   useEffect(() => {
     if (!workspace || !canManage) {
@@ -404,6 +408,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     if (!workspace) return
     let cancelled = false
     setLoading(true)
+    setSelectedIds(new Set())
     api<{ prospects: Prospect[]; total: number }>(
       `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
     )
@@ -522,6 +527,43 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     { key: 'signalCount', header: 'Signals', sortable: true, align: 'right', render: p => <span style={{ color: colors.textMuted }}>{p.signalCount ?? 0}</span> },
     { key: 'winProbability', header: 'Win Prob', sortable: true, align: 'right', render: p => <span style={{ color: colors.green, fontWeight: 600 }}>{p.winProbability != null ? `${Math.round(p.winProbability * 100)}%` : '–'}</span> },
   ]
+
+  const toggleRow = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const allOnPageSelected = sortedProspects.length > 0 && sortedProspects.every(p => selectedIds.has(p.id))
+  const toggleAll = useCallback(() => {
+    setSelectedIds(allOnPageSelected ? new Set() : new Set(sortedProspects.map(p => p.id)))
+  }, [allOnPageSelected, sortedProspects])
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
+
+  // Bulk actions have no batch endpoint — they loop the existing per-prospect
+  // routes (same contract the detail panel uses), so there's no API/model change.
+  const runBulk = async (action: 'rescore' | 'recommend') => {
+    const ids = prospects.filter(p => selectedIds.has(p.id)).map(p => p.id)
+    if (ids.length === 0 || bulkRunning) return
+    setBulkRunning(true)
+    let ok = 0
+    let failed = 0
+    for (const id of ids) {
+      try {
+        await route(action === 'rescore' ? 'POST /api/prospects/:id/rescore' : 'POST /api/prospects/:id/recommend', { params: { id } })
+        ok++
+      } catch { failed++ }
+    }
+    setBulkRunning(false)
+    clearSelection()
+    if (ok > 0) toast.success(`${action === 'rescore' ? 'Rescored' : 'Recommendations generated for'} ${ok} prospect${ok !== 1 ? 's' : ''}`)
+    if (failed > 0) toast.error(`${failed} could not be processed`)
+    load()
+  }
 
   if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="◎" /></div>
 
@@ -665,6 +707,29 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
         </div>
       )}
 
+      {/* Bulk action bar — appears once one or more prospects are selected. */}
+      {canManage && selectedIds.size > 0 && (
+        <div style={{ ...s.card, display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' }}>
+          <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>{selectedIds.size} selected</span>
+          <button style={{ ...s.btnGhost, padding: '4px 8px' }} onClick={clearSelection} disabled={bulkRunning}>Clear</button>
+          <div style={{ flex: 1 }} />
+          <button
+            style={{ ...s.btnSm, opacity: bulkRunning ? 0.5 : 1 }}
+            disabled={bulkRunning}
+            onClick={() => runBulk('rescore')}
+          >
+            {bulkRunning ? 'Working…' : 'Rescore selected'}
+          </button>
+          <button
+            style={{ ...s.btn, opacity: bulkRunning ? 0.5 : 1 }}
+            disabled={bulkRunning}
+            onClick={() => runBulk('recommend')}
+          >
+            {bulkRunning ? 'Working…' : 'Generate recommendations'}
+          </button>
+        </div>
+      )}
+
       {/* Prospect list */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
@@ -680,6 +745,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
           onRowClick={p => setSelected(p)}
           sort={sort}
           onSortChange={setSort}
+          {...(canManage ? { selectedKeys: selectedIds, onToggleRow: toggleRow, onToggleAll: toggleAll } : {})}
         />
       )}
 
