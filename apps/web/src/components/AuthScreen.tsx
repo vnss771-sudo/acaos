@@ -61,8 +61,9 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
         setSuccessMsg('Password reset! You can now sign in.')
         setPassword('')
         setConfirmPassword('')
-        // Clear the ?reset= param from URL without reload
-        window.history.replaceState({}, '', window.location.pathname)
+        // Clear the #reset= token from the URL fragment without reload,
+        // leaving any query string intact.
+        window.history.replaceState({}, '', window.location.pathname + window.location.search)
         setTimeout(() => setMode('login'), 1500)
         return
       }

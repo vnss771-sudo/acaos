@@ -290,7 +290,7 @@ authRouter.post(
     await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash, expiresAt } })
 
     const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
-    const resetUrl = `${appUrl}?reset=${rawToken}`
+    const resetUrl = `${appUrl}/#reset=${rawToken}`
 
     if (isMailConfigured()) {
       await sendMail(email, 'Reset your ACAOS password',
@@ -482,7 +482,7 @@ async function sendVerificationEmail(userId: string, email: string) {
   await prisma.emailVerificationToken.create({ data: { userId, tokenHash, expiresAt } })
 
   const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
-  const verifyUrl = `${appUrl}?verify=${rawToken}`
+  const verifyUrl = `${appUrl}/#verify=${rawToken}`
 
   if (isMailConfigured()) {
     await sendMail(email, 'Verify your ACAOS email address',

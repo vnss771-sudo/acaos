@@ -62,17 +62,27 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
-function getUrlParam(key: string) {
-  return new URLSearchParams(window.location.search).get(key)
+// Security: reset/verify/invite tokens are delivered in the URL fragment (after
+// '#'), not the query string. Fragments are never sent to the server (no Referer
+// leak, no proxy/access-log exposure) — the SPA reads them client-side.
+function getHashParam(key: string) {
+  const hash = window.location.hash.replace(/^#/, '')
+  return new URLSearchParams(hash).get(key)
+}
+
+// Drop the fragment (which carries a sensitive token) from the URL without a
+// reload, leaving any query string intact.
+function clearUrlHash() {
+  window.history.replaceState({}, '', window.location.pathname + window.location.search)
 }
 
 export function App() {
   // Access token is held in memory only. On load it is re-derived from the
   // HttpOnly refresh cookie via /api/auth/refresh (see the boot effect below).
   const [token, setToken] = useState<string | null>(null)
-  const [resetToken] = useState<string | null>(() => getUrlParam('reset'))
-  const [inviteToken] = useState<string | null>(() => getUrlParam('invite'))
-  const [verifyToken] = useState<string | null>(() => getUrlParam('verify'))
+  const [resetToken] = useState<string | null>(() => getHashParam('reset'))
+  const [inviteToken] = useState<string | null>(() => getHashParam('invite'))
+  const [verifyToken] = useState<string | null>(() => getHashParam('verify'))
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
@@ -162,15 +172,15 @@ export function App() {
   // Verify email address when ?verify=TOKEN is present (runs once on mount)
   useEffect(() => {
     if (!verifyToken) return
-    fetch(`${API}/api/auth/verify-email/${verifyToken}`)
-      .then(() => window.history.replaceState({}, '', window.location.pathname))
+    fetch(`${API}/api/auth/verify-email/${encodeURIComponent(verifyToken)}`)
+      .then(() => clearUrlHash())
       .catch(() => {})
   }, [verifyToken])
 
   // Accept a pending invite once we know who the user is
   useEffect(() => {
     if (!inviteToken || !token || !user) return
-    fetch(`${API}/api/auth/invite/${inviteToken}/accept`, {
+    fetch(`${API}/api/auth/invite/${encodeURIComponent(inviteToken)}/accept`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     }).then(r => r.json()).then(d => {
