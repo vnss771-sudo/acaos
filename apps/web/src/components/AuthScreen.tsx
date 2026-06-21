@@ -288,7 +288,7 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="At least 12 characters"
+                  placeholder={mode === 'login' ? 'Enter your password' : 'At least 12 characters'}
                   required
                   // Enforce the 12-char floor only when setting a password
                   // (signup/reset). In login mode, never block submit on length —
