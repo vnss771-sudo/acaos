@@ -10,6 +10,16 @@ import { prisma } from '../lib/prisma.js'
 const MAX_NAME = 200
 const MAX_NOTES = 2_000
 const MAX_REPLY = 10_000
+const MAX_SUMMARY = 4_000
+
+// Trim an optional string field and cap its length so prompt-contributing inputs
+// can't bloat the AI request (provider cost / abuse) within the 1MB JSON limit.
+function boundedField(value: unknown, max: number, label: string): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (trimmed.length > max) throw new ApiError(400, `${label} must be at most ${max} characters`)
+  return trimmed || undefined
+}
 
 export const aiRouter = Router()
 aiRouter.use(requireAuth)
@@ -74,15 +84,16 @@ aiRouter.post(
 
     const businessName = String(req.body?.businessName || '').trim()
     if (!businessName) throw new ApiError(400, 'businessName is required')
+    if (businessName.length > MAX_NAME) throw new ApiError(400, `businessName must be at most ${MAX_NAME} characters`)
 
     const data = await generateOutreach({
       businessName,
-      category: typeof req.body?.category === 'string' ? req.body.category.trim() : undefined,
-      city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
-      contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() : undefined,
-      aiSummary: typeof req.body?.aiSummary === 'string' ? req.body.aiSummary.trim() : undefined,
-      outreachAngle: typeof req.body?.outreachAngle === 'string' ? req.body.outreachAngle.trim() : undefined,
-      notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() : undefined,
+      category: boundedField(req.body?.category, MAX_NAME, 'category'),
+      city: boundedField(req.body?.city, MAX_NAME, 'city'),
+      contactName: boundedField(req.body?.contactName, MAX_NAME, 'contactName'),
+      aiSummary: boundedField(req.body?.aiSummary, MAX_SUMMARY, 'aiSummary'),
+      outreachAngle: boundedField(req.body?.outreachAngle, MAX_NOTES, 'outreachAngle'),
+      notes: boundedField(req.body?.notes, MAX_NOTES, 'notes'),
       icp
     })
 

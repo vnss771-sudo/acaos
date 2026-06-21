@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { getRedis } from '../lib/redis.js'
+import { hashApiKey } from '../lib/apiKeys.js'
 
 interface RateLimitOptions {
   windowMs: number
@@ -128,7 +129,12 @@ export const apiKeyRateLimit = createRateLimiter({
   keyFn: (req) => {
     const key = req.headers['x-api-key']
     const k = Array.isArray(key) ? key[0] : key
-    return k ? `k:${k}` : `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
+    // Key by the SHA-256 of the API key (same hash the ingest lookup stores), so
+    // the raw secret never lands in the Redis keyspace, MONITOR output, metrics,
+    // or backups. The key is a 256-bit random token (randomBytes(32)), so a fast
+    // hash is correct here — and required, since this runs per request.
+    if (k) return `k:${hashApiKey(k)}`
+    return `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`
   }
 })
 

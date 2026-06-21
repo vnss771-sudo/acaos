@@ -32,15 +32,19 @@ test('ttl=0 is pure single-flight: sequential (awaited) gets recompute', async (
 })
 
 test('ttl>0 serves the cached value within the window, then recomputes', async () => {
-  const cache = createTtlCache<number>(30)
+  // Injected clock keeps this deterministic — a real 30ms TTL flaked under
+  // concurrent test files when the event loop stalled >30ms between gets.
+  let nowMs = 1_000
+  const cache = createTtlCache<number>(30, () => nowMs)
   let calls = 0
   const loader = async () => { calls++; return calls }
 
   assert.equal(await cache.get('k', loader), 1)
+  nowMs += 20 // still within the 30ms window
   assert.equal(await cache.get('k', loader), 1, 'served from cache within TTL')
   assert.equal(calls, 1)
 
-  await tick(45)
+  nowMs += 25 // now 45ms after the store — past the 30ms TTL
   assert.equal(await cache.get('k', loader), 2, 'recomputes after TTL expiry')
   assert.equal(calls, 2)
 })
