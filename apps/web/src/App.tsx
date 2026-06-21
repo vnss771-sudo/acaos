@@ -172,7 +172,13 @@ export function App() {
   // Verify email address when ?verify=TOKEN is present (runs once on mount)
   useEffect(() => {
     if (!verifyToken) return
-    fetch(`${API}/api/auth/verify-email/${encodeURIComponent(verifyToken)}`)
+    // Token travels in the POST body, never the URL path, so it can't leak via
+    // API access / proxy logs. Clear the fragment after firing regardless.
+    fetch(`${API}/api/auth/verify-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verifyToken }),
+    })
       .then(() => clearUrlHash())
       .catch(() => {})
   }, [verifyToken])
@@ -180,9 +186,10 @@ export function App() {
   // Accept a pending invite once we know who the user is
   useEffect(() => {
     if (!inviteToken || !token || !user) return
-    fetch(`${API}/api/auth/invite/${encodeURIComponent(inviteToken)}/accept`, {
+    fetch(`${API}/api/auth/invite/accept`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: inviteToken }),
     }).then(r => r.json()).then(d => {
       if (d.workspaceId) {
         window.history.replaceState({}, '', window.location.pathname)
