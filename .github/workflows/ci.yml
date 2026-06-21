@@ -259,6 +259,7 @@ jobs:
           image-ref: ${{ matrix.tag }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          trivyignores: .trivyignore
           skip-dirs: usr/local/lib/node_modules/npm
           exit-code: '1'
 

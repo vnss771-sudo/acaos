@@ -1,0 +1,5 @@
+# CVE-2026-45186 (libexpat) is currently present in the alpine package set used
+# by our web image base. The web image serves static assets only and does not
+# process untrusted XML inputs. Revisit and remove once upstream base updates.
+# exp:2026-09-30
+CVE-2026-45186
