@@ -6,6 +6,12 @@ import { Spinner, EmptyState } from '../components/Spinner.js'
 import { GettingStarted } from '../components/GettingStarted.js'
 import { OutboxHealth } from '../components/OutboxHealth.js'
 import { OutreachIntents } from '../components/OutreachIntents.js'
+import { Card } from '../components/ui/Card.js'
+import { KpiCard } from '../components/ui/KpiCard.js'
+import { ProgressBar } from '../components/ui/ProgressBar.js'
+import { Grid } from '../components/ui/Grid.js'
+import { Badge } from '../components/ui/Badge.js'
+import { Table, type Column } from '../components/ui/Table.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -16,38 +22,16 @@ type Props = {
   toast: ToastHook
 }
 
-function StatCard({
-  label, value, sub, color = colors.text, trend
-}: {
-  label: string; value: string | number; sub?: string; color?: string; trend?: string
-}) {
-  return (
-    <div style={s.card}>
-      <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
-        {label}
-      </div>
-      <div style={{ color, fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 6 }}>{sub}</div>}
-      {trend && <div style={{ color: colors.green, fontSize: 11, marginTop: 4 }}>{trend}</div>}
-    </div>
-  )
-}
+type TopLead = NonNullable<StatsData['topLeads']>[number]
 
 function FunnelBar({ stage, count, max }: { stage: string; count: number; max: number }) {
-  const pct = max > 0 ? (count / max) * 100 : 0
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
         <span style={{ color: colors.textMuted, fontSize: 13 }}>{stage}</span>
         <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>{count}</span>
       </div>
-      <div style={{ background: '#1e2d40', borderRadius: 4, height: 6, overflow: 'hidden' }}>
-        <div style={{
-          width: `${pct}%`, height: '100%',
-          background: STAGE_COLOR[stage] || colors.textFaint,
-          borderRadius: 4, transition: 'width 0.4s ease'
-        }} />
-      </div>
+      <ProgressBar value={count} max={max} color={STAGE_COLOR[stage] || colors.textFaint} height={6} track="#1e2d40" />
     </div>
   )
 }
@@ -69,12 +53,7 @@ function UsageMeter({ used, limit, plan }: { used: number; limit: number; plan: 
         </span>
       </div>
       {!unlimited && (
-        <div style={{ background: '#1e2d40', borderRadius: 4, height: 5, overflow: 'hidden' }}>
-          <div style={{
-            width: `${pct}%`, height: '100%', background: barColor,
-            borderRadius: 4, transition: 'width 0.3s'
-          }} />
-        </div>
+        <ProgressBar value={used} max={limit} color={barColor} height={5} track="#1e2d40" />
       )}
       <div style={{ color: colors.textFaint, fontSize: 11, marginTop: 4 }}>
         {unlimited ? `Unlimited on ${plan} plan` : warning ? `${Math.round(limit - used)} calls remaining — consider upgrading` : `${plan} plan`}
@@ -84,7 +63,6 @@ function UsageMeter({ used, limit, plan }: { used: number; limit: number; plan: 
 }
 
 function WeightBar({ label, value, max }: { label: string; value: number; max: number }) {
-  const pct = max > 0 ? (value / max) * 100 : 0
   const displayPct = Math.round(value * 100)
   return (
     <div style={{ marginBottom: 8 }}>
@@ -92,13 +70,7 @@ function WeightBar({ label, value, max }: { label: string; value: number; max: n
         <span style={{ color: colors.textMuted, fontSize: 12, textTransform: 'capitalize' }}>{label.replace(/([A-Z])/g, ' $1')}</span>
         <span style={{ color: colors.text, fontSize: 12, fontWeight: 600 }}>{displayPct}%</span>
       </div>
-      <div style={{ background: '#1e2d40', borderRadius: 3, height: 4, overflow: 'hidden' }}>
-        <div style={{
-          width: `${pct}%`, height: '100%',
-          background: `linear-gradient(90deg, ${colors.blue}, ${colors.purple})`,
-          borderRadius: 3, transition: 'width 0.4s ease'
-        }} />
-      </div>
+      <ProgressBar value={value} max={max} gradient={`linear-gradient(90deg, ${colors.blue}, ${colors.purple})`} height={4} track="#1e2d40" />
     </div>
   )
 }
@@ -353,22 +325,22 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
       )}
 
       {/* KPI row */}
-      <div style={s.grid4}>
-        <StatCard label="Total Leads" value={loading ? '…' : (stats?.totalLeads ?? 0)} color={colors.blueLight} />
-        <StatCard label="Campaigns" value={loading ? '…' : (stats?.campaignCount ?? 0)} />
-        <StatCard
+      <Grid cols={4}>
+        <KpiCard label="Total Leads" value={loading ? '…' : (stats?.totalLeads ?? 0)} color={colors.blueLight} />
+        <KpiCard label="Campaigns" value={loading ? '…' : (stats?.campaignCount ?? 0)} />
+        <KpiCard
           label="Reply Rate"
           value={loading ? '…' : `${stats?.metrics.replyRate ?? 0}%`}
           sub={`${stats?.metrics.replied ?? 0} of ${stats?.metrics.contacted ?? 0} contacted`}
           color={colors.green}
         />
-        <StatCard
+        <KpiCard
           label="Booked"
           value={loading ? '…' : (stats?.metrics.booked ?? 0)}
           sub={`${stats?.metrics.bookingRate ?? 0}% booking rate`}
           color={colors.amber}
         />
-      </div>
+      </Grid>
 
       {/* Score tier distribution */}
       {!loading && stats?.scoreDistribution && (
@@ -381,7 +353,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <Grid cols={2}>
         {/* Funnel */}
         <div style={s.card}>
           <div style={s.sectionHeader}>Pipeline Funnel</div>
@@ -439,7 +411,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
                 limit={stats.usage.limit}
                 plan={stats.usage.plan}
               />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 10 }}>
+              <Grid cols={3} gap={8} style={{ marginTop: 10 }}>
                 {[
                   { label: 'Research', key: 'AI_RESEARCH' as const, icon: '✦' },
                   { label: 'Outreach', key: 'AI_OUTREACH' as const, icon: '✉' },
@@ -452,11 +424,11 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
                     </div>
                   </div>
                 ))}
-              </div>
+              </Grid>
             </div>
           )}
         </div>
-      </div>
+      </Grid>
 
       {/* Scoring model */}
       {!loading && stats?.scoringModel && (
@@ -465,40 +437,30 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
       {/* Top scoring leads */}
       {stats?.topLeads && stats.topLeads.length > 0 && (
-        <div style={s.card}>
+        <Card>
           <div style={s.sectionHeader}>Top Scoring Leads</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {['Business', 'Category', 'Tier', 'Stage', 'Score'].map(h => (
-                  <th key={h} style={{ ...s.sectionHeader, padding: '0 12px 8px 0', textAlign: 'left' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {stats.topLeads.map(lead => {
-                const tier = lead.score >= 72 ? 'HOT' : lead.score >= 48 ? 'WARM' : 'COLD'
-                return (
-                  <tr key={lead.id}>
-                    <td style={{ padding: '8px 12px 8px 0', color: colors.text, fontSize: 14 }}>{lead.businessName}</td>
-                    <td style={{ padding: '8px 12px 8px 0', color: colors.textFaint, fontSize: 13 }}>{lead.category || '–'}</td>
-                    <td style={{ padding: '8px 12px 8px 0' }}>
-                      <span style={s.badge(TIER_COLOR[tier])}>{tier}</span>
-                    </td>
-                    <td style={{ padding: '8px 12px 8px 0' }}>
-                      <span style={s.badge(STAGE_COLOR[lead.stage] || colors.textFaint)}>{lead.stage}</span>
-                    </td>
-                    <td style={{ padding: '8px 12px 8px 0', color: colors.amber, fontSize: 14, fontWeight: 700 }}>{lead.score}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+          <Table<TopLead>
+            rows={stats.topLeads}
+            rowKey={lead => lead.id}
+            columns={[
+              { key: 'businessName', header: 'Business', render: lead => lead.businessName },
+              { key: 'category', header: 'Category', render: lead => lead.category || '–' },
+              {
+                key: 'tier', header: 'Tier',
+                render: lead => {
+                  const tier = lead.score >= 72 ? 'HOT' : lead.score >= 48 ? 'WARM' : 'COLD'
+                  return <Badge color={TIER_COLOR[tier]}>{tier}</Badge>
+                },
+              },
+              { key: 'stage', header: 'Stage', render: lead => <Badge color={STAGE_COLOR[lead.stage] || colors.textFaint}>{lead.stage}</Badge> },
+              { key: 'score', header: 'Score', align: 'right', render: lead => <span style={{ color: colors.amber, fontWeight: 700 }}>{lead.score}</span> },
+            ] as Column<TopLead>[]}
+          />
+        </Card>
       )}
 
       {/* Quick actions */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+      <Grid cols={3} gap={12}>
         {[
           { label: 'Add Lead', icon: '+', action: () => setView('leads') },
           { label: 'New Campaign', icon: '◈', action: () => setView('campaigns') },
@@ -528,7 +490,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
             {label}
           </button>
         ))}
-      </div>
+      </Grid>
     </div>
   )
 }
