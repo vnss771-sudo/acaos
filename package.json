@@ -1,6 +1,9 @@
 {
   "name": "acaos-production-enhanced",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
