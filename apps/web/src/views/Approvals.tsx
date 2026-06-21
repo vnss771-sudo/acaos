@@ -4,6 +4,7 @@ import type { OutreachDraft, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { Card } from '../components/ui/Card.js'
+import { analyzeDraft } from '../lib/draftRisk.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -158,6 +159,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
           {drafts.map(d => {
             const e = edits[d.id] ?? { subject: d.subject, emailBody: d.emailBody }
             const isBusy = busy[d.id]
+            const risks = analyzeDraft(e.subject, e.emailBody)
             return (
               <Card key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
@@ -193,6 +195,23 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                     onChange={ev => setEdits(prev => ({ ...prev, [d.id]: { ...e, emailBody: ev.target.value } }))}
                   />
                 </div>
+                {risks.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} aria-label="Draft risk checks">
+                    {risks.map(r => {
+                      const tone = r.level === 'warn' ? colors.red : colors.amber
+                      return (
+                        <span key={r.id} title={r.message} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
+                          color: tone, background: tone + '18', border: `1px solid ${tone}44`,
+                          borderRadius: 99, padding: '2px 8px',
+                        }}>
+                          <span aria-hidden="true">{r.level === 'warn' ? '!' : '⚠'}</span>
+                          {r.message}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
                 {canManage && (
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                     {edited(d) && (
