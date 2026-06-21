@@ -29,7 +29,8 @@ jobs:
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           languages: javascript-typescript
-          queries: security-and-quality
+          # Query suite + documented false-positive filters live in the config.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Analyze with CodeQL
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2

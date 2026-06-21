@@ -11,7 +11,11 @@ export function isValidEmail(value: string) {
   // that flags control chars in regexes is intentionally disabled here.
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(value)) return false
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
+  // ReDoS-safe: each quantified class is separated by a required, non-overlapping
+  // delimiter. The domain is dot-separated labels that exclude '.', so adjacent
+  // `+` groups can't both match the same dot (no ambiguous/polynomial backtracking
+  // like the prior `[^\s@]+\.[^\s@]+`, which let '.' be consumed two ways).
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(normalizeEmail(value))
 }
 
 export function validatePassword(value: string) {
