@@ -24,7 +24,7 @@ describe('Sidebar', () => {
     renderSidebar()
     expect(screen.getByText('Northwind Trades')).toBeInTheDocument()
     expect(screen.getByText('sarah@northwind.test')).toBeInTheDocument()
-    for (const label of ['Intelligence', 'Prospects', 'Dashboard', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
+    for (const label of ['Radar', 'Intelligence', 'Prospects', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
   })

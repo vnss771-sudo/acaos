@@ -5,17 +5,21 @@ import { colors } from '../styles.js'
 
 type NavItem = { id: View; label: string; icon: string }
 
+// Ordered by the acquisition loop (Mission → Discover → Score → Review → Send →
+// Learn): Radar (overview) first, then the operating objects, then supporting
+// surfaces. Leads is retained (distinct data model) but demoted; Billing sits at
+// the end with Settings.
 const NAV: NavItem[] = [
-  { id: 'intelligence', label: 'Intelligence', icon: '◈' },
-  { id: 'prospects', label: 'Prospects', icon: '◎' },
-  { id: 'dashboard', label: 'Dashboard', icon: '⬡' },
+  { id: 'dashboard', label: 'Radar', icon: '⬡' },
   { id: 'missions', label: 'Missions', icon: '◇' },
-  { id: 'campaigns', label: 'Campaigns', icon: '▣' },
+  { id: 'prospects', label: 'Prospects', icon: '◎' },
   { id: 'approvals', label: 'Review Queue', icon: '✓' },
+  { id: 'campaigns', label: 'Campaigns', icon: '▣' },
+  { id: 'intelligence', label: 'Intelligence', icon: '◈' },
   { id: 'leads', label: 'Leads', icon: '▤' },
   { id: 'ai', label: 'AI Tools', icon: '✦' },
-  { id: 'billing', label: 'Billing', icon: '◆' },
-  { id: 'settings', label: 'Settings', icon: '◌' }
+  { id: 'settings', label: 'Settings', icon: '◌' },
+  { id: 'billing', label: 'Billing', icon: '◆' }
 ]
 
 type SidebarProps = {
