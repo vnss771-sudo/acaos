@@ -32,6 +32,7 @@ const Settings = lazy(() => import('./views/Settings.js').then(m => ({ default: 
 const Intelligence = lazy(() => import('./views/Intelligence.js').then(m => ({ default: m.Intelligence })))
 const ProspectsView = lazy(() => import('./views/Prospects.js').then(m => ({ default: m.ProspectsView })))
 const AdminView = lazy(() => import('./views/Admin.js').then(m => ({ default: m.AdminView })))
+const InboxView = lazy(() => import('./views/Inbox.js').then(m => ({ default: m.InboxView })))
 
 function ViewFallback() {
   return (
@@ -263,6 +264,7 @@ export function App() {
     missions: 'Missions',
     campaigns: 'Campaigns',
     approvals: 'Review Queue',
+    inbox: 'Inbox',
     leads: 'Leads',
     ai: 'AI Tools',
     billing: 'Billing',
@@ -416,6 +418,7 @@ export function App() {
             {view === 'missions' && <MissionsView {...commonProps} canManage={canManage} />}
             {view === 'campaigns' && <Campaigns {...commonProps} canManage={canManage} />}
             {view === 'approvals' && <ApprovalsView {...commonProps} canManage={canManage} />}
+            {view === 'inbox' && <InboxView {...commonProps} />}
             {view === 'leads' && <Leads {...commonProps} canManage={canManage} />}
             {view === 'ai' && <AiTools {...commonProps} />}
             {view === 'billing' && <Billing {...commonProps} />}

@@ -15,6 +15,7 @@ const NAV: NavItem[] = [
   { id: 'prospects', label: 'Prospects', icon: '◎' },
   { id: 'approvals', label: 'Review Queue', icon: '✓' },
   { id: 'campaigns', label: 'Campaigns', icon: '▣' },
+  { id: 'inbox', label: 'Inbox', icon: '✉' },
   { id: 'intelligence', label: 'Intelligence', icon: '◈' },
   { id: 'leads', label: 'Leads', icon: '▤' },
   { id: 'ai', label: 'AI Tools', icon: '✦' },

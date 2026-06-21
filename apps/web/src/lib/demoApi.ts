@@ -76,6 +76,16 @@ const DEMO_MISSIONS = [
   { id: 'dm2', name: 'Roofing Multi-Location Expansion', status: 'ACTIVE' },
 ]
 
+const DEMO_INBOX = {
+  replies: [
+    { id: 'dr1', toEmail: 'ops@lonestarhvac.example', subject: 'Helping Lone Star HVAC book more jobs', sentAt: new Date(Date.now() - 172_800_000).toISOString(), repliedAt: new Date(Date.now() - 3_600_000).toISOString(), replyIntent: 'INTERESTED', replySummary: 'Wants to see how scheduling would work for their crew — open to a call.', replyKeyQuote: 'This is timely, can you send some times?', replySuggestedAction: 'Propose three call slots this week.', replyUrgency: 'this_week', replyConfidence: 91, replyIsAutoReply: false, lead: { id: 'dl3', businessName: 'Lone Star HVAC', stage: 'REPLIED' } },
+    { id: 'dr2', toEmail: 'hello@meridianroofing.example', subject: 'Quick idea for Meridian Roofing', sentAt: new Date(Date.now() - 259_200_000).toISOString(), repliedAt: new Date(Date.now() - 90_000_000).toISOString(), replyIntent: 'NEEDS_MORE_INFO', replySummary: 'Curious but wants pricing before committing to a call.', replyKeyQuote: 'What does this cost for a team our size?', replySuggestedAction: 'Share the Growth plan pricing and a one-line ROI.', replyUrgency: 'this_week', replyConfidence: 76, replyIsAutoReply: false, lead: { id: 'dl1', businessName: 'Meridian Roofing', stage: 'REPLIED' } },
+    { id: 'dr3', toEmail: 'info@bluebonnet.example', subject: 'Bluebonnet Electric — scheduling', sentAt: new Date(Date.now() - 345_600_000).toISOString(), repliedAt: new Date(Date.now() - 200_000_000).toISOString(), replyIntent: 'NOT_NOW', replySummary: 'Revisiting tools next quarter; asked to follow up later.', replyKeyQuote: 'Reach back out in Q4.', replySuggestedAction: 'Set a Q4 reminder and nurture.', replyUrgency: 'nurture', replyConfidence: 82, replyIsAutoReply: false, lead: { id: 'dl4', businessName: 'Bluebonnet Electric', stage: 'REPLIED' } },
+  ],
+  counts: { INTERESTED: 1, NEEDS_MORE_INFO: 1, NOT_NOW: 1 },
+  total: 3,
+}
+
 // One permissive shape that satisfies the destructuring of the many list-style
 // endpoints we don't bother seeding individually — so untouched views fall back
 // to clean, valid empties instead of crashing.
@@ -96,6 +106,7 @@ export function makeDemoApi(): ApiHook {
     if (path.includes('/approvals/pending')) return { drafts: DEMO_DRAFTS } as T
     if (path.includes('/api/prospects?')) return { prospects: DEMO_PROSPECTS, total: DEMO_PROSPECTS.length } as T
     if (path.includes('/api/missions')) return { missions: DEMO_MISSIONS } as T
+    if (path.includes('/api/inbox')) return DEMO_INBOX as T
     if (path.includes('/send-readiness')) return { ready: true, checks: [] } as T
 
     return PERMISSIVE_EMPTY as T
