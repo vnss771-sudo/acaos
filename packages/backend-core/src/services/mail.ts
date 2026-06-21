@@ -201,6 +201,22 @@ export async function recordProcessedReply(params: {
   return { advanced: advance }
 }
 
+// Where a mailbox sync should start fetching, by IMAP UID. With a live cursor we
+// fetch strictly above it (nothing skipped); on first sync (cursor 0) we bound to
+// a recent window so we don't scan an entire historical mailbox. Pure + exported
+// so the windowing is unit-tested without an IMAP server.
+export function computeMailboxFetchStart(opts: {
+  cursor: number
+  uidNext: number | null
+  exists: number | null
+  recentWindow?: number
+}): number {
+  const recentWindow = opts.recentWindow ?? 200
+  if (opts.cursor > 0) return opts.cursor + 1
+  const top = opts.uidNext ?? (opts.exists ?? recentWindow) + 1
+  return Math.max(1, top - recentWindow)
+}
+
 export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: string): Promise<{
   inspected: number
   matched: number
@@ -239,12 +255,32 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     await client.connect()
     await client.mailboxOpen('INBOX')
 
-    // Load already-processed records within the fetch window, scoped to this
-    // workspace — IMAP UIDs are only unique per-mailbox, not globally.
-    const windowStart = Math.max(1, (client.mailbox?.exists ?? 200) - 199)
     if (!workspaceId) throw new Error('workspaceId required for mailbox sync')
+
+    // Reply-sync cursor: fetch strictly ABOVE the last processed UID so a reply is
+    // never silently skipped (the old fixed last-200 window dropped anything older
+    // after an outage or on a busy inbox). On first sync — or after a UIDVALIDITY
+    // change, which invalidates old UIDs — bound to a recent window so we don't scan
+    // an entire historical mailbox.
+    const uidValidity = client.mailbox?.uidValidity != null ? Number(client.mailbox.uidValidity) : null
+    const uidNext = client.mailbox?.uidNext != null ? Number(client.mailbox.uidNext) : null
+    const cursorRow = await prisma.workspaceEmailConfig.findUnique({
+      where: { workspaceId },
+      select: { lastSyncedUid: true, lastUidValidity: true },
+    })
+    const validityChanged =
+      cursorRow?.lastUidValidity != null && uidValidity != null && cursorRow.lastUidValidity !== uidValidity
+    const cursor = !cursorRow || validityChanged ? 0 : cursorRow.lastSyncedUid ?? 0
+    const fetchStart = computeMailboxFetchStart({
+      cursor,
+      uidNext,
+      exists: client.mailbox?.exists ?? null,
+    })
+
+    // Already-processed records at/above the fetch floor (belt-and-suspenders with
+    // the cursor), scoped to this workspace — IMAP UIDs are only unique per-mailbox.
     const existing = await prisma.processedEmail.findMany({
-      where: { workspaceId, uid: { gte: windowStart } },
+      where: { workspaceId, uid: { gte: fetchStart } },
       select: { uid: true, messageId: true }
     })
     type ProcessedEmailRow = { uid: number; messageId: string | null }
@@ -263,9 +299,10 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
 
     const toProcess: ParsedMsg[] = []
     let inspected = 0
+    let maxUid = cursor
 
-    // Fetch recent messages (last 200) with source for body extraction
-    for await (const msg of client.fetch('*:' + Math.max(1, (client.mailbox?.exists ?? 200) - 199), {
+    // Fetch everything above the cursor (UID range) with source for body extraction.
+    for await (const msg of client.fetch(`${fetchStart}:*`, {
       envelope: true,
       uid: true,
       source: true
@@ -273,6 +310,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       inspected++
 
       const uid: number = msg.uid
+      if (uid > maxUid) maxUid = uid
       const messageId: string | null = msg.envelope?.messageId ?? null
       const fromAddress: string = msg.envelope?.from?.[0]?.address?.toLowerCase()?.trim() ?? ''
 
@@ -289,6 +327,19 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       if (bounceRecipients.length === 0 && replyBody.length < 5) continue
 
       toProcess.push({ uid, messageId, fromAddress, subject, body: replyBody, bounceRecipients })
+    }
+
+    // Advance the persisted cursor to the highest UID we inspected. Best-effort: a
+    // persist failure must never fail the sync — worst case we re-inspect a bounded,
+    // ProcessedEmail-deduped window next time.
+    if (maxUid > cursor || validityChanged) {
+      try {
+        await prisma.workspaceEmailConfig.upsert({
+          where: { workspaceId },
+          update: { lastSyncedUid: maxUid, ...(uidValidity != null ? { lastUidValidity: uidValidity } : {}) },
+          create: { workspaceId, lastSyncedUid: maxUid, ...(uidValidity != null ? { lastUidValidity: uidValidity } : {}) },
+        })
+      } catch { /* non-fatal: cursor advances on the next successful sync */ }
     }
 
     if (toProcess.length === 0) {
