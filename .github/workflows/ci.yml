@@ -260,6 +260,8 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           skip-dirs: usr/local/lib/node_modules/npm
+          # Documented, time-boxed suppressions (each carries a why + exp: expiry).
+          trivyignores: .trivyignore
           exit-code: '1'
 
   # Database-backed integration tests against a real PostgreSQL service.

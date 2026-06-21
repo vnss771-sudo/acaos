@@ -288,9 +288,13 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="At least 8 characters"
+                  placeholder={mode === 'login' ? 'Password' : 'At least 12 characters'}
                   required
-                  minLength={8}
+                  // Enforce the 12-char floor only when setting a password
+                  // (signup/reset). In login mode, never block submit on length —
+                  // legacy/short or simply-wrong passwords must reach the server
+                  // for a proper auth response.
+                  minLength={mode === 'login' ? undefined : 12}
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 />
               </div>
@@ -306,7 +310,7 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
                   onChange={e => setConfirmPassword(e.target.value)}
                   placeholder="Repeat password"
                   required
-                  minLength={8}
+                  minLength={12}
                   autoComplete="new-password"
                 />
               </div>

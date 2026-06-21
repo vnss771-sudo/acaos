@@ -196,8 +196,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       toast.error('Passwords do not match')
       return
     }
-    if (passwordForm.newPassword.length < 8) {
-      toast.error('Password must be at least 8 characters')
+    if (passwordForm.newPassword.length < 12) {
+      toast.error('Password must be at least 12 characters')
       return
     }
     setSavingPassword(true)
@@ -432,14 +432,14 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             { label: 'Confirm New Password', field: 'confirmPassword', autocomplete: 'new-password' }
           ].map(({ label, field, autocomplete }) => (
             <div key={field}>
-              <label style={s.label} htmlFor="settings-field-2">{label}</label>
-              <input id="settings-field-2"
+              <label style={s.label} htmlFor={`settings-field-${field}`}>{label}</label>
+              <input id={`settings-field-${field}`}
                 style={s.input}
                 type="password"
                 value={(passwordForm as Record<string, string>)[field]}
                 onChange={e => setPasswordForm(f => ({ ...f, [field]: e.target.value }))}
                 autoComplete={autocomplete}
-                minLength={field !== 'currentPassword' ? 8 : undefined}
+                minLength={field !== 'currentPassword' ? 12 : undefined}
               />
             </div>
           ))}

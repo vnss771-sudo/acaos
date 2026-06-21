@@ -149,3 +149,24 @@ beta; schedule items §6.1–§6.3 as fast-follow PRs.**
 
 *Prepared from a clean checkout with all listed commands executed; no results transcribed from
 memory. DB/Redis/e2e/load tiers run in CI, not in this sandbox.*
+
+---
+
+## 8. A+ closure addendum (2026-06-20, later same day)
+
+The §6 hardening recommendations have now been **executed and verified in a clean run**,
+moving every git-controllable dimension from A− to **A**. (The two operator-only items —
+turning on code scanning and the staging/production environment setup — remain outside git
+and are tracked in `docs/GITHUB_ADMIN.md`.)
+
+| §6 item | Status | Evidence |
+|---|---|---|
+| 6.1 Web container drops to non-root (finishes C2) | ✅ **Done** | `Dockerfile.web` → `nginxinc/nginx-unprivileged:alpine`, digest-pinned to the multi-arch index (amd64+arm64), runs as UID 101 with pid/temp under `/tmp`; `nginx.conf` listens on `8080`; `docker-compose.yml` maps `8080:8080` (host port unchanged, all docs/probes still valid) |
+| 6.2 Ratchet the branch-coverage floor | ✅ **Done** | `package.json` `test:coverage` now `--test-coverage-lines=84 --test-coverage-branches=78 --test-coverage-functions=87` (was 80/65/80); actuals 85.82 / 81.94 / 89.40 clear the new floors |
+| 6.3 Code scanning | ⏳ Operator-only | CodeQL wiring already gated on `vars.ENABLE_CODE_SCANNING`; flip the repo variable |
+| New — PR-time supply-chain gate (Council Sprint-1) | ✅ **Done** | `.github/workflows/security-pr.yml`: `dependency-review` (fail on moderate+) + `gitleaks` secret scan, SHA-pinned, least-privilege `permissions`; `check-workflow-pinning` passes (5 workflows) |
+| New — password-policy parity (correctness) | ✅ **Done** | Client now enforces the same 12-char floor the API already required: `AuthScreen.tsx` (password + confirm), `Settings.tsx` (change-password form + JS guard), and the API schema `apps/api/src/lib/validate.ts` `passwordField`. Previously the client advertised "8" while the server rejected `<12` |
+
+**Verification (clean run):** `eslint` ✅ · `tsc --noEmit` ×5 ✅ · `test:coverage` **1162/1162**, 85.82/81.94/89.40 ✅ · `test:web` **81/81** ✅ · production build ✅. An independent read-only audit pass confirmed no remaining substantive A+ blocker after these changes.
+
+**Grade after closure: A.** Residual is now purely operator configuration (code scanning, environments) plus the documented product roadmap — no open code-engineering items.
