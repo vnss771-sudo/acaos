@@ -18,6 +18,7 @@ import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@acaos/backend-core/lib/limits.js'
+import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { randomBytes } from 'crypto'
@@ -294,14 +295,18 @@ export async function sendCampaignBatch(
     ...(leadIds ? { id: { in: leadIds } } : {})
   }
 
+  // SAFE_LAUNCH_MODE forces human approval regardless of the workspace's own
+  // setting, so a controlled launch never auto-sends freshly generated copy.
+  const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
+
   const leads = await prisma.lead.findMany({
     where,
     include: {
-      // When approvalMode is on, only include APPROVED drafts. A lead that ends
+      // When approval is required, only include APPROVED drafts. A lead that ends
       // up with no included draft is then skipped in the send loop below (it is
       // NOT sent with freshly generated copy — that would bypass approval).
       outreachDrafts: {
-        where: icp?.approvalMode ? { status: 'APPROVED' } : undefined,
+        where: approvalRequired ? { status: 'APPROVED' } : undefined,
         orderBy: { createdAt: 'desc' },
         take: 1
       }
@@ -312,7 +317,10 @@ export async function sendCampaignBatch(
   // reserveDailySendSlot, so concurrent send jobs for the same workspace can't
   // each pass an independent check and collectively overshoot). This is just the
   // fast path: if the workspace already hit today's cap, skip the whole batch.
-  const dailySendLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
+  // SAFE_LAUNCH_MODE clamps the workspace's own cap down to the low safe ceiling
+  // (and imposes the ceiling even when the workspace set no limit).
+  const workspaceDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
+  const dailySendLimit = effectiveDailySendLimit(workspaceDailyLimit)
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
   if (dailySendLimit != null) {
@@ -429,7 +437,7 @@ export async function sendCampaignBatch(
       // lead has nothing approved — it must be skipped, never sent with freshly
       // generated copy. (Without this guard, generating below would bypass the
       // entire approval gate.)
-      if (icp?.approvalMode) { skipped++; continue }
+      if (approvalRequired) { skipped++; continue }
 
       // Check AI limit before generating
       try {

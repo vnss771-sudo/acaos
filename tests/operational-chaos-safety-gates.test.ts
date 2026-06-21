@@ -94,7 +94,9 @@ test('operational chaos: worker must skip unapproved leads before any AI generat
   // draft-generation branch and run BEFORE generateOutreach, or the entire
   // approval gate is bypassed at send time.
   const draftCheckIdx = processors.indexOf('if (lead.outreachDrafts[0])')
-  const skipGuardIdx = processors.indexOf('if (icp?.approvalMode) { skipped++; continue }')
+  // The guard now reads `approvalRequired` (the workspace's approvalMode OR forced
+  // on by SAFE_LAUNCH_MODE) rather than the raw workspace flag — same invariant.
+  const skipGuardIdx = processors.indexOf('if (approvalRequired) { skipped++; continue }')
   const generateIdx = processors.indexOf('generateOutreach(')
   assert.notEqual(draftCheckIdx, -1, 'Could not locate the draft-presence check')
   assert.notEqual(skipGuardIdx, -1, 'Missing approval-mode skip guard in the draft-generation branch')
