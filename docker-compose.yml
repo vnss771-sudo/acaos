@@ -22,6 +22,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Stateful service: not read_only (it writes its data dir) and keeps default
+    # caps (init does chown/setuid), but still cannot escalate privileges and is
+    # resource-capped so a runaway query can't starve the host.
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
 
   redis:
     image: redis:7
@@ -30,6 +40,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
 
   api:
     build:
@@ -56,6 +73,25 @@ services:
       APP_URL: http://localhost:8080
     ports:
       - '4000:4000'
+    # Runtime hardening: read-only root filesystem with writable tmpfs only where
+    # the process genuinely writes — /tmp, and the node HOME npm/XDG caches that
+    # `prisma migrate deploy` (run via npx at startup) needs. The app never writes
+    # to /app. Drops all Linux capabilities (a Node API server needs none) and
+    # blocks privilege escalation; CPU/memory are capped.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node/.npm
+      - /home/node/.cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768m
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +128,22 @@ services:
       EMAIL_ENCRYPTION_KEY: 1111111111111111111111111111111111111111111111111111111111111111
 
       WORKER_HEALTH_PORT: 9090
+    # Pure Node process (no migrations): read-only root with a /tmp tmpfs is all it
+    # needs. Caches are included for parity with the API. No capabilities required.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node/.npm
+      - /home/node/.cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512m
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,6 +159,21 @@ services:
     ports:
       # Container listens on 8080 (non-root nginx); host port unchanged.
       - '8080:8080'
+    # Unprivileged nginx writes its pid + temp paths under /tmp (see Dockerfile.web),
+    # so a read-only root with a single /tmp tmpfs is sufficient. No capabilities
+    # needed — it already binds the unprivileged port 8080.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128m
     depends_on:
       api:
         condition: service_healthy

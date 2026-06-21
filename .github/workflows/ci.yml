@@ -44,6 +44,9 @@ jobs:
       - name: Check rollout contract
         run: npm run check:rollout-contract
 
+      - name: Check compose runtime hardening
+        run: npm run check:compose-hardening
+
   verify:
     name: Static and unit gates
     runs-on: ubuntu-latest
