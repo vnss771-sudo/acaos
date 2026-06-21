@@ -4,6 +4,7 @@ import type { Workspace, OpportunitiesData, ForecastData, Prospect, Signal, View
 import { BUYING_STAGE_COLOR, BUYING_STAGE_LABELS, SIGNAL_TYPE_ICONS, TIER_COLOR } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Grid } from '../components/ui/Grid.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -373,7 +374,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
   return (
     <div style={s.stack}>
       {/* KPI Bar */}
-      <div style={s.grid4}>
+      <Grid cols={4}>
         <div style={s.card}>
           <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Total Prospects</div>
           <div style={{ color: colors.blueLight, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.total ?? 0)}</div>
@@ -394,7 +395,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
             {loading ? '…' : forecast ? `$${forecast.summary.weightedForecast.toLocaleString()}` : '$0'}
           </div>
         </div>
-      </div>
+      </Grid>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, background: colors.bgSurface, borderRadius: 8, padding: 4, border: `1px solid ${colors.border}`, width: 'fit-content' }}>
