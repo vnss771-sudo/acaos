@@ -344,7 +344,9 @@ export async function sendCampaignBatch(
         (await prisma.outreachSent.findMany({
           where: { campaignId, leadId: { in: batchLeadIds }, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
           select: { leadId: true },
-        })).map((r: { leadId: string }) => r.leadId)
+        }))
+          .map((r: { leadId: string | null }) => r.leadId)
+          .filter((id): id is string => id !== null)
       )
     : new Set<string>()
 
@@ -365,7 +367,9 @@ export async function sendCampaignBatch(
     : []
   const linkedIntentByLeadId = new Map<string, (typeof linkedIntentRows)[number]>()
   for (const intent of linkedIntentRows) {
-    if (!linkedIntentByLeadId.has(intent.leadId)) linkedIntentByLeadId.set(intent.leadId, intent)
+    if (intent.leadId !== null && !linkedIntentByLeadId.has(intent.leadId)) {
+      linkedIntentByLeadId.set(intent.leadId, intent)
+    }
   }
 
   const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
