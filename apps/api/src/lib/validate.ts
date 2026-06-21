@@ -51,3 +51,8 @@ export const emailField = z.string().trim().email('Valid email required').max(25
 export const passwordField = z.string().min(12, 'Password must be at least 12 characters').max(128)
 export const workspaceIdField = z.string().min(1, 'workspaceId required')
 export const nonEmptyString = z.string().trim().min(1)
+// Route-param id. cuid / cuid2 / uuid all fit [A-Za-z0-9_-] and are well under 64
+// chars, so this bounds length and charset (rejecting path-traversal, oversized,
+// or junk ids) before the value ever reaches a Prisma `where: { id }` lookup,
+// without being so strict it rejects any of the id formats we actually mint.
+export const idField = z.string().trim().min(1, 'id required').max(64).regex(/^[A-Za-z0-9_-]+$/, 'invalid id')

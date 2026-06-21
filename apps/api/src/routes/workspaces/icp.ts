@@ -2,12 +2,11 @@ import type { Router } from 'express'
 import { asyncHandler, ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { z } from 'zod'
+import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import type { Assert, Extends, UpdateIcpRequest } from '@acaos/shared'
 
-// Request contract for PUT /:id/icp, pinned to the shared type so the accepted
-// body shape can't drift from UpdateIcpRequest. The handler parses req.body
-// defensively (below) rather than through this schema, so this is a compile-time
-// guard only — adding runtime validation would change behaviour.
+// Compile-time contract for PUT /:id/icp, pinned to the shared type so the
+// accepted body shape can't drift from UpdateIcpRequest.
 const _updateIcpSchema = z.object({
   businessType:       z.string().nullish(),
   playbook:           z.string().nullish(),
@@ -22,6 +21,36 @@ const _updateIcpSchema = z.object({
   excludedIndustries: z.array(z.string()).optional(),
 })
 type _UpdateIcpConforms = Assert<Extends<z.infer<typeof _updateIcpSchema>, UpdateIcpRequest>>
+
+// :id route param.
+const workspaceParamsSchema = z.object({ id: idField })
+
+// Runtime request schema. This is the previous defensive, per-field parsing
+// expressed as Zod so its *output* is identical to what the handler computed by
+// hand: array fields keep only string elements (else undefined); min/max
+// employees → number, else (present) null, else undefined; outreachTone only the
+// allowed set, else undefined; dailySendLimit a positive number clamped to ≤ 500,
+// else undefined; businessType trimmed (blank → null); playbook blank → null.
+// Invalid-but-present values are tolerated (mapped to the same fallback the old
+// code produced) so behaviour is unchanged — only the field *types* are pinned.
+const stringArrayRuntime = z.unknown().optional().transform(v =>
+  Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : undefined
+)
+const updateIcpRuntimeSchema = z.object({
+  targetIndustries:   stringArrayRuntime,
+  targetGeos:         stringArrayRuntime,
+  excludedIndustries: stringArrayRuntime,
+  // NB: the old handler set these to null for absent OR non-number, and ALWAYS
+  // included them in the upsert data — mirror that (never undefined).
+  minEmployees:       z.unknown().optional().transform(v => (typeof v === 'number' ? v : null)),
+  maxEmployees:       z.unknown().optional().transform(v => (typeof v === 'number' ? v : null)),
+  mustHaveEmail:      z.unknown().optional().transform(v => (typeof v === 'boolean' ? v : undefined)),
+  businessType:       z.unknown().optional().transform(v => (typeof v === 'string' ? v.trim() || null : undefined)),
+  outreachTone:       z.unknown().optional().transform(v => (typeof v === 'string' && ['professional', 'casual', 'direct'].includes(v) ? v : undefined)),
+  approvalMode:       z.unknown().optional().transform(v => (typeof v === 'boolean' ? v : undefined)),
+  dailySendLimit:     z.unknown().optional().transform(v => (typeof v === 'number' && v > 0 ? Math.min(v, 500) : undefined)),
+  playbook:           z.unknown().optional().transform(v => (typeof v === 'string' ? v || null : undefined)),
+})
 
 export function registerIcpRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
@@ -45,28 +74,18 @@ export function registerIcpRoutes(workspaceRouter: Router) {
     '/:id/icp',
     asyncHandler(async (req, res) => {
       const user = req.user!
-      const workspaceId = req.params.id as string
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       const canManage = await prisma.membership.findFirst({
         where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
       })
       if (!canManage) throw new ApiError(403, 'Must be owner or admin to update ICP')
 
-      const body = req.body ?? {}
-      const arr = (v: unknown): string[] | undefined =>
-        Array.isArray(v) ? v.filter((s: unknown) => typeof s === 'string') : undefined
-
-      const targetIndustries = arr(body.targetIndustries)
-      const targetGeos = arr(body.targetGeos)
-      const excludedIndustries = arr(body.excludedIndustries)
-      const minEmployees = typeof body.minEmployees === 'number' ? body.minEmployees : null
-      const maxEmployees = typeof body.maxEmployees === 'number' ? body.maxEmployees : null
-      const mustHaveEmail = typeof body.mustHaveEmail === 'boolean' ? body.mustHaveEmail : undefined
-      const businessType = typeof body.businessType === 'string' ? body.businessType.trim() || null : undefined
-      const outreachTone = typeof body.outreachTone === 'string' && ['professional', 'casual', 'direct'].includes(body.outreachTone) ? body.outreachTone : undefined
-      const approvalMode = typeof body.approvalMode === 'boolean' ? body.approvalMode : undefined
-      const dailySendLimit = typeof body.dailySendLimit === 'number' && body.dailySendLimit > 0 ? Math.min(body.dailySendLimit, 500) : undefined
-      const playbook = typeof body.playbook === 'string' ? body.playbook || null : undefined
+      const {
+        targetIndustries, targetGeos, excludedIndustries,
+        minEmployees, maxEmployees, mustHaveEmail, businessType,
+        outreachTone, approvalMode, dailySendLimit, playbook,
+      } = parseBody(updateIcpRuntimeSchema, { body: req.body ?? {} })
 
       const data: Record<string, unknown> = {}
       if (targetIndustries !== undefined) data.targetIndustries = targetIndustries

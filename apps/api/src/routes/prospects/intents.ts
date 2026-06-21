@@ -8,6 +8,15 @@ import { materializeOutreachIntent } from '../../lib/materializeIntent.js'
 import { generateOutreach } from '../../services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
 import { loadIntentForWrite } from './helpers.js'
+import { parseBody, parseParams, idField } from '../../lib/validate.js'
+import { z } from 'zod'
+
+// Route params for the /:id/intents/:intentId/* endpoints.
+const intentParamsSchema = z.object({ id: idField, intentId: idField })
+// approve: optional leadId (the handler trims and verifies workspace ownership).
+const approveIntentSchema = z.object({ leadId: z.string().optional() })
+// materialize: optional campaignId (same handling).
+const materializeIntentSchema = z.object({ campaignId: z.string().optional() })
 
 export function registerIntentRoutes(prospectsRouter: Router) {
   // GET /api/prospects/:id/intents — read-only view of the bridge records for a
@@ -86,13 +95,15 @@ export function registerIntentRoutes(prospectsRouter: Router) {
   // evidence + text already captured on the intent (the auditable snapshot).
   prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, res) => {
     const userId = req.user!.id
-    const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
+    const { id, intentId } = parseParams(intentParamsSchema, req)
+    const { leadId: rawLeadId } = parseBody(approveIntentSchema, { body: req.body ?? {} })
+    const intent = await loadIntentForWrite(id, intentId, userId)
     if (intent.status !== 'DRAFTED') {
       throw new ApiError(409, `Cannot approve an intent that is ${intent.status.toLowerCase()} — generate a draft first`)
     }
     // Optionally link the intent to a lead so the send path can stamp its
     // provenance onto the resulting OutreachSent (Stage 5).
-    const leadId = typeof req.body?.leadId === 'string' ? req.body.leadId.trim() : undefined
+    const leadId = typeof rawLeadId === 'string' ? rawLeadId.trim() : undefined
     if (leadId) {
       const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { workspaceId: true } })
       if (!lead || lead.workspaceId !== intent.workspaceId) throw new ApiError(400, 'leadId does not belong to this workspace')
@@ -129,7 +140,9 @@ export function registerIntentRoutes(prospectsRouter: Router) {
   // the campaign via the normal send path (which stamps provenance + flips SENT).
   prospectsRouter.post('/:id/intents/:intentId/materialize', asyncHandler(async (req, res) => {
     const userId = req.user!.id
-    const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
+    const { id, intentId } = parseParams(intentParamsSchema, req)
+    const { campaignId: rawCampaignId } = parseBody(materializeIntentSchema, { body: req.body ?? {} })
+    const intent = await loadIntentForWrite(id, intentId, userId)
     if (intent.status !== 'APPROVED') {
       throw new ApiError(409, `Intent must be approved before sending — it is ${intent.status.toLowerCase()}`)
     }
@@ -142,7 +155,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
     if (!prospect) throw new ApiError(404, 'Prospect not found')
     if (!prospect.contactEmail) throw new ApiError(400, 'Prospect has no contact email — cannot create a sendable lead')
 
-    const campaignId = typeof req.body?.campaignId === 'string' ? req.body.campaignId.trim() : undefined
+    const campaignId = typeof rawCampaignId === 'string' ? rawCampaignId.trim() : undefined
     if (campaignId) {
       const c = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { workspaceId: true } })
       if (!c || c.workspaceId !== intent.workspaceId) throw new ApiError(400, 'campaignId does not belong to this workspace')

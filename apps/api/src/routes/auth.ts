@@ -375,9 +375,22 @@ authRouter.post(
   })
 )
 
+// All fields optional and only loosely typed as strings — the handler keeps its
+// `typeof === 'string'` branching and the empty-update 400, and validatePassword()
+// still enforces the password policy on newPassword. The schema just rejects
+// non-string junk for these fields before the handler runs. currentPassword is
+// intentionally unconstrained in length so a wrong (short) password still reaches
+// the bcrypt comparison and yields 401, not a schema 400.
+const updateProfileSchema = z.object({
+  name: z.string().optional(),
+  currentPassword: z.string().optional(),
+  newPassword: z.string().optional(),
+})
+
 authRouter.patch(
   '/profile',
   requireAuth,
+  validate(updateProfileSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
     const updates: { name?: string | null; passwordHash?: string } = {}

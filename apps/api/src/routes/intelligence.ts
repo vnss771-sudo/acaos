@@ -6,14 +6,19 @@ import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage, OutcomeStage } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { centsToDollars } from '../lib/money.js'
+import { parseQuery, workspaceIdField } from '../lib/validate.js'
+import { z } from 'zod'
+
+// Shared query schema for the workspace-scoped GET endpoints — mirrors the prior
+// `req.query.workspaceId as string` + `if (!workspaceId) 400`.
+const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
 export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
 
 // Resolve the requested workspace and confirm the caller is a member.
 async function requireWorkspace(req: import('express').Request): Promise<string> {
-  const workspaceId = req.query.workspaceId as string
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const { workspaceId } = parseQuery(workspaceQuerySchema, req)
   const user = req.user!
   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
     throw new ApiError(403, 'Workspace access denied')

@@ -5,6 +5,7 @@ import { encryptSecret } from '../../lib/encrypt.js'
 import { assertPublicMailHost } from '../../lib/ssrf.js'
 import { recordAudit } from '../../lib/audit.js'
 import { z } from 'zod'
+import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import type { Assert, EmailConfigRequest, Extends } from '@acaos/shared'
 import { validateMailPort } from './helpers.js'
 
@@ -26,6 +27,33 @@ const _emailConfigSchema = z.object({
   imapPass:   z.string().nullish(),
 })
 type _EmailConfigConforms = Assert<Extends<z.infer<typeof _emailConfigSchema>, EmailConfigRequest>>
+
+// :id route param.
+const workspaceParamsSchema = z.object({ id: idField })
+
+// Runtime request schema — the previous str()/num()/bool() defensive parsing
+// expressed as Zod, so its output matches the old handler exactly:
+//  - host/user/from/pass: trimmed string, blank/non-string → null
+//  - port: a positive number, anything else → null
+//  - secure flags: a boolean, otherwise the prior default (smtp false, imap true)
+// Invalid-but-present values are tolerated (mapped to the same fallback) so
+// behaviour is unchanged; the SSRF/port/secret-preservation logic stays below.
+const strField = z.unknown().optional().transform(v => (typeof v === 'string' && v.trim() ? v.trim() : null))
+const numField = z.unknown().optional().transform(v => (typeof v === 'number' && v > 0 ? v : null))
+const boolField = (def: boolean) => z.unknown().optional().transform(v => (typeof v === 'boolean' ? v : def))
+const emailConfigRuntimeSchema = z.object({
+  smtpHost:   strField,
+  smtpPort:   numField,
+  smtpSecure: boolField(false),
+  smtpUser:   strField,
+  smtpPass:   strField,
+  smtpFrom:   strField,
+  imapHost:   strField,
+  imapPort:   numField,
+  imapSecure: boolField(true),
+  imapUser:   strField,
+  imapPass:   strField,
+})
 
 export function registerEmailConfigRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
@@ -63,32 +91,28 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
     '/:id/email-config',
     asyncHandler(async (req, res) => {
       const user = req.user!
-      const workspaceId = req.params.id as string
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       const canManage = await prisma.membership.findFirst({
         where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
       })
       if (!canManage) throw new ApiError(403, 'Must be owner or admin')
 
-      const b = req.body ?? {}
-      const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
-      const num = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null)
-      const bool = (v: unknown, def: boolean) => (typeof v === 'boolean' ? v : def)
-
-      const rawSmtpPass = str(b.smtpPass)
-      const rawImapPass = str(b.imapPass)
+      const parsed = parseBody(emailConfigRuntimeSchema, { body: req.body ?? {} })
+      const rawSmtpPass = parsed.smtpPass
+      const rawImapPass = parsed.imapPass
 
       const data = {
-        smtpHost:   str(b.smtpHost),
-        smtpPort:   num(b.smtpPort),
-        smtpSecure: bool(b.smtpSecure, false),
-        smtpUser:   str(b.smtpUser),
+        smtpHost:   parsed.smtpHost,
+        smtpPort:   parsed.smtpPort,
+        smtpSecure: parsed.smtpSecure,
+        smtpUser:   parsed.smtpUser,
         smtpPass:   rawSmtpPass ? encryptSecret(rawSmtpPass) : null,
-        smtpFrom:   str(b.smtpFrom),
-        imapHost:   str(b.imapHost),
-        imapPort:   num(b.imapPort),
-        imapSecure: bool(b.imapSecure, true),
-        imapUser:   str(b.imapUser),
+        smtpFrom:   parsed.smtpFrom,
+        imapHost:   parsed.imapHost,
+        imapPort:   parsed.imapPort,
+        imapSecure: parsed.imapSecure,
+        imapUser:   parsed.imapUser,
         imapPass:   rawImapPass ? encryptSecret(rawImapPass) : null,
       }
 
