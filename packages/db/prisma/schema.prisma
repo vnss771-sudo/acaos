@@ -28,6 +28,9 @@ model AuditEvent {
 
   @@index([workspaceId, createdAt])
   @@index([type, createdAt])
+  // Standalone time index for the global retention purge (createdAt < cutoff),
+  // which the workspace-/type-first compounds above can't serve.
+  @@index([createdAt])
 }
 
 // Audit log for prospect-discovery runs so users can tell "no prospects" apart
@@ -52,6 +55,8 @@ model DiscoveryRun {
 
   @@index([workspaceId, startedAt])
   @@index([missionId])
+  // Standalone time index for the global retention purge (startedAt < cutoff).
+  @@index([startedAt])
 }
 
 model User {
@@ -270,6 +275,9 @@ model OutreachSent {
   // Serves the per-workspace deliverability counters (status + window filters in
   // the campaigns/mission stats and the send loop).
   @@index([workspaceId, status, sentAt])
+  // Standalone time index for the global retention purge (sentAt < cutoff), which
+  // the workspace-first compound above can't serve.
+  @@index([sentAt])
   // Outbox idempotency: at most one send row per (campaign, lead). Postgres
   // treats NULLs as distinct, so non-campaign/non-lead sends are unaffected.
   @@unique([campaignId, leadId])
@@ -325,6 +333,8 @@ model RefreshToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  // Retention purge scans createdAt < cutoff.
+  @@index([createdAt])
 }
 
 // Monthly AI usage tracking for plan enforcement
@@ -356,6 +366,8 @@ model ProcessedEmail {
   @@unique([workspaceId, uid])
   @@unique([workspaceId, messageId])
   @@index([workspaceId])
+  // Retention purge scans processedAt < cutoff (workspace-agnostic).
+  @@index([processedAt])
 }
 
 // Idempotency log for Stripe webhook events. Stripe delivers at-least-once and
@@ -414,6 +426,8 @@ model EmailVerificationToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  // Retention purge scans createdAt < cutoff.
+  @@index([createdAt])
 }
 
 // Time-limited one-use token for password reset
@@ -427,12 +441,17 @@ model PasswordResetToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  // Retention purge scans createdAt < cutoff.
+  @@index([createdAt])
 }
 
 model ProcessedStripeEvent {
   id          String   @id // Stripe event id (evt_...)
   type        String
   processedAt DateTime @default(now())
+
+  // Retention purge scans processedAt < cutoff.
+  @@index([processedAt])
 }
 
 enum SignalType {
