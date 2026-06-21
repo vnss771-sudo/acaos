@@ -8,6 +8,7 @@ import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
+import { recordAudit } from '../lib/audit.js'
 import type { BillingPlan } from '@acaos/shared'
 
 export const billingRouter = Router()
@@ -109,6 +110,13 @@ billingRouter.post(
     try {
       event = constructWebhookEvent(req.body as Buffer, sig)
     } catch (err) {
+      // Audit the verification failure. Never log the raw signature header or the
+      // webhook secret — only the safe error reason.
+      void recordAudit({
+        type: 'billing.webhook.verification_failed',
+        entityType: 'stripeWebhook',
+        metadata: { reason: err instanceof Error ? err.message : 'unknown' },
+      })
       throw new ApiError(400, `Webhook signature invalid: ${err instanceof Error ? err.message : ''}`)
     }
 
@@ -126,6 +134,13 @@ billingRouter.post(
       // Processing failed after claiming the event — release the claim so
       // Stripe's redelivery is reprocessed rather than skipped as a duplicate.
       await prisma.processedStripeEvent.delete({ where: { id: event.id } }).catch(() => {})
+      // Audit the processing failure. Record only the event id/type + safe error
+      // reason — never any signature or secret material.
+      void recordAudit({
+        type: 'billing.webhook.processing_failed',
+        entityType: 'stripeWebhook', entityId: event.id,
+        metadata: { eventType: event.type, reason: err instanceof Error ? err.message : 'unknown' },
+      })
       throw err
     }
 

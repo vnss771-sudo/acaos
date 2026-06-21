@@ -535,7 +535,15 @@ export async function sendCampaignBatch(
     }
 
     try {
-      const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg)
+      // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
+      // endpoint already serves a safe GET confirmation and a POST one-click
+      // handler. Major mailbox providers require these for bulk senders.
+      const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
+        headers: {
+          'List-Unsubscribe': `<${unsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
+      })
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([

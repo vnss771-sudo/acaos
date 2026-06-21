@@ -116,4 +116,7 @@ test('step-up: mfa/disable requires fresh auth and reauth refreshes it', async (
   const row = await prisma.user.findFirst({ where: { id: userId }, select: { totpEnabled: true, totpSecret: true } })
   assert.equal(row?.totpEnabled, false)
   assert.equal(row?.totpSecret, null)
+  // Disabling a credential factor revokes all active refresh tokens.
+  const active = await prisma.refreshToken.count({ where: { userId, revokedAt: null } })
+  assert.equal(active, 0, 'all refresh tokens revoked after MFA disable')
 })

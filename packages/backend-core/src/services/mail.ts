@@ -89,7 +89,23 @@ export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
   })
 }
 
-export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null) {
+// Best-effort HTML→text for the plaintext alternative part. A multipart message
+// with a text/plain alternative improves deliverability and spam scoring versus
+// HTML-only mail; this need not be perfect, just representative.
+function htmlToText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|hr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+export type SendMailOptions = { headers?: Record<string, string> }
+
+export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null, opts?: SendMailOptions) {
   // Workspace-supplied SMTP hosts are an SSRF surface: resolve and reject
   // private/loopback/metadata targets, then dial the resolved IP directly so the
   // check and the connect can't disagree (DNS-rebinding TOCTOU). Env-configured
@@ -97,7 +113,14 @@ export async function sendMail(to: string, subject: string, html: string, cfg?: 
   const pin = cfg?.smtpHost ? await resolvePublicMailHost(cfg.smtpHost, 'smtpHost') : undefined
   const transporter = buildTransport(cfg, pin)
   const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
-  return transporter.sendMail({ from, to, subject, html })
+  return transporter.sendMail({
+    from,
+    to,
+    subject,
+    html,
+    text: htmlToText(html),
+    ...(opts?.headers ? { headers: opts.headers } : {}),
+  })
 }
 
 // Strips quoted text and signatures to get the fresh reply content

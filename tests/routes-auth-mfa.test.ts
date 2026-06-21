@@ -142,14 +142,16 @@ test('verify-totp rejects a missing mfaToken (zod 400)', async () => {
 // requireAuth looks up the user by id; provide a matching row so we reach the
 // zod validation and exercise the 400 paths.
 
+// /mfa/activate now requires fresh auth (step-up) ahead of zod validation, so
+// these users carry a recent lastReauthAt to reach the validation paths.
 test('mfa/activate rejects a missing code (zod 400)', async () => {
-  users.push({ id: 'u-4', email: 'act@x.test', name: 'A', emailVerified: true })
+  users.push({ id: 'u-4', email: 'act@x.test', name: 'A', emailVerified: true, lastReauthAt: new Date() })
   const res = await post('/api/auth/mfa/activate', {}, { Authorization: bearer('u-4') })
   assert.equal(res.status, 400)
 })
 
 test('mfa/activate rejects a too-short code (zod 400)', async () => {
-  users.push({ id: 'u-5', email: 'act2@x.test', name: 'A', emailVerified: true })
+  users.push({ id: 'u-5', email: 'act2@x.test', name: 'A', emailVerified: true, lastReauthAt: new Date() })
   const res = await post('/api/auth/mfa/activate', { code: '12' }, { Authorization: bearer('u-5') })
   assert.equal(res.status, 400)
 })
