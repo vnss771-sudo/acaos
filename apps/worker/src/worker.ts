@@ -199,6 +199,32 @@ const replyWorker = new Worker(
         select: { workspaceId: true, score: true }
       })
 
+      // Stamp the AI-derived reply metadata onto the send that just flipped to
+      // REPLIED, so the Inbox can show the classification, summary, and suggested
+      // action. Done for every classification (incl. auto-replies). We never
+      // persist the raw reply body — only these derived fields.
+      if (lead) {
+        const target = await prisma.outreachSent.findFirst({
+          where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
+          orderBy: { repliedAt: 'desc' },
+          select: { id: true },
+        })
+        if (target) {
+          await prisma.outreachSent.update({
+            where: { id: target.id },
+            data: {
+              replyIntent: parsed.classification,
+              replySummary: parsed.summary ?? null,
+              replyKeyQuote: parsed.keyQuote ?? null,
+              replySuggestedAction: parsed.suggestedAction ?? null,
+              replyUrgency: parsed.urgency ?? null,
+              replyConfidence: parsed.confidence != null ? Math.round(parsed.confidence) : null,
+              replyIsAutoReply: parsed.isAutoReply ?? false,
+            },
+          })
+        }
+      }
+
       if (lead && !parsed.isAutoReply) {
         const stageMap: Record<string, LeadStage> = {
           INTERESTED: 'REPLIED',

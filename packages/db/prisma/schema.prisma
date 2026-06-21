@@ -242,6 +242,15 @@ model OutreachSent {
   lastError        String?
   repliedAt        DateTime?
   replyIntent      String?
+  // AI-derived reply metadata (Inbox/Replies). Populated by the analyze-reply
+  // worker from the classifier output. The raw inbound body is intentionally
+  // NOT stored — only these derived fields (privacy / retention).
+  replySummary         String?
+  replyKeyQuote        String?
+  replySuggestedAction String?
+  replyUrgency         String?
+  replyConfidence      Int?
+  replyIsAutoReply     Boolean?
   unsubscribeToken String?   @unique
   // Intelligence provenance (Stage 5): what intent/recommendation + evidence this
   // send was based on, snapshotted at send time so the record is self-auditable.
