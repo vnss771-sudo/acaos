@@ -32,15 +32,41 @@ re-mint cleanly on the next refresh.
 
 ### `EMAIL_ENCRYPTION_KEY` (special — read first)
 Encrypts stored SMTP/IMAP credentials in `WorkspaceEmailConfig` **and** MFA TOTP
-secrets (`User.totpSecret`), both with AES-256-GCM. **Rotating the key without
-re-encrypting makes existing stored values undecryptable** — this breaks both
+secrets (`User.totpSecret`), both with AES-256-GCM. **Overwriting the key in place
+without re-encrypting makes existing stored values undecryptable** — it breaks both
 stored mailbox credentials *and* stored TOTP secrets (affected users would have to
-re-enroll MFA).
-1. Decrypt existing configs and TOTP secrets with the old key and re-encrypt with
-   the new key in a one-off migration, **or**
-2. Clear stored credentials (require workspaces to re-enter them) and reset
-   affected users' MFA (require re-enrollment).
-Never rotate this key in place without one of the above.
+re-enroll MFA). Do not swap `EMAIL_ENCRYPTION_KEY` for a different value in place.
+
+#### Preferred: non-destructive versioned rotation
+The encryption helper supports a **keyring** so the old and new keys are both live
+during a rotation, letting you re-encrypt data gradually with zero downtime and no
+forced MFA re-enrollment. Blobs are tagged with their key version (`k<id>:iv:tag:ct`);
+untagged `iv:tag:ct` blobs are "legacy" and decrypt with `EMAIL_ENCRYPTION_KEY`.
+
+Environment:
+- `EMAIL_ENCRYPTION_KEY` — the legacy/default key. Keep it set while *any* legacy
+  (untagged) blobs remain; it still decrypts them.
+- `EMAIL_ENCRYPTION_KEYS` — comma-separated `id:hex` keyring, e.g.
+  `2:<64hex>,1:<64hex>`. Holds every key that must remain readable.
+- `EMAIL_ENCRYPTION_ACTIVE_KEY_ID` — the keyring id used to seal **new** writes.
+
+Procedure:
+1. Generate a new 32-byte key (`openssl rand -hex 32`); add it to the keyring with a
+   fresh id, e.g. `EMAIL_ENCRYPTION_KEYS=2:<newhex>`, and set
+   `EMAIL_ENCRYPTION_ACTIVE_KEY_ID=2`. Leave `EMAIL_ENCRYPTION_KEY` in place. Deploy.
+   New writes are now sealed under key `2`; all existing data still decrypts.
+2. Run a one-off migration that walks the encrypted columns and calls
+   `rewrapSecret(blob)` for every row where `needsReencryption(blob)` is true
+   (decrypt under the old key, re-encrypt under the active key). Idempotent and safe
+   to re-run.
+3. Once nothing reports `needsReencryption`, you may drop the retired key from
+   `EMAIL_ENCRYPTION_KEYS` (and stop relying on `EMAIL_ENCRYPTION_KEY` for reads if
+   all data is now versioned).
+
+#### Fallback (destructive)
+If you cannot run a migration, either clear stored credentials (require workspaces
+to re-enter them) and reset affected users' MFA (require re-enrollment), **or**
+accept the breakage. Prefer the versioned rotation above.
 
 ### Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)
 1. Create a new restricted secret key in the Stripe dashboard; deploy it.
