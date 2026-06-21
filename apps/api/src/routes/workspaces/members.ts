@@ -132,10 +132,14 @@ export function registerMemberRoutes(workspaceRouter: Router) {
           `<p>This link expires in 7 days. If you don't have an ACAOS account yet, you'll be asked to create one first.</p>`
         )
       } else if (process.env.NODE_ENV === 'production') {
+        // Strip CR/LF from the user-supplied email before logging to prevent
+        // log-injection / forged log entries.
+        const safeEmail = email.replace(/[\r\n]/g, '')
         // Never log a URL containing the raw invite token in production.
-        console.warn(`[invites] SMTP not configured; invite email was not sent to ${email}`)
+        console.warn(`[invites] SMTP not configured; invite email was not sent to ${safeEmail}`)
       } else {
-        console.log(`[invites] Invite URL for ${email}: ${inviteUrl}`)
+        const safeEmail = email.replace(/[\r\n]/g, '')
+        console.log(`[invites] Invite URL for ${safeEmail}: ${inviteUrl}`)
       }
 
       res.status(201).json({ ok: true, email })

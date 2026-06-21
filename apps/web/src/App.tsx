@@ -172,7 +172,7 @@ export function App() {
   // Verify email address when ?verify=TOKEN is present (runs once on mount)
   useEffect(() => {
     if (!verifyToken) return
-    fetch(`${API}/api/auth/verify-email/${verifyToken}`)
+    fetch(`${API}/api/auth/verify-email/${encodeURIComponent(verifyToken)}`)
       .then(() => clearUrlHash())
       .catch(() => {})
   }, [verifyToken])
@@ -180,7 +180,7 @@ export function App() {
   // Accept a pending invite once we know who the user is
   useEffect(() => {
     if (!inviteToken || !token || !user) return
-    fetch(`${API}/api/auth/invite/${inviteToken}/accept`, {
+    fetch(`${API}/api/auth/invite/${encodeURIComponent(inviteToken)}/accept`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     }).then(r => r.json()).then(d => {
