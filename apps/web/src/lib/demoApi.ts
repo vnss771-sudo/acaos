@@ -107,6 +107,7 @@ export function makeDemoApi(): ApiHook {
     if (path.includes('/api/prospects?')) return { prospects: DEMO_PROSPECTS, total: DEMO_PROSPECTS.length } as T
     if (path.includes('/api/missions')) return { missions: DEMO_MISSIONS } as T
     if (path.includes('/api/inbox')) return DEMO_INBOX as T
+    if (path.includes('/api/sends/summary')) return { total: 103, delivered: 103, sent: 78, replied: 22, bounced: 3, failed: 0, sending: 0, last24hSent: 12, replyRate: 21.4 } as T
     if (path.includes('/send-readiness')) return { ready: true, checks: [] } as T
 
     return PERMISSIVE_EMPTY as T
