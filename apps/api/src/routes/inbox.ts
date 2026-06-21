@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
@@ -11,6 +11,7 @@ import { parseQuery, workspaceIdField } from '../lib/validate.js'
 // Read-only; the raw inbound body is never stored, so only derived fields here.
 export const inboxRouter = Router()
 inboxRouter.use(requireAuth)
+inboxRouter.use(requireVerifiedForMutation)
 
 const REPLY_CLASSIFICATIONS = [
   'INTERESTED', 'NOT_INTERESTED', 'NEEDS_MORE_INFO', 'NOT_NOW', 'OUT_OF_OFFICE', 'REFERRAL',

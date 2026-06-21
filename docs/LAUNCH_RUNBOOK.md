@@ -63,14 +63,20 @@ onboarding any paying user.
   only allows origins in `ALLOWED_ORIGINS` (falls back to `WEB_URL`). Wildcards
   are intentionally not honored. If unset/wrong, the browser blocks every API
   call cross-origin.
-- [ ] **SMTP is live BEFORE onboarding users — or AI is unusable.** AI routes
-  (`/api/ai/*`) require a verified email (`requireVerifiedEmail`). Verification
-  links are sent via SMTP; if SMTP is not configured, signup still succeeds but
-  the verification email is silently skipped in production (`auth.ts`
-  `sendVerificationEmail`), so the user can NEVER verify and is permanently
-  locked out of AI. Either have SMTP live at launch, or add an admin/manual
-  verification path first. (`/api/auth/resend-verification` only helps once SMTP
-  works.)
+- [ ] **SMTP is live BEFORE onboarding users — or the app is read-only for
+  them.** A verified email is required for AI (`/api/ai/*`, admin: all methods via
+  `requireVerifiedEmail`) AND for every state-changing request across the data
+  routers (POST/PUT/PATCH/DELETE) via `requireVerifiedForMutation` — sends,
+  campaigns, mailbox, prospects, leads, missions, signals, billing, etc. Reads
+  (GET) stay open, and the onboarding wizard's self-config (`PUT
+  /api/workspaces/:id/icp`, `POST /api/workspaces/:id/seed`) is intentionally
+  exempt (`requireVerifiedForMutationExcept`) so a new user can finish setup
+  before verifying. Verification links are sent via SMTP; if SMTP is not
+  configured, signup still succeeds but the verification email is silently skipped
+  in production (`auth.ts` `sendVerificationEmail`), so the user can NEVER verify
+  and is permanently locked out of every mutation. Either have SMTP live at
+  launch, or add an admin/manual verification path first.
+  (`/api/auth/resend-verification` only helps once SMTP works.)
 
 ## 5. First week metrics
 - Signup conversion

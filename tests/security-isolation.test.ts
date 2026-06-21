@@ -42,8 +42,8 @@ function membershipFor(userId: string, workspaceId: string) {
 const userLookup = {
   findUnique: async (args: any) => {
     const db: Record<string, object> = {
-      [USER_A]: { id: USER_A, email: 'a@test.com', name: null },
-      [USER_B]: { id: USER_B, email: 'b@test.com', name: null },
+      [USER_A]: { id: USER_A, email: 'a@test.com', name: null, emailVerified: true },
+      [USER_B]: { id: USER_B, email: 'b@test.com', name: null, emailVerified: true },
     }
     return db[args?.where?.id] ?? null
   }
@@ -261,7 +261,7 @@ describe('IDOR: workspace settings', () => {
         },
         create: async () => ({})
       },
-      user: { findUnique: async () => ({ id: USER_A, email: 'a@test.com', name: 'A' }) }
+      user: { findUnique: async () => ({ id: USER_A, email: 'a@test.com', name: 'A', emailVerified: true }) }
     })
     installPrisma(memberBSpec)
     const r = await server.request('/api/workspaces/' + WS_B + '/members', {

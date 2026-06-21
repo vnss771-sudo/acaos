@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
@@ -122,6 +122,7 @@ jobsRouter.get('/events/:queue/:jobId', asyncHandler(async (req, res) => {
 
 // Everything below requires a normal authenticated session.
 jobsRouter.use(requireAuth)
+jobsRouter.use(requireVerifiedForMutation)
 
 // Issue a one-time SSE ticket (authenticated via the Authorization header).
 // The browser exchanges this for the EventSource URL above.

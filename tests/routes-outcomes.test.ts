@@ -49,6 +49,7 @@ function baseSpec(extra: Record<string, any> = {}) {
         id: args?.where?.id,
         email: `${args?.where?.id}@acme.test`,
         name: null,
+        emailVerified: true,
       }),
     },
     membership: { findFirst: async (args: any) => membershipFor(args) },

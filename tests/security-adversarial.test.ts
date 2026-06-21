@@ -48,7 +48,7 @@ const WS_A = 'workspace-adversarial-001'
 const userLookup = {
   findUnique: async (args: any) => {
     if (args?.where?.id === USER_A) {
-      return { id: USER_A, email: 'adversarial@test.com', name: null }
+      return { id: USER_A, email: 'adversarial@test.com', name: null, emailVerified: true }
     }
     return null
   },

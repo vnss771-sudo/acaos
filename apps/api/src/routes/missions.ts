@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -15,6 +15,7 @@ import type { Prisma } from '@prisma/client'
 
 export const missionsRouter = Router()
 missionsRouter.use(requireAuth)
+missionsRouter.use(requireVerifiedForMutation)
 
 const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] as const
 const MISSION_STATUSES = ['DRAFT', 'DISCOVERING', 'REVIEWING', 'ACTIVE', 'PAUSED', 'COMPLETE'] as const satisfies readonly MissionStatus[]

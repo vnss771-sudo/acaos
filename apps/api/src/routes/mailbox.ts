@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
@@ -12,6 +12,7 @@ import { promises as dns } from 'dns'
 
 export const mailboxRouter = Router()
 mailboxRouter.use(requireAuth)
+mailboxRouter.use(requireVerifiedForMutation)
 
 // `to` stays optional here on purpose: recipient validity is checked in-handler
 // *after* the SMTP-configured guard, so an unconfigured workspace returns 503

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireFreshAuth } from '../middleware/auth.js'
+import { requireAuth, requireFreshAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
@@ -26,6 +26,7 @@ const workspaceBodySchema = z.object({ workspaceId: workspaceIdField })
 billingRouter.post(
   '/checkout',
   requireAuth,
+  requireVerifiedForMutation,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
     const user = req.user!
@@ -89,6 +90,7 @@ billingRouter.get(
 billingRouter.post(
   '/portal',
   requireAuth,
+  requireVerifiedForMutation,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
     const user = req.user!

@@ -63,7 +63,7 @@ function prospectRow(workspaceId: string, id = 'p1') {
 
 function spec() {
   return {
-    user: { findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null }) },
+    user: { findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null, emailVerified: true }) },
     membership: {
       findFirst: async (args: any) => membershipFor(args?.where?.userId, args?.where?.workspaceId),
     },
