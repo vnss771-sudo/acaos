@@ -43,19 +43,17 @@ type BillingStatus = {
   usage?: UsageStats
 }
 
-// Plan feature copy. The lead/AI-request figures MUST match the enforced limits
-// in PLAN_LIMITS (packages/backend-core/src/lib/limits.ts) — that file is the
-// source of truth for enforcement; keep these numbers in sync with it.
+// Non-numeric plan feature copy only. The lead / AI-request figures are NOT
+// hardcoded here — they're rendered from the backend plan catalog
+// (GET /api/billing/plans → PLAN_LIMITS in packages/backend-core/src/lib/limits.ts,
+// the single source of truth) via limitBullets(), so the UI can never drift from
+// the enforced limits.
 const PLAN_FEATURES: Record<string, string[]> = {
   free: [
     '1 workspace',
-    'Up to 500 leads',
-    '15 AI requests per month',
     'Basic pipeline management'
   ],
   starter: [
-    'Up to 10,000 leads',
-    '300 AI requests per month',
     'Async AI research & outreach',
     'CSV bulk import',
     'BullMQ job queue',
@@ -64,13 +62,24 @@ const PLAN_FEATURES: Record<string, string[]> = {
   ],
   growth: [
     'Everything in Starter',
-    'Unlimited AI requests',
     'Multiple workspaces',
     'Team members',
     'Advanced analytics',
     'Dedicated onboarding',
     'SLA support'
   ]
+}
+
+type PlanLimits = { maxLeads: number | null; aiCallsPerMonth: number | null; discoveriesPerMonth: number | null }
+
+// Numeric limit bullets derived from the backend catalog (null = unlimited).
+// Returns [] until the catalog has loaded, so cards still render their static
+// features and never show stale/hardcoded numbers.
+function limitBullets(limits: PlanLimits | undefined): string[] {
+  if (!limits) return []
+  const leads = limits.maxLeads === null ? 'Unlimited leads' : `Up to ${limits.maxLeads.toLocaleString()} leads`
+  const ai = limits.aiCallsPerMonth === null ? 'Unlimited AI requests per month' : `${limits.aiCallsPerMonth.toLocaleString()} AI requests per month`
+  return [leads, ai]
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -84,9 +93,18 @@ const STATUS_COLOR: Record<string, string> = {
 export function Billing({ api, workspace, toast }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null)
+  const [plans, setPlans] = useState<Record<string, PlanLimits> | null>(null)
   const [loading, setLoading] = useState(false)
   const [checkoutLoading, setCheckoutLoading] = useState('')
   const [portalLoading, setPortalLoading] = useState(false)
+
+  // Load the canonical plan-limit catalog once; the comparison cards render their
+  // numbers from this (single source of truth shared with backend enforcement).
+  useEffect(() => {
+    api<{ plans: Record<string, PlanLimits> }>('/api/billing/plans')
+      .then(d => setPlans(d.plans ?? null))
+      .catch(() => {})
+  }, [api])
 
   useEffect(() => {
     if (!workspace) return
@@ -257,7 +275,7 @@ export function Billing({ api, workspace, toast }: Props) {
                 </div>
 
                 <ul style={{ color: colors.textMuted, fontSize: 13, lineHeight: 1.8, paddingLeft: 18, marginBottom: 20 }}>
-                  {PLAN_FEATURES[plan].map(f => <li key={f}>{f}</li>)}
+                  {[...limitBullets(plans?.[plan]), ...PLAN_FEATURES[plan]].map(f => <li key={f}>{f}</li>)}
                 </ul>
 
                 <button
@@ -282,7 +300,7 @@ export function Billing({ api, workspace, toast }: Props) {
       <div style={s.card}>
         <div style={s.sectionHeader}>Free Plan includes</div>
         <ul style={{ color: colors.textMuted, fontSize: 13, lineHeight: 1.9, paddingLeft: 18, margin: 0 }}>
-          {PLAN_FEATURES.free.map(f => <li key={f}>{f}</li>)}
+          {[...limitBullets(plans?.free), ...PLAN_FEATURES.free].map(f => <li key={f}>{f}</li>)}
         </ul>
       </div>
     </div>

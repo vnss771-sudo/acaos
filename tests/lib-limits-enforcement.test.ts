@@ -12,6 +12,7 @@ import {
   checkLeadLimit,
   getMonthlyUsage,
   getPlanInfo,
+  getPlanCatalog,
 } from '../packages/backend-core/src/lib/limits.ts'
 import { createFakePrisma, installPrisma, resetPrisma, type FakePrisma } from './helpers/integration.ts'
 
@@ -126,4 +127,29 @@ test('getMonthlyUsage reports totals and an unlimited cap as -1', async () => {
   assert.equal(usage.limit, -1)
   assert.equal(usage.total, 3)
   assert.equal(usage.totals.AI_RESEARCH, 3)
+})
+
+// --- getPlanCatalog (single source of truth for the billing UI) ---
+
+test('getPlanCatalog exposes every plan with JSON-safe limits (Infinity -> null)', () => {
+  const catalog = getPlanCatalog()
+  assert.deepEqual(Object.keys(catalog).sort(), ['free', 'growth', 'starter'])
+  // Finite limits pass through unchanged...
+  assert.equal(catalog.free.maxLeads, 500)
+  assert.equal(catalog.free.aiCallsPerMonth, 15)
+  assert.equal(catalog.starter.maxLeads, 10_000)
+  assert.equal(catalog.starter.aiCallsPerMonth, 300)
+  // ...and unlimited (Infinity) becomes null so it survives JSON serialization.
+  assert.equal(catalog.growth.maxLeads, null)
+  assert.equal(catalog.growth.aiCallsPerMonth, null)
+  assert.equal(catalog.growth.discoveriesPerMonth, null)
+})
+
+test('getPlanCatalog matches getPlanInfo for the enforced numbers', () => {
+  const catalog = getPlanCatalog()
+  for (const plan of ['free', 'starter'] as const) {
+    const info = getPlanInfo(plan)
+    assert.equal(catalog[plan].maxLeads, info.maxLeads)
+    assert.equal(catalog[plan].aiCallsPerMonth, info.aiCallsPerMonth)
+  }
 })

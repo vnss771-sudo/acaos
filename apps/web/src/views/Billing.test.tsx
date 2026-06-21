@@ -25,9 +25,18 @@ afterEach(() => {
 function apiFor(status: { plan: string; status: string; hasSubscription: boolean }, extra: Record<string, unknown> = {}) {
   return vi.fn((path: string, _init?: unknown) => {
     if (path.startsWith('/api/billing/status')) return Promise.resolve(status)
+    if (path === '/api/billing/plans') return Promise.resolve({ plans: PLAN_CATALOG })
     if (path === '/api/billing/checkout') return Promise.resolve({ url: 'https://checkout.stripe.com/c/pay/sess_1' })
     return Promise.resolve(extra)
   })
+}
+
+// Mirrors the backend getPlanCatalog() (Infinity -> null). The Billing cards must
+// render their numbers from THIS, not hardcode them.
+const PLAN_CATALOG = {
+  free: { maxLeads: 500, aiCallsPerMonth: 15, discoveriesPerMonth: 25 },
+  starter: { maxLeads: 10_000, aiCallsPerMonth: 300, discoveriesPerMonth: 500 },
+  growth: { maxLeads: null, aiCallsPerMonth: null, discoveriesPerMonth: null },
 }
 
 describe('Billing', () => {
@@ -52,6 +61,18 @@ describe('Billing', () => {
     const body = JSON.parse((checkoutCall[1] as { body: string }).body)
     expect(body.workspaceId).toBe('ws1')
     expect(window.location.href).toBe('https://checkout.stripe.com/c/pay/sess_1')
+  })
+
+  test('renders plan limits from the backend catalog (single source of truth)', async () => {
+    const api = apiFor({ plan: 'free', status: 'none', hasSubscription: false })
+    render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
+
+    // Numbers come from GET /api/billing/plans, not hardcoded copy.
+    expect(await screen.findByText('Up to 500 leads')).toBeInTheDocument()        // free card
+    expect(screen.getByText('15 AI requests per month')).toBeInTheDocument()      // free card
+    expect(screen.getByText('Up to 10,000 leads')).toBeInTheDocument()            // starter card
+    expect(screen.getByText('Unlimited AI requests per month')).toBeInTheDocument() // growth card (null)
+    expect(api).toHaveBeenCalledWith('/api/billing/plans')
   })
 
   test('an active subscription shows Manage Subscription and hides upgrade cards', async () => {
