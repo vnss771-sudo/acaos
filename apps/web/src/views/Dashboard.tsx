@@ -6,6 +6,7 @@ import { Spinner, EmptyState } from '../components/Spinner.js'
 import { GettingStarted } from '../components/GettingStarted.js'
 import { NextBestActionCard } from '../components/NextBestAction.js'
 import { OutboxHealth } from '../components/OutboxHealth.js'
+import { SendMonitor } from '../components/SendMonitor.js'
 import { OutreachIntents } from '../components/OutreachIntents.js'
 import { Card } from '../components/ui/Card.js'
 import { KpiCard } from '../components/ui/KpiCard.js'
@@ -323,6 +324,9 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
       {/* Delivery health: shows failed/stuck sends; hides itself when clean */}
       <OutboxHealth api={api} workspaceId={workspace.id} />
+
+      {/* Send Monitor: live outreach delivery summary; hides until anything is sent */}
+      <SendMonitor api={api} workspaceId={workspace.id} setView={setView} />
 
       {/* This week's outreach: actionable evidence-backed intents; hides when empty */}
       <OutreachIntents api={api} workspaceId={workspace.id} toast={toast} />
