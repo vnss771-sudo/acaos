@@ -8,6 +8,7 @@ import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, fres
 import type { RawSignal, SignalType } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
+import type { Assert, CreateSignalRequest, Extends } from '@acaos/shared'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
@@ -78,6 +79,10 @@ const createSignalSchema = z.object({
     rawText: z.string().optional(),
   }).optional(),
 })
+// Compile-time drift guard: the request schema must remain assignable to the
+// shared contract (detectedAt accepts string|number; the extra `evidence` object
+// is permitted by Extends). Bound after widening CreateSignalRequest.detectedAt.
+type _CreateSignalConforms = Assert<Extends<z.infer<typeof createSignalSchema>, CreateSignalRequest>>
 
 // POST /api/signals — add a manual signal
 signalsRouter.post('/', asyncHandler(async (req, res) => {

@@ -287,7 +287,8 @@ export interface CreateSignalRequest {
   source?: string
   sourceReliability?: number
   industryRelevance?: number
-  detectedAt?: string
+  // Accepts an ISO string or an epoch number; the API coerces via new Date().
+  detectedAt?: string | number
 }
 // The web create form spreads its prospect draft, whose columns are nullable, so
 // the declared fields accept null (undeclared form fields are dropped by the
