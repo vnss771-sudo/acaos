@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutationExcept } from '../../middleware/auth.js'
 import { registerCoreRoutes } from './core.js'
 import { registerMemberRoutes } from './members.js'
 import { registerApiKeyRoutes } from './apiKeys.js'
@@ -8,6 +8,11 @@ import { registerIcpRoutes } from './icp.js'
 
 export const workspaceRouter = Router()
 workspaceRouter.use(requireAuth)
+// Gate every workspace mutation behind a verified email EXCEPT the onboarding
+// wizard's self-config (PUT /:id/icp, POST /:id/seed) so a new user can finish
+// setup before verifying. Member/api-key/email-config/workspace-create mutations
+// stay gated.
+workspaceRouter.use(requireVerifiedForMutationExcept(/\/icp$/, /\/seed$/))
 
 // Routes are registered so Express keeps matching them identically to the
 // pre-split router. The route paths are mutually distinct (literal GET / and

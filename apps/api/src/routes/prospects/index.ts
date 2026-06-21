@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../../middleware/auth.js'
 import { registerCrudRoutes } from './crud.js'
 import { registerDiscoveryRoutes } from './discovery.js'
 import { registerScoringRoutes } from './scoring.js'
@@ -12,6 +12,7 @@ export { normalizeDomain } from './helpers.js'
 
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
+prospectsRouter.use(requireVerifiedForMutation)
 
 // Routes are registered in their original declaration order so Express keeps
 // matching them identically (literal GET paths before GET /:id, etc.).

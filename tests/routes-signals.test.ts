@@ -30,7 +30,7 @@ function membershipFor(userId: string, workspaceId: string) {
 function baseSpec() {
   return {
     user: {
-      findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null }),
+      findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null, emailVerified: true }),
     },
     membership: {
       findFirst: async (args: any) =>

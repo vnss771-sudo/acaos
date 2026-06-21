@@ -10,6 +10,34 @@ export function requireVerifiedEmail(req: Request, res: Response, next: NextFunc
   return next()
 }
 
+// Read-only HTTP methods an unverified user may still use to look around. Every
+// state-changing method must clear email verification first.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+// Gate every mutating request (POST/PUT/PATCH/DELETE) behind a verified email
+// while leaving reads open, so an unverified account can authenticate and browse
+// but cannot write, spend, send, or change billing. Apply at the router level
+// AFTER requireAuth (it reads req.user). Reads fall straight through; mutations
+// route through requireVerifiedEmail and 403 until the email is confirmed.
+export function requireVerifiedForMutation(req: Request, res: Response, next: NextFunction) {
+  if (SAFE_METHODS.has(req.method)) return next()
+  return requireVerifiedEmail(req, res, next)
+}
+
+// Same as requireVerifiedForMutation but exempts a small allowlist of paths so a
+// brand-new, not-yet-verified user can still finish the setup wizard before
+// confirming their email (decided policy: onboarding self-config is low-risk and
+// must stay open). Patterns match the router-relative `req.path` (Express strips
+// the mount prefix inside a sub-router, e.g. `/:id/icp` arrives as `/<id>/icp`).
+// Every other mutation still routes through requireVerifiedEmail.
+export function requireVerifiedForMutationExcept(...exempt: RegExp[]) {
+  return function (req: Request, res: Response, next: NextFunction) {
+    if (SAFE_METHODS.has(req.method)) return next()
+    if (exempt.some((re) => re.test(req.path))) return next()
+    return requireVerifiedEmail(req, res, next)
+  }
+}
+
 // True when the user has a password/MFA proof within the step-up window. Shared
 // by the requireFreshAuth middleware and ad-hoc gates (e.g. admin promotion).
 // Window configurable via STEP_UP_MAX_AGE_MIN (default 15 min).

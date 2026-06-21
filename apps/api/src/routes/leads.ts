@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
@@ -15,6 +15,7 @@ import type { Assert, CreateLeadRequest, Extends, ImportLeadsRequest, LeadStage 
 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
+leadsRouter.use(requireVerifiedForMutation)
 
 async function assertCampaignInWorkspace(campaignId: string | null | undefined, workspaceId: string): Promise<void> {
   if (!campaignId) return

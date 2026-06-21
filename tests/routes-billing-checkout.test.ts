@@ -30,7 +30,7 @@ function spec(ws: any = { id: WS, subscriptionStatus: null, stripeCustomerId: nu
   return {
     // Billing mutations are behind step-up auth (requireFreshAuth) — a recent
     // lastReauthAt by default so the guard-path branches below are reachable.
-    user: { findUnique: async (a: any) => ({ id: a?.where?.id, email: 'x@a.test', name: null, lastReauthAt }) },
+    user: { findUnique: async (a: any) => ({ id: a?.where?.id, email: 'x@a.test', name: null, lastReauthAt, emailVerified: true }) },
     membership: { findFirst: async (a: any) => billingMember(a) },
     workspace: { findUnique: async () => ws },
     usageRecord: { findMany: async () => [] },

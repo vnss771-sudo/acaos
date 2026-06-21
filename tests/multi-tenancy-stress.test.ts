@@ -59,9 +59,9 @@ const HASH_KEY_B = hashApiKey(RAW_KEY_B)
 const userLookup = {
   findUnique: async (args: any) => {
     const db: Record<string, object> = {
-      [USER_A]: { id: USER_A, email: 'alpha@test.com', name: 'Alpha' },
-      [USER_B]: { id: USER_B, email: 'bravo@test.com', name: 'Bravo' },
-      [USER_C]: { id: USER_C, email: 'charlie@test.com', name: 'Charlie' },
+      [USER_A]: { id: USER_A, email: 'alpha@test.com', name: 'Alpha', emailVerified: true },
+      [USER_B]: { id: USER_B, email: 'bravo@test.com', name: 'Bravo', emailVerified: true },
+      [USER_C]: { id: USER_C, email: 'charlie@test.com', name: 'Charlie', emailVerified: true },
     }
     // Support lookup by id or by email
     if (args?.where?.id) return db[args.where.id] ?? null

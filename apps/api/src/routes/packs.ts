@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -13,6 +13,7 @@ const packParamsSchema = z.object({ id: idField })
 
 export const packsRouter = Router()
 packsRouter.use(requireAuth)
+packsRouter.use(requireVerifiedForMutation)
 
 // List available industry packs (summaries).
 packsRouter.get('/', asyncHandler(async (_req, res) => {

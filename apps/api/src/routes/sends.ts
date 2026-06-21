@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
@@ -11,6 +11,7 @@ import { parseQuery, workspaceIdField } from '../lib/validate.js'
 // tenant-scoping of /api/stats and /api/inbox.
 export const sendsRouter = Router()
 sendsRouter.use(requireAuth)
+sendsRouter.use(requireVerifiedForMutation)
 
 const summaryQuerySchema = z.object({ workspaceId: workspaceIdField })
 

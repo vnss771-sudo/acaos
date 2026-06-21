@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
@@ -12,6 +12,7 @@ import type { Assert, CreateSignalRequest, Extends } from '@acaos/shared'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
+signalsRouter.use(requireVerifiedForMutation)
 
 function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
   return { type: s.type as RawSignal['type'], strength: s.strength, sourceReliability: s.sourceReliability, industryRelevance: s.industryRelevance, detectedAt: s.detectedAt }

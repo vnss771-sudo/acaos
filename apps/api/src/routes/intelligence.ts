@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
@@ -15,6 +15,7 @@ const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
 export const intelligenceRouter = Router()
 intelligenceRouter.use(requireAuth)
+intelligenceRouter.use(requireVerifiedForMutation)
 
 // Resolve the requested workspace and confirm the caller is a member.
 async function requireWorkspace(req: import('express').Request): Promise<string> {

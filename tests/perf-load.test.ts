@@ -354,7 +354,7 @@ describe('C. Cursor-based export pagination correctness', () => {
 
     return createFakePrisma({
       user: {
-        findUnique: async () => ({ id: USER, email: 'u@e.test', name: null }),
+        findUnique: async () => ({ id: USER, email: 'u@e.test', name: null, emailVerified: true }),
       },
       membership: {
         findFirst: async (a: any) =>
@@ -495,7 +495,7 @@ describe('C. Cursor-based export pagination correctness', () => {
 
     const streamFake = createFakePrisma({
       user: {
-        findUnique: async () => ({ id: USER, email: 'u@e.test', name: null }),
+        findUnique: async () => ({ id: USER, email: 'u@e.test', name: null, emailVerified: true }),
       },
       membership: {
         findFirst: async (a: any) =>
@@ -626,7 +626,7 @@ describe('D. Campaign stats under concurrent load', () => {
   }) {
     const { totalLeads = 100, leadsWithEmail = 80, eligible = 60, sent = 50, replied = 10 } = opts
     return createFakePrisma({
-      user: { findUnique: async () => ({ id: USER, email: 'u@s.test', name: null }) },
+      user: { findUnique: async () => ({ id: USER, email: 'u@s.test', name: null, emailVerified: true }) },
       membership: {
         findFirst: async (a: any) =>
           a?.where?.userId === USER && a?.where?.workspaceId === WS ? { id: 'm1', role: 'admin' } : null,

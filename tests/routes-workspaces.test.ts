@@ -22,9 +22,9 @@ function membershipFor(a: any) {
 
 function spec(extra: Record<string, any> = {}) {
   return {
-    user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null }) },
+    user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => membershipFor(a), findMany: async () => [
-      { id: 'm1', role: 'owner', createdAt: new Date(), user: { id: USER, email: 'u1@a.test', name: null } },
+      { id: 'm1', role: 'owner', createdAt: new Date(), user: { id: USER, email: 'u1@a.test', name: null, emailVerified: true } },
     ] },
     workspace: {
       findMany: async () => [{ id: WS, name: 'Acme', slug: 'acme', plan: 'free', _count: { leads: 2, campaigns: 1 }, memberships: [{ role: 'owner' }] }],
@@ -156,7 +156,7 @@ test('POST /:id/members — an owner can grant the admin role', async () => {
     },
     user: { findUnique: async (a: any) => a?.where?.email
       ? { id: 'u2', email: 'new@a.test', name: null }
-      : { id: USER, email: 'u1@a.test', name: null } },
+      : { id: USER, email: 'u1@a.test', name: null, emailVerified: true } },
   }))
   installPrisma(prisma)
   const res = await server.request(`/api/workspaces/${WS}/members`, {
@@ -173,7 +173,7 @@ test('POST /:id/members — an admin cannot grant the admin role (only owners ca
     membership: { findFirst: async (a: any) => (a?.where?.userId === USER ? { role: 'admin' } : null) },
     user: { findUnique: async (a: any) => a?.where?.email
       ? { id: 'u2', email: 'new@a.test', name: null }
-      : { id: USER, email: 'u1@a.test', name: null } },
+      : { id: USER, email: 'u1@a.test', name: null, emailVerified: true } },
   }))
   installPrisma(prisma)
   const res = await server.request(`/api/workspaces/${WS}/members`, {
@@ -192,7 +192,7 @@ test('POST /:id/members — an admin can still add a regular member', async () =
     },
     user: { findUnique: async (a: any) => a?.where?.email
       ? { id: 'u2', email: 'new@a.test', name: null }
-      : { id: USER, email: 'u1@a.test', name: null } },
+      : { id: USER, email: 'u1@a.test', name: null, emailVerified: true } },
   }))
   installPrisma(prisma)
   const res = await server.request(`/api/workspaces/${WS}/members`, {

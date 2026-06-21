@@ -44,7 +44,7 @@ function missionRow(workspaceId: string, id = 'm1', playbookId: string | null = 
 
 function spec(overrides: Record<string, unknown> = {}) {
   return {
-    user: { findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null }) },
+    user: { findUnique: async () => ({ id: MEMBER, email: 'u1@acme.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (args: any) => membershipFor(args?.where?.userId, args?.where?.workspaceId) },
     mission: {
       findUnique: async (args: any) => {

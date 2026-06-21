@@ -15,7 +15,7 @@ const member = (uid: string, wid: string) => (uid === MEMBER && wid === OWNED ? 
 
 function spec() {
   return {
-    user: { findUnique: async () => ({ id: MEMBER, email: 'u1@a.test', name: null }) },
+    user: { findUnique: async () => ({ id: MEMBER, email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => member(a?.where?.userId, a?.where?.workspaceId) },
     campaign: {
       findMany: async () => [{ id: 'c1', name: 'C', goalType: 'BOOK_CALL', _count: { leads: 3 } }],

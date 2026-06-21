@@ -27,13 +27,13 @@ const WS_ID     = 'ws-1'
 
 // ── Shared data ───────────────────────────────────────────────────────────────
 
-type UserRecord = { id: string; email: string; name: null }
+type UserRecord = { id: string; email: string; name: null; emailVerified: boolean }
 
 const USERS: Record<string, UserRecord> = {
-  [OWNER_ID]:  { id: OWNER_ID,  email: 'owner@test.com',  name: null },
-  [ADMIN_ID]:  { id: ADMIN_ID,  email: 'admin@test.com',  name: null },
-  [MEMBER_ID]: { id: MEMBER_ID, email: 'member@test.com', name: null },
-  [OTHER_ID]:  { id: OTHER_ID,  email: 'other@test.com',  name: null },
+  [OWNER_ID]:  { id: OWNER_ID,  email: 'owner@test.com',  name: null, emailVerified: true },
+  [ADMIN_ID]:  { id: ADMIN_ID,  email: 'admin@test.com',  name: null, emailVerified: true },
+  [MEMBER_ID]: { id: MEMBER_ID, email: 'member@test.com', name: null, emailVerified: true },
+  [OTHER_ID]:  { id: OTHER_ID,  email: 'other@test.com',  name: null, emailVerified: true },
 }
 
 const EMAILS: Record<string, UserRecord> = Object.fromEntries(

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { hashApiKey } from '../lib/apiKeys.js'
@@ -320,6 +320,7 @@ outcomesRouter.get(
 outcomesRouter.post(
   '/model/reset',
   requireAuth,
+  requireVerifiedForMutation,
   asyncHandler(async (req, res) => {
     const user = req.user!
     const { workspaceId } = parseBody(resetModelSchema, req)

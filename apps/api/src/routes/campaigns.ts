@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -14,6 +14,7 @@ import type { Assert, CreateCampaignRequest, Extends, LeadStage } from '@acaos/s
 
 export const campaignsRouter = Router()
 campaignsRouter.use(requireAuth)
+campaignsRouter.use(requireVerifiedForMutation)
 
 const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] as const
 
