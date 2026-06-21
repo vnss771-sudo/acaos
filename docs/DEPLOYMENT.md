@@ -3,6 +3,7 @@
 How to deploy ACAOS to production. This is the operator quick-path; it links out
 to the deeper references rather than duplicating them.
 
+- **One-page go-live checklist → [`docs/GO_LIVE_CHECKLIST.md`](./GO_LIVE_CHECKLIST.md)**
 - Environment variables → [`docs/PRODUCTION_ENV_VARS.md`](./PRODUCTION_ENV_VARS.md)
 - Day-2 operations & incident response → [`docs/OPERATIONS.md`](./OPERATIONS.md), [`docs/RUNBOOKS.md`](./RUNBOOKS.md)
 - Secret/key rotation → [`docs/KEY_ROTATION.md`](./KEY_ROTATION.md)
