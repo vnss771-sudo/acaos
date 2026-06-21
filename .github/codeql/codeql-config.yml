@@ -1,0 +1,18 @@
+name: "ACAOS CodeQL config"
+
+# Query suite (moved here from the workflow's `queries:` input so query-filters
+# below apply to it).
+queries:
+  - uses: security-and-quality
+
+# Documented, justified false-positive suppressions. Keep this list tight — only
+# queries that are systematically inapplicable to this codebase's architecture.
+query-filters:
+  # js/missing-rate-limiting fires on essentially every authenticated route
+  # because this app applies rate limiting GLOBALLY via `app.use(generalRateLimit)`
+  # (apps/api/src/server.ts) — CodeQL's query cannot trace an app-level middleware
+  # to each individual route handler, so it reports every route as "unlimited".
+  # Every route is in fact rate-limited, making the query pure noise here. We
+  # deliberately do NOT exclude any other security query.
+  - exclude:
+      id: js/missing-rate-limiting
