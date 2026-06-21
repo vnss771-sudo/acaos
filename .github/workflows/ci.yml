@@ -117,6 +117,54 @@ jobs:
       - name: Frontend tests (Vitest)
         run: npm run test:web
 
+  # Forward-compat smoke on the next Node line (26) so a SERVER runtime regression
+  # surfaces here rather than on a future engine bump (package.json engines is
+  # `>=22`). Validates the Node-runtime path the api/worker/backend actually run:
+  # install → prisma generate → typecheck → unit (node) tests → production build.
+  # The web vitest suite is intentionally EXCLUDED: it runs in jsdom (a simulated
+  # browser), so it tests jsdom/DOM-shim compatibility, not the Node server
+  # runtime — and jsdom 25 has a separate Node-26 issue (no localStorage) to be
+  # handled when the engine bump is actually taken. Deliberately NOT a full matrix:
+  # the Docker images and the DB/Redis/e2e tiers stay on the pinned runtime to keep
+  # CI time and cost bounded.
+  forward-compat:
+    name: Forward-compat (Node 26)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Cache Prisma engines
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/prisma-nodejs
+            ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Typecheck (shared + backend-core + api + web + worker)
+        run: npm run typecheck
+
+      - name: Test (unit, with coverage gate)
+        run: npm run test:coverage
+
+      - name: Production build (root)
+        run: npm run build
+
   # Compile exactly the production artifacts after generating Prisma once up
   # front. Build itself stays offline/deterministic and must not download engines.
   build:
@@ -560,6 +608,7 @@ jobs:
     needs:
       - repo-hardening
       - verify
+      - forward-compat
       - build
       - standalone-build
       - build-deterministic
