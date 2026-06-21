@@ -18,7 +18,19 @@ function model() {
   return process.env.OPENAI_MODEL || 'gpt-4o-mini'
 }
 
-async function chat(system: string, user: string): Promise<string> {
+// Per-task output-token ceilings. Without max_tokens the API will generate up to
+// the model's full context window, so a runaway/looping completion can cost far
+// more than the task needs. Each ceiling sits comfortably above the task's
+// expected output (a normal JSON response is a few hundred tokens) so a valid
+// response is never truncated — a truncated body fails the strict aiSchemas parse
+// and burns a retry. An env override allows tuning without a code change.
+const MAX_TOKENS = {
+  research: Number(process.env.OPENAI_MAX_TOKENS_RESEARCH || 1500),
+  outreach: Number(process.env.OPENAI_MAX_TOKENS_OUTREACH || 1200),
+  reply: Number(process.env.OPENAI_MAX_TOKENS_REPLY || 700),
+} as const
+
+async function chat(system: string, user: string, maxTokens: number): Promise<string> {
   try {
     return await openAiBreaker.call(async () => {
       const client = getOpenAiClient()
@@ -26,6 +38,7 @@ async function chat(system: string, user: string): Promise<string> {
         model: model(),
         response_format: { type: 'json_object' },
         temperature: 0.4,
+        max_tokens: maxTokens,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user }
@@ -99,7 +112,8 @@ City / region: ${input.city || 'Not specified'}
 Website: ${input.website || 'Not provided'}
 Additional notes: ${input.notes || 'None'}
 
-Key question to answer: Are they large enough to have real coordination problems but small enough that they haven't already solved them with enterprise software?`
+Key question to answer: Are they large enough to have real coordination problems but small enough that they haven't already solved them with enterprise software?`,
+    MAX_TOKENS.research
   )
 }
 
@@ -165,7 +179,8 @@ Return ONLY a valid JSON object with these exact keys:
 - email (string): The full email body. No subject line, no sign-off — body only. Under 90 words. Personalised opener referencing their specific business. One clear question CTA at the end.
 - followup (string): A 2-sentence follow-up for 4–5 days later if no reply. Acknowledge the first email, offer a slightly different angle or value point. Still ends with a question.`,
 
-    buildOutreachUserPrompt(input)
+    buildOutreachUserPrompt(input),
+    MAX_TOKENS.outreach
   )
 }
 
@@ -198,6 +213,7 @@ Return ONLY a valid JSON object with these exact keys:
 ${replyBody.slice(0, 3000)}
 ---
 
-Be precise. Distinguish genuine interest from polite brush-offs, flag referrals, and catch auto-replies.`
+Be precise. Distinguish genuine interest from polite brush-offs, flag referrals, and catch auto-replies.`,
+    MAX_TOKENS.reply
   )
 }
