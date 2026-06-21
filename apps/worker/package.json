@@ -11,8 +11,8 @@
   "dependencies": {
     "@acaos/backend-core": "*",
     "bullmq": "^5.12.12",
-    "dotenv": "^16.4.5",
-    "ioredis": "^5.4.1"
+    "dotenv": "^17.4.2",
+    "ioredis": "^5.11.1"
   },
   "devDependencies": {
     "tsx": "^4.16.2",
