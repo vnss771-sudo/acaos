@@ -17,7 +17,8 @@ import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendation
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
-import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@acaos/backend-core/lib/limits.js'
+import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { randomBytes } from 'crypto'
 import type { LeadStage } from '@acaos/shared'
@@ -306,16 +307,20 @@ export async function sendCampaignBatch(
       }
     }
   }) as CampaignLeadRow[]
-  let dailyRemaining = Infinity
-  if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
-    const startOfToday = new Date()
-    startOfToday.setHours(0, 0, 0, 0)
-    const sentToday = await prisma.outreachSent.count({
-      where: { workspaceId, status: 'SENT', sentAt: { gte: startOfToday } }
+  // Daily send cap. The authoritative enforcement is per-lead and atomic (the
+  // outbox claim below runs inside an advisory-locked transaction via
+  // reserveDailySendSlot, so concurrent send jobs for the same workspace can't
+  // each pass an independent check and collectively overshoot). This is just the
+  // fast path: if the workspace already hit today's cap, skip the whole batch.
+  const dailySendLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  if (dailySendLimit != null) {
+    const usedToday = await prisma.outreachSent.count({
+      where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } }
     })
-    dailyRemaining = Math.max(0, icp.dailySendLimit - sentToday)
-    if (dailyRemaining === 0) {
-      console.log(`[send-campaign] Daily limit of ${icp.dailySendLimit} reached for workspace ${workspaceId}`)
+    if (usedToday >= dailySendLimit) {
+      console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
       return { campaignId, sent: 0, skipped: leads.length, failed: 0 }
     }
   }
@@ -410,8 +415,6 @@ export async function sendCampaignBatch(
     // Skip suppressed addresses (unsubscribed or bounced)
     if (isSuppressed(lead.email!)) { skipped++; continue }
 
-    // Stop once daily cap is reached
-    if (sent >= dailyRemaining) { skipped++; continue }
 
     // Get or generate outreach copy
     let subject: string
@@ -514,19 +517,38 @@ export async function sendCampaignBatch(
 
     let claimId: string
     try {
-      const claim = await prisma.outreachSent.create({
-        data: {
-          workspaceId, campaignId, leadId: lead.id,
-          toEmail: lead.email!, subject, body,
-          unsubscribeToken, status: 'SENDING',
-          ...(linkedIntent ? {
-            outreachIntentId: linkedIntent.id,
-            recommendationId: linkedIntent.recommendationId,
-            evidenceSnapshot: linkedIntent.evidenceSnapshot ?? undefined,
-          } : {}),
-        },
-        select: { id: true },
+      // Atomic outbox claim + daily-cap reservation in ONE advisory-locked
+      // transaction: reserveDailySendSlot serializes the cap check across
+      // concurrent send jobs for this workspace (so two campaigns can't each pass
+      // an independent check and overshoot), and the unique (campaignId, leadId)
+      // still guarantees at-most-once delivery. A null result means the live cap
+      // is now reached — stop the rest of the batch.
+      const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        if (dailySendLimit != null) {
+          const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
+          if (!ok) return null
+        }
+        return tx.outreachSent.create({
+          data: {
+            workspaceId, campaignId, leadId: lead.id,
+            toEmail: lead.email!, subject, body,
+            unsubscribeToken, status: 'SENDING',
+            ...(linkedIntent ? {
+              outreachIntentId: linkedIntent.id,
+              recommendationId: linkedIntent.recommendationId,
+              evidenceSnapshot: linkedIntent.evidenceSnapshot ?? undefined,
+            } : {}),
+          },
+          select: { id: true },
+        })
       })
+      if (claim === null) {
+        // Daily cap reached mid-batch — skip the remaining leads and stop.
+        const remaining = leads.length - i
+        console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached mid-batch for workspace ${workspaceId}; skipped remaining=${remaining}`)
+        skipped += remaining
+        break
+      }
       claimId = claim.id
     } catch (err) {
       // Unique violation — another attempt already owns this send. Skip.

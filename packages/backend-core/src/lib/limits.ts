@@ -157,6 +157,30 @@ export async function reserveLeadCapacity(
   return Math.max(0, Math.min(requested, maxLeads - count))
 }
 
+/**
+ * Atomically decide whether the workspace may send one more email today without
+ * exceeding `dailyLimit`. MUST be called inside an interactive transaction; the
+ * caller inserts the outbox claim within the SAME transaction so the
+ * count-then-claim is atomic. A per-workspace advisory lock (namespaced `send:`
+ * so it never contends with the AI/lead/discovery locks) serializes concurrent
+ * send jobs for the workspace, so two campaigns can't each pass an independent
+ * cap check and collectively overshoot the daily limit. Counts today's delivered
+ * (SENT) plus in-flight (SENDING) claims — fail-closed; FAILED rows are excluded
+ * so a failed attempt doesn't permanently burn a slot.
+ */
+export async function reserveDailySendSlot(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  dailyLimit: number,
+  since: Date
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`send:${workspaceId}`}))`
+  const used = await tx.outreachSent.count({
+    where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since } },
+  })
+  return used < dailyLimit
+}
+
 // Start of the current month in UTC — matches the UTC month window used by the
 // usage counters so the discovery-cost view lines up with the quota period.
 function startOfMonthUtc(): Date {

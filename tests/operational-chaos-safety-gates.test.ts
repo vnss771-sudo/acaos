@@ -37,7 +37,10 @@ test('operational chaos: OutreachSent must uniquely identify campaign+lead sends
 
 test('operational chaos: send flow should reserve an outbox row before SMTP dispatch', () => {
   const sendMailIdx = processors.indexOf('await sendMailFn(')
-  const createIdx = processors.indexOf('prisma.outreachSent.create')
+  // Receiver-agnostic: the claim now runs inside an advisory-locked transaction
+  // as `tx.outreachSent.create` (atomic cap reservation + outbox claim), so match
+  // `.outreachSent.create` rather than the `prisma.`-bound form.
+  const createIdx = processors.indexOf('.outreachSent.create')
   assert.notEqual(sendMailIdx, -1, 'Could not locate sendMail call')
   assert.notEqual(createIdx, -1, 'Could not locate outreachSent.create')
   assert.ok(createIdx < sendMailIdx, 'SMTP send happens before the outbox row is reserved.')
@@ -167,6 +170,8 @@ test('worker: send stamps a linked approved intent and advances it to SENT', () 
   assert.ok(processors.includes('linkedIntentByLeadId.get(lead.id)'), 'resolves the per-lead approved intent from the batch map')
   assert.ok(processors.includes('outreachIntentId: linkedIntent.id'), 'stamps intent provenance on the send')
   const flipIdx = processors.indexOf("prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' }")
-  const createIdx = processors.indexOf('prisma.outreachSent.create')
+  // The claim now runs as `tx.outreachSent.create` inside the advisory-locked
+  // transaction; match the receiver-agnostic form.
+  const createIdx = processors.indexOf('.outreachSent.create')
   assert.ok(flipIdx !== -1 && createIdx !== -1 && createIdx < flipIdx, 'intent flips to SENT after the send claim')
 })
