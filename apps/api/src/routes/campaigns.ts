@@ -4,7 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
-import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
+import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
 import { isProduction } from '../lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
@@ -28,14 +28,45 @@ const createCampaignSchema = z.object({
 // frontend is typed against. If the zod schema drifts from the contract, this fails.
 type _CreateCampaignConforms = Assert<Extends<z.infer<typeof createCampaignSchema>, CreateCampaignRequest>>
 
+// Shared query schema for the workspace-scoped GET endpoints. Mirrors the prior
+// `String(req.query.workspaceId || '').trim()` + `if (!workspaceId) 400` pair:
+// missing/blank produces a 400 'workspaceId required'.
+const workspaceIdQuerySchema = z.object({
+  workspaceId: z.string().trim().min(1, 'workspaceId required'),
+})
+
+// Route-param id for the /:id endpoints (replaces `req.params.id as string`).
+const campaignParamsSchema = z.object({ id: idField })
+
+// PATCH /:id body. Each field is optional; the handler still drops blanks and
+// only updates provided fields (and 400s when nothing updatable remains).
+const updateCampaignSchema = z.object({
+  name: z.string().optional(),
+  goalType: z.string().optional(),
+  description: z.string().optional(),
+})
+
+// GET /:id/outreach pagination. Mirrors `Math.max(1, Number(page) || 1)` and
+// `Math.min(100, Math.max(1, Number(limit) || 50))` exactly.
+const outreachQuerySchema = z.object({
+  page: z.unknown().optional().transform(v => Math.max(1, Number(v) || 1)),
+  limit: z.unknown().optional().transform(v => Math.min(100, Math.max(1, Number(v) || 50))),
+})
+
+// POST /:id/send body. Both optional: leadIds restricts the send to specific
+// leads (non-string elements are still filtered in the handler), approved is the
+// approval-mode opt-in flag.
+const sendCampaignSchema = z.object({
+  leadIds: z.array(z.unknown()).optional(),
+  approved: z.unknown().optional(),
+})
+
 // List campaigns for a workspace
 campaignsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.query.workspaceId || '').trim()
-
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceIdQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -56,8 +87,7 @@ campaignsRouter.get(
   '/send-readiness',
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceIdQuerySchema, req)
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
     res.json(await getSendReadiness(workspaceId))
   })
@@ -72,8 +102,7 @@ campaignsRouter.get(
   '/outbox-issues',
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceIdQuerySchema, req)
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
 
     // SENDING older than this is "unknown delivery" — claimed but never confirmed.
@@ -133,23 +162,25 @@ campaignsRouter.get(
 // Update campaign
 campaignsRouter.patch(
   '/:id',
+  validate(updateCampaignSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const campaignId = req.params.id as string
+    const { id: campaignId } = parseParams(campaignParamsSchema, req)
+    const body = req.body as z.infer<typeof updateCampaignSchema>
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
     await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
 
     const updates: { name?: string; goalType?: string; description?: string } = {}
-    if (typeof req.body?.name === 'string' && req.body.name.trim()) {
-      updates.name = req.body.name.trim()
+    if (typeof body.name === 'string' && body.name.trim()) {
+      updates.name = body.name.trim()
     }
-    if (typeof req.body?.goalType === 'string' && req.body.goalType.trim()) {
-      updates.goalType = req.body.goalType.trim()
+    if (typeof body.goalType === 'string' && body.goalType.trim()) {
+      updates.goalType = body.goalType.trim()
     }
-    if (typeof req.body?.description === 'string') {
-      updates.description = req.body.description.trim() || null as unknown as string
+    if (typeof body.description === 'string') {
+      updates.description = body.description.trim() || null as unknown as string
     }
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updatable fields provided')
@@ -204,14 +235,14 @@ campaignsRouter.get(
   '/:id/outreach',
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id as string } })
+    const { id } = parseParams(campaignParamsSchema, req)
+    const campaign = await prisma.campaign.findUnique({ where: { id } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
     const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    const page  = Math.max(1, Number(req.query.page)  || 1)
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
+    const { page, limit } = parseQuery(outreachQuerySchema, req)
 
     const [outreach, total] = await Promise.all([
       prisma.outreachSent.findMany({
@@ -237,10 +268,13 @@ campaignsRouter.get(
 campaignsRouter.post(
   '/:id/send',
   requireVerifiedEmail,
+  validate(sendCampaignSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
+    const { id: campaignId } = parseParams(campaignParamsSchema, req)
+    const body = req.body as z.infer<typeof sendCampaignSchema>
     const campaign = await prisma.campaign.findUnique({
-      where: { id: req.params.id as string },
+      where: { id: campaignId },
       include: { _count: { select: { leads: true } } }
     })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
@@ -264,8 +298,8 @@ campaignsRouter.post(
 
     // Resolve which leads to send to — filter to string IDs only so non-string
     // elements (numbers, objects) from untrusted input don't reach Prisma.
-    const requestedIds: string[] | undefined = Array.isArray(req.body?.leadIds)
-      ? (req.body.leadIds as unknown[]).filter((id): id is string => typeof id === 'string')
+    const requestedIds: string[] | undefined = Array.isArray(body.leadIds)
+      ? (body.leadIds as unknown[]).filter((id): id is string => typeof id === 'string')
       : undefined
 
     const where = {
@@ -293,7 +327,7 @@ campaignsRouter.post(
     if (icp?.approvalMode) {
       // Approval mode: require explicit opt-in flag in the request body.
       // The frontend sends { approved: true } after the user confirms the modal.
-      if (!req.body?.approved) {
+      if (!body.approved) {
         throw new ApiError(403, 'Approval required — send { approved: true } to confirm dispatch')
       }
       // This product reviews drafts per-lead (Review Queue → APPROVED) and the

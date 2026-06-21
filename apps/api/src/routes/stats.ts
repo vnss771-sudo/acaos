@@ -6,6 +6,11 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { getScoreTier } from '../lib/scoring.js'
 import { statsCache } from '../lib/statsCache.js'
+import { parseQuery, workspaceIdField } from '../lib/validate.js'
+import { z } from 'zod'
+
+// Shared query schema — mirrors `String(... || '').trim()` + `if (!workspaceId) 400`.
+const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
 export const statsRouter = Router()
 statsRouter.use(requireAuth)
@@ -16,8 +21,7 @@ statsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -125,8 +129,7 @@ statsRouter.get(
   '/campaigns',
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')

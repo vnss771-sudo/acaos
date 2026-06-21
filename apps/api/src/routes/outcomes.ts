@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { parseBody, nonEmptyString } from '../lib/validate.js'
+import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
@@ -184,6 +184,15 @@ const recordOutcomeSchema = z.object({
   leadId: z.string().optional(),
 })
 
+// GET /model (JWT path) query + POST /model/reset body. Both mirror the prior
+// `String(... || '').trim()` + `if (!workspaceId) 400 'workspaceId required'`.
+const modelQuerySchema = z.object({
+  workspaceId: z.string().trim().min(1, 'workspaceId required'),
+})
+const resetModelSchema = z.object({
+  workspaceId: z.string().trim().min(1, 'workspaceId required'),
+})
+
 outcomesRouter.post(
   '/',
   apiKeyRateLimit,
@@ -283,8 +292,7 @@ outcomesRouter.get(
     if (viaApiKey) {
       workspaceId = req.resolvedWorkspaceId!
     } else {
-      workspaceId = String(req.query.workspaceId || '').trim()
-      if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+      workspaceId = parseQuery(modelQuerySchema, req).workspaceId
       const user = req.user!
       const member = await userBelongsToWorkspace(user.id, workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
@@ -313,8 +321,7 @@ outcomesRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseBody(resetModelSchema, req)
 
     const membership = await prisma.membership.findFirst({
       where: { userId: user.id, workspaceId, role: 'owner' }

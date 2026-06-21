@@ -7,6 +7,22 @@ import { isMailConfigured, sendMail } from '../../services/mail.js'
 import { escapeHtml } from '../../lib/html.js'
 import { normalizeEmail, isValidEmail } from '../../lib/validation.js'
 import { recordAudit } from '../../lib/audit.js'
+import { parseBody, parseParams, idField } from '../../lib/validate.js'
+import { z } from 'zod'
+
+// :id route param shared by every member/invite endpoint.
+const workspaceParamsSchema = z.object({ id: idField })
+
+// Body for POST /:id/members and POST /:id/invites. email stays an optional
+// loosely-typed string so the handlers keep their existing required/validity
+// checks (members: `if (!email) 400`; invites: isValidEmail → 400) in the same
+// order relative to the owner-only admin-grant check. role mirrors the prior
+// `['admin','member'].includes(role) ? role : 'member'`: anything else (including
+// missing or junk) falls back to 'member'.
+const memberBodySchema = z.object({
+  email: z.string().optional(),
+  role: z.enum(['admin', 'member']).catch('member').default('member'),
+})
 
 export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
@@ -34,7 +50,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
     '/:id/members',
     asyncHandler(async (req, res) => {
       const user = req.user!
-      const workspaceId = req.params.id as string
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       const canManage = await prisma.membership.findFirst({
         where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
@@ -42,8 +58,9 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       })
       if (!canManage) throw new ApiError(403, 'Must be owner or admin to add members')
 
-      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
-      const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+      const parsed = parseBody(memberBodySchema, req)
+      const email = typeof parsed.email === 'string' ? parsed.email.trim().toLowerCase() : ''
+      const role = parsed.role
       // Only an owner may grant the admin role; an admin can add members only. This
       // stops an admin from minting a second admin (lateral privilege escalation).
       if (role === 'admin' && canManage.role !== 'owner') {
@@ -83,7 +100,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
     '/:id/invites',
     asyncHandler(async (req, res) => {
       const user = req.user!
-      const workspaceId = req.params.id as string
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       const canManage = await prisma.membership.findFirst({
         where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
@@ -91,11 +108,12 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       })
       if (!canManage) throw new ApiError(403, 'Must be owner or admin to invite members')
 
-      const rawEmail = typeof req.body?.email === 'string' ? req.body.email : ''
+      const parsed = parseBody(memberBodySchema, req)
+      const rawEmail = typeof parsed.email === 'string' ? parsed.email : ''
       const email = normalizeEmail(rawEmail)
       if (!isValidEmail(email)) throw new ApiError(400, 'Valid email required')
 
-      const role = typeof req.body?.role === 'string' && ['admin', 'member'].includes(req.body.role) ? req.body.role : 'member'
+      const role = parsed.role
       // Only an owner may grant the admin role (see member-add above).
       if (role === 'admin' && canManage.role !== 'owner') {
         throw new ApiError(403, 'Only an owner can grant the admin role')

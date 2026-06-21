@@ -8,6 +8,15 @@ import { z } from 'zod'
 import { createBillingPortalSession } from '../../services/stripe.js'
 import { seededScore, SEED_COMPANIES, EXAMPLE_SIGNALS } from './helpers.js'
 
+// POST / body. name/slug stay optional strings here; the handler keeps its
+// normalizeOptionalString() handling and the `if (!name) 400` required check, so
+// behaviour (trim, blank→400, slug derived from name) is unchanged. The schema
+// just rejects non-string junk for these fields.
+const createWorkspaceSchema = z.object({
+  name: z.string().optional(),
+  slug: z.string().optional(),
+})
+
 const updateWorkspaceSchema = z.object({
   name: nonEmptyString.max(100).optional(),
   slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens').optional(),
@@ -43,6 +52,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
 
   workspaceRouter.post(
     '/',
+    validate(createWorkspaceSchema),
     asyncHandler(async (req, res) => {
       const user = req.user!
       const name = normalizeOptionalString(req.body?.name)

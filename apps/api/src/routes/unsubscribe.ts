@@ -6,6 +6,11 @@ import { suppress } from '../lib/suppressions.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { unsubscribeRateLimit } from '../middleware/rateLimit.js'
 import { escapeHtml } from '../lib/html.js'
+import { parseQuery, workspaceIdField } from '../lib/validate.js'
+import { z } from 'zod'
+
+// GET / query — mirrors the prior `String(... || '').trim()` + `if (!workspaceId) 400`.
+const suppressionsQuerySchema = z.object({ workspaceId: workspaceIdField })
 
 export const unsubscribeRouter = Router()
 
@@ -80,8 +85,7 @@ unsubscribeRouter.get(
   '/',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const workspaceId = String(req.query.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseQuery(suppressionsQuerySchema, req)
 
     const userId = req.user!.id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')

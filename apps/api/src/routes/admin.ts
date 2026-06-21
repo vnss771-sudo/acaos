@@ -4,6 +4,8 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
 import { recordAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
+import { parseQuery } from '../lib/validate.js'
+import { z } from 'zod'
 import type { AuthUser } from '../types/auth.js'
 
 export const adminRouter = Router()
@@ -145,12 +147,22 @@ adminRouter.get(
 
 // Recent audit events (optionally filtered by workspace or type) for operational
 // visibility: sends, mission status changes, discovery failures, etc.
+const auditQuerySchema = z.object({
+  // Mirrors the previous `typeof === 'string' ? trim() : undefined` handling:
+  // present-and-string values are trimmed, anything else is treated as absent.
+  workspaceId: z.string().trim().optional(),
+  type: z.string().trim().optional(),
+  // Mirrors `Math.min(200, Math.max(1, Number(limit) || 100))` exactly: any
+  // falsy Number() result (NaN, 0, empty) becomes 100, then clamp to [1, 200].
+  limit: z.unknown().optional().transform(v => Math.min(200, Math.max(1, Number(v) || 100))),
+})
+
 adminRouter.get(
   '/audit',
   asyncHandler(async (req, res) => {
-    const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : undefined
-    const type = typeof req.query.type === 'string' ? req.query.type.trim() : undefined
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
+    const { workspaceId: rawWorkspaceId, type: rawType, limit } = parseQuery(auditQuerySchema, req)
+    const workspaceId = rawWorkspaceId || undefined
+    const type = rawType || undefined
     const events = await prisma.auditEvent.findMany({
       where: { ...(workspaceId ? { workspaceId } : {}), ...(type ? { type } : {}) },
       orderBy: { createdAt: 'desc' },
