@@ -64,11 +64,12 @@ async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights>
 const researchWorker = new Worker(
   'research-lead',
   async (job) => {
-    const { leadId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
+    const { leadId, workspaceId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
     log('research-lead', `Processing leadId=${leadId}`)
 
-    const lead = await prisma.lead.findUnique({ where: { id: leadId } })
-    if (!lead) throw new Error(`Lead ${leadId} not found`)
+    // Tenant-scoped fetch: never act on a lead outside the job's workspace.
+    const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
+    if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
 
     await job.updateProgress(10)
 
@@ -126,11 +127,12 @@ const researchWorker = new Worker(
 const outreachWorker = new Worker(
   'generate-outreach',
   async (job) => {
-    const { leadId } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
+    const { leadId, workspaceId } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
     log('generate-outreach', `Processing leadId=${leadId}`)
 
-    const lead = await prisma.lead.findUnique({ where: { id: leadId } })
-    if (!lead) throw new Error(`Lead ${leadId} not found`)
+    // Tenant-scoped fetch: never act on a lead outside the job's workspace.
+    const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
+    if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
 
     await job.updateProgress(10)
 
@@ -552,7 +554,7 @@ const healthServer = startHealthServer(
 )
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
-async function shutdown(signal: string) {
+async function shutdown(signal: string, exitCode = 0) {
   if (shuttingDown) return
   shuttingDown = true
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'begin' })
@@ -581,7 +583,7 @@ async function shutdown(signal: string) {
   await prisma.$disconnect()
   clearTimeout(forceExit)
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })
-  process.exit(0)
+  process.exit(exitCode)
 }
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
@@ -594,6 +596,10 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   logLifecycleEvent(SERVICE, 'crash', { source: 'worker.uncaughtException', err: err.message })
   captureError(err, { source: 'worker.uncaughtException' })
+  // Inconsistent state after an uncaught exception — drain workers and exit
+  // non-zero so the platform restarts a clean process (the in-shutdown watchdog
+  // force-exits if a close wedges). unhandledRejection stays log-only above.
+  void shutdown('worker.uncaughtException', 1)
 })
 
 logLifecycleEvent(SERVICE, 'deploy', { queueCount: WORKER_QUEUES.length })

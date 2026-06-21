@@ -73,6 +73,16 @@ export function validateConfig(): void {
     if (!process.env.METRICS_TOKEN?.trim()) {
       console.warn('[config] METRICS_TOKEN not set — /metrics is disabled in production (set it to enable authenticated scraping)')
     }
+    // The refresh-token cookie must never travel over non-TLS in production. A
+    // forced COOKIE_SECURE=false (or SameSite=None without Secure, which browsers
+    // reject anyway) is a misconfiguration we fail fast on rather than silently
+    // weaken cookie transport.
+    if (process.env.COOKIE_SECURE === 'false') {
+      problems.push('COOKIE_SECURE=false is not allowed in production (refresh-token cookie would be sent over non-TLS)')
+    }
+    if ((process.env.COOKIE_SAMESITE || '').toLowerCase() === 'none' && process.env.COOKIE_SECURE === 'false') {
+      problems.push('COOKIE_SAMESITE=none requires Secure cookies')
+    }
     if (getAllowedOrigins().length === 0) {
       // Warn but don't crash — CORS middleware will reject cross-origin requests
       // regardless. This allows the API to start before the web frontend URL is known.

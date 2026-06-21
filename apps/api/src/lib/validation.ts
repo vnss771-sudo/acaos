@@ -1,6 +1,18 @@
 const slugUnsafeChars = /[^a-z0-9-]+/g
 const repeatedDash = /-{2,}/g
 
+/**
+ * Parse an untrusted query/body value into a bounded integer. Returns `fallback`
+ * for missing/NaN/non-numeric input, and clamps to [min, max] — so a hostile or
+ * malformed `?limit=-100` / `?limit=abc` can never reach Prisma's `take`/`skip`
+ * (a negative `take` silently reverses ordering; NaN throws).
+ */
+export function clampInt(raw: unknown, { min, max, fallback }: { min: number; max: number; fallback: number }): number {
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, Math.trunc(n)))
+}
+
 export function normalizeEmail(value: string) {
   return value.trim().toLowerCase()
 }

@@ -14,6 +14,7 @@ import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/wo
 import { listSources } from '../../lib/prospectSources.js'
 import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
+import { clampInt } from '../../lib/validation.js'
 import { normalizeDomain, withDollars, getICP } from './helpers.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
@@ -33,7 +34,9 @@ const intFromQuery = (fallback: number) =>
 const listProspectsQuerySchema = z.object({
   workspaceId: workspaceIdField,
   page: intFromQuery(1).transform(n => Math.max(1, n)),
-  limit: intFromQuery(25).transform(n => Math.min(100, n)),
+  // Clamp to [1, 100]: a negative parseInt would otherwise reach Prisma's `take`
+  // and silently REVERSE ordering (a negative take reads from the end).
+  limit: intFromQuery(25).transform(n => Math.min(100, Math.max(1, n))),
   tier: z.string().optional(),
   stage: z.string().optional(),
   outcome: z.string().optional(),
@@ -198,7 +201,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     const userId = req.user!.id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-    const limit = Math.min(Number(req.query.limit ?? 25), 100)
+    const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 25 })
     const intents = await prisma.outreachIntent.findMany({
       where: { workspaceId, status: { in: ['PROPOSED', 'DRAFTED', 'APPROVED'] } },
       orderBy: { createdAt: 'desc' },

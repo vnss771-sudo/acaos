@@ -113,7 +113,12 @@ app.get('/api/ready', async (_req, res) => {
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
   setDependencyUp('postgres', dbOk)
   setDependencyUp('redis', redisOk)
-  const ok = report.ready && dbOk
+  // Redis is a required production dependency (the queue-backed flows — outreach,
+  // campaign send, mailbox sync — can't run without it), so it gates readiness in
+  // production: a Redis outage pulls the instance from rotation. Liveness
+  // (/api/live) is independent, so the container isn't killed during a blip; it's
+  // re-added when Redis recovers. Dev/test (no Redis) are not gated.
+  const ok = report.ready && dbOk && (!isProduction() || redisOk)
 
   res.status(ok ? 200 : 503).json({
     ok,
@@ -208,6 +213,11 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
 
+// Deliberate asymmetry: a single unhandled promise rejection is logged/captured
+// but does NOT kill the server (one bad promise shouldn't take down all in-flight
+// requests). An uncaughtException, by contrast, leaves the process in an
+// undefined state, so we stop accepting connections and exit non-zero for the
+// orchestrator to restart a clean instance.
 process.on('unhandledRejection', (reason) => {
   logLifecycleEvent(SERVICE, 'crash', { source: 'unhandledRejection', reason: reason instanceof Error ? reason.message : String(reason) })
   captureError(reason, { source: 'unhandledRejection' })
@@ -215,4 +225,8 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   logLifecycleEvent(SERVICE, 'crash', { source: 'uncaughtException', err: err.message })
   captureError(err, { source: 'uncaughtException' })
+  if (shuttingDown) { process.exit(1); return }
+  shuttingDown = true
+  server.close(() => process.exit(1))
+  setTimeout(() => process.exit(1), 5_000).unref()
 })
