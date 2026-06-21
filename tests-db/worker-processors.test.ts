@@ -3,7 +3,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { scoreProspects, calibrateScoring } from '../apps/worker/src/processors.ts'
+import { scoreProspects, calibrateScoring, applyReplyAnalysis } from '../apps/worker/src/processors.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
@@ -98,4 +98,72 @@ test('calibrateScoring is idempotent-safe: a second run increments updateCount',
   await calibrateScoring(workspace.id)
   const model = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
   assert.equal(model!.updateCount, 1) // create then one update
+})
+
+// --- applyReplyAnalysis (analyze-reply DB effects) ---
+
+async function seedRepliedLeadWithSend(workspaceId: string, email = 'replier@x.test') {
+  const lead = await prisma.lead.create({
+    data: { workspaceId, businessName: 'Acme', email, stage: 'OUTREACH_SENT', score: 60 },
+  })
+  const send = await prisma.outreachSent.create({
+    data: { workspaceId, leadId: lead.id, toEmail: email, subject: 's', body: 'b', status: 'REPLIED', repliedAt: new Date() },
+  })
+  return { lead, send }
+}
+
+test('applyReplyAnalysis stamps reply metadata on the send, advances the lead, and records an outcome', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const { lead, send } = await seedRepliedLeadWithSend(workspace.id)
+
+  await applyReplyAnalysis(lead.id, {
+    classification: 'INTERESTED',
+    summary: 'Wants a call next week',
+    keyQuote: 'send some times',
+    suggestedAction: 'Propose three slots',
+    urgency: 'this_week',
+    confidence: 91,
+    isAutoReply: false,
+  })
+
+  const updatedSend = await prisma.outreachSent.findUnique({ where: { id: send.id } })
+  assert.equal(updatedSend!.replyIntent, 'INTERESTED')
+  assert.equal(updatedSend!.replySummary, 'Wants a call next week')
+  assert.equal(updatedSend!.replySuggestedAction, 'Propose three slots')
+  assert.equal(updatedSend!.replyConfidence, 91)
+
+  const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(updatedLead!.stage, 'REPLIED')
+
+  const outcome = await prisma.scoringOutcome.findFirst({ where: { leadId: lead.id } })
+  assert.ok(outcome, 'a scoring outcome was recorded')
+  assert.equal(outcome!.replied, true)
+  assert.equal(outcome!.prospectId, null) // lead-sourced outcome
+})
+
+test('applyReplyAnalysis on a NOT_INTERESTED reply marks the lead DEAD and outcome not-replied', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const { lead } = await seedRepliedLeadWithSend(workspace.id)
+
+  await applyReplyAnalysis(lead.id, { classification: 'NOT_INTERESTED', isAutoReply: false })
+
+  const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(updatedLead!.stage, 'DEAD')
+  const outcome = await prisma.scoringOutcome.findFirst({ where: { leadId: lead.id } })
+  assert.equal(outcome!.replied, false)
+})
+
+test('applyReplyAnalysis on an auto-reply stamps the send but does NOT advance the lead or score', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const { lead, send } = await seedRepliedLeadWithSend(workspace.id)
+
+  await applyReplyAnalysis(lead.id, { classification: 'OUT_OF_OFFICE', isAutoReply: true })
+
+  const updatedSend = await prisma.outreachSent.findUnique({ where: { id: send.id } })
+  assert.equal(updatedSend!.replyIsAutoReply, true)
+  assert.equal(updatedSend!.replyIntent, 'OUT_OF_OFFICE')
+
+  const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(updatedLead!.stage, 'OUTREACH_SENT') // unchanged
+  assert.equal(await prisma.scoringOutcome.count({ where: { leadId: lead.id } }), 0)
 })
