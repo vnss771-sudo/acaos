@@ -90,7 +90,7 @@ test('two signups produce distinct, unique workspace slugs', async () => {
   assert.notEqual(slugs[0].slug, slugs[1].slug)
 })
 
-test('login then refresh rotates the cookie: old revoked, new usable', async () => {
+test('refresh reuse detection: replaying a revoked token revokes the whole family', async () => {
   await post('/api/auth/signup', { email: 'rot@acme.test', password: 'sup3rsecret1' })
   const login = await post('/api/auth/login', { email: 'rot@acme.test', password: 'sup3rsecret1' })
   assert.equal(login.status, 200)
@@ -98,21 +98,43 @@ test('login then refresh rotates the cookie: old revoked, new usable', async () 
   const first = refreshCookieFrom(login.headers)
   assert.ok(first, 'login sets a refresh cookie')
 
+  // Rotate once: the old cookie is revoked, a new one is issued.
   const refresh = await postWithRefreshCookie('/api/auth/refresh', first!)
   assert.equal(refresh.status, 200)
   const rotated = refreshCookieFrom(refresh.headers)
   assert.ok(rotated && rotated !== first, 'refresh rotates the cookie')
 
-  // Old token now revoked in the DB; reusing it fails.
+  // Replaying the OLD (already-revoked) token is a theft signal. It 401s AND
+  // triggers reuse detection, which revokes the user's entire refresh-token
+  // family — including the freshly rotated token that had not yet been used.
   const reuseOld = await postWithRefreshCookie('/api/auth/refresh', first!)
   assert.equal(reuseOld.status, 401)
 
-  // New token works.
-  const useNew = await postWithRefreshCookie('/api/auth/refresh', rotated!)
-  assert.equal(useNew.status, 200)
+  // The rotated token is now dead too: the family was revoked, so it cannot be
+  // used to mint a new session. The legitimate user must re-authenticate.
+  const useRotated = await postWithRefreshCookie('/api/auth/refresh', rotated!)
+  assert.equal(useRotated.status, 401)
 
   const revokedCount = await prisma.refreshToken.count({ where: { revokedAt: { not: null } } })
   assert.ok(revokedCount >= 2)
+})
+
+test('chained refresh: each rotated cookie is usable for the next refresh', async () => {
+  await post('/api/auth/signup', { email: 'chain@acme.test', password: 'sup3rsecret1' })
+  const login = await post('/api/auth/login', { email: 'chain@acme.test', password: 'sup3rsecret1' })
+  assert.equal(login.status, 200)
+
+  // Use each freshly rotated cookie immediately (never replaying an old one), so
+  // reuse detection is never tripped and every rotation succeeds in turn.
+  let cookie = refreshCookieFrom(login.headers)
+  assert.ok(cookie, 'login sets a refresh cookie')
+  for (let i = 0; i < 3; i++) {
+    const res = await postWithRefreshCookie('/api/auth/refresh', cookie!)
+    assert.equal(res.status, 200)
+    const next = refreshCookieFrom(res.headers)
+    assert.ok(next && next !== cookie, 'each refresh rotates to a new cookie')
+    cookie = next
+  }
 })
 
 test('login rejects a wrong password against the stored bcrypt hash', async () => {

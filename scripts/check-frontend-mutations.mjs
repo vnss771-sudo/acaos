@@ -29,6 +29,11 @@ const EXEMPT = new Set([
   // 401 means bad credentials (not an expired session) — so it must not flow
   // through the authenticated api/route client. Bodies are typed via @acaos/shared.
   'apps/web/src/components/AuthScreen.tsx',
+  // Auth/boot orchestration: the email-verification call runs pre-auth (no
+  // bearer), and the one-shot invite-accept call is an auth-flow special; both
+  // post a minimal { token } body (validated server-side by tokenBodySchema) and
+  // can't route through the authenticated route client.
+  'apps/web/src/App.tsx',
 ])
 
 function walk(dir) {
