@@ -149,8 +149,8 @@ async function requireIngestKeyOrAuth(
   if (apiKey && typeof apiKey === 'string') {
     const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: hashApiKey(apiKey) } })
     if (!workspace) { res.status(401).json({ error: 'Invalid API key' }); return }
-    ;(req as any).resolvedWorkspaceId = workspace.id
-    ;(req as any).resolvedViaApiKey = true
+    req.resolvedWorkspaceId = workspace.id
+    req.resolvedViaApiKey = true
     next()
     return
   }
@@ -163,7 +163,7 @@ async function requireIngestKeyOrAuth(
   try { payload = verifyJwt(auth.slice(7)) } catch { res.status(401).json({ error: 'Unauthorized' }); return }
   const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true } })
   if (!user) { res.status(401).json({ error: 'User not found' }); return }
-  ;(req as any).user = user
+  req.user = user
   next()
 }
 
@@ -189,12 +189,12 @@ outcomesRouter.post(
   apiKeyRateLimit,
   requireIngestKeyOrAuth,
   asyncHandler(async (req, res) => {
-    const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false
+    const viaApiKey: boolean = req.resolvedViaApiKey ?? false
     const parsed = parseBody(recordOutcomeSchema, req)
     let workspaceId: string
 
     if (viaApiKey) {
-      workspaceId = (req as any).resolvedWorkspaceId
+      workspaceId = req.resolvedWorkspaceId!
     } else {
       // JWT path — workspaceId must be in body. Recording an outcome retunes the
       // shared workspace scoring model (every 7th outcome recomputes its
@@ -277,11 +277,11 @@ outcomesRouter.get(
   '/model',
   requireIngestKeyOrAuth,
   asyncHandler(async (req, res) => {
-    const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false
+    const viaApiKey: boolean = req.resolvedViaApiKey ?? false
     let workspaceId: string
 
     if (viaApiKey) {
-      workspaceId = (req as any).resolvedWorkspaceId
+      workspaceId = req.resolvedWorkspaceId!
     } else {
       workspaceId = String(req.query.workspaceId || '').trim()
       if (!workspaceId) throw new ApiError(400, 'workspaceId required')

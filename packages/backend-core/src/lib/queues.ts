@@ -36,10 +36,19 @@ export function getQueue(name: string): Queue {
   return _queues.get(name)!
 }
 
-const defaultJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 5000 } } as const
+// Cap retained job records so completed/failed jobs don't accumulate unbounded in
+// Redis. The AI queues run one job per lead, so without these the high-volume
+// queues grow forever. Keep the last 1000 completed (or anything older than a day)
+// and the last 5000 failed for post-mortem inspection.
+const jobRetention = {
+  removeOnComplete: { count: 1000, age: 86_400 },
+  removeOnFail: { count: 5000 },
+} as const
+
+const defaultJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 5000 }, ...jobRetention } as const
 // AI jobs use a longer backoff so retries always wait past the OpenAI circuit
 // breaker's resetAfterMs (30s) — prevents burning all attempts while OPEN.
-const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 } } as const
+const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 }, ...jobRetention } as const
 
 // Job payloads are scoped by workspaceId (authoritative for polling/auth) plus an
 // optional initiatedByUserId. Object params prevent the positional confusion that

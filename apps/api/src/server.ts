@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import express from 'express'
 import cors from 'cors'
 import compression from 'compression'
@@ -40,6 +41,16 @@ import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js
 
 validateConfig()
 
+// Constant-time bearer-token check. Hashing both sides to a fixed-length digest
+// before comparing means timingSafeEqual never sees a length mismatch (it throws
+// on unequal lengths) and the comparison leaks neither the token's length nor a
+// matching prefix via timing. Matches the timingSafeEqual style used for TOTP.
+function timingSafeBearerMatch(authorization: string | undefined, token: string): boolean {
+  const presented = createHash('sha256').update(authorization ?? '').digest()
+  const expected = createHash('sha256').update(`Bearer ${token}`).digest()
+  return timingSafeEqual(presented, expected)
+}
+
 const SERVICE = 'acaos-api'
 const metadata = getRuntimeMetadata(SERVICE)
 const app = express()
@@ -76,7 +87,7 @@ app.get('/metrics', (req, res) => {
       res.status(404).json({ error: 'Not found' })
       return
     }
-  } else if (req.headers.authorization !== `Bearer ${token}`) {
+  } else if (!timingSafeBearerMatch(req.headers.authorization, token)) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
