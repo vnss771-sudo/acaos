@@ -32,7 +32,7 @@ Choose playbook → Configure ICP → Seed radar → Discover prospects
 > package resolves under tsc/tsx/node. The quick start below is the short version.
 
 ### Requirements
-- Node.js 20+
+- Node.js 22+ (CI and local dev use Node 22 — see `.nvmrc` / `engines`; the production Docker images run Node 26, which is within the supported range)
 - PostgreSQL
 - Redis
 

@@ -43,16 +43,19 @@ type BillingStatus = {
   usage?: UsageStats
 }
 
+// Plan feature copy. The lead/AI-request figures MUST match the enforced limits
+// in PLAN_LIMITS (packages/backend-core/src/lib/limits.ts) — that file is the
+// source of truth for enforcement; keep these numbers in sync with it.
 const PLAN_FEATURES: Record<string, string[]> = {
   free: [
     '1 workspace',
-    'Up to 50 leads',
-    '5 AI requests per month',
+    'Up to 500 leads',
+    '15 AI requests per month',
     'Basic pipeline management'
   ],
   starter: [
-    'Unlimited leads',
-    '500 AI requests per month',
+    'Up to 10,000 leads',
+    '300 AI requests per month',
     'Async AI research & outreach',
     'CSV bulk import',
     'BullMQ job queue',
