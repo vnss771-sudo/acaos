@@ -391,6 +391,13 @@ model WorkspaceEmailConfig {
   imapSecure  Boolean   @default(true)
   imapUser    String?
   imapPass    String?
+  // Reply-sync cursor: the highest IMAP UID processed for this workspace. Sync
+  // fetches strictly above it (no fixed 200-message window), so a reply can never
+  // be silently skipped after an outage or on a busy inbox. lastUidValidity pins
+  // the mailbox's UIDVALIDITY — if it changes (mailbox reset/recreated), the
+  // cursor is stale and is reset so old UIDs don't make us skip new mail.
+  lastSyncedUid   Int       @default(0)
+  lastUidValidity Int?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
