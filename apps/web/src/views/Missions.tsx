@@ -4,6 +4,8 @@ import type { Mission, MissionDetail, MissionStatus, Workspace } from '../types.
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
+import { Card } from '../components/ui/Card.js'
+import { useIsTablet } from '../hooks/useMediaQuery.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -232,6 +234,7 @@ function MissionGuide({ detail }: { detail: MissionDetail }) {
 // the actionable outreach queue scoped to this mission. Lazy-loaded on expand.
 function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook; missionId: string; toast: ToastHook; canManage: boolean }) {
   const route = useMemo(() => makeRouteApi(api), [api])
+  const isTablet = useIsTablet()
   const [detail, setDetail] = useState<MissionDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
@@ -286,7 +289,7 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
       {/* Guided walkthrough: where this mission is in the loop + what's next */}
       <MissionGuide detail={detail} />
 
-      {/* Operator-loop funnel strip */}
+      {/* Operator-loop funnel strip (full width) */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {funnelStages.map(st => (
           <div key={st.label} style={{ flex: '1 1 80px', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '8px 10px' }}>
@@ -296,167 +299,179 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
         ))}
       </div>
 
-      {/* Score & recommend */}
-      {canManage && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button style={s.btnSm} disabled={busy.score} onClick={score}>
-            {busy.score ? 'Scoring…' : 'Score & recommend'}
-          </button>
-          <span style={{ color: colors.textFaint, fontSize: 12 }}>
-            Scores discovered prospects and generates outreach recommendations.
-          </span>
-        </div>
-      )}
+      {/* Operator hub — three columns: Brief · Action queue · Operator panel.
+          Collapses to a single column at tablet/mobile widths. */}
+      <div style={{ display: 'grid', gridTemplateColumns: isTablet ? '1fr' : '1fr 1.6fr 1fr', gap: 14, alignItems: 'start' }}>
 
-      {/* Send readiness */}
-      <div>
-        <div style={heading}>Send readiness</div>
-        {detail.sendReadiness.ready ? (
-          <div style={{ color: colors.green, fontSize: 13, marginTop: 4 }}>✓ Ready to send — SMTP and compliance details are configured.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
-            {detail.sendReadiness.checks.filter(c => !c.ok).map(c => (
-              <div key={c.name} style={{ fontSize: 12 }}>
-                <span style={{ color: colors.amber }}>• {c.label}</span>
-                <span style={{ color: colors.textFaint }}> — {c.hint}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <div style={heading}>Playbook</div>
-        <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
-          {detail.playbook ? detail.playbook.label : 'No playbook — uses workspace ICP'}
-        </div>
-      </div>
-
-      <div>
-        <div style={heading}>Action queue</div>
-        {detail.intents.length === 0 ? (
-          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — discover prospects, then Score &amp; recommend to populate it.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-            {detail.intents.map(i => {
-              const pid = i.prospect?.id
-              const why = i.recommendation?.reasoning || i.messageAngle || null
-              return (
-                <div key={i.id} style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
-                    <span style={{ color: colors.text, fontWeight: 600 }}>{i.prospect?.companyName ?? 'Unknown'}</span>
-                    <span style={{ color: colors.textMuted }}>{i.status}{i.prospect ? ` · score ${i.prospect.opportunityScore}` : ''}</span>
-                  </div>
-                  {why && <div style={{ color: colors.textMuted, fontSize: 12 }}>{why}</div>}
-                  {i.status === 'DRAFTED' && i.draftSubject && (
-                    <div style={{ background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6, padding: '6px 8px' }}>
-                      <div style={{ color: colors.text, fontSize: 12, fontWeight: 600 }}>{i.draftSubject}</div>
-                      {i.draftBody && <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, whiteSpace: 'pre-wrap' }}>{i.draftBody}</div>}
-                    </div>
-                  )}
-                  {canManage && pid && (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {i.status === 'PROPOSED' && (
-                        <button style={s.btnSm} disabled={busy[`draft:${i.id}`]} onClick={() => intentAction(pid, i.id, 'draft', 'Draft generated')}>
-                          {busy[`draft:${i.id}`] ? 'Drafting…' : 'Generate draft'}
-                        </button>
-                      )}
-                      {i.status === 'DRAFTED' && (
-                        <button style={s.btnSm} disabled={busy[`approve:${i.id}`]} onClick={() => intentAction(pid, i.id, 'approve', 'Outreach approved')}>
-                          {busy[`approve:${i.id}`] ? 'Approving…' : 'Approve'}
-                        </button>
-                      )}
-                      {(i.status === 'PROPOSED' || i.status === 'DRAFTED') && (
-                        <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} disabled={busy[`reject:${i.id}`]} onClick={() => intentAction(pid, i.id, 'reject', 'Outreach rejected')}>
-                          {busy[`reject:${i.id}`] ? 'Rejecting…' : 'Reject'}
-                        </button>
-                      )}
-                      {i.status === 'APPROVED' && <span style={{ color: colors.green, fontSize: 12, alignSelf: 'center' }}>✓ Approved</span>}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Engagement — the loop tail: what actually went out and came back */}
-      <div>
-        <div style={heading}>Engagement</div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-          {[
-            { label: 'Sent', value: String(detail.engagement.sent) },
-            { label: 'Replied', value: String(detail.engagement.replied) },
-            { label: 'Reply rate', value: `${Math.round(detail.engagement.replyRate * 100)}%` },
-            ...(detail.engagement.bounced > 0 ? [{ label: 'Bounced', value: String(detail.engagement.bounced) }] : []),
-          ].map(st => (
-            <div key={st.label} style={{ flex: '1 1 70px', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: colors.text, fontSize: 16, fontWeight: 700 }}>{st.value}</div>
-              <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{st.label}</div>
+        {/* ── Mission Brief ─────────────────────────────────────────── */}
+        <Card style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {canManage && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+              <button style={s.btnSm} disabled={busy.score} onClick={score}>
+                {busy.score ? 'Scoring…' : 'Score & recommend'}
+              </button>
+              <span style={{ color: colors.textFaint, fontSize: 12 }}>
+                Scores discovered prospects and generates outreach recommendations.
+              </span>
             </div>
-          ))}
-        </div>
-        {detail.engagement.sent === 0 ? (
-          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 6 }}>Nothing sent yet — approve drafts and run the campaign to start engagement.</div>
-        ) : detail.recentSends.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
-            {detail.recentSends.map(sd => (
-              <div key={sd.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
-                <span style={{ color: colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sd.toEmail} · {sd.subject}</span>
-                <span style={{ flexShrink: 0, color: sd.status === 'REPLIED' ? colors.green : (sd.status === 'BOUNCED' || sd.status === 'FAILED') ? colors.red : colors.textFaint }}>
-                  {sd.status === 'REPLIED' && sd.replyIntent ? `replied · ${sd.replyIntent}` : sd.status.toLowerCase()}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+          )}
 
-      {/* Learning — is the loop improving the model? */}
-      <div>
-        <div style={heading}>Learning</div>
-        <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
-          {detail.learning.totalOutcomes === 0
-            ? 'No outcomes recorded yet — the scoring model learns once replies and outcomes come in.'
-            : `Scoring model updated ${detail.learning.updateCount}× from ${detail.learning.totalOutcomes} outcome${detail.learning.totalOutcomes === 1 ? '' : 's'}${detail.learning.lastWeightUpdate ? ` · last ${new Date(detail.learning.lastWeightUpdate).toLocaleDateString()}` : ''}.`}
-        </div>
-      </div>
-
-      <div>
-        <div style={heading}>Top prospects</div>
-        {detail.prospects.length === 0 ? (
-          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>None discovered for this mission yet.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-            {detail.prospects.map(p => (
-              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
-                <span style={{ color: colors.text }}>{p.companyName}{p.industry ? ` · ${p.industry}` : ''}</span>
-                <span style={{ color: colors.textMuted }}>score {p.opportunityScore}</span>
+          <div>
+            <div style={heading}>Send readiness</div>
+            {detail.sendReadiness.ready ? (
+              <div style={{ color: colors.green, fontSize: 13, marginTop: 4 }}>✓ Ready to send — SMTP and compliance details are configured.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                {detail.sendReadiness.checks.filter(c => !c.ok).map(c => (
+                  <div key={c.name} style={{ fontSize: 12 }}>
+                    <span style={{ color: colors.amber }}>• {c.label}</span>
+                    <span style={{ color: colors.textFaint }}> — {c.hint}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </div>
 
-      <div>
-        <div style={heading}>Discovery history</div>
-        {detail.discoveryRuns.length === 0 ? (
-          <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No discovery runs yet.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-            {detail.discoveryRuns.map(r => (
-              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
-                <span style={{ color: colors.textMuted }}>{r.source}</span>
-                <span style={{ color: r.status === 'FAILED' ? colors.red : colors.textMuted }}>
-                  {r.status === 'FAILED'
-                    ? `failed${r.errorMessage ? ` — ${r.errorMessage}` : ''}`
-                    : `${r.importedCount} imported · ${r.skippedCount} skipped`}
-                </span>
-              </div>
-            ))}
+          <div>
+            <div style={heading}>Playbook</div>
+            <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
+              {detail.playbook ? detail.playbook.label : 'No playbook — uses workspace ICP'}
+            </div>
           </div>
-        )}
+        </Card>
+
+        {/* ── Action queue (the recommended-prospect review hub) ─────── */}
+        <Card style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <div style={heading}>Action queue</div>
+            {detail.intents.length === 0 ? (
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — discover prospects, then Score &amp; recommend to populate it.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+                {detail.intents.map(i => {
+                  const pid = i.prospect?.id
+                  const why = i.recommendation?.reasoning || i.messageAngle || null
+                  return (
+                    <div key={i.id} style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                        <span style={{ color: colors.text, fontWeight: 600 }}>{i.prospect?.companyName ?? 'Unknown'}</span>
+                        <span style={{ color: colors.textMuted }}>{i.status}{i.prospect ? ` · score ${i.prospect.opportunityScore}` : ''}</span>
+                      </div>
+                      {why && <div style={{ color: colors.textMuted, fontSize: 12 }}>{why}</div>}
+                      {i.status === 'DRAFTED' && i.draftSubject && (
+                        <div style={{ background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6, padding: '6px 8px' }}>
+                          <div style={{ color: colors.text, fontSize: 12, fontWeight: 600 }}>{i.draftSubject}</div>
+                          {i.draftBody && <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, whiteSpace: 'pre-wrap' }}>{i.draftBody}</div>}
+                        </div>
+                      )}
+                      {canManage && pid && (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {i.status === 'PROPOSED' && (
+                            <button style={s.btnSm} disabled={busy[`draft:${i.id}`]} onClick={() => intentAction(pid, i.id, 'draft', 'Draft generated')}>
+                              {busy[`draft:${i.id}`] ? 'Drafting…' : 'Generate draft'}
+                            </button>
+                          )}
+                          {i.status === 'DRAFTED' && (
+                            <button style={s.btnSm} disabled={busy[`approve:${i.id}`]} onClick={() => intentAction(pid, i.id, 'approve', 'Outreach approved')}>
+                              {busy[`approve:${i.id}`] ? 'Approving…' : 'Approve'}
+                            </button>
+                          )}
+                          {(i.status === 'PROPOSED' || i.status === 'DRAFTED') && (
+                            <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} disabled={busy[`reject:${i.id}`]} onClick={() => intentAction(pid, i.id, 'reject', 'Outreach rejected')}>
+                              {busy[`reject:${i.id}`] ? 'Rejecting…' : 'Reject'}
+                            </button>
+                          )}
+                          {i.status === 'APPROVED' && <span style={{ color: colors.green, fontSize: 12, alignSelf: 'center' }}>✓ Approved</span>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* ── Operator panel — engagement, learning, prospects, discovery ── */}
+        <Card style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Engagement — the loop tail: what actually went out and came back */}
+          <div>
+            <div style={heading}>Engagement</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+              {[
+                { label: 'Sent', value: String(detail.engagement.sent) },
+                { label: 'Replied', value: String(detail.engagement.replied) },
+                { label: 'Reply rate', value: `${Math.round(detail.engagement.replyRate * 100)}%` },
+                ...(detail.engagement.bounced > 0 ? [{ label: 'Bounced', value: String(detail.engagement.bounced) }] : []),
+              ].map(st => (
+                <div key={st.label} style={{ flex: '1 1 70px', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '6px 8px' }}>
+                  <div style={{ color: colors.text, fontSize: 16, fontWeight: 700 }}>{st.value}</div>
+                  <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{st.label}</div>
+                </div>
+              ))}
+            </div>
+            {detail.engagement.sent === 0 ? (
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 6 }}>Nothing sent yet — approve drafts and run the campaign to start engagement.</div>
+            ) : detail.recentSends.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                {detail.recentSends.map(sd => (
+                  <div key={sd.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+                    <span style={{ color: colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sd.toEmail} · {sd.subject}</span>
+                    <span style={{ flexShrink: 0, color: sd.status === 'REPLIED' ? colors.green : (sd.status === 'BOUNCED' || sd.status === 'FAILED') ? colors.red : colors.textFaint }}>
+                      {sd.status === 'REPLIED' && sd.replyIntent ? `replied · ${sd.replyIntent}` : sd.status.toLowerCase()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Learning — is the loop improving the model? */}
+          <div>
+            <div style={heading}>Learning</div>
+            <div style={{ color: colors.textMuted, fontSize: 13, marginTop: 4 }}>
+              {detail.learning.totalOutcomes === 0
+                ? 'No outcomes recorded yet — the scoring model learns once replies and outcomes come in.'
+                : `Scoring model updated ${detail.learning.updateCount}× from ${detail.learning.totalOutcomes} outcome${detail.learning.totalOutcomes === 1 ? '' : 's'}${detail.learning.lastWeightUpdate ? ` · last ${new Date(detail.learning.lastWeightUpdate).toLocaleDateString()}` : ''}.`}
+            </div>
+          </div>
+
+          <div>
+            <div style={heading}>Top prospects</div>
+            {detail.prospects.length === 0 ? (
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>None discovered for this mission yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                {detail.prospects.map(p => (
+                  <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                    <span style={{ color: colors.text }}>{p.companyName}{p.industry ? ` · ${p.industry}` : ''}</span>
+                    <span style={{ color: colors.textMuted }}>score {p.opportunityScore}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div style={heading}>Discovery history</div>
+            {detail.discoveryRuns.length === 0 ? (
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No discovery runs yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                {detail.discoveryRuns.map(r => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+                    <span style={{ color: colors.textMuted }}>{r.source}</span>
+                    <span style={{ color: r.status === 'FAILED' ? colors.red : colors.textMuted }}>
+                      {r.status === 'FAILED'
+                        ? `failed${r.errorMessage ? ` — ${r.errorMessage}` : ''}`
+                        : `${r.importedCount} imported · ${r.skippedCount} skipped`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   )
