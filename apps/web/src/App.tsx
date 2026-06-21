@@ -5,10 +5,12 @@ import { useApi } from './hooks/useApi.js'
 import { useToast } from './hooks/useToast.js'
 import { ToastContainer } from './components/Toast.js'
 import { Sidebar } from './components/Sidebar.js'
+import { Drawer } from './components/ui/Drawer.js'
 import { AuthScreen } from './components/AuthScreen.js'
 import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { Spinner } from './components/Spinner.js'
+import { useIsTablet } from './hooks/useMediaQuery.js'
 import { colors } from './styles.js'
 
 // Code-split the route views: each becomes its own chunk fetched on first
@@ -88,6 +90,10 @@ export function App() {
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
   const [view, setView] = useState<View>('dashboard')
   const [booting, setBooting] = useState(true)
+  // At tablet/mobile widths the sidebar collapses into a hamburger-triggered
+  // drawer; `navOpen` controls it. Desktop renders the sidebar inline.
+  const isTablet = useIsTablet()
+  const [navOpen, setNavOpen] = useState(false)
   // Step-up: set when any authed API call returns 403 {code:"REAUTH_REQUIRED"}.
   // While true the ReauthModal is shown; on success the user can retry the action.
   const [reauthRequired, setReauthRequired] = useState(false)
@@ -248,14 +254,27 @@ export function App() {
       background: colors.bg, color: colors.text,
       fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif'
     }}>
-      <Sidebar
-        view={view}
-        setView={setView}
-        email={user.email}
-        workspace={activeWorkspace}
-        onLogout={logout}
-        isAdmin={isAdmin}
-      />
+      {isTablet ? (
+        <Drawer open={navOpen} onClose={() => setNavOpen(false)}>
+          <Sidebar
+            view={view}
+            setView={v => { setView(v); setNavOpen(false) }}
+            email={user.email}
+            workspace={activeWorkspace}
+            onLogout={logout}
+            isAdmin={isAdmin}
+          />
+        </Drawer>
+      ) : (
+        <Sidebar
+          view={view}
+          setView={setView}
+          email={user.email}
+          workspace={activeWorkspace}
+          onLogout={logout}
+          isAdmin={isAdmin}
+        />
+      )}
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
         {/* Top bar */}
@@ -264,9 +283,23 @@ export function App() {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           flexShrink: 0, background: colors.bgSurface
         }}>
-          <h1 style={{ color: colors.textMuted, fontSize: 12, letterSpacing: '0.1em', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-            {VIEW_TITLE[view]}
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+            {isTablet && (
+              <button
+                aria-label="Open navigation"
+                onClick={() => setNavOpen(true)}
+                style={{
+                  background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6,
+                  color: colors.textMuted, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '4px 9px'
+                }}
+              >
+                ☰
+              </button>
+            )}
+            <h1 style={{ color: colors.textMuted, fontSize: 12, letterSpacing: '0.1em', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
+              {VIEW_TITLE[view]}
+            </h1>
+          </div>
 
           {/* Workspace switcher */}
           {workspaces.length > 1 && (
