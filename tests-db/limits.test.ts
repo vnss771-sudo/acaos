@@ -61,6 +61,39 @@ test('a growth (unlimited) workspace accepts many concurrent calls', async () =>
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 25)
 })
 
+// --- downgrade / lapsed-subscription entitlement (audit gap) ---
+// A paid plan whose Stripe subscription has lapsed (past_due / canceled /
+// incomplete) must be treated as free: getWorkspacePlan() returns 'free' for any
+// non-'active' status, and every gate routes through it. These verify the
+// entitlement actually reverts, not just the reported plan.
+
+for (const status of ['past_due', 'canceled', 'incomplete'] as const) {
+  test(`a ${status} subscription is metered as the free plan`, async () => {
+    const { workspace } = await seedUserWithWorkspace()
+    // Paid plan on record, but the subscription has lapsed.
+    await prisma.workspace.update({ where: { id: workspace.id }, data: { plan: 'growth', subscriptionStatus: status } })
+
+    const usage = await getMonthlyUsage(workspace.id)
+    assert.equal(usage.plan, 'free', 'effective plan reverts to free')
+    assert.equal(usage.limit, 15, 'free AI cap applies, not growth/unlimited')
+    assert.equal(usage.leads.limit, 500, 'free lead cap applies')
+  })
+}
+
+test('a lapsed growth subscription enforces the free AI cap (not just reports it)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await prisma.workspace.update({ where: { id: workspace.id }, data: { plan: 'growth', subscriptionStatus: 'past_due' } })
+
+  // Were this still active growth, all 20 would succeed (unlimited). Lapsed → free
+  // cap of 15 must reject the rest.
+  const results = await Promise.allSettled(
+    Array.from({ length: 20 }, () => checkAndIncrementAiUsage(workspace.id, 'AI_RESEARCH'))
+  )
+  const ok = results.filter((r) => r.status === 'fulfilled').length
+  assert.ok(ok <= 15, `lapsed subscription must enforce the free cap, got ${ok}`)
+  assert.ok(ok >= 1, 'some calls should still succeed under the free cap')
+})
+
 test('the DB rejects a plan value outside the BillingPlan enum', async () => {
   const { workspace } = await seedUserWithWorkspace()
   // Bypass Prisma's client-side typing with a raw write to prove the column type
