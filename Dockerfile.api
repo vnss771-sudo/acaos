@@ -4,7 +4,7 @@
 # Pinned to the immutable multi-arch index digest for reproducible builds; the
 # tag is kept as a comment for readability. Dependabot (docker ecosystem) bumps
 # the digest+tag. Re-resolve with:
-#   docker buildx imagetools inspect node:22-alpine --format '{{json .Manifest.Digest}}'
+#   docker buildx imagetools inspect node:26-alpine --format '{{json .Manifest.Digest}}'
 FROM node:26-alpine@sha256:a2dc166a387cc6ca1e62d0c8e265e49ca985d6e60abc9fe6e6c3d6ce8e63f606 AS builder
 WORKDIR /app
 ARG ACAOS_RELEASE_VERSION=0.0.0-dev
@@ -90,7 +90,7 @@ EXPOSE 4000
 RUN chown -R node:node /app
 USER node
 
-# Liveness from inside the container (Node 22 has global fetch). Honors the
+# Liveness from inside the container (Node 26 has global fetch). Honors the
 # platform-injected PORT (Railway sets 8080), falling back to the EXPOSEd 4000.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
