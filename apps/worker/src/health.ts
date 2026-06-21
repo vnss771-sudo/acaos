@@ -1,5 +1,6 @@
 import http from 'node:http'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
+import { isProduction } from '@acaos/backend-core/lib/config.js'
 import { renderWorkerMetrics, METRICS_CONTENT_TYPE, type QueueDepth } from './lib/metrics.js'
 
 type HealthOptions = {
@@ -51,7 +52,15 @@ export function startHealthServer(port: number, opts: HealthOptions = {}): http.
 
     if (req.url === '/metrics') {
       const token = process.env.METRICS_TOKEN?.trim()
-      if (token && req.headers.authorization !== `Bearer ${token}`) {
+      if (!token) {
+        // No token configured: refuse in production rather than exposing metrics
+        // unauthenticated (404, not 401, so the endpoint isn't probeable).
+        if (isProduction()) {
+          res.writeHead(404, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Not found' }))
+          return
+        }
+      } else if (req.headers.authorization !== `Bearer ${token}`) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Unauthorized' }))
         return

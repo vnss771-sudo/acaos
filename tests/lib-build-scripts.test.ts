@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdtempSync, mkdirSync } from 'node:fs'
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +9,23 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const ensureScript = join(root, 'scripts/ensure-prisma-client.mjs')
 const postinstallScript = join(root, 'scripts/postinstall.mjs')
+
+// Build an isolated root containing scripts/assert-real-prisma-client.mjs and a
+// generated-client dir in one of the layouts the script checks, optionally with
+// the offline-stub marker, so the guard's pass/fail logic can be exercised.
+function assertScriptIn(opts: { client?: boolean; stub?: boolean }): string {
+  const dir = mkdtempSync(join(tmpdir(), 'acaos-assert-'))
+  mkdirSync(join(dir, 'scripts'), { recursive: true })
+  cpSync(join(root, 'scripts', 'assert-real-prisma-client.mjs'), join(dir, 'scripts', 'assert-real-prisma-client.mjs'))
+  if (opts.client || opts.stub) {
+    const clientDir = join(dir, 'node_modules', '.prisma', 'client')
+    mkdirSync(clientDir, { recursive: true })
+    writeFileSync(join(clientDir, 'default.js'), 'module.exports = {}\n')
+    writeFileSync(join(clientDir, 'default.d.ts'), 'export {}\n')
+    if (opts.stub) writeFileSync(join(clientDir, 'offline-stub.json'), '{"mode":"offline-stub"}\n')
+  }
+  return join(dir, 'scripts', 'assert-real-prisma-client.mjs')
+}
 
 function run(script: string, opts: { cwd?: string; env?: Record<string, string> } = {}) {
   return spawnSync(process.execPath, [script], {
@@ -65,4 +82,24 @@ test('postinstall exits 0 when neither schema nor offline-stub source is present
   const r = run(join(dir, 'scripts', 'postinstall.mjs'))
   assert.equal(r.status, 0, r.stderr)
   assert.doesNotMatch(r.stderr, /ENOENT/)
+})
+
+// assert-real-prisma-client: the typecheck gate's guard against running against
+// the `any`-typed offline stub.
+test('assert-real-prisma-client exits 0 when a real generated client is present', () => {
+  const r = run(assertScriptIn({ client: true }))
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /Real Prisma client present/)
+})
+
+test('assert-real-prisma-client fails when the client is the offline stub', () => {
+  const r = run(assertScriptIn({ client: true, stub: true }))
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /offline stub/)
+})
+
+test('assert-real-prisma-client fails when no client is present at all', () => {
+  const r = run(assertScriptIn({}))
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /offline stub|missing/)
 })

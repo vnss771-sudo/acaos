@@ -69,7 +69,14 @@ app.use(express.json({ limit: '1mb' }))
 
 app.get('/metrics', (req, res) => {
   const token = process.env.METRICS_TOKEN?.trim()
-  if (token && req.headers.authorization !== `Bearer ${token}`) {
+  if (!token) {
+    // No token configured: in production, refuse rather than exposing build and
+    // runtime info unauthenticated (404, not 401, so the endpoint isn't probeable).
+    if (isProduction()) {
+      res.status(404).json({ error: 'Not found' })
+      return
+    }
+  } else if (req.headers.authorization !== `Bearer ${token}`) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }

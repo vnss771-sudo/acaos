@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { isProduction } from '../lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '../lib/audit.js'
-import type { AuthedRequest } from '../types/auth.js'
+import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Assert, CreateCampaignRequest, Extends, LeadStage } from '@acaos/shared'
 
 export const campaignsRouter = Router()
@@ -32,7 +32,7 @@ type _CreateCampaignConforms = Assert<Extends<z.infer<typeof createCampaignSchem
 campaignsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = String(req.query.workspaceId || '').trim()
 
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
@@ -55,7 +55,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/send-readiness',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
@@ -71,7 +71,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/outbox-issues',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
@@ -97,7 +97,7 @@ campaignsRouter.post(
   '/',
   validate(createCampaignSchema),
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId, name, goalType, description } = req.body as z.infer<typeof createCampaignSchema>
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -106,6 +106,7 @@ campaignsRouter.post(
       data: { workspaceId, name, goalType, description }
     })
 
+    invalidateWorkspaceStats(workspaceId) // new campaign changes dashboard campaignCount
     res.status(201).json({ campaign })
   })
 )
@@ -114,7 +115,7 @@ campaignsRouter.post(
 campaignsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaign = await prisma.campaign.findUnique({
       where: { id: req.params.id as string },
       include: { _count: { select: { leads: true } } }
@@ -133,7 +134,7 @@ campaignsRouter.get(
 campaignsRouter.patch(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaignId = req.params.id as string
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
@@ -162,7 +163,7 @@ campaignsRouter.patch(
 campaignsRouter.get(
   '/:id/stats',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaign = await prisma.campaign.findUnique({
       where: { id: req.params.id as string },
       include: { _count: { select: { leads: true } } }
@@ -202,7 +203,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/:id/outreach',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id as string } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
@@ -237,7 +238,7 @@ campaignsRouter.post(
   '/:id/send',
   requireVerifiedEmail,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaign = await prisma.campaign.findUnique({
       where: { id: req.params.id as string },
       include: { _count: { select: { leads: true } } }
@@ -353,7 +354,7 @@ campaignsRouter.post(
 campaignsRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaignId = req.params.id as string
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
@@ -361,6 +362,8 @@ campaignsRouter.delete(
     await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
 
     await prisma.campaign.delete({ where: { id: campaignId } })
+    // Deleting a campaign changes campaignCount and (via cascade) lead totals/funnel.
+    invalidateWorkspaceStats(existing.workspaceId)
     res.json({ ok: true })
   })
 )
@@ -371,7 +374,7 @@ campaignsRouter.delete(
 campaignsRouter.post(
   '/:id/retry-failed',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const campaignId = req.params.id as string
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')

@@ -11,6 +11,7 @@
 // fake-Prisma harness — they do not touch the database layer.
 
 import { prisma } from '../../packages/backend-core/src/lib/prisma.ts'
+import { clearAllTtlCaches } from '../../apps/api/src/lib/ttlCache.ts'
 
 export { prisma }
 export { startTestServer, bearer, type TestServer } from '../../tests/helpers/integration.ts'
@@ -35,6 +36,9 @@ export async function resetDb(): Promise<void> {
   if (tables.length === 0) return
   const list = tables.map((t) => `"public"."${t.tablename}"`).join(', ')
   await prisma.$executeRawUnsafe(`TRUNCATE ${list} RESTART IDENTITY CASCADE`)
+  // Drop in-process caches (e.g. the membership-role and /api/stats caches) so a
+  // value cached against an id reused by a later test can't shadow fresh DB state.
+  clearAllTtlCaches()
 }
 
 export async function disconnect(): Promise<void> {

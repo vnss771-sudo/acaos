@@ -8,8 +8,8 @@ import { enqueueResearchLead } from '../lib/queues.js'
 import { checkAndIncrementAiUsage, reserveLeadCapacity } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
+import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
-import type { AuthedRequest } from '../types/auth.js'
 import type { Prisma } from '@prisma/client'
 
 export const ingestRouter = Router()
@@ -137,6 +137,8 @@ ingestRouter.post(
       return out
     })
 
+    if (created.length > 0) invalidateWorkspaceStats(workspace.id) // ingested leads shift totals/funnel
+
     // Enqueue AI research for each new lead if requested — subject to the same
     // monthly AI plan limit as the dashboard, so the ingest key cannot drive
     // uncapped OpenAI spend. Processed sequentially so we stop at the cap.
@@ -177,7 +179,7 @@ keyRouter.use(requireAuth)
 keyRouter.post(
   '/rotate',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
@@ -198,7 +200,7 @@ keyRouter.post(
 keyRouter.delete(
   '/',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })

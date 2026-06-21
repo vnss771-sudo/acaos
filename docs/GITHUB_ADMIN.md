@@ -4,6 +4,18 @@ These settings finish the last repo-governance gap that cannot be flipped from g
 alone. The workflows and docs in this repo assume the repository is configured as
 follows.
 
+## Optional bootstrap script
+
+To automate most one-time setup from a terminal with `gh` auth:
+
+```bash
+bash scripts/configure-github-admin.sh
+```
+
+The script configures branch protection, enables `ENABLE_CODE_SCANNING`, creates
+`staging`/`production` environments, and prompts for smoke URLs + optional
+`METRICS_TOKEN` per environment.
+
 ## Branch protection / ruleset
 
 Apply this to the default branch (`main`, or `master` if that remains the default):
@@ -46,7 +58,11 @@ Enable these repository features in GitHub settings:
 - Dependabot alerts
 - Dependabot security updates
 - Dependency graph
-- Code scanning
+- Code scanning — after enabling, set the repository variable
+  `ENABLE_CODE_SCANNING=true` so the CodeQL workflow uploads its SARIF results
+  to the Security tab. Until that variable is set the analysis still runs on
+  every PR but does not upload (upload would 403 and redden CI before code
+  scanning is on).
 - Secret scanning, if your plan supports it
 
 ## First run after enabling

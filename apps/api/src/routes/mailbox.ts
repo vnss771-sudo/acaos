@@ -8,7 +8,6 @@ import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
 import { isValidEmail } from '../lib/validation.js'
 import { promises as dns } from 'dns'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const mailboxRouter = Router()
 mailboxRouter.use(requireAuth)
@@ -30,7 +29,7 @@ mailboxRouter.post(
   requireVerifiedEmail,
   mailRateLimit,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const parsed = parseBody(sendTestSchema, req)
     const workspaceId = parsed.workspaceId
     const to = (parsed.to ?? '').trim()
@@ -58,7 +57,7 @@ mailboxRouter.post(
   requireVerifiedEmail,
   syncRateLimit,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseBody(syncSchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })

@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
@@ -35,4 +35,15 @@ jobs:
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           category: /language:javascript-typescript
-          upload: false
+          # Upload SARIF to code scanning only once the operator has enabled it on
+          # the repo (set repo variable ENABLE_CODE_SCANNING=true). Until then the
+          # upload would 403 and redden CI; analysis still runs every PR regardless.
+          # This keeps the wiring honest with docs/GITHUB_ADMIN.md instead of
+          # hard-disabling the upload in code.
+          upload: ${{ vars.ENABLE_CODE_SCANNING == 'true' }}
+          # The CodeQL *database* upload is a separate feature that ALSO requires
+          # code scanning enabled on the repo (otherwise it logs a "code scanning is
+          # not enabled" failed-upload warning on every default-branch run). Gate it
+          # on the same flag so a repo without GHAS stays warning-free; it activates
+          # together with the SARIF upload once ENABLE_CODE_SCANNING=true.
+          upload-database: ${{ vars.ENABLE_CODE_SCANNING == 'true' }}

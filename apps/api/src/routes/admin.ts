@@ -4,7 +4,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
 import { recordAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
-import type { AuthedRequest, AuthUser } from '../types/auth.js'
+import type { AuthUser } from '../types/auth.js'
 
 export const adminRouter = Router()
 adminRouter.use(requireAuth)
@@ -28,7 +28,7 @@ function emailMatchesBootstrapAdmin(user: AuthUser): boolean {
 // different account without leaving a trail.
 adminRouter.use(
   asyncHandler(async (req, _res, next) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
 
     if (user.isPlatformAdmin) return next()
 

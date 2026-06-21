@@ -254,8 +254,14 @@ export async function sendCampaignBatch(
   campaignId: string,
   workspaceId: string,
   leadIds: string[] | undefined,
-  progress?: Progress
+  progress?: Progress,
+  // Optional injection seam: tests pass a `sendMail` stub so the suppression,
+  // idempotency, and fail-closed paths can be exercised without real SMTP (the
+  // real mailer does network I/O and SSRF-pins public hosts). Defaults to the
+  // real mailer, so production callers (worker.ts) are unchanged.
+  deps: { sendMail?: typeof sendMail } = {}
 ): Promise<SendCampaignResult> {
+  const sendMailFn = deps.sendMail ?? sendMail
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
@@ -483,7 +489,7 @@ export async function sendCampaignBatch(
     }
 
     try {
-      const info = await sendMail(lead.email!, subject, htmlBody, smtpCfg)
+      const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg)
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([

@@ -20,9 +20,14 @@ import { resolveUniqueWorkspaceSlug, normalizeWorkspaceRole } from '../lib/works
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import { validate, emailField, passwordField } from '../lib/validate.js'
 import { z } from 'zod'
-import type { AuthedRequest } from '../types/auth.js'
 
 export const authRouter = Router()
+
+// bcrypt work factor. 12 is the current OWASP-recommended floor (cost ~250ms on
+// modern hardware) — high enough to slow offline cracking, low enough not to
+// add meaningful latency to login/signup. Existing hashes at older costs still
+// verify correctly (the cost is encoded in the stored hash).
+const BCRYPT_COST = 12
 
 function issueTokens(userId: string) {
   const token = signJwt({ userId })
@@ -68,7 +73,7 @@ authRouter.post(
 
     const slug = await resolveUniqueWorkspaceSlug(name, email)
     const workspaceName = buildWorkspaceName(name, email)
-    const passwordHash = await bcrypt.hash(password, 10)
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
 
     const result = await prisma.$transaction(async (tx: any) => {
       const user = await tx.user.create({
@@ -235,7 +240,7 @@ authRouter.get(
   '/me',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const authedUser = (req as AuthedRequest).user
+    const authedUser = req.user!
     const [dbUser, workspaces] = await Promise.all([
       prisma.user.findUnique({
         where: { id: authedUser.id },
@@ -333,7 +338,7 @@ authRouter.post(
     const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } })
     if (!record) throw new ApiError(400, 'Reset link is invalid or has expired')
 
-    const passwordHash = await bcrypt.hash(newPassword, 10)
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST)
 
     await prisma.$transaction([
       prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
@@ -352,7 +357,7 @@ authRouter.patch(
   '/profile',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const updates: { name?: string | null; passwordHash?: string } = {}
 
     if (typeof req.body?.name === 'string') {
@@ -366,7 +371,7 @@ authRouter.patch(
       if (!ok) throw new ApiError(401, 'Current password is incorrect')
       const err = validatePassword(req.body.newPassword)
       if (err) throw new ApiError(400, err)
-      updates.passwordHash = await bcrypt.hash(req.body.newPassword, 10)
+      updates.passwordHash = await bcrypt.hash(req.body.newPassword, BCRYPT_COST)
     }
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updates provided')
@@ -390,7 +395,7 @@ authRouter.post(
   '/mfa/setup',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const existing = await prisma.user.findUnique({ where: { id: user.id }, select: { totpEnabled: true } })
     if (existing?.totpEnabled) throw new ApiError(409, 'MFA is already enabled')
 
@@ -408,7 +413,7 @@ authRouter.post(
   requireAuth,
   validate(mfaCodeSchema),
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { code } = req.body as z.infer<typeof mfaCodeSchema>
     const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { totpSecret: true, totpEnabled: true } })
     if (dbUser?.totpEnabled) throw new ApiError(409, 'MFA is already enabled')
@@ -427,7 +432,7 @@ authRouter.post(
   requireAuth,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: false, totpSecret: null } })
     res.json({ ok: true })
   })
@@ -448,7 +453,7 @@ authRouter.post(
   requireAuth,
   validate(reauthSchema),
   asyncHandler(async (req, res) => {
-    const authed = (req as AuthedRequest).user
+    const authed = req.user!
     const { password, code } = req.body as z.infer<typeof reauthSchema>
     const user = await prisma.user.findUnique({ where: { id: authed.id } })
     if (!user?.passwordHash) throw new ApiError(400, 'Cannot re-authenticate this account')
@@ -524,7 +529,7 @@ authRouter.post(
   authRateLimit,
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { emailVerified: true, email: true } })
     if (dbUser?.emailVerified) return res.json({ ok: true }) // already verified
 
@@ -555,7 +560,7 @@ authRouter.post(
   '/invite/:token/accept',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const authedUser = (req as AuthedRequest).user
+    const authedUser = req.user!
     const rawToken = String(req.params.token || '').trim()
     const tokenHash = hashRefreshToken(rawToken)
 

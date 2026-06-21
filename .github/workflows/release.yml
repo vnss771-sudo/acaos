@@ -42,7 +42,7 @@ jobs:
     environment:
       name: ${{ github.event_name == 'push' && 'production' || 'staging' }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Package the exact source being released. On a tag push that's the tag;
           # on a publish dispatch, package the release_tag itself (NOT an arbitrary
@@ -51,7 +51,7 @@ jobs:
           ref: ${{ github.event_name == 'push' && github.ref || (inputs.publish && inputs.release_tag) || inputs.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -106,31 +106,64 @@ jobs:
       - name: Build release archive
         run: npm run pack
 
+      # Software Bill of Materials for the released source tree, so consumers and
+      # auditors can see exactly which dependencies ship in a given release. Pinned
+      # to a full commit SHA per the check:workflow-pinning gate; the checksum step
+      # below picks the SBOM up automatically.
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@df80a981bc0e7c93f351eab5f43b39e5ea173d5f # v0.17.9
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist-pack/acaos-sbom.spdx.json
+          artifact-name: acaos-sbom.spdx.json
+
+      # Tamper-evident checksums for every release artifact. Consumers verify with
+      # `sha256sum -c SHA256SUMS.txt`. Computed over the files that exist; the SBOM
+      # is included automatically once the step above is enabled.
+      - name: Generate artifact checksums
+        working-directory: dist-pack
+        run: |
+          shopt -s nullglob
+          files=(acaos-source.zip release-manifest.json acaos-sbom.spdx.json)
+          present=()
+          for f in "${files[@]}"; do [[ -f "$f" ]] && present+=("$f"); done
+          sha256sum "${present[@]}" | tee SHA256SUMS.txt
+          echo "--- SHA256SUMS.txt ---"
+          cat SHA256SUMS.txt
+
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: acaos-source-${{ steps.release_target.outputs.tag || github.sha }}
           path: |
             dist-pack/acaos-source.zip
             dist-pack/release-manifest.json
+            dist-pack/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish GitHub Release asset
         if: ${{ steps.release_target.outputs.publish == 'true' }}
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_TAG: ${{ steps.release_target.outputs.tag }}
-          RELEASE_ASSET_PATH: dist-pack/acaos-source.zip
-          RELEASE_ASSET_NAME: acaos-source.zip
         with:
           script: |
             const fs = require('node:fs');
-            const path = process.env.RELEASE_ASSET_PATH;
-            const assetName = process.env.RELEASE_ASSET_NAME;
             const tag = process.env.RELEASE_TAG;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+
+            // Attach the source archive, the SBOM (if generated), and the
+            // checksum manifest so the Release carries both the artifacts and the
+            // means to verify them (sha256sum -c SHA256SUMS.txt).
+            const candidates = [
+              { path: 'dist-pack/acaos-source.zip', name: 'acaos-source.zip', type: 'application/zip' },
+              { path: 'dist-pack/acaos-sbom.spdx.json', name: 'acaos-sbom.spdx.json', type: 'application/json' },
+              { path: 'dist-pack/SHA256SUMS.txt', name: 'SHA256SUMS.txt', type: 'text/plain' },
+            ];
+            const assets = candidates.filter((a) => fs.existsSync(a.path));
 
             let release;
             try {
@@ -150,23 +183,21 @@ jobs:
               release = created.data;
             }
 
-            const duplicate = release.assets.find((asset) => asset.name === assetName);
-            if (duplicate) {
-              await github.rest.repos.deleteReleaseAsset({
+            for (const asset of assets) {
+              const duplicate = release.assets.find((existing) => existing.name === asset.name);
+              if (duplicate) {
+                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: duplicate.id });
+              }
+              await github.rest.repos.uploadReleaseAsset({
                 owner,
                 repo,
-                asset_id: duplicate.id,
+                release_id: release.id,
+                name: asset.name,
+                headers: {
+                  'content-type': asset.type,
+                  'content-length': String(fs.statSync(asset.path).size),
+                },
+                data: fs.readFileSync(asset.path),
               });
+              core.info(`Uploaded release asset: ${asset.name}`);
             }
-
-            await github.rest.repos.uploadReleaseAsset({
-              owner,
-              repo,
-              release_id: release.id,
-              name: assetName,
-              headers: {
-                'content-type': 'application/zip',
-                'content-length': String(fs.statSync(path).size),
-              },
-              data: fs.readFileSync(path),
-            });

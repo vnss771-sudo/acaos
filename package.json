@@ -11,6 +11,7 @@
     "dev:worker": "npm --workspace @acaos/worker run dev",
     "dev": "echo Run dev:web, dev:api and dev:worker in separate terminals",
     "prisma:generate": "node scripts/prisma-client.mjs generate",
+    "check:prisma-real": "node scripts/assert-real-prisma-client.mjs",
     "prisma:migrate": "npm --workspace @acaos/db run prisma:migrate",
     "build": "npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
     "check:boundaries": "node scripts/check-boundaries.mjs",

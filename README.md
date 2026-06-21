@@ -26,6 +26,11 @@ Choose playbook → Configure ICP → Seed radar → Discover prospects
 
 ## Local setup
 
+> 📦 **Building from the source archive?** See **[`BUILD.md`](BUILD.md)** for the
+> complete build & run guide — prerequisites, local dev, production build, Docker,
+> environment variables, the CI verify gates, and how the shared `@acaos/backend-core`
+> package resolves under tsc/tsx/node. The quick start below is the short version.
+
 ### Requirements
 - Node.js 20+
 - PostgreSQL

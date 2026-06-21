@@ -14,7 +14,6 @@ import {
   getJobById
 } from '../lib/queues.js'
 import { issueSseTicket, consumeSseTicket } from '../lib/sseTickets.js'
-import type { AuthedRequest } from '../types/auth.js'
 import type { Job } from 'bullmq'
 
 async function assertCanReadJob(userId: string, job: Job): Promise<void> {
@@ -127,7 +126,7 @@ jobsRouter.use(requireAuth)
 // Issue a one-time SSE ticket (authenticated via the Authorization header).
 // The browser exchanges this for the EventSource URL above.
 jobsRouter.post('/events/ticket', asyncHandler(async (req, res) => {
-  const user = (req as AuthedRequest).user
+  const user = req.user!
   const ticket = await issueSseTicket(user.id)
   res.json({ ticket })
 }))
@@ -136,7 +135,7 @@ jobsRouter.post(
   '/research',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { leadId } = parseBody(leadIdBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -156,7 +155,7 @@ jobsRouter.post(
   '/outreach',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { leadId } = parseBody(leadIdBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -176,7 +175,7 @@ jobsRouter.post(
   '/analyze-reply',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { replyBody, leadId, workspaceId: bodyWorkspaceId } = parseBody(analyzeReplyBodySchema, req)
 
     let workspaceId: string
@@ -203,7 +202,7 @@ jobsRouter.post(
   '/research-bulk',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const { workspaceId } = parseBody(workspaceBodySchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -228,7 +227,7 @@ jobsRouter.post(
 jobsRouter.get(
   '/:queue/:jobId',
   asyncHandler(async (req, res) => {
-    const user = (req as AuthedRequest).user
+    const user = req.user!
     const queue = req.params.queue as string
     const jobId = req.params.jobId as string
     if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)

@@ -211,18 +211,37 @@ const replyWorker = new Worker(
           await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
         }
 
-        const model = await prisma.scoringModel.upsert({
+        // Common path is a read: the scoring model almost always already exists,
+        // so look it up first and only create on the cold path. (Was an
+        // unconditional upsert — a write + row lock on every interested reply.)
+        // The @unique(workspaceId) means a concurrent first-reply race can lose
+        // the create with P2002; re-read in that case so we still get the id.
+        let model = await prisma.scoringModel.findUnique({
           where: { workspaceId: lead.workspaceId },
-          create: {
-            workspaceId: lead.workspaceId,
-            weights: DEFAULT_SCORING_WEIGHTS,
-            performanceMetrics: {
-              totalScored: 0, totalReplied: 0, replyRate: 0,
-              avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
-            }
-          },
-          update: {}
+          select: { id: true },
         })
+        if (!model) {
+          try {
+            model = await prisma.scoringModel.create({
+              data: {
+                workspaceId: lead.workspaceId,
+                weights: DEFAULT_SCORING_WEIGHTS,
+                performanceMetrics: {
+                  totalScored: 0, totalReplied: 0, replyRate: 0,
+                  avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0
+                }
+              },
+              select: { id: true },
+            })
+          } catch (err) {
+            if ((err as { code?: string }).code !== 'P2002') throw err
+            model = await prisma.scoringModel.findUnique({
+              where: { workspaceId: lead.workspaceId },
+              select: { id: true },
+            })
+          }
+        }
+        if (!model) throw new Error('scoring model unavailable after create race')
 
         const replyIntentMap: Record<string, string> = {
           INTERESTED: 'INTERESTED',
@@ -539,6 +558,15 @@ async function shutdown(signal: string) {
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'begin' })
   healthServer.close()
 
+  // Watchdog: if a wedged BullMQ/Prisma close blocks the await below, force-exit
+  // so the platform can restart us instead of the process hanging through SIGTERM
+  // indefinitely (mirrors the API's shutdown timeout).
+  const forceExit = setTimeout(() => {
+    logLifecycleEvent(SERVICE, 'crash', { signal, reason: 'forced-exit-after-timeout' })
+    process.exit(1)
+  }, 10_000)
+  forceExit.unref()
+
   await Promise.all([
     researchWorker.close(),
     outreachWorker.close(),
@@ -551,6 +579,7 @@ async function shutdown(signal: string) {
     retentionWorker.close(),
   ])
   await prisma.$disconnect()
+  clearTimeout(forceExit)
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })
   process.exit(0)
 }

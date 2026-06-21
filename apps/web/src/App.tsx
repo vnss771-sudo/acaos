@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react'
 import type { User, Workspace, View } from './types.js'
 import { canManageWorkspace } from './types.js'
 import { useApi } from './hooks/useApi.js'
@@ -7,19 +7,33 @@ import { ToastContainer } from './components/Toast.js'
 import { Sidebar } from './components/Sidebar.js'
 import { AuthScreen } from './components/AuthScreen.js'
 import { ReauthModal } from './components/ReauthModal.js'
-import { Dashboard } from './views/Dashboard.js'
-import { Campaigns } from './views/Campaigns.js'
-import { MissionsView } from './views/Missions.js'
-import { ApprovalsView } from './views/Approvals.js'
-import { Leads } from './views/Leads.js'
-import { AiTools } from './views/AiTools.js'
-import { Billing } from './views/Billing.js'
-import { Settings } from './views/Settings.js'
-import { Intelligence } from './views/Intelligence.js'
-import { ProspectsView } from './views/Prospects.js'
-import { AdminView } from './views/Admin.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
+import { Spinner } from './components/Spinner.js'
 import { colors } from './styles.js'
+
+// Code-split the route views: each becomes its own chunk fetched on first
+// navigation, instead of shipping the entire app (admin/billing/settings
+// included) in the initial bundle. React.lazy needs a default export, so adapt
+// each named export.
+const Dashboard = lazy(() => import('./views/Dashboard.js').then(m => ({ default: m.Dashboard })))
+const Campaigns = lazy(() => import('./views/Campaigns.js').then(m => ({ default: m.Campaigns })))
+const MissionsView = lazy(() => import('./views/Missions.js').then(m => ({ default: m.MissionsView })))
+const ApprovalsView = lazy(() => import('./views/Approvals.js').then(m => ({ default: m.ApprovalsView })))
+const Leads = lazy(() => import('./views/Leads.js').then(m => ({ default: m.Leads })))
+const AiTools = lazy(() => import('./views/AiTools.js').then(m => ({ default: m.AiTools })))
+const Billing = lazy(() => import('./views/Billing.js').then(m => ({ default: m.Billing })))
+const Settings = lazy(() => import('./views/Settings.js').then(m => ({ default: m.Settings })))
+const Intelligence = lazy(() => import('./views/Intelligence.js').then(m => ({ default: m.Intelligence })))
+const ProspectsView = lazy(() => import('./views/Prospects.js').then(m => ({ default: m.ProspectsView })))
+const AdminView = lazy(() => import('./views/Admin.js').then(m => ({ default: m.AdminView })))
+
+function ViewFallback() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '64px 0' }}>
+      <Spinner size={20} color={colors.blue} />
+    </div>
+  )
+}
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -277,6 +291,7 @@ export function App() {
         {/* Main content */}
         <main style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
           <ErrorBoundary>
+            <Suspense fallback={<ViewFallback />}>
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
             {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
             {view === 'prospects' && <ProspectsView {...commonProps} canManage={canManage} />}
@@ -296,6 +311,7 @@ export function App() {
               />
             )}
             {view === 'admin' && isAdmin && <AdminView api={api} toast={toast} />}
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>
