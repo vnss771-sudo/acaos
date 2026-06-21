@@ -62,7 +62,13 @@ Wire your platform's probes to:
 |---|---|---|
 | `GET /api/live` | process is up (no I/O) | liveness |
 | `GET /api/ready` | config valid + Postgres reachable (Redis reported, non-fatal) → 200/503 | readiness / LB gate |
+| `GET /api/ready/strict` | config valid + Postgres **and** Redis reachable → 200/503 | LB gate for Redis/BullMQ-dependent deployments |
 | `GET /api/health` | DB + Redis status | dashboards |
+
+Use `/api/ready` when the service can tolerate a transient Redis outage (rate
+limiting degrades gracefully); use `/api/ready/strict` when critical flows are
+Redis/BullMQ-backed and serving traffic without Redis is worse than briefly
+shedding it.
 
 Build/version metadata (commit SHA, build time, version) is exposed on `/metrics`
 and baked into the images via the `ACAOS_RELEASE_*` build args.

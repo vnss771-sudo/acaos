@@ -129,6 +129,33 @@ app.get('/api/ready', async (_req, res) => {
   })
 })
 
+// Strict readiness: like /api/ready, but ALSO requires Redis. Point a load
+// balancer's readiness probe here for deployments whose critical flows are
+// Redis/BullMQ-backed (job enqueue, queue-driven features), where serving
+// traffic with Redis down is worse than briefly shedding it. /api/ready stays
+// lenient (Redis optional) for deployments that tolerate degraded rate limiting
+// during a transient Redis blip.
+app.get('/api/ready/strict', async (_req, res) => {
+  const report = getReadinessReport()
+  const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
+  setDependencyUp('postgres', dbOk)
+  setDependencyUp('redis', redisOk)
+  const ok = report.ready && dbOk && redisOk
+
+  res.status(ok ? 200 : 503).json({
+    ok,
+    ready: ok,
+    db: dbOk,
+    redis: redisOk,
+    config: report,
+    service: SERVICE,
+    releaseId: metadata.releaseId,
+    version: metadata.version,
+    commit: metadata.commit,
+    timestamp: new Date().toISOString(),
+  })
+})
+
 app.get('/api/health', async (_req, res) => {
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
   setDependencyUp('postgres', dbOk)
