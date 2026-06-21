@@ -346,7 +346,7 @@ export async function sendCampaignBatch(
           select: { leadId: true },
         }))
           .map((r: { leadId: string | null }) => r.leadId)
-          .filter((id): id is string => id !== null)
+          .filter((id: string | null): id is string => id !== null)
       )
     : new Set<string>()
 
