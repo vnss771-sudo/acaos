@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
-import { createRateLimiter } from '../apps/api/src/middleware/rateLimit.ts'
+import { createRateLimiter, authRateLimit } from '../apps/api/src/middleware/rateLimit.ts'
 import type { Request, Response, NextFunction } from 'express'
 
 // ---------------------------------------------------------------------------
@@ -214,4 +214,95 @@ test('rate limiter: a spoofed X-Forwarded-For header does NOT create new buckets
   const { res: r2, status } = makeRes()
   await runMiddleware(limiter, mk('2.2.2.2'), r2) // different spoofed header, same req.ip
   assert.equal(status.mock.calls[0]?.arguments[0], 429, 'spoofing the header must not bypass the limit')
+})
+
+// ---------------------------------------------------------------------------
+// keyFn returning null skips limiting (finding #9 per-account: no account → skip)
+// ---------------------------------------------------------------------------
+test('rate limiter: keyFn returning null skips limiting entirely', async () => {
+  const limiter = createRateLimiter({ windowMs: 60_000, max: 1, keyFn: () => null })
+  const req = makeReq('88.0.0.1')
+  for (let i = 0; i < 5; i++) {
+    const { res, headers } = makeRes()
+    const { nextCalled } = await runMiddleware(limiter, req, res)
+    assert.equal(nextCalled, true, `request ${i + 1} passes (no bucket)`)
+    assert.equal(headers['X-RateLimit-Limit'], undefined, 'no rate headers when skipped')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// degradedMax: tighten on the Redis fallback, but only in production
+// ---------------------------------------------------------------------------
+test('rate limiter: degradedMax tightens the fallback ceiling in production', async () => {
+  const prev = process.env.NODE_ENV
+  process.env.NODE_ENV = 'production'
+  try {
+    // Unit env has no Redis, so every request takes the in-process fallback path.
+    const limiter = createRateLimiter({ windowMs: 60_000, max: 10, degradedMax: 2 })
+    const req = makeReq('77.0.0.1')
+    for (let i = 0; i < 2; i++) {
+      const { res } = makeRes()
+      const { nextCalled } = await runMiddleware(limiter, req, res)
+      assert.equal(nextCalled, true, `request ${i + 1} within degradedMax passes`)
+    }
+    const { res, status, headers } = makeRes()
+    const { nextCalled } = await runMiddleware(limiter, req, res)
+    assert.equal(nextCalled, false, '3rd request blocked at degradedMax=2')
+    assert.equal(status.mock.calls[0]?.arguments[0], 429)
+    assert.equal(headers['X-RateLimit-Limit'], 2, 'header reflects the tightened ceiling')
+  } finally {
+    process.env.NODE_ENV = prev
+  }
+})
+
+test('rate limiter: degradedMax is ignored outside production (full max applies)', async () => {
+  // NODE_ENV is 'test' here, so degradedMax must NOT apply — the real max wins.
+  const limiter = createRateLimiter({ windowMs: 60_000, max: 3, degradedMax: 1 })
+  const req = makeReq('77.0.0.2')
+  for (let i = 0; i < 3; i++) {
+    const { res } = makeRes()
+    const { nextCalled } = await runMiddleware(limiter, req, res)
+    assert.equal(nextCalled, true, `request ${i + 1} passes at full max`)
+  }
+  const { res, status } = makeRes()
+  const { nextCalled } = await runMiddleware(limiter, req, res)
+  assert.equal(nextCalled, false, '4th request blocked at full max=3 (degradedMax ignored)')
+  assert.equal(status.mock.calls[0]?.arguments[0], 429)
+})
+
+// ---------------------------------------------------------------------------
+// authRateLimit: per-account dimension (finding #9)
+// ---------------------------------------------------------------------------
+test('authRateLimit: one account is throttled even across rotating IPs', async () => {
+  const email = 'victim@example.com'
+  const mk = (ip: string) =>
+    ({ headers: {}, ip, socket: { remoteAddress: ip }, body: { email } }) as unknown as Request
+
+  // 10 attempts on the SAME account, each from a fresh IP. The per-IP limiter sees
+  // only 1 per IP, but the per-account limiter counts all 10.
+  for (let i = 0; i < 10; i++) {
+    const { res } = makeRes()
+    const { nextCalled } = await runMiddleware(authRateLimit, mk(`9.9.9.${i}`), res)
+    assert.equal(nextCalled, true, `attempt ${i + 1} (new IP) passes`)
+  }
+  // 11th attempt on the same account from yet another new IP — blocked per-account.
+  const { res, status } = makeRes()
+  const { nextCalled } = await runMiddleware(authRateLimit, mk('9.9.9.250'), res)
+  assert.equal(nextCalled, false, '11th attempt on the same account is blocked')
+  assert.equal(status.mock.calls[0]?.arguments[0], 429)
+})
+
+test('authRateLimit: requests without an email skip the per-account limiter', async () => {
+  // e.g. /refresh or /verify-totp carry no email; only the per-IP window applies.
+  const mk = () => ({ headers: {}, ip: '10.0.0.9', socket: { remoteAddress: '10.0.0.9' }, body: {} }) as unknown as Request
+  for (let i = 0; i < 10; i++) {
+    const { res } = makeRes()
+    const { nextCalled } = await runMiddleware(authRateLimit, mk(), res)
+    assert.equal(nextCalled, true, `request ${i + 1} passes the per-IP window`)
+  }
+  // 11th from the same IP trips the per-IP limiter (max 10), proving the chain runs.
+  const { res, status } = makeRes()
+  const { nextCalled } = await runMiddleware(authRateLimit, mk(), res)
+  assert.equal(nextCalled, false)
+  assert.equal(status.mock.calls[0]?.arguments[0], 429)
 })
