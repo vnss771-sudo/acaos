@@ -24,7 +24,7 @@ export async function signUp(page: Page, email: string, password = PASSWORD): Pr
   await page.getByRole('button', { name: 'Create account' }).first().click()
   await page.getByPlaceholder('Your name').fill('E2E Tester')
   await page.getByPlaceholder('you@example.com').fill(email)
-  await page.getByPlaceholder('At least 8 characters').fill(password)
+  await page.getByPlaceholder('At least 12 characters').fill(password)
   // Submit (last match = the form's submit button, not the mode toggle).
   await page.getByRole('button', { name: 'Create account' }).last().click()
   // Onboarding wizard is the first authenticated screen for a fresh account.

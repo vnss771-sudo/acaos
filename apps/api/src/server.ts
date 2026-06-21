@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import express from 'express'
 import cors from 'cors'
 import compression from 'compression'
@@ -24,7 +25,7 @@ import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
 import { metricsMiddleware } from './middleware/metrics.js'
-import { renderMetrics, METRICS_CONTENT_TYPE } from './lib/metrics.js'
+import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
@@ -39,6 +40,16 @@ import { attachBreakerStore } from './lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 
 validateConfig()
+
+// Constant-time bearer-token check. Hashing both sides to a fixed-length digest
+// before comparing means timingSafeEqual never sees a length mismatch (it throws
+// on unequal lengths) and the comparison leaks neither the token's length nor a
+// matching prefix via timing. Matches the timingSafeEqual style used for TOTP.
+function timingSafeBearerMatch(authorization: string | undefined, token: string): boolean {
+  const presented = createHash('sha256').update(authorization ?? '').digest()
+  const expected = createHash('sha256').update(`Bearer ${token}`).digest()
+  return timingSafeEqual(presented, expected)
+}
 
 const SERVICE = 'acaos-api'
 const metadata = getRuntimeMetadata(SERVICE)
@@ -76,7 +87,7 @@ app.get('/metrics', (req, res) => {
       res.status(404).json({ error: 'Not found' })
       return
     }
-  } else if (req.headers.authorization !== `Bearer ${token}`) {
+  } else if (!timingSafeBearerMatch(req.headers.authorization, token)) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
@@ -100,6 +111,8 @@ app.get('/api/live', (_req, res) => {
 app.get('/api/ready', async (_req, res) => {
   const report = getReadinessReport()
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
+  setDependencyUp('postgres', dbOk)
+  setDependencyUp('redis', redisOk)
   // Redis is a required production dependency (the queue-backed flows — outreach,
   // campaign send, mailbox sync — can't run without it), so it gates readiness in
   // production: a Redis outage pulls the instance from rotation. Liveness
@@ -123,6 +136,8 @@ app.get('/api/ready', async (_req, res) => {
 
 app.get('/api/health', async (_req, res) => {
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
+  setDependencyUp('postgres', dbOk)
+  setDependencyUp('redis', redisOk)
   const ok = dbOk
   res.status(ok ? 200 : 503).json({
     ok,

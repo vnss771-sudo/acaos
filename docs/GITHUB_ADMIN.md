@@ -24,7 +24,10 @@ Apply this to the default branch (`main`, or `master` if that remains the defaul
 - Require approvals before merging.
 - Dismiss stale approvals when new commits are pushed.
 - Require status checks before merging.
-- Mark **`required`** as the single mandatory status check.
+- Mark these as the mandatory status checks:
+  - **`required`** — the stable CI aggregator (from `ci.yml`).
+  - **`Dependency review`** — the PR supply-chain dependency gate (from `security-pr.yml`).
+  - **`Secret scan (gitleaks)`** — the PR committed-secret gate (from `security-pr.yml`).
 - Require branches to be up to date before merging.
 - Block force pushes.
 - Block branch deletion.
@@ -32,6 +35,14 @@ Apply this to the default branch (`main`, or `master` if that remains the defaul
 
 Why `required`? The CI matrix intentionally fans out into variable job names. The
 stable `required` aggregator gives branch protection one durable check name.
+
+Why also list `Dependency review` and `Secret scan (gitleaks)` separately? Those
+two checks live in a **separate workflow** (`security-pr.yml`), not in `ci.yml`,
+so they cannot join the `required` aggregator's `needs:` graph. They must be
+named as their own required contexts (using their exact GitHub check-run names,
+i.e. the workflow job `name:` fields) or a PR that introduces a vulnerable
+dependency or a committed secret could still merge. `configure-github-admin.sh`
+sets all three contexts.
 
 ## Environments
 
@@ -70,6 +81,6 @@ Enable these repository features in GitHub settings:
 1. Merge this branch.
 2. Enable the settings above in the GitHub UI.
 3. Trigger `CI`, `CodeQL`, and a manual `Release` dry run.
-4. Protect the default branch with the `required` check.
+4. Protect the default branch with the `required`, `Dependency review`, and `Secret scan (gitleaks)` checks.
 5. Verify Dependabot opens grouped PRs for npm, Docker, and GitHub Actions.
 6. Run `Post-deploy smoke` once against `staging`, then once against `production`, and confirm the runtime reports the intended `releaseId`.

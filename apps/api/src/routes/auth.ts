@@ -9,7 +9,8 @@ import {
   signMfaToken,
   verifyMfaToken
 } from '../lib/jwt.js'
-import { requireAuth, requireFreshAuth } from '../middleware/auth.js'
+import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { recordAudit } from '../lib/audit.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotp, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
@@ -197,6 +198,27 @@ authRouter.post(
       data: { revokedAt: now },
     })
     if (result.count === 0) {
+      // Reuse detection: if the presented token EXISTS but is already revoked, it's
+      // a replay of a rotated/revoked refresh token — a theft signal. Revoke the
+      // user's entire refresh-token set (the long-lived credential) and audit it.
+      // (Trade-off: a rare benign simultaneous-refresh race can also trip this and
+      // force re-login; bounded by the shared-cookie + single-flight client model.)
+      const replayed = await prisma.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { userId: true, revokedAt: true },
+      })
+      if (replayed?.revokedAt) {
+        await prisma.refreshToken.updateMany({
+          where: { userId: replayed.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        })
+        void recordAudit({
+          actorUserId: replayed.userId,
+          type: 'refresh_token.reuse_detected',
+          entityType: 'user',
+          entityId: replayed.userId,
+        })
+      }
       throw new ApiError(401, 'Refresh token invalid or expired')
     }
     // Fetch token record to obtain userId (already atomically revoked above)
@@ -290,7 +312,7 @@ authRouter.post(
     await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash, expiresAt } })
 
     const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
-    const resetUrl = `${appUrl}?reset=${rawToken}`
+    const resetUrl = `${appUrl}/#reset=${rawToken}`
 
     if (isMailConfigured()) {
       await sendMail(email, 'Reset your ACAOS password',
@@ -353,9 +375,22 @@ authRouter.post(
   })
 )
 
+// All fields optional and only loosely typed as strings — the handler keeps its
+// `typeof === 'string'` branching and the empty-update 400, and validatePassword()
+// still enforces the password policy on newPassword. The schema just rejects
+// non-string junk for these fields before the handler runs. currentPassword is
+// intentionally unconstrained in length so a wrong (short) password still reaches
+// the bcrypt comparison and yields 401, not a schema 400.
+const updateProfileSchema = z.object({
+  name: z.string().optional(),
+  currentPassword: z.string().optional(),
+  newPassword: z.string().optional(),
+})
+
 authRouter.patch(
   '/profile',
   requireAuth,
+  validate(updateProfileSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
     const updates: { name?: string | null; passwordHash?: string } = {}
@@ -376,11 +411,24 @@ authRouter.patch(
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updates provided')
 
+    const passwordChanged = updates.passwordHash !== undefined
+
     const updated = await prisma.user.update({
       where: { id: user.id },
       data: updates,
       select: { id: true, email: true, name: true }
     })
+
+    // Credential change: revoke all refresh tokens so any other session must
+    // re-authenticate (mirrors the password-reset handler). Only after the new
+    // hash is committed, and only when the password actually changed.
+    if (passwordChanged) {
+      await prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() }
+      })
+      void recordAudit({ actorUserId: user.id, type: 'password.change', entityType: 'User', entityId: user.id })
+    }
 
     res.json({ user: updated })
   })
@@ -394,6 +442,10 @@ authRouter.patch(
 authRouter.post(
   '/mfa/setup',
   requireAuth,
+  // Enrolling a second factor is account-takeover-grade sensitive: a stolen
+  // access token must not be able to attach MFA to an account that has none.
+  // Require a recent credential proof (step-up), like /mfa/disable.
+  requireFreshAuth,
   asyncHandler(async (req, res) => {
     const user = req.user!
     const existing = await prisma.user.findUnique({ where: { id: user.id }, select: { totpEnabled: true } })
@@ -401,6 +453,7 @@ authRouter.post(
 
     const secret = generateTotpSecret()
     await prisma.user.update({ where: { id: user.id }, data: { totpSecret: encryptSecret(secret) } })
+    void recordAudit({ actorUserId: user.id, type: 'mfa.setup', entityType: 'User', entityId: user.id })
     res.json({ secret, otpauthUri: buildOtpauthUri(secret, user.email) })
   })
 )
@@ -411,6 +464,8 @@ const mfaCodeSchema = z.object({ code: z.string().min(6).max(10) })
 authRouter.post(
   '/mfa/activate',
   requireAuth,
+  // Same step-up requirement as setup — flipping MFA on is a credential change.
+  requireFreshAuth,
   validate(mfaCodeSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
@@ -421,7 +476,14 @@ authRouter.post(
     if (!verifyTotp(decryptSecret(dbUser.totpSecret), code)) throw new ApiError(400, 'Invalid authentication code')
 
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: true } })
+    // A credential factor changed — revoke all refresh tokens so any other
+    // session must re-authenticate (mirrors the password-reset handler).
+    await prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    })
     await markReauth(user.id) // proving a code is a fresh credential
+    void recordAudit({ actorUserId: user.id, type: 'mfa.activate', entityType: 'User', entityId: user.id })
     res.json({ ok: true })
   })
 )
@@ -434,6 +496,13 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const user = req.user!
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: false, totpSecret: null } })
+    // A credential factor changed — revoke all refresh tokens so any other
+    // session must re-authenticate (mirrors the password-reset handler).
+    await prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    })
+    void recordAudit({ actorUserId: user.id, type: 'mfa.disable', entityType: 'User', entityId: user.id })
     res.json({ ok: true })
   })
 )
@@ -482,7 +551,7 @@ async function sendVerificationEmail(userId: string, email: string) {
   await prisma.emailVerificationToken.create({ data: { userId, tokenHash, expiresAt } })
 
   const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
-  const verifyUrl = `${appUrl}?verify=${rawToken}`
+  const verifyUrl = `${appUrl}/#verify=${rawToken}`
 
   if (isMailConfigured()) {
     await sendMail(email, 'Verify your ACAOS email address',
@@ -498,10 +567,15 @@ async function sendVerificationEmail(userId: string, email: string) {
   }
 }
 
-authRouter.get(
-  '/verify-email/:token',
+// Single-use credential tokens are carried in the POST body, not the URL path,
+// so they can't leak via API access logs / reverse-proxy logs / APM traces.
+const tokenBodySchema = z.object({ token: z.string().trim().min(1, 'Token required').max(512) })
+
+authRouter.post(
+  '/verify-email',
+  validate(tokenBodySchema),
   asyncHandler(async (req, res) => {
-    const rawToken = String(req.params.token || '').trim()
+    const rawToken = (req.body as z.infer<typeof tokenBodySchema>).token
     const tokenHash = hashRefreshToken(rawToken)
 
     // Atomic conditional update — only one concurrent request can win (count === 1)
@@ -557,11 +631,15 @@ authRouter.get(
 )
 
 authRouter.post(
-  '/invite/:token/accept',
+  '/invite/accept',
   requireAuth,
+  // Don't grant workspace access to an account that hasn't proven control of
+  // its mailbox — a verified email is a precondition for joining a workspace.
+  requireVerifiedEmail,
+  validate(tokenBodySchema),
   asyncHandler(async (req, res) => {
     const authedUser = req.user!
-    const rawToken = String(req.params.token || '').trim()
+    const rawToken = (req.body as z.infer<typeof tokenBodySchema>).token
     const tokenHash = hashRefreshToken(rawToken)
 
     const invite = await prisma.workspaceInvite.findUnique({ where: { tokenHash } })
@@ -586,6 +664,11 @@ authRouter.post(
       ]),
       prisma.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } }),
     ])
+
+    void recordAudit({
+      workspaceId: invite.workspaceId, actorUserId: authedUser.id, type: 'invite.accept',
+      entityType: 'workspaceInvite', entityId: invite.id, metadata: { role: invite.role },
+    })
 
     res.json({ workspaceId: invite.workspaceId, role: invite.role })
   })

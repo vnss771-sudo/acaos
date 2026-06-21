@@ -1,0 +1,19 @@
+# Trivy vulnerability suppressions.
+#
+# Policy: every entry MUST document (a) why the finding is not exploitable in our
+# deployment, and (b) an `exp:` expiry date, so a suppression can never silently
+# become permanent — once it lapses, Trivy fails again and forces a re-review.
+#
+# ---------------------------------------------------------------------------
+# CVE-2026-45186 — libexpat: denial of service via crafted XML input (HIGH).
+# Origin: the Alpine base of nginxinc/nginx-unprivileged:alpine ships libexpat
+#   2.7.5-r0; the fix (2.8.1-r0) is published in Alpine but not yet baked into
+#   the nginx base image we pin. Re-resolving the digest confirms no fixed
+#   nginx-unprivileged:alpine build exists yet.
+# Why not exploitable here: the web image is nginx serving a static SPA. Our
+#   nginx.conf enables neither the XSLT module, WebDAV, nor any other path that
+#   feeds untrusted input to libexpat's XML parser, so the vulnerable code is
+#   unreachable in our deployment.
+# Remove this entry once the base image rebuilds with libexpat >= 2.8.1-r0
+#   (Dependabot's docker ecosystem bumps the pinned digest).
+CVE-2026-45186 exp:2026-09-30

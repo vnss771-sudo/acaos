@@ -1,10 +1,11 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { asyncHandler, ApiError } from '../lib/http.js'
-import { parseBody, nonEmptyString } from '../lib/validate.js'
+import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { hashApiKey } from '../lib/apiKeys.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
@@ -149,8 +150,8 @@ async function requireIngestKeyOrAuth(
   if (apiKey && typeof apiKey === 'string') {
     const workspace = await prisma.workspace.findUnique({ where: { ingestApiKey: hashApiKey(apiKey) } })
     if (!workspace) { res.status(401).json({ error: 'Invalid API key' }); return }
-    ;(req as any).resolvedWorkspaceId = workspace.id
-    ;(req as any).resolvedViaApiKey = true
+    req.resolvedWorkspaceId = workspace.id
+    req.resolvedViaApiKey = true
     next()
     return
   }
@@ -161,9 +162,9 @@ async function requireIngestKeyOrAuth(
   const { verifyJwt } = await import('../lib/jwt.js')
   let payload: { userId: string }
   try { payload = verifyJwt(auth.slice(7)) } catch { res.status(401).json({ error: 'Unauthorized' }); return }
-  const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true } })
+  const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true } })
   if (!user) { res.status(401).json({ error: 'User not found' }); return }
-  ;(req as any).user = user
+  req.user = user
   next()
 }
 
@@ -184,17 +185,26 @@ const recordOutcomeSchema = z.object({
   leadId: z.string().optional(),
 })
 
+// GET /model (JWT path) query + POST /model/reset body. Both mirror the prior
+// `String(... || '').trim()` + `if (!workspaceId) 400 'workspaceId required'`.
+const modelQuerySchema = z.object({
+  workspaceId: z.string().trim().min(1, 'workspaceId required'),
+})
+const resetModelSchema = z.object({
+  workspaceId: z.string().trim().min(1, 'workspaceId required'),
+})
+
 outcomesRouter.post(
   '/',
   apiKeyRateLimit,
   requireIngestKeyOrAuth,
   asyncHandler(async (req, res) => {
-    const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false
+    const viaApiKey: boolean = req.resolvedViaApiKey ?? false
     const parsed = parseBody(recordOutcomeSchema, req)
     let workspaceId: string
 
     if (viaApiKey) {
-      workspaceId = (req as any).resolvedWorkspaceId
+      workspaceId = req.resolvedWorkspaceId!
     } else {
       // JWT path — workspaceId must be in body. Recording an outcome retunes the
       // shared workspace scoring model (every 7th outcome recomputes its
@@ -277,14 +287,13 @@ outcomesRouter.get(
   '/model',
   requireIngestKeyOrAuth,
   asyncHandler(async (req, res) => {
-    const viaApiKey: boolean = (req as any).resolvedViaApiKey ?? false
+    const viaApiKey: boolean = req.resolvedViaApiKey ?? false
     let workspaceId: string
 
     if (viaApiKey) {
-      workspaceId = (req as any).resolvedWorkspaceId
+      workspaceId = req.resolvedWorkspaceId!
     } else {
-      workspaceId = String(req.query.workspaceId || '').trim()
-      if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+      workspaceId = parseQuery(modelQuerySchema, req).workspaceId
       const user = req.user!
       const member = await userBelongsToWorkspace(user.id, workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
@@ -313,13 +322,9 @@ outcomesRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = String(req.body?.workspaceId || '').trim()
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId } = parseBody(resetModelSchema, req)
 
-    const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId, role: 'owner' }
-    })
-    if (!membership) throw new ApiError(403, 'Only workspace owners can reset the scoring model')
+    await assertWorkspacePermission(user.id, workspaceId, 'model:reset')
 
     await prisma.scoringModel.upsert({
       where: { workspaceId },

@@ -6,10 +6,50 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
 import { prisma } from '../lib/prisma.js'
+import { validate, workspaceIdField } from '../lib/validate.js'
+import { z } from 'zod'
 
 const MAX_NAME = 200
 const MAX_NOTES = 2_000
 const MAX_REPLY = 10_000
+const MAX_SUMMARY = 4_000
+
+// A trimmed, optional, length-bounded prompt-contributing field. Replaces the old
+// boundedField() helper: trims, enforces the same max length (now a schema-level
+// 400), and collapses an empty result to undefined so it isn't sent to the model.
+const boundedOptional = (max: number) =>
+  z.string().trim().max(max).optional().transform(v => (v ? v : undefined))
+
+// Research/outreach require a non-empty businessName (the old `String(...).trim()`
+// + `if (!businessName) 400` pair), capped at MAX_NAME.
+const businessNameField = z.string().trim().min(1, 'businessName is required').max(MAX_NAME)
+
+const researchSchema = z.object({
+  workspaceId: workspaceIdField,
+  businessName: businessNameField,
+  // website/category/city had no length cap in the original handler — keep them
+  // uncapped (just trimmed) so behaviour is unchanged.
+  website: z.string().trim().optional().transform(v => (v ? v : undefined)),
+  category: z.string().trim().optional().transform(v => (v ? v : undefined)),
+  city: z.string().trim().optional().transform(v => (v ? v : undefined)),
+  notes: z.string().trim().max(MAX_NOTES).optional().transform(v => (v ? v : undefined)),
+})
+
+const outreachSchema = z.object({
+  workspaceId: workspaceIdField,
+  businessName: businessNameField,
+  category: boundedOptional(MAX_NAME),
+  city: boundedOptional(MAX_NAME),
+  contactName: boundedOptional(MAX_NAME),
+  aiSummary: boundedOptional(MAX_SUMMARY),
+  outreachAngle: boundedOptional(MAX_NOTES),
+  notes: boundedOptional(MAX_NOTES),
+})
+
+const replyAnalysisSchema = z.object({
+  workspaceId: workspaceIdField,
+  replyBody: z.string().trim().min(1, 'replyBody is required').max(MAX_REPLY),
+})
 
 export const aiRouter = Router()
 aiRouter.use(requireAuth)
@@ -18,10 +58,10 @@ aiRouter.use(aiRateLimit)
 
 aiRouter.post(
   '/research',
+  validate(researchSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId, businessName, website, category, city, notes } = req.body as z.infer<typeof researchSchema>
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -34,18 +74,11 @@ aiRouter.post(
     })
     if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
-    const businessName = String(req.body?.businessName || '').trim()
-    if (!businessName) throw new ApiError(400, 'businessName is required')
-    if (businessName.length > MAX_NAME) throw new ApiError(400, `businessName must be at most ${MAX_NAME} characters`)
-
-    const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : undefined
-    if (notes && notes.length > MAX_NOTES) throw new ApiError(400, `notes must be at most ${MAX_NOTES} characters`)
-
     const data = await generateLeadResearch({
       businessName,
-      website: typeof req.body?.website === 'string' ? req.body.website.trim() : undefined,
-      category: typeof req.body?.category === 'string' ? req.body.category.trim() : undefined,
-      city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
+      website,
+      category,
+      city,
       notes,
       icp
     })
@@ -56,10 +89,11 @@ aiRouter.post(
 
 aiRouter.post(
   '/outreach',
+  validate(outreachSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId, businessName, category, city, contactName, aiSummary, outreachAngle, notes } =
+      req.body as z.infer<typeof outreachSchema>
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
@@ -72,17 +106,14 @@ aiRouter.post(
     })
     if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
-    const businessName = String(req.body?.businessName || '').trim()
-    if (!businessName) throw new ApiError(400, 'businessName is required')
-
     const data = await generateOutreach({
       businessName,
-      category: typeof req.body?.category === 'string' ? req.body.category.trim() : undefined,
-      city: typeof req.body?.city === 'string' ? req.body.city.trim() : undefined,
-      contactName: typeof req.body?.contactName === 'string' ? req.body.contactName.trim() : undefined,
-      aiSummary: typeof req.body?.aiSummary === 'string' ? req.body.aiSummary.trim() : undefined,
-      outreachAngle: typeof req.body?.outreachAngle === 'string' ? req.body.outreachAngle.trim() : undefined,
-      notes: typeof req.body?.notes === 'string' ? req.body.notes.trim() : undefined,
+      category,
+      city,
+      contactName,
+      aiSummary,
+      outreachAngle,
+      notes,
       icp
     })
 
@@ -92,18 +123,14 @@ aiRouter.post(
 
 aiRouter.post(
   '/reply-analysis',
+  validate(replyAnalysisSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const workspaceId = typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : ''
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const { workspaceId, replyBody } = req.body as z.infer<typeof replyAnalysisSchema>
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
-
-    const replyBody = String(req.body?.replyBody || '').trim()
-    if (!replyBody) throw new ApiError(400, 'replyBody is required')
-    if (replyBody.length > MAX_REPLY) throw new ApiError(400, `replyBody must be at most ${MAX_REPLY} characters`)
 
     const data = await analyzeReply(replyBody)
     res.json({ result: data })

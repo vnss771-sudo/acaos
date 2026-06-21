@@ -15,6 +15,19 @@ import { evidenceGatedPriority } from '../../lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '../../lib/outreachIntent.js'
 import { dollarsToCents, centsToDollars } from '../../lib/money.js'
 import { withDollars, getICP } from './helpers.js'
+import { validate, parseParams, idField } from '../../lib/validate.js'
+import { z } from 'zod'
+
+const prospectParamsSchema = z.object({ id: idField })
+
+// POST /:id/outcome body. stage required (the prior `if (!stage) 400`); notes
+// optional; dealValue optional and accepted as a number or numeric string (the
+// handler runs it through Number() then dollarsToCents()).
+const outcomeBodySchema = z.object({
+  stage: z.string().min(1, 'stage required'),
+  notes: z.string().optional(),
+  dealValue: z.union([z.number(), z.string()]).optional(),
+})
 
 export function registerScoringRoutes(prospectsRouter: Router) {
   // POST /api/prospects/:id/rescore
@@ -49,8 +62,9 @@ export function registerScoringRoutes(prospectsRouter: Router) {
   }))
 
   // POST /api/prospects/:id/outcome
-  prospectsRouter.post('/:id/outcome', asyncHandler(async (req, res) => {
-    const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+  prospectsRouter.post('/:id/outcome', validate(outcomeBodySchema), asyncHandler(async (req, res) => {
+    const { id } = parseParams(prospectParamsSchema, req)
+    const prospect = await prisma.prospect.findUnique({ where: { id } })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
     const userId = req.user!.id
@@ -59,8 +73,6 @@ export function registerScoringRoutes(prospectsRouter: Router) {
     // Example prospects are fictional — recording outcomes against them would feed
     // demo data into the forecast and the scoring calibration loop.
     if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot have outcomes — add real prospects first')
-
-    if (!req.body.stage) throw new ApiError(400, 'stage required')
 
     const [outcome, updated] = await prisma.$transaction([
       prisma.prospectOutcome.create({

@@ -1,11 +1,13 @@
-# One-command local stack that builds the REAL production Docker images (the same
-# ones Railway deploys), so "works here" means "will deploy". Brings up Postgres,
-# Redis, the API, the worker, and the web frontend (served by nginx).
+# One-command local stack that builds the REAL production Docker images.
 #
-#   docker compose up --build
+# docker compose up --build
 #
-# Then open http://localhost:8080. The secrets below are LOCAL-ONLY throwaways —
-# never reuse them in a real deployment.
+# Then open http://localhost:8080.
+#
+# The values below are LOCAL-ONLY placeholders. They are intentionally obvious
+# non-production values so this file can stay public without looking like it
+# contains reusable secrets.
+
 services:
   postgres:
     image: postgres:16
@@ -20,6 +22,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Stateful service: not read_only (it writes its data dir) and keeps default
+    # caps (init does chown/setuid), but still cannot escalate privileges and is
+    # resource-capped so a runaway query can't starve the host.
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
 
   redis:
     image: redis:7
@@ -28,6 +40,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
 
   api:
     build:
@@ -43,18 +62,49 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
       DIRECT_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: local-dev-cbc563b01877fb2524a2bd56b245e392fd4b10f336cd7c45
-      EMAIL_ENCRYPTION_KEY: cdd7e29638fe486fa78590ccb2a4605425883f51fa697af202b31900561fae53
+
+      # Local-only placeholder. Never reuse in production.
+      JWT_SECRET: local-only-insecure-do-not-use-in-production
+
+      # Local-only placeholder: 64 hex chars. Never reuse in production.
+      EMAIL_ENCRYPTION_KEY: 1111111111111111111111111111111111111111111111111111111111111111
+
       ALLOWED_ORIGINS: http://localhost:8080
       APP_URL: http://localhost:8080
     ports:
       - '4000:4000'
+    # Runtime hardening: read-only root filesystem with writable tmpfs only where
+    # the process genuinely writes — /tmp, and the node HOME npm/XDG caches that
+    # `prisma migrate deploy` (run via npx at startup) needs. The app never writes
+    # to /app. Drops all Linux capabilities (a Node API server needs none) and
+    # blocks privilege escalation; CPU/memory are capped.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node/.npm
+      - /home/node/.cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768m
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
-        ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4000/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -73,11 +123,32 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
       DIRECT_URL: postgresql://postgres:postgres@postgres:5432/acaos?schema=public
       REDIS_URL: redis://redis:6379
-      EMAIL_ENCRYPTION_KEY: cdd7e29638fe486fa78590ccb2a4605425883f51fa697af202b31900561fae53
+
+      # Local-only placeholder: 64 hex chars. Never reuse in production.
+      EMAIL_ENCRYPTION_KEY: 1111111111111111111111111111111111111111111111111111111111111111
+
       WORKER_HEALTH_PORT: 9090
+    # Pure Node process (no migrations): read-only root with a /tmp tmpfs is all it
+    # needs. Caches are included for parity with the API. No capabilities required.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node/.npm
+      - /home/node/.cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512m
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   web:
     build:
@@ -86,9 +157,26 @@ services:
       args:
         VITE_API_BASE_URL: http://localhost:4000
     ports:
-      - '8080:80'
+      # Container listens on 8080 (non-root nginx); host port unchanged.
+      - '8080:8080'
+    # Unprivileged nginx writes its pid + temp paths under /tmp (see Dockerfile.web),
+    # so a read-only root with a single /tmp tmpfs is sufficient. No capabilities
+    # needed — it already binds the unprivileged port 8080.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128m
     depends_on:
-      api: { condition: service_healthy }
+      api:
+        condition: service_healthy
 
 volumes:
   postgres_data:

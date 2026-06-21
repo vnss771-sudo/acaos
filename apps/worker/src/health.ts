@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { isProduction } from '@acaos/backend-core/lib/config.js'
 import { renderWorkerMetrics, METRICS_CONTENT_TYPE, type QueueDepth } from './lib/metrics.js'
@@ -9,6 +10,16 @@ type HealthOptions = {
 }
 
 const SERVICE = 'acaos-worker'
+
+// Constant-time bearer-token check. Hashing both sides to a fixed-length digest
+// before comparing means timingSafeEqual never sees a length mismatch (it throws
+// on unequal lengths) and the comparison leaks neither the token's length nor a
+// matching prefix via timing. Mirrors the API's /metrics check.
+function timingSafeBearerMatch(authorization: string | undefined, token: string): boolean {
+  const presented = createHash('sha256').update(authorization ?? '').digest()
+  const expected = createHash('sha256').update(`Bearer ${token}`).digest()
+  return timingSafeEqual(presented, expected)
+}
 
 export function startHealthServer(port: number, opts: HealthOptions = {}): http.Server {
   const server = http.createServer((req, res) => {
@@ -60,7 +71,7 @@ export function startHealthServer(port: number, opts: HealthOptions = {}): http.
           res.end(JSON.stringify({ error: 'Not found' }))
           return
         }
-      } else if (req.headers.authorization !== `Bearer ${token}`) {
+      } else if (!timingSafeBearerMatch(req.headers.authorization, token)) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Unauthorized' }))
         return

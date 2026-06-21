@@ -5,6 +5,11 @@ import { prisma } from '../lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { listPacks, getPack } from '../lib/packs/index.js'
 import { recordAudit } from '../lib/audit.js'
+import { validate, parseParams, workspaceIdField, idField } from '../lib/validate.js'
+import { z } from 'zod'
+
+const applyPackSchema = z.object({ workspaceId: workspaceIdField })
+const packParamsSchema = z.object({ id: idField })
 
 export const packsRouter = Router()
 packsRouter.use(requireAuth)
@@ -23,13 +28,13 @@ packsRouter.get('/:id', asyncHandler(async (req, res) => {
 
 // Apply a pack's ICP preset to a workspace (onboarding shortcut). The operator
 // can still edit their ICP afterwards; this just seeds it from the vertical.
-packsRouter.post('/:id/apply', asyncHandler(async (req, res) => {
+packsRouter.post('/:id/apply', validate(applyPackSchema), asyncHandler(async (req, res) => {
   const user = req.user!
-  const workspaceId = String(req.body?.workspaceId || '').trim()
-  if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+  const { workspaceId } = req.body as z.infer<typeof applyPackSchema>
+  const { id } = parseParams(packParamsSchema, req)
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
-  const pack = getPack(req.params.id as string)
+  const pack = getPack(id)
   if (!pack) throw new ApiError(404, 'Pack not found')
 
   const { icp } = pack

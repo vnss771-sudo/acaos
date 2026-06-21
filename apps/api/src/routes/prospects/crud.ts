@@ -16,24 +16,47 @@ import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
 import { clampInt } from '../../lib/validation.js'
 import { normalizeDomain, withDollars, getICP } from './helpers.js'
+import { parseQuery, workspaceIdField } from '../../lib/validate.js'
+import { z } from 'zod'
+
+// GET / query. Mirrors the prior raw parsing exactly:
+//  - workspaceId required (else 400)
+//  - page = Math.max(1, parseInt(page) || 1)
+//  - limit = Math.min(100, parseInt(limit) || 25)  (note: NO lower clamp, so a
+//    negative parseInt is preserved as-is — kept identical on purpose)
+//  - tier/stage/outcome/search: passed through untouched (string | undefined)
+//  - showExamples: true only when the literal string 'true'
+const intFromQuery = (fallback: number) =>
+  z.unknown().optional().transform(v => {
+    const n = parseInt(v as string)
+    return Number.isNaN(n) ? fallback : (n || fallback)
+  })
+const listProspectsQuerySchema = z.object({
+  workspaceId: workspaceIdField,
+  page: intFromQuery(1).transform(n => Math.max(1, n)),
+  // Clamp to [1, 100]: a negative parseInt would otherwise reach Prisma's `take`
+  // and silently REVERSE ordering (a negative take reads from the end).
+  limit: intFromQuery(25).transform(n => Math.min(100, Math.max(1, n))),
+  tier: z.string().optional(),
+  stage: z.string().optional(),
+  outcome: z.string().optional(),
+  search: z.string().optional(),
+  showExamples: z.unknown().optional().transform(v => v === 'true'),
+})
 
 export function registerCrudRoutes(prospectsRouter: Router) {
   // GET /api/prospects?workspaceId=&tier=&stage=&outcome=&search=&page=&limit=
   prospectsRouter.get('/', asyncHandler(async (req, res) => {
-    const workspaceId = req.query.workspaceId as string
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
+    const {
+      workspaceId, page, limit,
+      tier: tierFilter, stage: stageFilter, outcome: outcomeFilter, search,
+      showExamples,
+    } = parseQuery(listProspectsQuerySchema, req)
 
     const userId = req.user!.id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-    const page  = clampInt(req.query.page,  { min: 1, max: 1_000_000, fallback: 1 })
-    const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 25 })
     const skip  = (page - 1) * limit
-
-    const tierFilter    = req.query.tier    as string | undefined
-    const stageFilter   = req.query.stage   as string | undefined
-    const outcomeFilter = req.query.outcome as string | undefined
-    const search        = req.query.search  as string | undefined
 
     const where: Record<string, unknown> = { workspaceId }
     if (stageFilter)   where.buyingStage  = stageFilter
@@ -51,7 +74,6 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     // example/onboarding prospects AND is reported to the client. Computed up front
     // because the hide decision feeds the findMany `where`.
     const realCount = await prisma.prospect.count({ where: { workspaceId, isExample: false } })
-    const showExamples = req.query.showExamples === 'true'
     if (!showExamples && realCount > 0) where.isExample = false
 
     const [prospects, total] = await Promise.all([

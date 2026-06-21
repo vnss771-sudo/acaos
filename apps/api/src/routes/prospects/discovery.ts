@@ -20,6 +20,17 @@ import { dollarsToCents } from '../../lib/money.js'
 import { validate } from '../../lib/validate.js'
 import { z } from 'zod'
 import { discoverSchema, nonEmpty, normalizeDomain, getICP, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import { workspaceIdField } from '../../lib/validate.js'
+
+// POST /import body. Mirrors the prior checks: workspaceId required (400), rows a
+// non-empty array (400), at most 1000 rows (400). Row objects stay free-form —
+// the handler reads fields defensively per row, so they're passed through as-is.
+const importProspectsSchema = z.object({
+  workspaceId: workspaceIdField,
+  rows: z.array(z.record(z.string(), z.unknown()))
+    .min(1, 'rows array required')
+    .max(1000, 'Maximum 1000 rows per import'),
+})
 
 export function registerDiscoveryRoutes(prospectsRouter: Router) {
   // POST /api/prospects/discover — pull companies from a source using the workspace
@@ -213,12 +224,8 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
   }))
 
   // POST /api/prospects/import — bulk import from CSV rows (parsed on the client)
-  prospectsRouter.post('/import', requireVerifiedEmail, asyncHandler(async (req, res) => {
-    const workspaceId = req.body.workspaceId as string
-    if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    const rows: Record<string, unknown>[] = req.body.rows
-    if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
-    if (rows.length > 1000) throw new ApiError(400, 'Maximum 1000 rows per import')
+  prospectsRouter.post('/import', requireVerifiedEmail, validate(importProspectsSchema), asyncHandler(async (req, res) => {
+    const { workspaceId, rows } = req.body as z.infer<typeof importProspectsSchema>
 
     const userId = req.user!.id
     await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')

@@ -211,9 +211,11 @@ test('profile updates the display name', async () => {
   assert.equal(res.body.user.name, 'New Name')
 })
 
-test('profile changes the password when the current one is correct', async () => {
+test('profile changes the password when the current one is correct and revokes sessions', async () => {
   const passwordHash = await bcrypt.hash('currentpass1', 10)
   users.push({ id: 'u-1', email: 'a@acme.test', name: 'A', passwordHash })
+  // An active session elsewhere must be invalidated on a credential change.
+  refreshTokens.push({ id: 'rt-1', userId: 'u-1', revokedAt: null })
   const res = await server.request('/api/auth/profile', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: bearer('u-1') },
@@ -221,6 +223,7 @@ test('profile changes the password when the current one is correct', async () =>
   })
   assert.equal(res.status, 200)
   assert.ok(await bcrypt.compare('replacement2', users[0].passwordHash))
+  assert.ok(refreshTokens[0].revokedAt) // sessions invalidated on password change
 })
 
 test('profile rejects a password change with the wrong current password', async () => {
@@ -251,13 +254,13 @@ test('verify-email marks the user verified for a valid token', async () => {
   const raw = 'verify-token-value'
   verifyTokens.push({ id: 'evt-1', userId: 'u-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), usedAt: null })
 
-  const res = await server.request(`/api/auth/verify-email/${raw}`)
+  const res = await post('/api/auth/verify-email', { token: raw })
   assert.equal(res.status, 200)
   assert.equal(users[0].emailVerified, true)
 })
 
 test('verify-email rejects an invalid token', async () => {
-  const res = await server.request('/api/auth/verify-email/bogus')
+  const res = await post('/api/auth/verify-email', { token: 'bogus' })
   assert.equal(res.status, 400)
 })
 
@@ -294,10 +297,11 @@ test('GET invite rejects an expired invite', async () => {
 })
 
 test('accepting an invite creates a membership and marks it accepted', async () => {
-  users.push({ id: 'u-1', email: 'invitee@acme.test' })
+  // Invite acceptance now requires a verified email (proof of mailbox control).
+  users.push({ id: 'u-1', email: 'invitee@acme.test', emailVerified: true })
   const raw = 'accept-token-value'
   invites.push({ id: 'inv-1', email: 'invitee@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), acceptedAt: null })
-  const res = await post(`/api/auth/invite/${raw}/accept`, {}, { Authorization: bearer('u-1') })
+  const res = await post('/api/auth/invite/accept', { token: raw }, { Authorization: bearer('u-1') })
   assert.equal(res.status, 200)
   assert.equal(res.body.workspaceId, 'ws-1')
   assert.equal(memberships.length, 1)
@@ -305,21 +309,32 @@ test('accepting an invite creates a membership and marks it accepted', async () 
 })
 
 test('accepting an invite rejects a signed-in user with a different email', async () => {
-  users.push({ id: 'u-1', email: 'someone-else@acme.test' })
+  // Verified so we exercise the email-mismatch 403, not the verified-email gate.
+  users.push({ id: 'u-1', email: 'someone-else@acme.test', emailVerified: true })
   const raw = 'mismatch-token'
   invites.push({ id: 'inv-1', email: 'invitee@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), acceptedAt: null })
-  const res = await post(`/api/auth/invite/${raw}/accept`, {}, { Authorization: bearer('u-1') })
+  const res = await post('/api/auth/invite/accept', { token: raw }, { Authorization: bearer('u-1') })
   assert.equal(res.status, 403)
   assert.equal(memberships.length, 0)
 })
 
 test('accepting an invite does not duplicate an existing membership', async () => {
-  users.push({ id: 'u-1', email: 'invitee@acme.test' })
+  users.push({ id: 'u-1', email: 'invitee@acme.test', emailVerified: true })
   memberships.push({ id: 'm-existing', userId: 'u-1', workspaceId: 'ws-1', role: 'member' })
   const raw = 'already-member-token'
   invites.push({ id: 'inv-1', email: 'invitee@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), acceptedAt: null })
-  const res = await post(`/api/auth/invite/${raw}/accept`, {}, { Authorization: bearer('u-1') })
+  const res = await post('/api/auth/invite/accept', { token: raw }, { Authorization: bearer('u-1') })
   assert.equal(res.status, 200)
   assert.equal(memberships.length, 1) // no duplicate created
   assert.ok(invites[0].acceptedAt)
+})
+
+test('accepting an invite is blocked for an unverified email (403)', async () => {
+  users.push({ id: 'u-1', email: 'invitee@acme.test', emailVerified: false })
+  const raw = 'unverified-accept-token'
+  invites.push({ id: 'inv-1', email: 'invitee@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), acceptedAt: null })
+  const res = await post('/api/auth/invite/accept', { token: raw }, { Authorization: bearer('u-1') })
+  assert.equal(res.status, 403)
+  assert.equal(memberships.length, 0) // workspace not granted
+  assert.equal(invites[0].acceptedAt, null)
 })

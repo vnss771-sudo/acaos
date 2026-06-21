@@ -326,6 +326,52 @@ export async function sendCampaignBatch(
     ? await bulkCheckSuppression(workspaceId, emailList)
     : () => false
 
+  // Perf: bulk-load the per-lead lookups that used to run as serial DB
+  // round-trips inside the loop (one query each for the whole batch instead of
+  // N). These are fast-path pre-filters / caches only — they never replace the
+  // atomic per-lead claim below (the unique (campaignId, leadId) constraint),
+  // which remains the real race guard. Mission status is deliberately NOT cached
+  // here: it is re-checked per lead inside the loop so an operator pause issued
+  // mid-run still aborts the remaining batch.
+  const batchLeadIds = leads.map((l: CampaignLeadRow) => l.id)
+
+  // (1) Already-sent fast-path: load existing OutreachSent rows for the batch in
+  // one query. Mirrors the old per-lead findFirst filter exactly: SENT/SENDING/
+  // FAILED are treated as "do not (re)send". The atomic claim inside the loop is
+  // still authoritative against races; this Set just avoids the per-lead query.
+  const alreadySentLeadIds: Set<string> = batchLeadIds.length > 0
+    ? new Set(
+        (await prisma.outreachSent.findMany({
+          where: { campaignId, leadId: { in: batchLeadIds }, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
+          select: { leadId: true },
+        }))
+          .map((r: { leadId: string | null }) => r.leadId)
+          .filter((id: string | null): id is string => id !== null)
+      )
+    : new Set<string>()
+
+  // (3) Linked-intent fast-path: load APPROVED OutreachIntents for the batch in
+  // one query, keyed by leadId. Best-effort, exactly as the old per-lead lookup
+  // (.catch(() => null)); a failure leaves the map empty so sends still proceed
+  // without provenance stamping. If a lead somehow has multiple APPROVED intents
+  // the first wins, matching findFirst's single-row semantics. The selected
+  // shape (id/recommendationId/evidenceSnapshot) matches the former findFirst,
+  // so the create's provenance fields type-check identically.
+  const linkedIntentRows = batchLeadIds.length > 0
+    ? await prisma.outreachIntent
+        .findMany({
+          where: { leadId: { in: batchLeadIds }, status: 'APPROVED' },
+          select: { leadId: true, id: true, recommendationId: true, evidenceSnapshot: true },
+        })
+        .catch(() => [])
+    : []
+  const linkedIntentByLeadId = new Map<string, (typeof linkedIntentRows)[number]>()
+  for (const intent of linkedIntentRows) {
+    if (intent.leadId !== null && !linkedIntentByLeadId.has(intent.leadId)) {
+      linkedIntentByLeadId.set(intent.leadId, intent)
+    }
+  }
+
   const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
 
   await progress?.(10)
@@ -353,15 +399,13 @@ export async function sendCampaignBatch(
     }
 
     // Cheap pre-check before any AI work: skip leads already sent to, in-flight,
-    // or terminally failed for this campaign. The unique (campaignId, leadId)
-    // constraint on the claim below is the real safety net against duplicate
-    // sends. FAILED is fail-closed (not auto-retried) — surfaced for operator
-    // review rather than blindly resent.
-    const alreadySent = await prisma.outreachSent.findFirst({
-      where: { campaignId, leadId: lead.id, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
-      select: { id: true },
-    })
-    if (alreadySent) { skipped++; continue }
+    // or terminally failed for this campaign. This is an in-memory membership
+    // test against the batch's pre-loaded OutreachSent rows (one bulk query
+    // above) instead of a per-lead query. The unique (campaignId, leadId)
+    // constraint on the claim below remains the real safety net against
+    // duplicate sends. FAILED is fail-closed (not auto-retried) — surfaced for
+    // operator review rather than blindly resent.
+    if (alreadySentLeadIds.has(lead.id)) { skipped++; continue }
 
     // Skip suppressed addresses (unsubscribed or bounced)
     if (isSuppressed(lead.email!)) { skipped++; continue }
@@ -462,9 +506,11 @@ export async function sendCampaignBatch(
     // Bridge (Stage 5): if an APPROVED OutreachIntent is linked to this lead,
     // stamp its provenance onto the send so the record is self-auditable, and
     // mark the intent SENT on success. Best-effort lookup — never blocks a send.
-    const linkedIntent = await prisma.outreachIntent
-      .findFirst({ where: { leadId: lead.id, status: 'APPROVED' }, select: { id: true, recommendationId: true, evidenceSnapshot: true } })
-      .catch(() => null)
+    // Resolved from the batch-wide map pre-loaded above (one query for the whole
+    // batch); the map was built by selecting OutreachIntents with
+    // `leadId in batch, status: 'APPROVED'`, so this is the same approved-intent
+    // link as the former per-lead findFirst, without the per-lead round-trip.
+    const linkedIntent = linkedIntentByLeadId.get(lead.id) ?? null
 
     let claimId: string
     try {
@@ -488,8 +534,21 @@ export async function sendCampaignBatch(
       throw err
     }
 
+    // Plaintext alternative built from the SOURCE draft (not regex-stripped HTML),
+    // so the multipart email carries a clean text/plain part for deliverability.
+    const textBody = `${body}\n\nYou received this email because you matched our outreach criteria. To stop receiving emails, unsubscribe: ${unsubscribeUrl}`
+
     try {
-      const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg)
+      // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
+      // endpoint already serves a safe GET confirmation and a POST one-click
+      // handler. Major mailbox providers require these for bulk senders.
+      const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
+        text: textBody,
+        headers: {
+          'List-Unsubscribe': `<${unsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
+      })
       const msgId = (info as any).messageId ?? null
 
       await prisma.$transaction([

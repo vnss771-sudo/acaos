@@ -39,6 +39,14 @@ groups:
           summary: "API sustained in-flight requests high"
           description: "In-flight requests have averaged >100 for 10m — consider scaling out or raising the DB pool."
 
+      - alert: DependencyDown
+        expr: acaos_dependency_up == 0
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "ACAOS backing dependency down ({{ $labels.dependency }})"
+          description: "acaos_dependency_up for {{ $labels.dependency }} has read 0 for >2m. Redis outages degrade gracefully (in-process fallbacks) but BullMQ jobs stall and rate limiting weakens; Postgres outages fail readiness. See the DependencyDown runbook."
+
       - alert: ApiSuccessBudgetBurn
         expr: |
           (

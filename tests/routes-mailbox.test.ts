@@ -15,7 +15,7 @@ beforeEach(async () => {
   for (const k of ['SMTP_HOST', 'SMTP_FROM', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASS']) delete process.env[k]
   installPrisma(createFakePrisma({
     user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null, emailVerified: true }) },
-    membership: { findFirst: async (a: any) => (a?.where?.userId === 'u1' && a?.where?.workspaceId === 'ws1' ? { id: 'm1' } : null) },
+    membership: { findFirst: async (a: any) => (a?.where?.userId === 'u1' && a?.where?.workspaceId === 'ws1' ? { id: 'm1', role: 'owner' } : null) },
     workspaceEmailConfig: { findUnique: async () => null },
   }))
   server = await startTestServer('/api/mailbox', mailboxRouter)

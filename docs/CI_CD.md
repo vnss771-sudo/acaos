@@ -10,13 +10,17 @@ This repo uses four GitHub-native automation layers:
 The last GitHub UI actions that cannot be stored in git are documented in
 [`GITHUB_ADMIN.md`](./GITHUB_ADMIN.md).
 
-## Required branch protection check
+## Required branch protection checks
 
-Configure branch protection to require exactly this status check:
+Configure branch protection to require these status checks:
 
-- `required`
+- `required` (from `ci.yml`)
+- `Dependency review` (from `security-pr.yml`)
+- `Secret scan (gitleaks)` (from `security-pr.yml`)
 
-That job is a stable aggregator for the full CI graph. Individual matrix jobs can expand to names like `Standalone build (api)` or `Docker image (worker)`, but branch protection should point at the single stable `required` job so the protected check name does not drift when the matrix changes.
+`required` is a stable aggregator for the full CI graph. Individual matrix jobs can expand to names like `Standalone build (api)` or `Docker image (worker)`, but branch protection should point at the single stable `required` job so the protected check name does not drift when the matrix changes.
+
+The supply-chain gates `Dependency review` and `Secret scan (gitleaks)` live in a **separate workflow** (`security-pr.yml`), so they cannot be folded into the `required` aggregator's `needs:` graph. They must be named as their own required contexts — using their exact GitHub check-run names (the workflow job `name:` fields) — otherwise they stay advisory and a PR with a vulnerable dependency or a committed secret could still merge. `scripts/configure-github-admin.sh` configures all three contexts.
 
 ## CI design
 
@@ -39,7 +43,9 @@ That job is a stable aggregator for the full CI graph. Individual matrix jobs ca
 - Redis-backed tests against Redis + PostgreSQL
 - Playwright browser smoke tests with cached Playwright browser binaries
 - a stable `required` aggregator job that fails if any of the above did not
-  succeed — this is the single check to require in branch protection
+  succeed — the durable CI check to require in branch protection (alongside the
+  separate-workflow supply-chain gates `Dependency review` and
+  `Secret scan (gitleaks)` from `security-pr.yml`)
 
 ## Security automation
 

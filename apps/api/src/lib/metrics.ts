@@ -14,6 +14,10 @@ const providerTotals = new Map<string, { labels: Labels; value: number }>()
 type Hist = { labels: Labels; buckets: number[]; sum: number; count: number }
 const durations = new Map<string, Hist>()
 let inFlight = 0
+// Backing-dependency reachability (1=up, 0=down), refreshed by the readiness/
+// health probes (see server.ts). Lets alerting distinguish a Redis outage
+// (degrades gracefully) from a Postgres outage without parsing /api/ready JSON.
+const dependencyUp = new Map<string, number>()
 
 const idOf = (labels: Labels) =>
   Object.keys(labels).sort().map((k) => `${k}=${labels[k]}`).join('\x1f')
@@ -53,10 +57,15 @@ export function setInFlight(n: number): void { inFlight = n }
 export function incInFlight(): void { inFlight++ }
 export function decInFlight(): void { inFlight = Math.max(0, inFlight - 1) }
 
+export function setDependencyUp(dependency: string, up: boolean): void {
+  dependencyUp.set(dependency, up ? 1 : 0)
+}
+
 export function resetMetrics(): void {
   requestTotals.clear()
   durations.clear()
   providerTotals.clear()
+  dependencyUp.clear()
   inFlight = 0
 }
 
@@ -99,6 +108,12 @@ export function renderMetrics(): string {
   lines.push('# HELP http_requests_in_flight In-flight HTTP requests.')
   lines.push('# TYPE http_requests_in_flight gauge')
   lines.push(`http_requests_in_flight ${inFlight}`)
+
+  lines.push('# HELP acaos_dependency_up Backing dependency reachability (1=up, 0=down), refreshed by readiness/health probes.')
+  lines.push('# TYPE acaos_dependency_up gauge')
+  for (const [dependency, value] of dependencyUp) {
+    lines.push(`acaos_dependency_up${fmtLabels({ dependency })} ${value}`)
+  }
 
   lines.push('# HELP acaos_build_info Immutable build and release metadata.')
   lines.push('# TYPE acaos_build_info gauge')
