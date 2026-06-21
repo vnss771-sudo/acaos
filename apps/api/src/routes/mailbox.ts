@@ -23,7 +23,29 @@ const sendTestSchema = z.object({
   html: z.string().optional(),
 })
 const syncSchema = z.object({ workspaceId: workspaceIdField })
-const checkDomainSchema = z.object({ domain: z.string().trim().min(1, 'domain required') })
+
+// Validate the domain shape before any DNS lookup (rejects localhost, bare IPs,
+// and junk — resolveTxt makes no outbound connection, but this keeps inputs sane).
+const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i
+const checkDomainSchema = z.object({
+  domain: z.string().trim().regex(DOMAIN_RE, 'valid domain required'),
+  // Optional DKIM selector; if omitted we probe the common defaults below.
+  selector: z.string().trim().regex(/^[A-Za-z0-9._-]{1,63}$/, 'invalid selector').optional(),
+})
+
+// DKIM keys live at <selector>._domainkey.<domain>, not the root domain. Without a
+// caller-supplied selector we probe the selectors the major providers use.
+const COMMON_DKIM_SELECTORS = ['google', 'default', 'selector1', 'selector2', 'k1', 'dkim', 'mail', 's1']
+
+/** The DNS name a DKIM TXT record for `selector` lives at. */
+export function dkimQueryName(selector: string, domain: string): string {
+  return `${selector}._domainkey.${domain}`
+}
+
+/** True if the (possibly multi-chunk) TXT record is a DKIM key. */
+export function isDkimRecord(txtChunks: string[]): boolean {
+  return /v=DKIM1/i.test(txtChunks.join(''))
+}
 
 mailboxRouter.post(
   '/send-test',
@@ -76,24 +98,38 @@ mailboxRouter.post(
 mailboxRouter.get(
   '/check-domain',
   asyncHandler(async (req, res) => {
-    const { domain } = parseQuery(checkDomainSchema, req)
+    const { domain, selector } = parseQuery(checkDomainSchema, req)
 
-    let records: string[] = []
+    // SPF lives at the root domain TXT.
+    let rootTxt: string[] = []
     try {
-      const txtRecords = await dns.resolveTxt(domain)
-      records = txtRecords.flat()
+      rootTxt = (await dns.resolveTxt(domain)).flat()
     } catch {
       // NXDOMAIN or SERVFAIL — domain has no TXT records
     }
+    const spfRecords = rootTxt.filter(r => r.startsWith('v=spf1'))
+    const hasSPF = spfRecords.length > 0
 
-    const hasSPF = records.some(r => r.startsWith('v=spf1'))
-    const hasDKIM = records.some(r => r.startsWith('v=DKIM1'))
+    // DKIM is NOT at the root — it lives at <selector>._domainkey.<domain>. Probe
+    // the caller's selector if given, else the common provider defaults, in
+    // parallel so latency is bounded by a single DNS timeout.
+    const selectors = selector ? [selector] : COMMON_DKIM_SELECTORS
+    const probes = await Promise.allSettled(
+      selectors.map(async sel => {
+        const chunks = (await dns.resolveTxt(dkimQueryName(sel, domain))).map(c => c.join(''))
+        return { sel, ok: isDkimRecord(chunks) }
+      })
+    )
+    const matched = probes.find((p): p is PromiseFulfilledResult<{ sel: string; ok: boolean }> => p.status === 'fulfilled' && p.value.ok)
+    const dkimSelector = matched ? matched.value.sel : null
 
     res.json({
       domain,
       hasSPF,
-      hasDKIM,
-      spfRecords: records.filter(r => r.startsWith('v=spf1')),
+      hasDKIM: dkimSelector !== null,
+      dkimSelector,
+      checkedSelectors: selectors,
+      spfRecords,
     })
   })
 )

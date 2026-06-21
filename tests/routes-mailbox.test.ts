@@ -3,7 +3,7 @@
 
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mailboxRouter } from '../apps/api/src/routes/mailbox.ts'
+import { mailboxRouter, dkimQueryName, isDkimRecord } from '../apps/api/src/routes/mailbox.ts'
 import {
   createFakePrisma, installPrisma, resetPrisma, startTestServer, bearer, type TestServer,
 } from './helpers/integration.ts'
@@ -47,6 +47,20 @@ test('send-test validates the recipient when SMTP IS configured', async () => {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.3' },
     body: JSON.stringify({ to: 'not-an-email', workspaceId: 'ws1' }),
   })
+  assert.equal(res.status, 400)
+})
+
+test('check-domain DKIM lookup targets the selector subdomain, not the root', () => {
+  // The bug fixed here: DKIM was probed at the root domain. It lives at
+  // <selector>._domainkey.<domain>.
+  assert.equal(dkimQueryName('google', 'example.com'), 'google._domainkey.example.com')
+  // Multi-chunk TXT records (DKIM keys are often split) join before matching.
+  assert.equal(isDkimRecord(['v=DKIM1; k=rsa; ', 'p=MIGf...']), true)
+  assert.equal(isDkimRecord(['v=spf1 include:_spf.google.com ~all']), false)
+})
+
+test('check-domain rejects a malformed domain before any DNS lookup', async () => {
+  const res = await server.request('/api/mailbox/check-domain?domain=not_a_domain', { headers: jsonAuth })
   assert.equal(res.status, 400)
 })
 
