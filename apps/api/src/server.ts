@@ -12,6 +12,7 @@ import { campaignsRouter } from './routes/campaigns.js'
 import { missionsRouter } from './routes/missions.js'
 import { leadsRouter } from './routes/leads.js'
 import { statsRouter } from './routes/stats.js'
+import { inboxRouter } from './routes/inbox.js'
 import { jobsRouter } from './routes/jobs.js'
 import { ingestRouter } from './routes/ingest.js'
 import { outcomesRouter } from './routes/outcomes.js'
@@ -193,6 +194,7 @@ app.use('/api/campaigns', campaignsRouter)
 app.use('/api/missions', missionsRouter)
 app.use('/api/leads', leadsRouter)
 app.use('/api/stats', statsRouter)
+app.use('/api/inbox', inboxRouter)
 app.use('/api/jobs', jobsRouter)
 app.use('/api/ingest', ingestRouter)
 app.use('/api/outcomes', outcomesRouter)
