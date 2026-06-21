@@ -9,6 +9,7 @@ import {
 import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -467,6 +468,61 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     reader.readAsText(file)
   }
 
+  // Client-side sort of the loaded page. Default (no sort) preserves server order.
+  const [sort, setSort] = useState<SortState | undefined>()
+  const sortedProspects = useMemo(() => {
+    if (!sort) return prospects
+    const dir = sort.dir === 'asc' ? 1 : -1
+    const val = (p: Prospect): string | number => {
+      switch (sort.key) {
+        case 'companyName': return (p.companyName ?? '').toLowerCase()
+        case 'industry': return (p.industry ?? '').toLowerCase()
+        case 'location': return (p.location ?? '').toLowerCase()
+        case 'opportunityScore': return p.opportunityScore ?? 0
+        case 'signalCount': return p.signalCount ?? 0
+        case 'winProbability': return p.winProbability ?? -1
+        default: return ''
+      }
+    }
+    return [...prospects].sort((a, b) => {
+      const av = val(a), bv = val(b)
+      return av < bv ? -dir : av > bv ? dir : 0
+    })
+  }, [prospects, sort])
+
+  const columns: Column<Prospect>[] = [
+    {
+      key: 'companyName', header: 'Company', sortable: true,
+      render: p => (
+        <span style={{ color: colors.text, fontWeight: 600 }}>
+          {p.companyName}
+          {p.isExample && (
+            <span style={{ marginLeft: 6, background: '#64748b22', color: '#94a3b8', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 99, letterSpacing: '0.06em', verticalAlign: 'middle' }}>EXAMPLE</span>
+          )}
+        </span>
+      ),
+    },
+    { key: 'industry', header: 'Industry', sortable: true, render: p => <span style={{ color: colors.textFaint }}>{p.industry || '–'}</span> },
+    { key: 'location', header: 'Location', sortable: true, render: p => <span style={{ color: colors.textFaint }}>{p.location || '–'}</span> },
+    {
+      key: 'buyingStage', header: 'Buying Stage',
+      render: p => (
+        <span style={{ background: BUYING_STAGE_COLOR[p.buyingStage as BuyingStage] + '33', color: BUYING_STAGE_COLOR[p.buyingStage as BuyingStage], fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 99 }}>
+          {BUYING_STAGE_LABELS[p.buyingStage as BuyingStage]}
+        </span>
+      ),
+    },
+    {
+      key: 'opportunityScore', header: 'Score', sortable: true, align: 'right',
+      render: p => {
+        const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
+        return <span style={{ color: TIER_COLOR[tier], fontWeight: 800, fontSize: 16 }}>{p.opportunityScore}</span>
+      },
+    },
+    { key: 'signalCount', header: 'Signals', sortable: true, align: 'right', render: p => <span style={{ color: colors.textMuted }}>{p.signalCount ?? 0}</span> },
+    { key: 'winProbability', header: 'Win Prob', sortable: true, align: 'right', render: p => <span style={{ color: colors.green, fontWeight: 600 }}>{p.winProbability != null ? `${Math.round(p.winProbability * 100)}%` : '–'}</span> },
+  ]
+
   if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="◎" /></div>
 
   return (
@@ -617,69 +673,14 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
           <EmptyState message="No prospects yet. Add your first prospect to start tracking signals." icon="◎" />
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {['Company', 'Industry', 'Location', 'Buying Stage', 'Score', 'Signals', 'Win Prob'].map(h => (
-                  <th key={h} style={{
-                    color: colors.textFaint, fontSize: 11, fontWeight: 600,
-                    textTransform: 'uppercase', letterSpacing: '0.06em',
-                    padding: '8px 12px 8px 0', textAlign: 'left', whiteSpace: 'nowrap'
-                  }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {prospects.map(p => {
-                const tier = p.opportunityScore >= 72 ? 'HOT' : p.opportunityScore >= 45 ? 'WARM' : 'COLD'
-                return (
-                  <tr key={p.id}
-                    onClick={() => setSelected(p)}
-                    style={{ cursor: 'pointer', borderBottom: `1px solid ${colors.borderLight}` }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#0f172a'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                  >
-                    <td style={{ padding: '10px 12px 10px 0', color: colors.text, fontSize: 14, fontWeight: 600 }}>
-                      {p.companyName}
-                      {p.isExample && (
-                        <span style={{
-                          marginLeft: 6, background: '#64748b22', color: '#94a3b8',
-                          fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 99, letterSpacing: '0.06em',
-                          verticalAlign: 'middle'
-                        }}>EXAMPLE</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '10px 12px 10px 0', color: colors.textFaint, fontSize: 13 }}>
-                      {p.industry || '–'}
-                    </td>
-                    <td style={{ padding: '10px 12px 10px 0', color: colors.textFaint, fontSize: 13 }}>
-                      {p.location || '–'}
-                    </td>
-                    <td style={{ padding: '10px 12px 10px 0' }}>
-                      <span style={{
-                        background: BUYING_STAGE_COLOR[p.buyingStage as BuyingStage] + '33',
-                        color: BUYING_STAGE_COLOR[p.buyingStage as BuyingStage],
-                        fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 99
-                      }}>{BUYING_STAGE_LABELS[p.buyingStage as BuyingStage]}</span>
-                    </td>
-                    <td style={{ padding: '10px 12px 10px 0' }}>
-                      <span style={{ color: TIER_COLOR[tier], fontWeight: 800, fontSize: 16 }}>
-                        {p.opportunityScore}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 12px 10px 0', color: colors.textMuted, fontSize: 13 }}>
-                      {p.signalCount ?? 0}
-                    </td>
-                    <td style={{ padding: '10px 12px 10px 0', color: colors.green, fontSize: 13, fontWeight: 600 }}>
-                      {p.winProbability != null ? `${Math.round(p.winProbability * 100)}%` : '–'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table<Prospect>
+          columns={columns}
+          rows={sortedProspects}
+          rowKey={p => p.id}
+          onRowClick={p => setSelected(p)}
+          sort={sort}
+          onSortChange={setSort}
+        />
       )}
 
       {selected && (
