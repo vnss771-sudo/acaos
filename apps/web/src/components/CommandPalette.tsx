@@ -20,6 +20,7 @@ const COMMANDS: Command[] = [
   { id: 'prospects', label: 'Prospects', description: 'Account database, scoring, filters, and signals', icon: '◎' },
   { id: 'approvals', label: 'Review Queue', description: 'Approve AI outreach before it sends', icon: '✓' },
   { id: 'campaigns', label: 'Campaigns', description: 'Campaign configuration and sending', icon: '▣' },
+  { id: 'inbox', label: 'Inbox', description: 'Replies to your outreach, classified by intent', icon: '✉' },
   { id: 'intelligence', label: 'Intelligence', description: 'Scoring model, opportunity tiers, forecasts', icon: '◈' },
   { id: 'leads', label: 'Leads', description: 'Lead list and outreach records', icon: '▤' },
   { id: 'ai', label: 'AI Tools', description: 'Research, write, and analyze replies manually', icon: '✦' },
