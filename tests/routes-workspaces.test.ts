@@ -151,7 +151,7 @@ test('PUT /:id/email-config accepts a public host', async () => {
 test('POST /:id/members — an owner can grant the admin role', async () => {
   prisma = createFakePrisma(spec({
     membership: {
-      findFirst: async (a: any) => (a?.where?.role?.in ? { role: 'owner' } : null),
+      findFirst: async (a: any) => (a?.where?.userId === USER ? { role: 'owner' } : null),
       create: async (a: any) => ({ id: 'm-new', ...a.data }),
     },
     user: { findUnique: async (a: any) => a?.where?.email
@@ -170,7 +170,7 @@ test('POST /:id/members — an owner can grant the admin role', async () => {
 test('POST /:id/members — an admin cannot grant the admin role (only owners can)', async () => {
   prisma = createFakePrisma(spec({
     // Caller is an admin (not owner); invitee is not yet a member.
-    membership: { findFirst: async (a: any) => (a?.where?.role?.in ? { role: 'admin' } : null) },
+    membership: { findFirst: async (a: any) => (a?.where?.userId === USER ? { role: 'admin' } : null) },
     user: { findUnique: async (a: any) => a?.where?.email
       ? { id: 'u2', email: 'new@a.test', name: null }
       : { id: USER, email: 'u1@a.test', name: null } },
@@ -187,7 +187,7 @@ test('POST /:id/members — an admin cannot grant the admin role (only owners ca
 test('POST /:id/members — an admin can still add a regular member', async () => {
   prisma = createFakePrisma(spec({
     membership: {
-      findFirst: async (a: any) => (a?.where?.role?.in ? { role: 'admin' } : null),
+      findFirst: async (a: any) => (a?.where?.userId === USER ? { role: 'admin' } : null),
       create: async (a: any) => ({ id: 'm-new', ...a.data }),
     },
     user: { findUnique: async (a: any) => a?.where?.email

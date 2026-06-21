@@ -2,6 +2,7 @@ import type { Router } from 'express'
 import { asyncHandler, ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { invalidateWorkspaceMembership } from '../../lib/workspaces.js'
+import { assertWorkspacePermission, roleCan } from '../../lib/permissions.js'
 import { generateRefreshToken, hashRefreshToken } from '../../lib/jwt.js'
 import { isMailConfigured, sendMail } from '../../services/mail.js'
 import { escapeHtml } from '../../lib/html.js'
@@ -52,18 +53,14 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       const user = req.user!
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
-        select: { role: true },
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin to add members')
+      const callerRole = await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
 
       const parsed = parseBody(memberBodySchema, req)
       const email = typeof parsed.email === 'string' ? parsed.email.trim().toLowerCase() : ''
       const role = parsed.role
       // Only an owner may grant the admin role; an admin can add members only. This
       // stops an admin from minting a second admin (lateral privilege escalation).
-      if (role === 'admin' && canManage.role !== 'owner') {
+      if (role === 'admin' && !roleCan(callerRole, 'members:grant_admin')) {
         throw new ApiError(403, 'Only an owner can grant the admin role')
       }
 
@@ -102,11 +99,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       const user = req.user!
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } },
-        select: { role: true },
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin to invite members')
+      const callerRole = await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
 
       const parsed = parseBody(memberBodySchema, req)
       const rawEmail = typeof parsed.email === 'string' ? parsed.email : ''
@@ -115,7 +108,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
 
       const role = parsed.role
       // Only an owner may grant the admin role (see member-add above).
-      if (role === 'admin' && canManage.role !== 'owner') {
+      if (role === 'admin' && !roleCan(callerRole, 'members:grant_admin')) {
         throw new ApiError(403, 'Only an owner can grant the admin role')
       }
 
@@ -187,10 +180,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       const user = req.user!
       const workspaceId = req.params.id as string
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
 
       const invites = await prisma.workspaceInvite.findMany({
         where: { workspaceId, acceptedAt: null, expiresAt: { gt: new Date() } },
@@ -208,10 +198,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       const user = req.user!
       const workspaceId = req.params.id as string
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
 
       const inviteId = req.params.inviteId as string
       await prisma.workspaceInvite.deleteMany({
@@ -236,10 +223,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
 
       if (targetUserId === user.id) throw new ApiError(400, 'Cannot remove yourself — transfer ownership first')
 
-      const myMembership = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: 'owner' }
-      })
-      if (!myMembership) throw new ApiError(403, 'Only owners can remove members')
+      await assertWorkspacePermission(user.id, workspaceId, 'members:remove')
 
       const targetMembership = await prisma.membership.findFirst({ where: { userId: targetUserId, workspaceId } })
       if (!targetMembership) throw new ApiError(404, 'Member not found')

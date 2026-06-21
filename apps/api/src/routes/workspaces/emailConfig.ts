@@ -1,9 +1,10 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { encryptSecret } from '../../lib/encrypt.js'
 import { assertPublicMailHost } from '../../lib/ssrf.js'
 import { recordAudit } from '../../lib/audit.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import type { Assert, EmailConfigRequest, Extends } from '@acaos/shared'
@@ -62,10 +63,7 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
       const user = req.user!
       const workspaceId = req.params.id as string
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'email_config:manage')
 
       const config = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
       // Never return smtpPass / imapPass in plaintext — only indicate presence
@@ -93,10 +91,7 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
       const user = req.user!
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
-      const canManage = await prisma.membership.findFirst({
-        where: { userId: user.id, workspaceId, role: { in: ['owner', 'admin'] } }
-      })
-      if (!canManage) throw new ApiError(403, 'Must be owner or admin')
+      await assertWorkspacePermission(user.id, workspaceId, 'email_config:manage')
 
       const parsed = parseBody(emailConfigRuntimeSchema, { body: req.body ?? {} })
       const rawSmtpPass = parsed.smtpPass

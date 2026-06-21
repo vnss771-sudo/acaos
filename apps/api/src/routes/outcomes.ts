@@ -5,6 +5,7 @@ import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { hashApiKey } from '../lib/apiKeys.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
@@ -323,10 +324,7 @@ outcomesRouter.post(
     const user = req.user!
     const { workspaceId } = parseBody(resetModelSchema, req)
 
-    const membership = await prisma.membership.findFirst({
-      where: { userId: user.id, workspaceId, role: 'owner' }
-    })
-    if (!membership) throw new ApiError(403, 'Only workspace owners can reset the scoring model')
+    await assertWorkspacePermission(user.id, workspaceId, 'model:reset')
 
     await prisma.scoringModel.upsert({
       where: { workspaceId },

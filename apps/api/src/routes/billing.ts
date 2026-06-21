@@ -4,7 +4,7 @@ import { requireAuth, requireFreshAuth } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
-import { userCanManageWorkspaceBilling } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { getMonthlyUsage } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
@@ -31,8 +31,7 @@ billingRouter.post(
     const user = req.user!
     const { workspaceId, plan } = parseBody(checkoutSchema, req)
 
-    const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
-    if (!allowed) throw new ApiError(403, 'Workspace billing access denied')
+    await assertWorkspacePermission(user.id, workspaceId, 'billing:manage')
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -58,8 +57,7 @@ billingRouter.get(
     const user = req.user!
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
-    const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
-    if (!allowed) throw new ApiError(403, 'Access denied')
+    await assertWorkspacePermission(user.id, workspaceId, 'billing:manage')
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -85,8 +83,7 @@ billingRouter.post(
     const user = req.user!
     const { workspaceId } = parseBody(workspaceBodySchema, req)
 
-    const allowed = await userCanManageWorkspaceBilling(user.id, workspaceId)
-    if (!allowed) throw new ApiError(403, 'Access denied')
+    await assertWorkspacePermission(user.id, workspaceId, 'billing:manage')
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
