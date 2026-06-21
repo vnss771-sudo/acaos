@@ -81,6 +81,16 @@ describe('ApprovalsView', () => {
     expect(screen.queryByText('Apex Plumbing')).not.toBeInTheDocument()
   })
 
+  test('surfaces compliance risk flags on a risky draft', async () => {
+    const api = makeApi(fixtures())
+    render(<ApprovalsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+    await screen.findByText('Meridian Roofing')
+    // The fixture drafts are short and lack opt-out language, so each card shows risk checks.
+    const groups = screen.getAllByLabelText('Draft risk checks')
+    expect(groups.length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/No opt-out language/i).length).toBeGreaterThan(0)
+  })
+
   test('hides selection and action controls when the user cannot manage', async () => {
     const api = makeApi(fixtures())
     render(<ApprovalsView api={api as never} workspace={workspace} toast={toast as never} canManage={false} />)
