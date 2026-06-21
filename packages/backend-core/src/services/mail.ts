@@ -89,21 +89,10 @@ export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
   })
 }
 
-// Best-effort HTML→text for the plaintext alternative part. A multipart message
-// with a text/plain alternative improves deliverability and spam scoring versus
-// HTML-only mail; this need not be perfect, just representative.
-function htmlToText(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|tr|hr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
-}
-
-export type SendMailOptions = { headers?: Record<string, string> }
+// Optional extras: a caller-provided plaintext alternative (built from the SOURCE
+// text, not by regex-stripping the HTML — that would be both fragile and a
+// needless injection surface) and extra SMTP headers (e.g. List-Unsubscribe).
+export type SendMailOptions = { headers?: Record<string, string>; text?: string }
 
 export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null, opts?: SendMailOptions) {
   // Workspace-supplied SMTP hosts are an SSRF surface: resolve and reject
@@ -118,7 +107,7 @@ export async function sendMail(to: string, subject: string, html: string, cfg?: 
     to,
     subject,
     html,
-    text: htmlToText(html),
+    ...(opts?.text ? { text: opts.text } : {}),
     ...(opts?.headers ? { headers: opts.headers } : {}),
   })
 }
