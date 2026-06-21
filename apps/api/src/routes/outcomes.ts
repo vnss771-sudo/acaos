@@ -161,7 +161,7 @@ async function requireIngestKeyOrAuth(
   const { verifyJwt } = await import('../lib/jwt.js')
   let payload: { userId: string }
   try { payload = verifyJwt(auth.slice(7)) } catch { res.status(401).json({ error: 'Unauthorized' }); return }
-  const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true } })
+  const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true } })
   if (!user) { res.status(401).json({ error: 'User not found' }); return }
   req.user = user
   next()
