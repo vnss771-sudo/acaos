@@ -47,8 +47,17 @@ export async function disconnect(): Promise<void> {
 
 // --- Seed helpers -----------------------------------------------------------
 
-export async function seedUser(email = 'owner@acme.test', name: string | null = null) {
-  return prisma.user.create({ data: { email, name } })
+// Seeded users are email-verified by DEFAULT: the route layer now gates every
+// mutation behind a verified email (requireVerifiedForMutation), and the vast
+// majority of DB-tier route tests exercise tenant/role/behavior gates on an
+// already-onboarded user. Pass `{ emailVerified: false }` for the handful of
+// tests that specifically assert the verification gate itself.
+export async function seedUser(
+  email = 'owner@acme.test',
+  name: string | null = null,
+  opts: { emailVerified?: boolean } = {},
+) {
+  return prisma.user.create({ data: { email, name, emailVerified: opts.emailVerified ?? true } })
 }
 
 /**
@@ -71,9 +80,18 @@ export async function seedWorkspace(
   })
 }
 
-/** Create a user that owns a fresh workspace; returns both. */
-export async function seedUserWithWorkspace(email?: string, role = 'owner') {
-  const user = await seedUser(email ?? `user-${Math.random().toString(36).slice(2, 8)}@acme.test`)
+/** Create a user that owns a fresh workspace; returns both. Verified by default
+ * — pass `{ emailVerified: false }` to exercise the mutation verification gate. */
+export async function seedUserWithWorkspace(
+  email?: string,
+  role = 'owner',
+  opts: { emailVerified?: boolean } = {},
+) {
+  const user = await seedUser(
+    email ?? `user-${Math.random().toString(36).slice(2, 8)}@acme.test`,
+    null,
+    { emailVerified: opts.emailVerified ?? true },
+  )
   const workspace = await seedWorkspace(user.id, { role })
   return { user, workspace }
 }
