@@ -4,6 +4,8 @@ const ALG = 'aes-256-gcm'
 const KEY_LEN = 32
 const IV_LEN = 12
 
+let warnedZeroKey = false
+
 function getKey(): Buffer {
   const raw = process.env.EMAIL_ENCRYPTION_KEY || ''
   if (!raw) {
@@ -12,6 +14,12 @@ function getKey(): Buffer {
     }
     // Dev-only fallback: zeroed key so the app boots without configuration.
     // Credentials stored this way are NOT safe — always set EMAIL_ENCRYPTION_KEY.
+    // Warn once (outside tests) so a shared/staging env running without the key
+    // is never silent. Production already threw above.
+    if (!warnedZeroKey && process.env.NODE_ENV !== 'test') {
+      warnedZeroKey = true
+      console.warn('[encrypt] EMAIL_ENCRYPTION_KEY is not set — using an INSECURE zeroed dev key. Stored mail credentials are NOT safe; set EMAIL_ENCRYPTION_KEY before any shared, staging, or production use.')
+    }
     return Buffer.alloc(KEY_LEN)
   }
   const buf = Buffer.from(raw, 'hex')

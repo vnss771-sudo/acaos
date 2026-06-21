@@ -25,7 +25,7 @@ import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
 import { metricsMiddleware } from './middleware/metrics.js'
-import { renderMetrics, METRICS_CONTENT_TYPE } from './lib/metrics.js'
+import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
@@ -111,6 +111,8 @@ app.get('/api/live', (_req, res) => {
 app.get('/api/ready', async (_req, res) => {
   const report = getReadinessReport()
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
+  setDependencyUp('postgres', dbOk)
+  setDependencyUp('redis', redisOk)
   const ok = report.ready && dbOk
 
   res.status(ok ? 200 : 503).json({
@@ -129,6 +131,8 @@ app.get('/api/ready', async (_req, res) => {
 
 app.get('/api/health', async (_req, res) => {
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
+  setDependencyUp('postgres', dbOk)
+  setDependencyUp('redis', redisOk)
   const ok = dbOk
   res.status(ok ? 200 : 503).json({
     ok,

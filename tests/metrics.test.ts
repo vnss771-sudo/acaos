@@ -1,10 +1,19 @@
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  incRequest, observeDuration, incInFlight, decInFlight, resetMetrics, renderMetrics,
+  incRequest, observeDuration, incInFlight, decInFlight, resetMetrics, renderMetrics, setDependencyUp,
 } from '../apps/api/src/lib/metrics.ts'
 
 beforeEach(() => resetMetrics())
+
+test('acaos_dependency_up gauge reflects per-dependency reachability', () => {
+  setDependencyUp('redis', false)
+  setDependencyUp('postgres', true)
+  const out = renderMetrics()
+  assert.match(out, /# TYPE acaos_dependency_up gauge/)
+  assert.match(out, /acaos_dependency_up\{dependency="redis"\} 0/)
+  assert.match(out, /acaos_dependency_up\{dependency="postgres"\} 1/)
+})
 
 test('incRequest accumulates per method/route/status', () => {
   incRequest('GET', '/api/leads', 200)
