@@ -164,3 +164,26 @@ export const s = {
   flexBetween: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } as React.CSSProperties,
   stack: { display: 'grid', gap: 16 } as React.CSSProperties
 }
+
+// Design-system scale tokens. ADDITIVE — `colors` and `s` above are the existing
+// seed and must not change (≈900 inline usages depend on them). New UI primitives
+// (components/ui/*) and the responsive layer consume these scales so spacing,
+// radius, type, and breakpoints come from one place. Values mirror the UX pack's
+// design_tokens.json (whose colors already match `colors`).
+export const tokens = {
+  space: { 0: 0, 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48, 16: 64 },
+  radius: { xs: 4, sm: 6, md: 8, lg: 12, full: 9999 },
+  font: {
+    pageTitle: { fontSize: 24, fontWeight: 700, lineHeight: 1.2 } as React.CSSProperties,
+    sectionTitle: { fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' } as React.CSSProperties,
+    body: { fontSize: 14, lineHeight: 1.5 } as React.CSSProperties,
+    table: { fontSize: 13 } as React.CSSProperties,
+    meta: { fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: colors.textFaint } as React.CSSProperties,
+    number: { fontSize: 30, fontWeight: 700, lineHeight: 1 } as React.CSSProperties,
+  },
+  layout: { sidebarWidth: 224, contentMaxWidth: 1200, pagePadding: 24 },
+  // Shared breakpoints (px). The useMediaQuery helpers and responsive primitives
+  // read these so JS-driven layout and any future CSS agree on one source.
+  breakpoint: { mobile: 640, tablet: 1024 },
+} as const
+
