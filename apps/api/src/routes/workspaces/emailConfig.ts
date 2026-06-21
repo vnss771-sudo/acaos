@@ -3,6 +3,7 @@ import { asyncHandler, ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { encryptSecret } from '../../lib/encrypt.js'
 import { assertPublicMailHost } from '../../lib/ssrf.js'
+import { recordAudit } from '../../lib/audit.js'
 import { z } from 'zod'
 import type { Assert, EmailConfigRequest, Extends } from '@acaos/shared'
 import { validateMailPort } from './helpers.js'
@@ -107,6 +108,18 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
         where: { workspaceId },
         create: { workspaceId, ...data },
         update: data,
+      })
+
+      // Audit the config change. Record only non-secret connection hints — never
+      // the SMTP/IMAP passwords (encrypted or raw); just whether they were set.
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'workspace.email_config.update',
+        entityType: 'workspaceEmailConfig', entityId: workspaceId,
+        metadata: {
+          smtpHost: data.smtpHost, smtpPort: data.smtpPort, smtpSecure: data.smtpSecure, smtpUser: data.smtpUser,
+          imapHost: data.imapHost, imapPort: data.imapPort, imapSecure: data.imapSecure, imapUser: data.imapUser,
+          smtpPassSet: data.smtpPass !== null, imapPassSet: data.imapPass !== null,
+        },
       })
 
       res.json({ ok: true })

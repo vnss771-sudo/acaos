@@ -9,7 +9,8 @@ import {
   signMfaToken,
   verifyMfaToken
 } from '../lib/jwt.js'
-import { requireAuth, requireFreshAuth } from '../middleware/auth.js'
+import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
+import { recordAudit } from '../lib/audit.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotp, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
@@ -376,11 +377,24 @@ authRouter.patch(
 
     if (Object.keys(updates).length === 0) throw new ApiError(400, 'No updates provided')
 
+    const passwordChanged = updates.passwordHash !== undefined
+
     const updated = await prisma.user.update({
       where: { id: user.id },
       data: updates,
       select: { id: true, email: true, name: true }
     })
+
+    // Credential change: revoke all refresh tokens so any other session must
+    // re-authenticate (mirrors the password-reset handler). Only after the new
+    // hash is committed, and only when the password actually changed.
+    if (passwordChanged) {
+      await prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() }
+      })
+      void recordAudit({ actorUserId: user.id, type: 'password.change', entityType: 'User', entityId: user.id })
+    }
 
     res.json({ user: updated })
   })
@@ -394,6 +408,10 @@ authRouter.patch(
 authRouter.post(
   '/mfa/setup',
   requireAuth,
+  // Enrolling a second factor is account-takeover-grade sensitive: a stolen
+  // access token must not be able to attach MFA to an account that has none.
+  // Require a recent credential proof (step-up), like /mfa/disable.
+  requireFreshAuth,
   asyncHandler(async (req, res) => {
     const user = req.user!
     const existing = await prisma.user.findUnique({ where: { id: user.id }, select: { totpEnabled: true } })
@@ -401,6 +419,7 @@ authRouter.post(
 
     const secret = generateTotpSecret()
     await prisma.user.update({ where: { id: user.id }, data: { totpSecret: encryptSecret(secret) } })
+    void recordAudit({ actorUserId: user.id, type: 'mfa.setup', entityType: 'User', entityId: user.id })
     res.json({ secret, otpauthUri: buildOtpauthUri(secret, user.email) })
   })
 )
@@ -411,6 +430,8 @@ const mfaCodeSchema = z.object({ code: z.string().min(6).max(10) })
 authRouter.post(
   '/mfa/activate',
   requireAuth,
+  // Same step-up requirement as setup — flipping MFA on is a credential change.
+  requireFreshAuth,
   validate(mfaCodeSchema),
   asyncHandler(async (req, res) => {
     const user = req.user!
@@ -421,7 +442,14 @@ authRouter.post(
     if (!verifyTotp(decryptSecret(dbUser.totpSecret), code)) throw new ApiError(400, 'Invalid authentication code')
 
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: true } })
+    // A credential factor changed — revoke all refresh tokens so any other
+    // session must re-authenticate (mirrors the password-reset handler).
+    await prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    })
     await markReauth(user.id) // proving a code is a fresh credential
+    void recordAudit({ actorUserId: user.id, type: 'mfa.activate', entityType: 'User', entityId: user.id })
     res.json({ ok: true })
   })
 )
@@ -434,6 +462,13 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const user = req.user!
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: false, totpSecret: null } })
+    // A credential factor changed — revoke all refresh tokens so any other
+    // session must re-authenticate (mirrors the password-reset handler).
+    await prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    })
+    void recordAudit({ actorUserId: user.id, type: 'mfa.disable', entityType: 'User', entityId: user.id })
     res.json({ ok: true })
   })
 )
@@ -559,6 +594,9 @@ authRouter.get(
 authRouter.post(
   '/invite/:token/accept',
   requireAuth,
+  // Don't grant workspace access to an account that hasn't proven control of
+  // its mailbox — a verified email is a precondition for joining a workspace.
+  requireVerifiedEmail,
   asyncHandler(async (req, res) => {
     const authedUser = req.user!
     const rawToken = String(req.params.token || '').trim()
@@ -586,6 +624,11 @@ authRouter.post(
       ]),
       prisma.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } }),
     ])
+
+    void recordAudit({
+      workspaceId: invite.workspaceId, actorUserId: authedUser.id, type: 'invite.accept',
+      entityType: 'workspaceInvite', entityId: invite.id, metadata: { role: invite.role },
+    })
 
     res.json({ workspaceId: invite.workspaceId, role: invite.role })
   })

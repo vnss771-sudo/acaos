@@ -89,7 +89,12 @@ export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
   })
 }
 
-export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null) {
+// Optional extras: a caller-provided plaintext alternative (built from the SOURCE
+// text, not by regex-stripping the HTML — that would be both fragile and a
+// needless injection surface) and extra SMTP headers (e.g. List-Unsubscribe).
+export type SendMailOptions = { headers?: Record<string, string>; text?: string }
+
+export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null, opts?: SendMailOptions) {
   // Workspace-supplied SMTP hosts are an SSRF surface: resolve and reject
   // private/loopback/metadata targets, then dial the resolved IP directly so the
   // check and the connect can't disagree (DNS-rebinding TOCTOU). Env-configured
@@ -97,7 +102,14 @@ export async function sendMail(to: string, subject: string, html: string, cfg?: 
   const pin = cfg?.smtpHost ? await resolvePublicMailHost(cfg.smtpHost, 'smtpHost') : undefined
   const transporter = buildTransport(cfg, pin)
   const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
-  return transporter.sendMail({ from, to, subject, html })
+  return transporter.sendMail({
+    from,
+    to,
+    subject,
+    html,
+    ...(opts?.text ? { text: opts.text } : {}),
+    ...(opts?.headers ? { headers: opts.headers } : {}),
+  })
 }
 
 // Strips quoted text and signatures to get the fresh reply content

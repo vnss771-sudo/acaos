@@ -6,6 +6,7 @@ import { generateRefreshToken, hashRefreshToken } from '../../lib/jwt.js'
 import { isMailConfigured, sendMail } from '../../services/mail.js'
 import { escapeHtml } from '../../lib/html.js'
 import { normalizeEmail, isValidEmail } from '../../lib/validation.js'
+import { recordAudit } from '../../lib/audit.js'
 
 export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
@@ -64,6 +65,14 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       // denied check — drop it so they're admitted immediately.
       invalidateWorkspaceMembership(invitee.id, workspaceId)
 
+      // Audit the membership add + role assignment (the role-change action for
+      // directly-added members).
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'workspace.member.add',
+        entityType: 'membership', entityId: invitee.id,
+        metadata: { memberId: invitee.id, email: invitee.email, role },
+      })
+
       res.status(201).json({ member: { email: invitee.email, name: invitee.name, role } })
     })
   )
@@ -109,6 +118,14 @@ export function registerMemberRoutes(workspaceRouter: Router) {
         where: { workspaceId_email: { workspaceId, email } },
         create: { workspaceId, email, role, tokenHash, expiresAt },
         update: { role, tokenHash, expiresAt, acceptedAt: null }, // refresh existing invite
+      })
+
+      // Audit the invite creation. Record the target email + role only — never the
+      // raw token or its hash.
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'workspace.invite.create',
+        entityType: 'workspaceInvite',
+        metadata: { email, role },
       })
 
       const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '')
@@ -178,8 +195,14 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       })
       if (!canManage) throw new ApiError(403, 'Must be owner or admin')
 
+      const inviteId = req.params.inviteId as string
       await prisma.workspaceInvite.deleteMany({
-        where: { id: req.params.inviteId as string, workspaceId }
+        where: { id: inviteId, workspaceId }
+      })
+
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'workspace.invite.delete',
+        entityType: 'workspaceInvite', entityId: inviteId,
       })
 
       res.json({ ok: true })
@@ -206,6 +229,13 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       await prisma.membership.delete({ where: { id: targetMembership.id } })
       // Drop the removed member's cached role so they're denied immediately.
       invalidateWorkspaceMembership(targetUserId, workspaceId)
+
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'workspace.member.remove',
+        entityType: 'membership', entityId: targetUserId,
+        metadata: { memberId: targetUserId, role: targetMembership.role },
+      })
+
       res.json({ ok: true })
     })
   )
