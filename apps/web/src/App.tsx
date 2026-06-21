@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import type { User, Workspace, View } from './types.js'
 import { canManageWorkspace } from './types.js'
 import { useApi } from './hooks/useApi.js'
@@ -11,6 +11,8 @@ import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { CommandPalette } from './components/CommandPalette.js'
 import { SkipLink } from './components/SkipLink.js'
+import { isInvestorDemoRequested, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
+import { makeDemoApi, DEMO_USER, DEMO_WORKSPACES } from './lib/demoApi.js'
 import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
 import { colors } from './styles.js'
@@ -83,6 +85,9 @@ function clearUrlHash() {
 export function App() {
   // Access token is held in memory only. On load it is re-derived from the
   // HttpOnly refresh cookie via /api/auth/refresh (see the boot effect below).
+  // Investor/demo mode: render the real shell + views against seeded data with
+  // no backend. Decided once at mount; the real auth/api paths are inert while on.
+  const [demo] = useState(() => isInvestorDemoRequested())
   const [token, setToken] = useState<string | null>(null)
   const [resetToken] = useState<string | null>(() => getHashParam('reset'))
   const [inviteToken] = useState<string | null>(() => getHashParam('invite'))
@@ -106,6 +111,13 @@ export function App() {
   // views deliberately key data-loading effects on `api`. A fresh logout every
   // render would churn `api` and defeat that.
   const logout = useCallback(() => {
+    // In demo mode "Sign out" exits the demo back to the real app.
+    if (isInvestorDemoRequested()) {
+      clearInvestorDemo()
+      removeDemoUrlFlag()
+      window.location.reload()
+      return
+    }
     // The refresh cookie is HttpOnly; the server clears it. A custom header
     // satisfies the CSRF guard.
     fetch(`${API}/api/auth/logout`, {
@@ -120,7 +132,10 @@ export function App() {
   }, [])
 
   const onReauthRequired = useCallback(() => setReauthRequired(true), [])
-  const api = useApi(token, logout, setToken, onReauthRequired)
+  const realApi = useApi(token, logout, setToken, onReauthRequired)
+  // Stable demo api identity (views key data-loading effects on `api`).
+  const demoApi = useMemo(() => makeDemoApi(), [])
+  const api = demo ? demoApi : realApi
 
   // Exchange the HttpOnly refresh cookie for a fresh access token. Returns true
   // when a session was (re)established.
@@ -138,19 +153,29 @@ export function App() {
     } catch { return false }
   }, [])
 
+  // Demo mode: seed a session from fixtures and skip all auth round-trips.
+  useEffect(() => {
+    if (!demo) return
+    setUser(DEMO_USER)
+    setWorkspaces(DEMO_WORKSPACES)
+    setActiveWsId(DEMO_WORKSPACES[0].id)
+    setBooting(false)
+  }, [demo])
+
   // Boot: try to re-establish a session from the refresh cookie. If it fails,
   // there is no session — show the auth screen.
   useEffect(() => {
+    if (demo) return
     let cancelled = false
     refreshAccessToken().then(ok => {
       if (!cancelled && !ok) setBooting(false)
     })
     return () => { cancelled = true }
-  }, [refreshAccessToken])
+  }, [refreshAccessToken, demo])
 
   // Once we have an access token, load the user + workspaces.
   useEffect(() => {
-    if (!token) return
+    if (demo || !token) return
     api<{ user: User; workspaces: Workspace[] }>('/api/auth/me')
       .then(d => {
         setUser(d.user)
@@ -280,6 +305,28 @@ export function App() {
       )}
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
+        {/* Investor/demo banner — sample data, no live backend. */}
+        {demo && (
+          <div style={{
+            background: '#1e3a8a', borderBottom: '1px solid #3b82f6',
+            padding: '8px 28px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0
+          }}>
+            <span aria-hidden="true">★</span>
+            <span style={{ fontSize: 13, color: '#dbeafe', flex: 1 }}>
+              <strong>Investor demo</strong> — sample data, no live backend.
+            </span>
+            <button
+              onClick={logout}
+              style={{
+                background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6,
+                padding: '5px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer'
+              }}
+            >
+              Exit demo
+            </button>
+          </div>
+        )}
+
         {/* Top bar */}
         <header style={{
           padding: '16px 28px', borderBottom: `1px solid ${colors.border}`,
