@@ -78,7 +78,7 @@ function spec() {
       findUnique: async (args: any) => {
         const inv = invites.find((i) => i.tokenHash === args.where.tokenHash)
         if (!inv) return null
-        // Support the include of workspace used by GET /invite/:token
+        // Support the include of workspace used by POST /invite/lookup
         return args.include?.workspace
           ? { ...inv, workspace: { id: inv.workspaceId, name: 'Acme Inc' } }
           : inv
@@ -211,6 +211,16 @@ test('profile updates the display name', async () => {
   assert.equal(res.body.user.name, 'New Name')
 })
 
+test('profile rejects an over-long display name (>100 chars)', async () => {
+  users.push({ id: 'u-1', email: 'a@acme.test', name: 'Old', passwordHash: 'x' })
+  const res = await server.request('/api/auth/profile', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: bearer('u-1') },
+    body: JSON.stringify({ name: 'x'.repeat(101) }),
+  })
+  assert.equal(res.status, 400)
+})
+
 test('profile changes the password when the current one is correct and revokes sessions', async () => {
   const passwordHash = await bcrypt.hash('currentpass1', 10)
   users.push({ id: 'u-1', email: 'a@acme.test', name: 'A', passwordHash })
@@ -280,19 +290,24 @@ test('resend-verification issues a fresh token for an unverified user', async ()
 
 // ── workspace invites ──────────────────────────────────────────────────────────
 
-test('GET invite returns the invite details for a valid token', async () => {
+test('POST invite/lookup returns the invite details for a valid token', async () => {
   const raw = 'invite-token-value'
   invites.push({ id: 'inv-1', email: 'invitee@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), acceptedAt: null })
-  const res = await server.request(`/api/auth/invite/${raw}`)
+  const res = await post('/api/auth/invite/lookup', { token: raw })
   assert.equal(res.status, 200)
   assert.equal(res.body.invite.email, 'invitee@acme.test')
   assert.equal(res.body.invite.workspaceName, 'Acme Inc')
 })
 
-test('GET invite rejects an expired invite', async () => {
+test('POST invite/lookup rejects an expired invite', async () => {
   const raw = 'expired-invite'
   invites.push({ id: 'inv-1', email: 'x@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() - 60_000), acceptedAt: null })
-  const res = await server.request(`/api/auth/invite/${raw}`)
+  const res = await post('/api/auth/invite/lookup', { token: raw })
+  assert.equal(res.status, 400)
+})
+
+test('POST invite/lookup rejects a missing token (400, no path param)', async () => {
+  const res = await post('/api/auth/invite/lookup', {})
   assert.equal(res.status, 400)
 })
 

@@ -30,6 +30,7 @@ import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
+import { parseTrustProxy } from './lib/trustProxy.js'
 import { captureError } from './lib/observability.js'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
@@ -56,7 +57,10 @@ const metadata = getRuntimeMetadata(SERVICE)
 const app = express()
 
 app.disable('x-powered-by')
-app.set('trust proxy', 1)
+// Env-driven so the trusted-proxy depth matches the actual topology (default: 1
+// managed hop). Too broad a value lets clients spoof X-Forwarded-For and dodge
+// the per-IP rate limits — see lib/trustProxy.ts.
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY))
 app.use((_req, res, next) => {
   res.setHeader('X-Acaos-Release-Id', metadata.releaseId)
   next()

@@ -382,7 +382,7 @@ authRouter.post(
 // intentionally unconstrained in length so a wrong (short) password still reaches
 // the bcrypt comparison and yields 401, not a schema 400.
 const updateProfileSchema = z.object({
-  name: z.string().optional(),
+  name: z.string().trim().max(100).optional(),
   currentPassword: z.string().optional(),
   newPassword: z.string().optional(),
 })
@@ -614,10 +614,14 @@ authRouter.post(
 
 // ── Invite verification (public) ──────────────────────────────────────────────
 
-authRouter.get(
-  '/invite/:token',
+// Token goes in the POST body, never the URL path — a path/query token leaks via
+// proxy/access logs, browser history, referrers, and APM traces. Mirrors the
+// reset-password / verify-email token handling.
+authRouter.post(
+  '/invite/lookup',
+  validate(tokenBodySchema),
   asyncHandler(async (req, res) => {
-    const rawToken = String(req.params.token || '').trim()
+    const rawToken = (req.body as z.infer<typeof tokenBodySchema>).token
     const tokenHash = hashRefreshToken(rawToken)
     const invite = await prisma.workspaceInvite.findUnique({
       where: { tokenHash },
