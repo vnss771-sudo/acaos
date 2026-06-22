@@ -24,6 +24,14 @@ export type Permission =
   | 'api_keys:manage'
   | 'icp:update'
   | 'mail:send_test'
+  // admin+ action capabilities (resource-spending / shared-state mutations)
+  | 'campaign:create'
+  | 'campaign:send'
+  | 'campaign:delete'
+  | 'campaign:approve_draft'
+  | 'leads:import'
+  | 'prospects:discover'
+  | 'prospects:import'
   // owner-only capabilities
   | 'members:grant_admin'
   | 'members:remove'
@@ -45,6 +53,15 @@ const ADMIN_PERMISSIONS: Permission[] = [
   'api_keys:manage',
   'icp:update',
   'mail:send_test',
+  // Action capabilities — each mirrors the admin role gate the route enforces
+  // today (campaign control, bulk import, discovery that spends provider quota).
+  'campaign:create',
+  'campaign:send',
+  'campaign:delete',
+  'campaign:approve_draft',
+  'leads:import',
+  'prospects:discover',
+  'prospects:import',
 ]
 
 const OWNER_PERMISSIONS: Permission[] = [

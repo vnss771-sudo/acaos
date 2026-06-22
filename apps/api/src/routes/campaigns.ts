@@ -4,6 +4,7 @@ import { requireFeature } from '../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
@@ -131,7 +132,7 @@ campaignsRouter.post(
     const user = req.user!
     const { workspaceId, name, goalType, description } = req.body as z.infer<typeof createCampaignSchema>
 
-    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, workspaceId, 'campaign:create')
 
     const campaign = await prisma.campaign.create({
       data: { workspaceId, name, goalType, description }
@@ -406,7 +407,7 @@ campaignsRouter.post(
     })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, campaign.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, campaign.workspaceId, 'campaign:send')
 
     // Production send-readiness / compliance gate. The frontend checks SPF/DKIM
     // and sender setup before launch, but a direct API caller must not be able to
@@ -524,7 +525,7 @@ campaignsRouter.delete(
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, existing.workspaceId, 'campaign:delete')
 
     await prisma.campaign.delete({ where: { id: campaignId } })
     // Deleting a campaign changes campaignCount and (via cascade) lead totals/funnel.

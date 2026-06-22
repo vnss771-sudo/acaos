@@ -11,7 +11,7 @@ import {
   calcWinProbability,
   type SignalType,
 } from '../../lib/signalEngine.js'
-import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { enqueueScoreProspects, enqueueDiscoverProspects } from '../../lib/queues.js'
 import { ingestSignal } from '../../lib/signalIngest.js'
 import { listSources, getSource } from '../../lib/prospectSources.js'
@@ -41,7 +41,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     const workspaceId = body.workspaceId
 
     const userId = req.user!.id
-    await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+    await assertWorkspacePermission(userId, workspaceId, 'prospects:discover')
 
     // Optionally scope the run to a mission so the mission control plane owns its
     // discovered prospects + activity. The mission must belong to the same workspace.
@@ -140,7 +140,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     const { workspaceId, rows } = req.body as z.infer<typeof importProspectsSchema>
 
     const userId = req.user!.id
-    await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+    await assertWorkspacePermission(userId, workspaceId, 'prospects:import')
 
     const icp = await getICP(workspaceId)
 
@@ -216,7 +216,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     if (rows.length > 500) throw new ApiError(400, 'Maximum 500 rows per import')
 
     const userId = req.user!.id
-    await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
+    await assertWorkspacePermission(userId, workspaceId, 'prospects:import')
 
     let prospectsCreated = 0
     let prospectsReused = 0

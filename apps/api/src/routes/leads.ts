@@ -5,6 +5,7 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
@@ -194,7 +195,7 @@ leadsRouter.post(
     const user = req.user!
     const { workspaceId, leads } = parseBody(importLeadsSchema, req)
 
-    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, workspaceId, 'leads:import')
 
     const weights = await getWorkspaceWeights(workspaceId)
 
