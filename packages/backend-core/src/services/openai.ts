@@ -101,7 +101,7 @@ async function chat(system: string, user: string, maxTokens: number): Promise<st
             ]
           })
           return completion.choices[0]?.message?.content ?? '{}'
-        } catch (fbErr) {
+        } catch (_fbErr) {
           // Fallback also failed — surface a clean 503 rather than leaking the
           // internal OpenAI error to callers.
           throw new ApiError(503, 'AI service temporarily unavailable — try again shortly')
