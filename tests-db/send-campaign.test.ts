@@ -239,6 +239,12 @@ test('fail-closed: an SMTP rejection marks the claim FAILED and does not advance
   // The lead is NOT advanced — it stays eligible for a deliberate retry.
   const after = await prisma.lead.findUnique({ where: { id: lead.id } })
   assert.equal(after!.stage, 'RESEARCHED')
+  // FAILED atomicity: the failure is recorded in the ledger AND the daily stats,
+  // consistent with the FAILED outbox row (one transaction).
+  const ev = await prisma.contactEvent.findFirst({ where: { leadId: lead.id, type: 'FAILED' } })
+  assert.ok(ev, 'a FAILED ContactEvent is appended atomically with the FAILED claim')
+  const stats = await prisma.campaignDailyStats.findFirst({ where: { campaignId: campaign.id } })
+  assert.equal(stats!.failed, 1, 'the daily failed counter is incremented in the same transaction')
 })
 
 test('mission stop: a PAUSED mission halts the batch before any dispatch', async () => {

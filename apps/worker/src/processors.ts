@@ -29,7 +29,7 @@ import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
-import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
+import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
 import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
 import { canContactRecipient } from '@acaos/backend-core/services/contactPolicy.js'
@@ -798,13 +798,20 @@ export async function sendCampaignBatch(
       // also never resent.) Operators can clear FAILED rows to deliberately retry.
       const message = err instanceof Error ? err.message : 'SMTP send failed'
       console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${message}`)
-      await prisma.outreachSent.update({
-        where: { id: claimId },
-        data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
-      }).catch(() => {})
-      // Best-effort FAILED ledger entry (not in a tx with the update — a ledger
-      // hiccup must never mask the SMTP failure itself).
-      void recordContactEvent({ workspaceId, email: lead.email!, type: 'FAILED', leadId: lead.id, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }).catch(() => {})
+      // Mark the claim FAILED, append the FAILED ledger event, and bump the daily
+      // failed counter ATOMICALLY (mirrors the SENT path) so the ledger/stats can't
+      // disagree with the outbox. The whole tx is best-effort wrapped — a ledger
+      // hiccup must never mask the SMTP failure itself (we still count it failed).
+      await prisma.$transaction([
+        prisma.outreachSent.update({
+          where: { id: claimId },
+          data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
+        }),
+        prisma.contactEvent.create({
+          data: contactEventData({ workspaceId, email: lead.email!, type: 'FAILED', leadId: lead.id, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }),
+        }),
+        prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'failed' })),
+      ]).catch((e) => console.error(`[send-campaign] FAILED-record tx error for lead ${lead.id}: ${e instanceof Error ? e.message : e}`))
       failed++
     }
     } // end per-lead loop for this page
@@ -992,8 +999,16 @@ export async function sendFollowupTask(
     return { taskId, status: 'SENT' }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'SMTP send failed'
-    await prisma.outreachSent.update({ where: { id: claimId }, data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) } }).catch(() => {})
-    await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'FAILED', lastError: message.slice(0, 500) } }).catch(() => {})
+    // Atomic FAILED record: outbox → FAILED, a FAILED ledger event, the daily failed
+    // counter, and the task → FAILED, in one transaction. Previously the follow-up
+    // failure path wrote NO ContactEvent/stat at all, so follow-up SMTP failures were
+    // invisible to the ledger and CampaignDailyStats — fixed here.
+    await prisma.$transaction([
+      prisma.outreachSent.update({ where: { id: claimId }, data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) } }),
+      prisma.contactEvent.create({ data: contactEventData({ workspaceId, email: lead.email!, type: 'FAILED', leadId, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }) }),
+      prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'failed' })),
+      prisma.followupTask.update({ where: { id: taskId }, data: { status: 'FAILED', lastError: message.slice(0, 500) } }),
+    ]).catch((e) => console.error(`[send-followup] FAILED-record tx error for task ${taskId}: ${e instanceof Error ? e.message : e}`))
     return { taskId, status: 'FAILED', reason: message }
   }
 }

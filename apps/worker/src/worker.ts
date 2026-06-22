@@ -27,6 +27,7 @@ import {
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
+import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
@@ -450,8 +451,16 @@ const retentionWorker = new Worker(
     const staleRecovered = await recoverStaleSends().catch((e) => {
       log('retention-purge', `stale-send recovery failed: ${(e as Error).message}`); return 0
     })
+    // Opt-in ledger↔projection reconciliation: detect CampaignDailyStats drift from
+    // the ContactEvent ledger and rebuild any drifted workspace. Default-off.
+    const reconcile = reconcileEnabled()
+      ? await reconcileCampaignStats({ rebuild: true }).catch((e) => {
+          log('retention-purge', `stats reconcile failed: ${(e as Error).message}`); return null
+        })
+      : null
+    if (reconcile) log('retention-purge', `stats reconcile: checked=${reconcile.campaignsChecked} drift=${reconcile.drifted.length} rebuilt=${reconcile.workspacesRebuilt}`)
     log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
-    return { ...deleted, staleSendsRecovered: staleRecovered }
+    return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0 }
   },
   { connection, concurrency: 1 }
 )

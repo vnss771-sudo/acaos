@@ -48,7 +48,7 @@ export async function incrementCampaignDailyStats(
 }
 
 // Map a ContactEvent.type to the stats field it increments (for live + rebuild).
-const EVENT_FIELD: Record<string, CampaignStatField | undefined> = {
+export const EVENT_FIELD: Record<string, CampaignStatField | undefined> = {
   SENT: 'sent',
   REPLIED: 'replied',
   BOUNCED: 'bounced',
