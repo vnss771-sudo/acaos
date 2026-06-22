@@ -18,7 +18,8 @@ import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@acaos/backend-core/lib/limits.js'
-import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
+import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
+import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
@@ -250,6 +251,7 @@ export type SendSkipReason =
   | 'AI_GENERATION_FAILED'
   | 'DAILY_CAP'
   | 'MISSION_PAUSED'
+  | 'REPUTATION_BLOCKED'
 
 type SendCampaignResult = {
   campaignId: string
@@ -330,6 +332,7 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MISSION_PAUSED: 0,
+    REPUTATION_BLOCKED: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
@@ -376,6 +379,23 @@ export async function sendCampaignBatch(
       console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
       skip('DAILY_CAP', total)
       return result()
+    }
+  }
+
+  // Sender-reputation circuit breaker: if this workspace's trailing bounce/complaint
+  // rate has degraded past the threshold, halt the whole batch before any dispatch.
+  // 'observe' (default) only logs; 'enforce' actually stops. Fail-safe: it only ever
+  // PREVENTS sends, and a ledger-read error is treated as healthy (never blocks).
+  const guardMode = reputationGuardMode()
+  if (guardMode !== 'off') {
+    const rep = await evaluateSenderReputation(workspaceId).catch(() => null)
+    if (rep && !rep.healthy) {
+      console.warn(`[send-campaign] reputation ${rep.reason} for workspace ${workspaceId} ` +
+        `(bounceRate=${rep.bounceRate.toFixed(3)} complaintRate=${rep.complaintRate.toFixed(3)} sends=${rep.totalSends}) mode=${guardMode}`)
+      if (guardMode === 'enforce') {
+        skip('REPUTATION_BLOCKED', total)
+        return result()
+      }
     }
   }
 
@@ -779,6 +799,17 @@ export async function sendFollowupTask(
   if (!step || !step.isActive) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'STEP_INACTIVE' })
   const smtpCfg: SmtpConfig | null = wsCfg ?? null
   if (!isMailConfigured(smtpCfg)) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SMTP_NOT_CONFIGURED' })
+
+  // Sender-reputation circuit breaker (same modes as the campaign sender). A
+  // degraded workspace blocks the follow-up in 'enforce'; 'observe' only logs.
+  const guardMode = reputationGuardMode()
+  if (guardMode !== 'off') {
+    const rep = await evaluateSenderReputation(workspaceId).catch(() => null)
+    if (rep && !rep.healthy) {
+      if (guardMode === 'enforce') return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'REPUTATION_BLOCKED' })
+      console.warn(`[send-followup] reputation ${rep.reason} for workspace ${workspaceId} (observe) — proceeding`)
+    }
+  }
 
   // Contact policy: re-checked at send time, not just at scheduling.
   const decision = await canContactRecipient({ workspaceId, email: lead.email, leadId })

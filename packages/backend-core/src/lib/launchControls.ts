@@ -65,6 +65,22 @@ export function areFollowupsEnabled(): boolean {
   return parseBool(process.env.FOLLOWUPS_ENABLED, false)
 }
 
+export type ReputationGuardMode = 'off' | 'observe' | 'enforce'
+
+/**
+ * Sender-reputation circuit-breaker mode (REPUTATION_GUARD_MODE). DEFAULT 'observe':
+ * the guard computes and LOGS a degraded reputation but does NOT block sends, so
+ * shipping it changes no send behavior — an operator graduates to 'enforce' once
+ * the observed numbers look right. 'enforce' halts sending for a workspace whose
+ * trailing bounce/complaint rate breaches the threshold; 'off' disables it
+ * entirely. Read live so the mode can be changed without a deploy.
+ */
+export function reputationGuardMode(): ReputationGuardMode {
+  const raw = (process.env.REPUTATION_GUARD_MODE || '').trim().toLowerCase()
+  if (raw === 'enforce' || raw === 'off') return raw
+  return 'observe'
+}
+
 // The low daily send ceiling applied to EVERY workspace while safe-launch is on.
 // Overridable via SAFE_LAUNCH_DAILY_SEND_CAP; a non-positive/invalid value falls
 // back to the default.
