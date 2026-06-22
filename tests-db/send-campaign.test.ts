@@ -294,3 +294,78 @@ test('policy review: a draft flagged POLICY_REVIEW is never auto-sent', async ()
   // No duplicate draft was generated for the flagged lead.
   assert.equal(await prisma.outreachDraft.count({ where: { leadId: lead.id } }), 1)
 })
+
+// ── AI generation failure paths (via the generateOutreach injection seam) ──────
+// A lead with NO draft + non-approval workspace forces the AI-generation branch.
+type GenFn = typeof import('../packages/backend-core/src/services/openai.ts').generateOutreach
+function genStub(impl: () => Promise<string> | string): GenFn {
+  return (async () => impl()) as unknown as GenFn
+}
+async function seedDraftlessLead(workspaceId: string, campaignId: string, email: string) {
+  return prisma.lead.create({ data: { workspaceId, campaignId, businessName: 'Acme', email, stage: 'RESEARCHED' } })
+}
+async function aiOutreachUsed(workspaceId: string): Promise<number> {
+  const rows = await prisma.usageRecord.findMany({ where: { workspaceId, action: 'AI_OUTREACH' } })
+  return rows.reduce((n, r) => n + (r as { count: number }).count, 0)
+}
+
+test('AI generation: a malformed draft is skipped (AI_GENERATION_FAILED) and the reserved AI call is refunded', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  await seedDraftlessLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, {
+    sendMail: mailer.fn,
+    generateOutreach: genStub(() => '{}'), // valid JSON, but missing subject/email → strict parse fails
+  })
+
+  assert.equal(result.sent, 0)
+  assert.equal(result.skippedByReason.AI_GENERATION_FAILED, 1)
+  assert.deepEqual(mailer.sent, [], 'a malformed draft must never be dispatched')
+  // The claim was released (no lingering SENDING row) and the AI call refunded.
+  assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id } }), 0)
+  assert.equal(await aiOutreachUsed(workspace.id), 0, 'reserved AI usage is refunded on a failed generation')
+})
+
+test('AI generation: a thrown generation error fails the lead and refunds the AI call', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  await seedDraftlessLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, {
+    sendMail: mailer.fn,
+    generateOutreach: genStub(() => { throw new Error('OpenAI exploded') }),
+  })
+
+  assert.equal(result.sent, 0)
+  assert.equal(result.failed, 1)
+  assert.deepEqual(mailer.sent, [], 'no SMTP attempt when generation throws')
+  assert.equal(await aiOutreachUsed(workspace.id), 0, 'reserved AI usage is refunded on a thrown generation')
+})
+
+test('AI generation: a valid generated draft sends and persists the draft', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedDraftlessLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, {
+    sendMail: mailer.fn,
+    generateOutreach: genStub(() => JSON.stringify({
+      subject: 'Quick question for Acme',
+      email: 'Noticed Acme runs multiple crews — how are you handling dispatch as you grow?',
+      followup: 'Just circling back on the above — worth a quick chat?',
+    })),
+  })
+
+  assert.equal(result.sent, 1)
+  assert.deepEqual(mailer.sent, ['reach@buyer.test'])
+  assert.equal((await prisma.outreachSent.findFirst({ where: { leadId: lead.id } }))!.status, 'SENT')
+  assert.equal(await prisma.outreachDraft.count({ where: { leadId: lead.id } }), 1, 'the generated draft is persisted')
+  assert.equal(await aiOutreachUsed(workspace.id), 1, 'a successful generation consumes one AI call')
+})

@@ -298,9 +298,13 @@ export async function sendCampaignBatch(
   // real mailer does network I/O and SSRF-pins public hosts). Defaults to the
   // real mailer, so production callers (worker.ts) are unchanged. `pageSize`
   // lets a test exercise multi-page paging without seeding hundreds of leads.
-  deps: { sendMail?: typeof sendMail; pageSize?: number } = {}
+  deps: { sendMail?: typeof sendMail; generateOutreach?: typeof generateOutreach; pageSize?: number } = {}
 ): Promise<SendCampaignResult> {
   const sendMailFn = deps.sendMail ?? sendMail
+  // Injection seam (tests): generation is otherwise a live OpenAI call, so the
+  // failure→refund/skip paths can't be exercised without it. Defaults to the real
+  // generator, so production callers (worker.ts) are unchanged.
+  const generateOutreachFn = deps.generateOutreach ?? generateOutreach
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
@@ -649,7 +653,7 @@ export async function sendCampaignBatch(
       }
 
       try {
-        const raw = await generateOutreach({
+        const raw = await generateOutreachFn({
           businessName: lead.businessName,
           category:      lead.category   ?? undefined,
           city:          lead.city        ?? undefined,
