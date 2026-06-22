@@ -78,6 +78,39 @@ test('skips suppressed addresses — never dispatches, never records a send', as
   assert.equal(goodLead!.stage, 'OUTREACH_SENT')
 })
 
+test('claim timestamps: SENT carries claimedAt + sentAt, no failedAt', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer()
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const send = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
+  assert.equal(send!.status, 'SENT')
+  assert.ok(send!.claimedAt, 'claimedAt is set at claim time')
+  assert.ok(send!.sentAt, 'sentAt is set on SMTP accept')
+  assert.equal(send!.failedAt, null, 'a successful send has no failedAt')
+  // The claim was reserved no later than the send was accepted.
+  assert.ok(send!.claimedAt.getTime() <= send!.sentAt.getTime())
+})
+
+test('claim timestamps: an SMTP rejection records failedAt and keeps claimedAt', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer({ throwOn: () => true })
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const send = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
+  assert.equal(send!.status, 'FAILED')
+  assert.ok(send!.claimedAt, 'claimedAt survives a failed dispatch')
+  assert.ok(send!.failedAt, 'failedAt records when SMTP rejected the send')
+})
+
 test('idempotent: a lead already sent for this campaign is not re-sent', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)

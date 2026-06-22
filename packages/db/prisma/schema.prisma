@@ -253,8 +253,12 @@ model OutreachSent {
   campaignId       String?
   leadId           String?
   toEmail          String
-  subject          String
-  body             String
+  // Nullable because the outbox row is now CLAIMED before the draft copy is known
+  // (claim-first: reserve the unique (campaignId,leadId) slot before spending AI so
+  // a racing job can't double-generate). Filled in once the draft is prepared; a
+  // SENT/FAILED row always carries them.
+  subject          String?
+  body             String?
   messageId        String?   @unique  // SMTP Message-ID for reply correlation
   // Outbox lifecycle: SENDING (claimed, pre-dispatch) -> SENT, or -> FAILED on a
   // known SMTP rejection. A crash after dispatch leaves the row SENDING
@@ -278,6 +282,13 @@ model OutreachSent {
   outreachIntentId String?
   recommendationId String?
   evidenceSnapshot Json?
+  // claimedAt: when the platform reserved the send (row insert). Stable even after
+  // sentAt is set, so it's the authoritative "when did we claim this" timestamp.
+  // failedAt: when SMTP definitively rejected it. sentAt: kept (defaults at claim,
+  // overwritten with the real accept time on SENT) for back-compat with the
+  // existing stats/retention/index paths.
+  claimedAt        DateTime  @default(now())
+  failedAt         DateTime?
   sentAt           DateTime  @default(now())
   workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign         Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)

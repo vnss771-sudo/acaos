@@ -462,9 +462,13 @@ export async function sendCampaignBatch(
     if (isSuppressed(lead.email!)) { skipped++; continue }
 
 
-    // Get or generate outreach copy
-    let subject: string
-    let body: string
+    // Resolve the draft source WITHOUT spending AI yet. The outbox claim below
+    // happens BEFORE any generation, so a racing send job loses the unique
+    // (campaignId, leadId) claim and skips before burning AI quota — no duplicate
+    // AI spend and no duplicate draft (the previous order generated first).
+    let subject: string | null = null
+    let body: string | null = null
+    let needGeneration = false
 
     if (lead.outreachDrafts[0]) {
       subject = lead.outreachDrafts[0].subject
@@ -482,120 +486,23 @@ export async function sendCampaignBatch(
       // entire approval gate.)
       if (approvalRequired) { skipped++; continue }
 
-      // Check AI limit before generating
-      try {
-        await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
-      } catch {
-        skipped++
-        continue  // AI limit reached — skip this lead
-      }
-
-      try {
-        const raw = await generateOutreach({
-          businessName: lead.businessName,
-          category:      lead.category   ?? undefined,
-          city:          lead.city        ?? undefined,
-          contactName:   lead.contactName ?? undefined,
-          aiSummary:     lead.aiSummary   ?? undefined,
-          outreachAngle: lead.outreachAngle ?? undefined,
-          // Pass the workspace ICP (tone + product) merged with any per-mission
-          // override (offer + target customer), so a mission's sends reflect that
-          // mission rather than the generic seller profile.
-          icp: (icp || missionCtx) ? {
-            targetIndustries: icp?.targetIndustries,
-            businessType: icp?.businessType ?? undefined,
-            outreachTone: icp?.outreachTone ?? undefined,
-            offer: missionCtx?.offer ?? undefined,
-            targetCustomer: missionCtx?.targetCustomer ?? undefined,
-          } : undefined,
-        })
-        // Strict, schema-validated parse. A draft with bad JSON or a missing
-        // subject/body is unusable — refund the reserved call and skip this lead
-        // rather than failing the whole batch (an isolated bad draft is expected).
-        let parsed: OutreachDraftOutput
-        try {
-          parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'send-campaign')
-        } catch {
-          await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
-          skipped++; continue
-        }
-        subject = parsed.subject
-        body    = parsed.email
-
-        // Deterministic policy check on freshly generated copy. If the AI output
-        // violates content rules (length, forbidden phrases, risky claims), persist
-        // it as POLICY_REVIEW with the violations recorded and skip the send — never
-        // auto-send unreviewed copy that tripped a policy. (Unsubscribe compliance is
-        // NOT checked here: the send footer guarantees a List-Unsubscribe link.)
-        const violations = checkDraftPolicy({ subject, emailBody: body }, draftPolicy)
-        if (violations.length > 0) {
-          await prisma.outreachDraft.create({
-            data: {
-              leadId:      lead.id,
-              workspaceId,
-              subject,
-              emailBody: body,
-              followup: parsed.followup ?? null,
-              status: 'POLICY_REVIEW',
-              policyViolations: { violations: violations.map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
-            }
-          })
-          console.log(`[send-campaign] Draft for lead ${lead.id} flagged POLICY_REVIEW: ${violations.map(v => v.code).join(', ')}`)
-          skipped++; continue
-        }
-
-        // Persist the draft so future sends reuse it
-        await prisma.outreachDraft.create({
-          data: {
-            leadId:      lead.id,
-            workspaceId,
-            subject,
-            emailBody: body,
-            followup: parsed.followup ?? null,
-          }
-        })
-      } catch (err) {
-        console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
-        // Generation failed after reserving the AI call — refund it.
-        await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
-        failed++
-        continue
-      }
+      needGeneration = true
     }
 
-    const escHtml = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    const unsubscribeToken = randomBytes(24).toString('hex')
-    const safeAppUrl = escHtml(appUrl)
-    const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
-    // CAN-SPAM / GDPR: include sender identity and physical address when configured
-    const senderLine = workspace?.senderBusinessName
-      ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
-      : ''
-    const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
-    const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
-
-    // Outbox claim: insert a SENDING row BEFORE the SMTP call. The unique
-    // (campaignId, leadId) constraint guarantees at-most-once delivery — a racing
-    // attempt or a retry after a crash that happened post-send cannot create a
-    // second claim, so the email is never sent twice.
-    // Bridge (Stage 5): if an APPROVED OutreachIntent is linked to this lead,
-    // stamp its provenance onto the send so the record is self-auditable, and
-    // mark the intent SENT on success. Best-effort lookup — never blocks a send.
-    // Resolved from the batch-wide map pre-loaded above (one query for the whole
-    // batch); the map was built by selecting OutreachIntents with
-    // `leadId in batch, status: 'APPROVED'`, so this is the same approved-intent
-    // link as the former per-lead findFirst, without the per-lead round-trip.
+    // Provenance (Stage 5): an APPROVED OutreachIntent linked to this lead, stamped
+    // onto the claim so the record is self-auditable and marked SENT on success.
+    // Resolved from the batch-wide pre-loaded map (no per-lead DB round-trip).
     const linkedIntent = linkedIntentByLeadId.get(lead.id) ?? null
+    const unsubscribeToken = randomBytes(24).toString('hex')
 
+    // CLAIM FIRST: reserve the daily-cap slot and insert the unique outbox row in
+    // ONE advisory-locked transaction, BEFORE generating. subject/body may be null
+    // here and are filled once the draft is prepared. The unique (campaignId,
+    // leadId) constraint guarantees at-most-once delivery: a racing attempt — or a
+    // retry after a post-send crash — gets a P2002 and skips, having spent no AI.
+    // A null result means the live daily cap is now reached.
     let claimId: string
     try {
-      // Atomic outbox claim + daily-cap reservation in ONE advisory-locked
-      // transaction: reserveDailySendSlot serializes the cap check across
-      // concurrent send jobs for this workspace (so two campaigns can't each pass
-      // an independent check and overshoot), and the unique (campaignId, leadId)
-      // still guarantees at-most-once delivery. A null result means the live cap
-      // is now reached — stop the rest of the batch.
       const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         if (dailySendLimit != null) {
           const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
@@ -624,11 +531,101 @@ export async function sendCampaignBatch(
       }
       claimId = claim.id
     } catch (err) {
-      // Unique violation — another attempt already owns this send. Skip.
+      // Unique violation — another attempt already owns this send. Skip (no AI spent).
       if ((err as { code?: string }).code === 'P2002') { skipped++; continue }
       throw err
     }
 
+    // Release the claim on a pre-dispatch abort: nothing was sent, so delete the row
+    // (freeing its reserved cap slot) and leave the lead eligible for a later run.
+    const releaseClaim = async () => { await prisma.outreachSent.delete({ where: { id: claimId } }).catch(() => {}) }
+
+    // Generate now that the claim is held (a racing job has already lost it, so this
+    // AI call happens at most once per (campaign, lead)).
+    if (needGeneration) {
+      try {
+        await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
+      } catch {
+        await releaseClaim(); skipped++; continue  // AI limit reached
+      }
+
+      try {
+        const raw = await generateOutreach({
+          businessName: lead.businessName,
+          category:      lead.category   ?? undefined,
+          city:          lead.city        ?? undefined,
+          contactName:   lead.contactName ?? undefined,
+          aiSummary:     lead.aiSummary   ?? undefined,
+          outreachAngle: lead.outreachAngle ?? undefined,
+          // Pass the workspace ICP (tone + product) merged with any per-mission
+          // override (offer + target customer), so a mission's sends reflect that
+          // mission rather than the generic seller profile.
+          icp: (icp || missionCtx) ? {
+            targetIndustries: icp?.targetIndustries,
+            businessType: icp?.businessType ?? undefined,
+            outreachTone: icp?.outreachTone ?? undefined,
+            offer: missionCtx?.offer ?? undefined,
+            targetCustomer: missionCtx?.targetCustomer ?? undefined,
+          } : undefined,
+        })
+        // Strict, schema-validated parse. A draft with bad JSON or a missing
+        // subject/body is unusable — refund the reserved call, release the claim,
+        // and skip this lead rather than failing the whole batch.
+        let parsed: OutreachDraftOutput
+        try {
+          parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'send-campaign')
+        } catch {
+          await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+          await releaseClaim(); skipped++; continue
+        }
+        subject = parsed.subject
+        body    = parsed.email
+        const followup = parsed.followup ?? null
+
+        // Deterministic policy check on freshly generated copy. On a violation,
+        // persist the draft as POLICY_REVIEW, release the claim, and skip — never
+        // auto-send unreviewed copy that tripped a policy. (Unsubscribe compliance
+        // is NOT checked here: the send footer guarantees a List-Unsubscribe link.)
+        const violations = checkDraftPolicy({ subject, emailBody: body }, draftPolicy)
+        if (violations.length > 0) {
+          await prisma.outreachDraft.create({
+            data: {
+              leadId: lead.id, workspaceId, subject, emailBody: body, followup,
+              status: 'POLICY_REVIEW',
+              policyViolations: { violations: violations.map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
+            }
+          })
+          console.log(`[send-campaign] Draft for lead ${lead.id} flagged POLICY_REVIEW: ${violations.map(v => v.code).join(', ')}`)
+          await releaseClaim(); skipped++; continue
+        }
+
+        // Persist the draft for reuse and fill the claim with the generated copy.
+        await prisma.outreachDraft.create({
+          data: { leadId: lead.id, workspaceId, subject, emailBody: body, followup }
+        })
+        await prisma.outreachSent.update({ where: { id: claimId }, data: { subject, body } })
+      } catch (err) {
+        console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
+        // Generation failed after reserving the AI call — refund it and release.
+        await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+        await releaseClaim(); failed++; continue
+      }
+    }
+
+    // Past this point subject/body are non-null (reused draft or freshly generated).
+    // Guard defensively so a logic slip fails this one lead, not the whole batch.
+    if (subject == null || body == null) { await releaseClaim(); failed++; continue }
+
+    const escHtml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    const safeAppUrl = escHtml(appUrl)
+    const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
+    // CAN-SPAM / GDPR: include sender identity and physical address when configured
+    const senderLine = workspace?.senderBusinessName
+      ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
+      : ''
+    const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
+    const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
     // Plaintext alternative built from the SOURCE draft (not regex-stripped HTML),
     // so the multipart email carries a clean text/plain part for deliverability.
     const textBody = `${body}\n\nYou received this email because you matched our outreach criteria. To stop receiving emails, unsubscribe: ${unsubscribeUrl}`
@@ -662,15 +659,15 @@ export async function sendCampaignBatch(
       sent++
     } catch (err) {
       // Known SMTP rejection (nodemailer throws only when the provider did NOT
-      // accept the message). Mark the claim FAILED with the error for operator
-      // review instead of deleting it — fail-closed: it won't be auto-resent.
-      // (A crash AFTER provider acceptance leaves the row SENDING, also never
-      // resent.) Operators can clear FAILED rows to deliberately retry.
+      // accept the message). Mark the claim FAILED with the error + failedAt for
+      // operator review instead of deleting it — fail-closed: it won't be
+      // auto-resent. (A crash AFTER provider acceptance leaves the row SENDING,
+      // also never resent.) Operators can clear FAILED rows to deliberately retry.
       const message = err instanceof Error ? err.message : 'SMTP send failed'
       console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${message}`)
       await prisma.outreachSent.update({
         where: { id: claimId },
-        data: { status: 'FAILED', lastError: message.slice(0, 500) },
+        data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
       }).catch(() => {})
       failed++
     }
