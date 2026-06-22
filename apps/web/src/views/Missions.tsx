@@ -73,7 +73,9 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
     try {
       const body: DiscoverProspectsRequest = { workspaceId: workspace.id, missionId: id }
       const d = await route('POST /api/prospects/discover', { body })
-      toast.success(`Discovered ${d.discovered} new prospect${d.discovered !== 1 ? 's' : ''} (${d.skipped} skipped)`)
+      toast.success(d.deduped
+        ? 'Discovery already running for this query — results will appear shortly.'
+        : 'Discovery started — new prospects will appear shortly.')
       load()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Discovery failed') }
     finally { setBusy(prev => ({ ...prev, [id]: false })) }

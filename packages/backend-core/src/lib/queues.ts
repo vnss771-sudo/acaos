@@ -82,6 +82,17 @@ export async function enqueueScoreProspects(workspaceId: string) {
   return getQueue('score-prospects').add('score-prospects', { workspaceId }, defaultJobOpts)
 }
 
+// Async prospect discovery. attempts:1 — a discovery run calls a metered, paid
+// provider and the route already consumed the workspace's discovery quota, so a
+// failed run must not silently re-hit the provider; failures surface as a FAILED
+// (or PARTIAL) DiscoveryRun for the operator instead of being auto-retried.
+export async function enqueueDiscoverProspects(runId: string, workspaceId: string) {
+  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId }, {
+    attempts: 1,
+    ...jobRetention,
+  })
+}
+
 export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string) {
   return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId }, defaultJobOpts)
 }
@@ -133,7 +144,7 @@ export async function enqueueRetentionPurge() {
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
-  'retention-purge'
+  'discover-prospects', 'retention-purge'
 ]
 
 export async function getQueueStats() {

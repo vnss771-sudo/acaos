@@ -20,6 +20,7 @@ import {
   GenerateRecommendationsPayloadSchema,
   CalibrateScoringPayloadSchema,
   SendCampaignPayloadSchema,
+  DiscoverProspectsPayloadSchema,
   RetentionPurgePayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
@@ -31,7 +32,7 @@ import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch } from './processors.js'
 import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
@@ -269,6 +270,24 @@ const scoreProspectsWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── discover-prospects ────────────────────────────────────────────────────────
+// Off-request prospect discovery: the /discover route creates the RUNNING run +
+// enqueues this; here we call the provider and import results, finalizing the run
+// as SUCCEEDED / PARTIAL / FAILED. Gated by the same 'discovery' feature flag the
+// route checks. Low concurrency — provider calls are metered and rate-limited.
+const discoverWorker = new Worker(
+  'discover-prospects',
+  async (job) => {
+    const { runId, workspaceId } = parseJobPayload(DiscoverProspectsPayloadSchema, 'discover-prospects', job.data)
+    if (!isFeatureEnabled('discovery')) { log('discover-prospects', 'skipped: FEATURE_DISCOVERY disabled'); return { skipped: true, reason: 'FEATURE_DISCOVERY disabled' } }
+    log('discover-prospects', `Discovering run=${runId} workspace=${workspaceId}`)
+    const result = await discoverProspectsBatch(runId, workspaceId, (n) => job.updateProgress(n))
+    log('discover-prospects', `Done run=${runId} status=${result.status} imported=${result.imported} skipped=${result.skipped}`)
+    return result
+  },
+  { connection, concurrency: 2 }
+)
+
 // ── generate-recommendations ──────────────────────────────────────────────────
 const recommendWorker = new Worker(
   'generate-recommendations',
@@ -503,6 +522,7 @@ async function shutdown(signal: string, exitCode = 0) {
     recommendWorker.close(),
     calibrateWorker.close(),
     sendCampaignWorker.close(),
+    discoverWorker.close(),
     retentionWorker.close(),
   ])
   await prisma.$disconnect()

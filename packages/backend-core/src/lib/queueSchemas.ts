@@ -50,6 +50,13 @@ export type SyncMailboxPayload = z.infer<typeof SyncMailboxPayloadSchema>
 export const ScoreProspectsPayloadSchema = z.object({ workspaceId: id })
 export type ScoreProspectsPayload = z.infer<typeof ScoreProspectsPayloadSchema>
 
+// Async prospect discovery. The route creates the DiscoveryRun (with the
+// resolved query stored on it) and enqueues this; the worker loads the run,
+// calls the provider, and imports candidates. workspaceId is carried for tenant
+// validation against the loaded run.
+export const DiscoverProspectsPayloadSchema = z.object({ runId: id, workspaceId: id })
+export type DiscoverProspectsPayload = z.infer<typeof DiscoverProspectsPayloadSchema>
+
 export const GenerateRecommendationsPayloadSchema = z.object({ prospectId: id, workspaceId: id })
 export type GenerateRecommendationsPayload = z.infer<typeof GenerateRecommendationsPayloadSchema>
 

@@ -43,6 +43,10 @@ model DiscoveryRun {
   source        String
   status        DiscoveryRunStatus @default(RUNNING)
   query         Json?
+  // Stable hash of (source + canonical query) — lets a repeated discover request
+  // collapse onto an already-RUNNING run instead of starting a duplicate provider
+  // search (and double-charging quota). Nullable: legacy rows stay null.
+  queryHash     String?
   resultCount   Int       @default(0)
   importedCount Int       @default(0)
   skippedCount  Int       @default(0)
@@ -55,6 +59,8 @@ model DiscoveryRun {
 
   @@index([workspaceId, startedAt])
   @@index([missionId])
+  // Serves the in-flight dedup lookup (workspace + queryHash + RUNNING).
+  @@index([workspaceId, queryHash])
   // Standalone time index for the global retention purge (startedAt < cutoff).
   @@index([startedAt])
 }
