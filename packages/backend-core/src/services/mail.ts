@@ -7,6 +7,10 @@ import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { resolvePublicMailHost, type PinnedHost } from '../lib/ssrf.js'
 import { suppress } from '../lib/suppressions.js'
 import { recordAudit } from '../lib/audit.js'
+import { findBestMatchingOutreachSent } from '../lib/replyAttribution.js'
+import { contactEventData } from '../lib/contactEvents.js'
+import { transitionLeadStage } from '../services/leadStageMachine.js'
+import type { LeadStage } from '@acaos/shared'
 
 const BOUNCE_SENDER = /(mailer-daemon|postmaster|mail delivery|maild?(a|ae)mon)/i
 const BOUNCE_SUBJECT = /(undeliverable|delivery status notification|mail delivery (failed|subsystem)|returned mail|failure notice|delivery has failed|message not delivered|delivery incomplete)/i
@@ -161,34 +165,67 @@ function isUniqueConstraintError(err: unknown): boolean {
 export async function recordProcessedReply(params: {
   uid: number
   messageId: string | null
+  inReplyTo: string | null
   fromAddress: string
+  fromEmailKey?: string
   workspaceId: string
-  lead: { id: string; stage: string } | null
+  lead: { id: string; stage: string; email?: string | null } | null
 }): Promise<{ advanced: boolean }> {
-  const { uid, messageId, fromAddress, workspaceId, lead } = params
+  const { uid, messageId, inReplyTo, fromAddress, workspaceId, lead } = params
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // create (not upsert) so a duplicate uid throws P2002 and aborts the whole
-      // transaction — the lead/outreach mutations below must not run twice.
-      await tx.processedEmail.create({
-        data: { workspaceId, uid, messageId: messageId ?? undefined, fromAddress },
+      // Attribute the reply to exactly ONE OutreachSent (In-Reply-To → messageId,
+      // with a conservative most-recent-send fallback) — never flip every send for
+      // the contact, which over-attributes replies across campaigns.
+      const match = await findBestMatchingOutreachSent(tx, {
+        workspaceId,
+        inReplyTo,
+        leadId: lead?.id ?? null,
       })
+
+      // create (not upsert) so a duplicate uid throws P2002 and aborts the whole
+      // transaction — the lead/outreach mutations below must not run twice. The
+      // attribution result is recorded so operators can see unmatched/ambiguous replies.
+      await tx.processedEmail.create({
+        data: {
+          workspaceId, uid, messageId: messageId ?? undefined, fromAddress,
+          matchMethod: match.method,
+          matchedOutreachSentId: match.outreachSentId,
+        },
+      })
+
       if (advance) {
-        // Scope writes by workspaceId (in scope here) as defense-in-depth so a
-        // mis-attributed lead id can never mutate another tenant's row.
-        await tx.lead.updateMany({
-          where: { id: lead!.id, workspaceId },
-          data: { stage: 'REPLIED', lastContactedAt: new Date() },
-        })
+        // Advance the lead stage through the state machine (forward-only, no
+        // regression). Scope by workspaceId as defense-in-depth.
+        const transition = transitionLeadStage(lead!.stage as LeadStage, 'REPLY_INTERESTED')
+        if (transition.changed) {
+          await tx.lead.updateMany({
+            where: { id: lead!.id, workspaceId },
+            data: { stage: transition.nextStage, lastContactedAt: new Date() },
+          })
+        }
       }
-      // Always close the outreach loop regardless of lead stage — a BOOKED or
-      // CLOSED lead that replies still deserves an accurate outreach record.
-      if (lead) {
+
+      // Close the outreach loop on the ONE attributed send (regardless of lead
+      // stage — a BOOKED/CLOSED lead that replies still deserves an accurate record).
+      if (match.outreachSentId) {
         await tx.outreachSent.updateMany({
-          where: { leadId: lead.id, workspaceId, status: 'SENT' },
+          where: { id: match.outreachSentId, workspaceId, status: 'SENT' },
           data: { status: 'REPLIED', repliedAt: new Date() },
+        })
+        // Append the REPLIED lifecycle event in the same transaction.
+        await tx.contactEvent.create({
+          data: contactEventData({
+            workspaceId,
+            email: lead?.email ?? match.toEmail ?? fromAddress,
+            type: 'REPLIED',
+            leadId: lead?.id ?? match.leadId,
+            campaignId: match.campaignId,
+            outreachSentId: match.outreachSentId,
+            metadata: { matchMethod: match.method },
+          }),
         })
       }
     })
@@ -291,6 +328,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     type ParsedMsg = {
       uid: number
       messageId: string | null
+      inReplyTo: string | null
       fromAddress: string
       subject: string
       body: string
@@ -312,6 +350,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       const uid: number = msg.uid
       if (uid > maxUid) maxUid = uid
       const messageId: string | null = msg.envelope?.messageId ?? null
+      const inReplyTo: string | null = msg.envelope?.inReplyTo ?? null
       const fromAddress: string = msg.envelope?.from?.[0]?.address?.toLowerCase()?.trim() ?? ''
 
       if (!fromAddress) continue
@@ -326,7 +365,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       // Keep bounces even if their reply text is trivial; otherwise skip empties.
       if (bounceRecipients.length === 0 && replyBody.length < 5) continue
 
-      toProcess.push({ uid, messageId, fromAddress, subject, body: replyBody, bounceRecipients })
+      toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients })
     }
 
     // Advance the persisted cursor to the highest UID we inspected. Best-effort: a
@@ -372,7 +411,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
         void recordAudit({ workspaceId, type: 'email.bounced', entityType: 'suppression', metadata: { email: addr } })
       }
       for (const m of bounceMsgs) {
-        await recordProcessedReply({ uid: m.uid, messageId: m.messageId, fromAddress: m.fromAddress, workspaceId, lead: null })
+        await recordProcessedReply({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
         processedUids.push(m.uid)
       }
     }
@@ -404,6 +443,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       const { advanced } = await recordProcessedReply({
         uid: msg.uid,
         messageId: msg.messageId,
+        inReplyTo: msg.inReplyTo,
         fromAddress: msg.fromAddress,
         workspaceId: workspaceId,
         lead,

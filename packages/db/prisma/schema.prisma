@@ -388,12 +388,17 @@ model ProcessedEmail {
   uid         Int
   messageId   String?
   fromAddress String?
+  // Reply attribution: which OutreachSent this inbound message was matched to, and
+  // by which method, so operators can see (and audit) unmatched/ambiguous replies.
+  matchedOutreachSentId String?
+  matchMethod           String?  // MESSAGE_ID | EMAIL_UNIQUE | MOST_RECENT_LEAD_SEND | NO_MATCH
   processedAt DateTime  @default(now())
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, uid])
   @@unique([workspaceId, messageId])
   @@index([workspaceId])
+  @@index([workspaceId, matchedOutreachSentId])
   // Retention purge scans processedAt < cutoff (workspace-agnostic).
   @@index([processedAt])
 }
