@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkDraftPolicy, formatViolations, countLinks } from '../packages/backend-core/src/lib/policyCheck.ts'
+import { checkDraftPolicy, formatViolations, countLinks, checkClaimGrounding } from '../packages/backend-core/src/lib/policyCheck.ts'
 
 // A compliant body reused across cases: long enough, has an unsubscribe notice,
 // no risky language. Individual cases override subject/body to exercise one rule.
@@ -121,6 +121,45 @@ describe('checkDraftPolicy — link count', () => {
     const body = 'a https://1.test b https://2.test c https://3.test'
     assert.ok(checkDraftPolicy({ subject: 'Three links here', emailBody: body }, { maxLinks: 2 }).some(v => v.code === 'TOO_MANY_LINKS'))
     assert.ok(!checkDraftPolicy({ subject: 'Three links here', emailBody: body }, { maxLinks: 0 }).some(v => v.code === 'TOO_MANY_LINKS'))
+  })
+})
+
+describe('checkClaimGrounding — fabricated claims', () => {
+  it('flags a fabricated prior conversation on a cold contact', () => {
+    const v = checkClaimGrounding('Great to meet you last week — following up on our call about scheduling.', { hasPriorConnection: false })
+    assert.ok(v.some(x => x.code === 'FABRICATED_PRIOR_CONTACT'))
+  })
+
+  it('allows prior-contact references when the lead has a recorded connection', () => {
+    const v = checkClaimGrounding('As we discussed, here is the overview.', { hasPriorConnection: true })
+    assert.ok(!v.some(x => x.code === 'FABRICATED_PRIOR_CONTACT'))
+  })
+
+  it('does not flag a genuinely cold opener', () => {
+    const v = checkClaimGrounding('Noticed Acme Plumbing runs multiple crews — how are you handling dispatch?', { hasPriorConnection: false })
+    assert.equal(v.length, 0)
+  })
+
+  it('flags an unsupported funding congratulation', () => {
+    const v = checkClaimGrounding('Congrats on your recent Series A! Thought our tool could help.', { grounding: 'acme plumbing, hvac, dispatch' })
+    assert.ok(v.some(x => x.code === 'UNSUPPORTED_CLAIM'))
+  })
+
+  it('allows an event claim that IS supported by grounding', () => {
+    const v = checkClaimGrounding('Congrats on your recent funding round!', { grounding: 'Acme recently raised a seed round to fund expansion' })
+    assert.ok(!v.some(x => x.code === 'UNSUPPORTED_CLAIM'))
+  })
+
+  it('allows an expansion reference grounded in research signals', () => {
+    const v = checkClaimGrounding('Saw you recently opened a new branch — congrats on the expansion.', { grounding: 'active hiring suggests a growth phase, scaling crews' })
+    assert.ok(!v.some(x => x.code === 'UNSUPPORTED_CLAIM'))
+  })
+
+  it('flags multiple distinct fabrications at once', () => {
+    const v = checkClaimGrounding('Thanks for your time on the call! Congrats on the acquisition too.', { hasPriorConnection: false, grounding: 'plumbing' })
+    const codes = v.map(x => x.code)
+    assert.ok(codes.includes('FABRICATED_PRIOR_CONTACT'))
+    assert.ok(codes.includes('UNSUPPORTED_CLAIM'))
   })
 })
 

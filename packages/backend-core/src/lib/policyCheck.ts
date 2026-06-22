@@ -44,6 +44,59 @@ export function countLinks(text: string): number {
   return matches ? matches.length : 0
 }
 
+// Phrases that assert a PRIOR RELATIONSHIP / earlier contact. In cold outreach these
+// are fabrications unless the lead genuinely has a recorded connection (notes). The
+// generator is instructed never to invent one; this enforces that.
+const PRIOR_CONTACT_RE =
+  /\b(as (?:we|previously) discussed|as discussed|per our (?:conversation|call|chat|discussion)|following up on (?:our|my (?:last|previous))|after (?:we|our) (?:spoke|talked|chat|call|meeting)|great (?:to meet|meeting|to connect)(?: you| with you)|thanks for (?:your time|(?:the|our) (?:call|chat|meeting))|since we (?:last )?(?:spoke|talked|met|connected)|when we (?:spoke|met|talked)|good (?:talking|speaking|chatting) (?:to|with) you|enjoyed our (?:call|chat|conversation)|as a follow[- ]?up to our)\b/i
+
+// Specific "congratulations on <event>" style claims. Each is only a violation when
+// NONE of its grounding keywords appear in the prospect data we actually have — i.e.
+// the draft invented a verifiable-sounding event we have no evidence for.
+const EVENT_CLAIMS: Array<{ code: string; re: RegExp; grounding: string[] }> = [
+  { code: 'FUNDING', re: /\b(?:your (?:recent )?(?:funding|raise|round)|congrat\w* on (?:the|your) (?:funding|raise|round|series)|series [a-e]\b|seed round|recently raised)\b/i, grounding: ['fund', 'raise', 'round', 'series ', 'seed', 'venture', 'investment'] },
+  { code: 'ACQUISITION', re: /\b(?:your (?:recent )?acquisition|congrat\w* on the acquisition|after (?:you|your) acqui|recently acquired|your merger)\b/i, grounding: ['acqui', 'merg'] },
+  { code: 'AWARD', re: /\b(?:congrat\w* on (?:the|your) award|your recent award|winning the|recently won)\b/i, grounding: ['award', 'recogni', 'won ', 'winner'] },
+  { code: 'EXPANSION', re: /\b(?:your (?:new|recent) (?:office|location|branch)|congrat\w* on (?:the|your) (?:expansion|new (?:office|location))|recently (?:expanded|opened a))\b/i, grounding: ['expand', 'expansion', 'new location', 'new office', 'new branch', 'opened', 'growth', 'growing', 'scaling'] },
+  { code: 'IPO', re: /\b(?:your ipo|going public|congrat\w* on (?:the|your) ipo)\b/i, grounding: ['ipo', 'public', 'listed'] },
+]
+
+/**
+ * Flag fabricated factual claims about the prospect in a draft body — copy that
+ * asserts a prior relationship, or congratulates the prospect on a specific event
+ * (funding / acquisition / award / expansion / IPO) we have no grounding for. Pure
+ * and deterministic. Conservative: an event claim is only flagged when none of its
+ * grounding keywords appear in the prospect data, and prior-contact claims are
+ * allowed when the lead has a recorded connection. Violations route to POLICY_REVIEW
+ * (human gate) like any other — never an auto-send, never a silent drop.
+ */
+export function checkClaimGrounding(
+  body: string,
+  opts: { grounding?: string; hasPriorConnection?: boolean } = {}
+): DraftPolicyViolation[] {
+  const violations: DraftPolicyViolation[] = []
+  const text = body || ''
+  const grounding = (opts.grounding || '').toLowerCase()
+
+  if (!opts.hasPriorConnection && PRIOR_CONTACT_RE.test(text)) {
+    violations.push({
+      code: 'FABRICATED_PRIOR_CONTACT',
+      message: 'Email claims a prior conversation/relationship, but this is a cold contact with no recorded connection',
+    })
+  }
+
+  for (const claim of EVENT_CLAIMS) {
+    if (claim.re.test(text) && !claim.grounding.some((kw) => grounding.includes(kw))) {
+      violations.push({
+        code: 'UNSUPPORTED_CLAIM',
+        message: `Email references a ${claim.code.toLowerCase()} event not supported by any known information about the prospect`,
+      })
+    }
+  }
+
+  return violations
+}
+
 export function checkDraftPolicy(
   draft: { subject: string; emailBody: string },
   policy?: DraftPolicyConfig

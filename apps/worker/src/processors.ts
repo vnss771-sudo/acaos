@@ -27,7 +27,7 @@ import { perDomainDailyCap, emailDomain, tallyDomains } from '@acaos/backend-cor
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
-import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
+import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
@@ -80,6 +80,7 @@ type CampaignLeadRow = {
   email: string | null
   aiSummary: string | null
   outreachAngle: string | null
+  notes: string | null
   outreachDrafts: Array<{ subject: string; emailBody: string }>
 }
 
@@ -688,7 +689,15 @@ export async function sendCampaignBatch(
         // persist the draft as POLICY_REVIEW, release the claim, and skip — never
         // auto-send unreviewed copy that tripped a policy. (Unsubscribe compliance
         // is NOT checked here: the send footer guarantees a List-Unsubscribe link.)
-        const violations = checkDraftPolicy({ subject, emailBody: body }, draftPolicy)
+        // Also fact-check generated claims against what we actually know about the
+        // prospect — fabricated prior-contact or unsupported event claims must not
+        // auto-send. Grounding = the lead facts the copy was generated from.
+        const grounding = [lead.businessName, lead.category, lead.city, lead.aiSummary, lead.outreachAngle, lead.notes]
+          .filter(Boolean).join(' ')
+        const violations = [
+          ...checkDraftPolicy({ subject, emailBody: body }, draftPolicy),
+          ...checkClaimGrounding(body, { grounding, hasPriorConnection: Boolean(lead.notes?.trim()) }),
+        ]
         if (violations.length > 0) {
           await prisma.outreachDraft.create({
             data: {
