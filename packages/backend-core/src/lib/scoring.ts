@@ -1,6 +1,8 @@
 // Lead ICP scoring — maps available lead fields to signal vectors
 // Uses the same weight schema as ScorerV2 / outcomes.ts
 
+import { prisma } from './prisma.js'
+
 export type ScoringWeights = {
   industry: number
   size: number
@@ -25,6 +27,18 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   channelFit: 0.05,
   timingFit: 0.02,
   dataFreshness: 0.00
+}
+
+/**
+ * A workspace's configured scoring weights, falling back to the defaults when none
+ * are set. Single source of truth shared by the API (lead create/update rescoring)
+ * and the worker (research-lead scoring) so the schema-handling cast lives in one
+ * place. Imported lazily — `prisma` is the shared lazy singleton, so this adds no
+ * cost to callers that never invoke it.
+ */
+export async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
+  const model = await prisma.scoringModel.findUnique({ where: { workspaceId }, select: { weights: true } })
+  return (model?.weights as ScoringWeights | null) ?? DEFAULT_SCORING_WEIGHTS
 }
 
 // Target ICP: field-service companies (civil, electrical, plumbing, landscaping, etc.)

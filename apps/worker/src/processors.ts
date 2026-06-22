@@ -10,6 +10,7 @@ import {
   detectBuyingStage,
   calcWinProbability,
   toRawSignal,
+  MAX_SIGNALS_FOR_SCORING,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
 import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
@@ -123,7 +124,7 @@ export async function scoreProspects(
   for (;;) {
     const page = await prisma.prospect.findMany({
       where: { workspaceId },
-      include: { signals: true },
+      include: { signals: { orderBy: { detectedAt: 'desc' }, take: MAX_SIGNALS_FOR_SCORING } },
       orderBy: { id: 'asc' },
       take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
@@ -178,7 +179,7 @@ export async function calibrateScoring(
     // Never learn signal weights / ICP from example prospects — that would poison
     // the real model with demo data.
     where: { workspaceId, stage: { in: ['WON', 'LOST'] }, prospect: { isExample: false } },
-    include: { prospect: { include: { signals: true } } },
+    include: { prospect: { include: { signals: { orderBy: { detectedAt: 'desc' }, take: MAX_SIGNALS_FOR_SCORING } } } },
     orderBy: { recordedAt: 'desc' },
     take: 100,
   }) as CalibrationOutcomeRow[]

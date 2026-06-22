@@ -4,7 +4,7 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
-import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState } from '../lib/signalEngine.js'
+import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, MAX_SIGNALS_FOR_SCORING } from '../lib/signalEngine.js'
 import type { RawSignal, SignalType } from '../lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '../lib/signalIngest.js'
@@ -138,7 +138,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   })
 
   // Rescore the prospect
-  const allSignals = await prisma.signal.findMany({ where: { prospectId } })
+  const allSignals = await prisma.signal.findMany({ where: { prospectId }, orderBy: { detectedAt: 'desc' }, take: MAX_SIGNALS_FOR_SCORING })
   const rawSignals = allSignals.map(toRawSignal)
   const scores = calculateOpportunityScores(rawSignals, {
     industry: prospect.industry,

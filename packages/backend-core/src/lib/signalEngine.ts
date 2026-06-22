@@ -2,6 +2,14 @@
 import type { BuyingStage, SignalType } from '@acaos/shared'
 export type { BuyingStage, OutcomeStage, SignalType } from '@acaos/shared'
 
+// Upper bound on signals loaded per prospect for scoring. Prospects with deep
+// enrichment history can accumulate thousands of signals; loading them all risks
+// OOM on the worker (batch rescoring) and the API (prospect detail / per-signal
+// rescore). We score on the most-recent N — recency drives decay-weighted scoring,
+// so only pathological outliers past the cap are clipped, and scores are unchanged
+// in practice.
+export const MAX_SIGNALS_FOR_SCORING = 5000
+
 
 // Exponential decay rates: strength × e^(-rate × ageDays)
 // Derived from spec: FUNDING Day30=70%, Day90=25%
