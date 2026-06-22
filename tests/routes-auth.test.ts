@@ -160,6 +160,18 @@ test('signup rejects a duplicate email', async () => {
   assert.equal(res.status, 409)
 })
 
+test('signup rejects a disposable email address (before any account is created)', async () => {
+  const res = await post('/api/auth/signup', { email: 'throwaway@mailinator.com', password: 'sup3rsecret1' })
+  assert.equal(res.status, 400)
+  assert.match(res.body.error ?? res.body.message ?? '', /permanent email/i)
+  assert.equal(prisma.callsTo('user', 'create').length, 0, 'no user row created for a disposable signup')
+})
+
+test('signup rejects a subdomain of a disposable provider', async () => {
+  const res = await post('/api/auth/signup', { email: 'x@inbox.mailinator.com', password: 'sup3rsecret1' })
+  assert.equal(res.status, 400)
+})
+
 // --- login ---
 
 test('login succeeds with correct credentials and sets the refresh cookie (not the body)', async () => {

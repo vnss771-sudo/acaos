@@ -13,6 +13,7 @@ import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middlewa
 import { recordAudit } from '../lib/audit.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotp, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
+import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-core/lib/disposableEmail.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
@@ -68,6 +69,14 @@ authRouter.post(
 
     const passwordError = validatePassword(password)
     if (passwordError) throw new ApiError(400, passwordError)
+
+    // Reject known throwaway/disposable mailbox providers — the cheapest way to
+    // mass-register abusive accounts. Checked before the existence lookup so a
+    // disposable address is rejected outright. Enabled by default; operator-
+    // disableable via BLOCK_DISPOSABLE_EMAILS=false.
+    if (disposableBlockingEnabled() && isDisposableEmail(email)) {
+      throw new ApiError(400, 'Please sign up with a permanent email address')
+    }
 
     const existing = await prisma.user.findUnique({ where: { email } })
     if (existing) throw new ApiError(409, 'Email already registered')
