@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey } from '../packages/backend-core/src/lib/normalize.ts'
+import { normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, isDeliverableEmail } from '../packages/backend-core/src/lib/normalize.ts'
 
 describe('normalizeDomain', () => {
   it('lowercases and strips a leading www.', () => {
@@ -58,5 +58,25 @@ describe('normalizeEmailKey', () => {
     assert.equal(normalizeEmailKey('@x.com'), null)
     assert.equal(normalizeEmailKey('alex@'), null)
     assert.equal(normalizeEmailKey('+tag@x.com'), null)
+  })
+})
+
+describe('isDeliverableEmail', () => {
+  it('accepts well-formed addresses', () => {
+    assert.equal(isDeliverableEmail('alex@example.com'), true)
+    assert.equal(isDeliverableEmail('  Alex.Smith@sub.example.co.uk '), true)
+  })
+  it('rejects structurally invalid addresses', () => {
+    assert.equal(isDeliverableEmail('not-an-email'), false)
+    assert.equal(isDeliverableEmail('alex@nodot'), false)
+    assert.equal(isDeliverableEmail('alex @example.com'), false)
+    assert.equal(isDeliverableEmail('a@b@c.com'), false)
+    assert.equal(isDeliverableEmail('@example.com'), false)
+  })
+  it('rejects control characters and empty/nullish input', () => {
+    assert.equal(isDeliverableEmail('alex\n@example.com'), false)
+    assert.equal(isDeliverableEmail(''), false)
+    assert.equal(isDeliverableEmail(null), false)
+    assert.equal(isDeliverableEmail(undefined), false)
   })
 })

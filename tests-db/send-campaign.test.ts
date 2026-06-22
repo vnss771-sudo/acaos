@@ -118,6 +118,34 @@ test('pagination: a daily cap reached mid-paging stops and tallies the remainder
   assert.equal(result.sent + result.skipped + result.failed, 6)
 })
 
+test('skip accounting: breaks skipped down by reason (suppressed + invalid email)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const good = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+  await seedSendableLead(workspace.id, campaign.id, 'stop@buyer.test')
+  await suppress(workspace.id, 'stop@buyer.test', 'UNSUBSCRIBED')
+  // A lead whose email is structurally invalid → INVALID_EMAIL, never dispatched.
+  const badLead = await prisma.lead.create({
+    data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Bad', email: 'not-an-email', stage: 'RESEARCHED' },
+  })
+  await prisma.outreachDraft.create({ data: { leadId: badLead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there' } })
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  assert.equal(result.sent, 1)
+  assert.equal(result.skipped, 2)
+  assert.equal(result.skippedByReason.SUPPRESSED, 1)
+  assert.equal(result.skippedByReason.INVALID_EMAIL, 1)
+  // The breakdown sums to the total skipped.
+  const sum = Object.values(result.skippedByReason).reduce((a, b) => a + b, 0)
+  assert.equal(sum, result.skipped)
+  // Only the valid, non-suppressed recipient was dispatched.
+  assert.deepEqual(mailer.sent, ['reach@buyer.test'])
+  assert.equal((await prisma.outreachSent.findFirst({ where: { leadId: good.id } }))!.status, 'SENT')
+})
+
 test('claim timestamps: SENT carries claimedAt + sentAt, no failedAt', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)

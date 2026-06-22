@@ -373,7 +373,10 @@ const sendCampaignWorker = new Worker(
     if (!isFeatureEnabled('send')) { log('send-campaign', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled', sent: 0, skipped_count: leadIds?.length ?? 0 } }
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
     const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
-    log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`)
+    // Compact skip breakdown (non-zero reasons only) so the operator log answers
+    // "why didn't these send?" at a glance.
+    const reasons = Object.entries(result.skippedByReason).filter(([, n]) => n > 0).map(([r, n]) => `${r}=${n}`).join(' ')
+    log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}${reasons ? ` [${reasons}]` : ''}`)
     return result
   },
   { connection, concurrency: 2 }

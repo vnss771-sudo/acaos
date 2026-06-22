@@ -44,6 +44,26 @@ export function normalizeCompanyNameKey(name: string | null | undefined): string
 }
 
 /**
+ * Deterministic, dependency-free deliverability check: is this address shaped
+ * like something we can actually send to? Rejects control chars, whitespace, a
+ * missing/duplicate `@`, and domains without a dotted TLD. Mirrors the API's
+ * isValidEmail so the worker can reject obviously-invalid addresses before
+ * claiming/generating (skip reason INVALID_EMAIL) instead of burning an SMTP
+ * attempt and hurting sender reputation. NOT a guarantee of deliverability — just
+ * a cheap structural gate.
+ */
+export function isDeliverableEmail(email: string | null | undefined): boolean {
+  if (!email) return false
+  const e = email.trim()
+  if (!e) return false
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(e)) return false
+  // ReDoS-safe: dot-separated labels that exclude '.', so adjacent '+' groups
+  // can't both match the same dot. Mirrors apps/api isValidEmail.
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(e.toLowerCase())
+}
+
+/**
  * Normalize an email for dedupe: lowercase, trim, and fold the local part's
  * plus-address tag (`alex+sales@x.com` -> `alex@x.com`). Conservative: it does
  * NOT strip dots (Gmail-specific) since that isn't universal across providers.

@@ -22,6 +22,7 @@ import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-c
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
+import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
 import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
@@ -233,11 +234,26 @@ export async function calibrateScoring(
   return result.stats
 }
 
+// Why a lead was skipped (vs sent/failed). Surfaced so the API/UI/operator can
+// answer "why didn't this send?" instead of a bare total.
+export type SendSkipReason =
+  | 'ALREADY_SENT'
+  | 'SUPPRESSED'
+  | 'INVALID_EMAIL'
+  | 'NO_APPROVED_DRAFT'
+  | 'POLICY_REVIEW'
+  | 'AI_LIMIT'
+  | 'AI_GENERATION_FAILED'
+  | 'DAILY_CAP'
+  | 'MISSION_PAUSED'
+
 type SendCampaignResult = {
   campaignId: string
   sent: number
   skipped: number
   failed: number
+  // Per-reason breakdown of `skipped` (sums to `skipped`).
+  skippedByReason: Record<SendSkipReason, number>
 }
 
 // Mission pause/complete is the operator stop button. Returns a human-readable
@@ -299,11 +315,22 @@ export async function sendCampaignBatch(
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
 
+  let sent = 0
+  let skipped = 0
+  let failed = 0
+  // Per-reason skip accounting so the result explains WHY leads didn't send.
+  const skippedByReason: Record<SendSkipReason, number> = {
+    ALREADY_SENT: 0, SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
+    POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MISSION_PAUSED: 0,
+  }
+  const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n }
+  const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
+
   // Don't even start a batch for a paused/completed mission.
   const initialBlock = await getMissionSendBlockReason(campaignId)
   if (initialBlock) {
     console.log(`[send-campaign] Skipping campaign ${campaignId}: ${initialBlock}`)
-    return { campaignId, sent: 0, skipped: 0, failed: 0 }
+    return result()
   }
 
   await progress?.(5)
@@ -339,17 +366,14 @@ export async function sendCampaignBatch(
     })
     if (usedToday >= dailySendLimit) {
       console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
-      return { campaignId, sent: 0, skipped: total, failed: 0 }
+      skip('DAILY_CAP', total)
+      return result()
     }
   }
 
   const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
 
   await progress?.(10)
-
-  let sent = 0
-  let skipped = 0
-  let failed = 0
 
   // Paginate eligible leads by id so a large campaign never loads them all into
   // memory. Each page re-loads its own fast-path sets and the per-lead mission
@@ -433,7 +457,7 @@ export async function sendCampaignBatch(
     if (blockReason) {
       const remaining = total - sent - skipped - failed
       console.log(`[send-campaign] Stopping campaign ${campaignId}: ${blockReason}; skipped remaining=${remaining}`)
-      skipped += remaining
+      skip('MISSION_PAUSED', remaining)
       break pageLoop
     }
 
@@ -444,11 +468,14 @@ export async function sendCampaignBatch(
     // constraint on the claim below remains the real safety net against
     // duplicate sends. FAILED is fail-closed (not auto-retried) — surfaced for
     // operator review rather than blindly resent.
-    if (alreadySentLeadIds.has(lead.id)) { skipped++; continue }
+    if (alreadySentLeadIds.has(lead.id)) { skip('ALREADY_SENT'); continue }
 
     // Skip suppressed addresses (unsubscribed or bounced)
-    if (isSuppressed(lead.email!)) { skipped++; continue }
+    if (isSuppressed(lead.email!)) { skip('SUPPRESSED'); continue }
 
+    // Reject structurally-invalid addresses before claiming/generating — a bad
+    // address would only burn an SMTP attempt and hurt sender reputation.
+    if (!isDeliverableEmail(lead.email)) { skip('INVALID_EMAIL'); continue }
 
     // Resolve the draft source WITHOUT spending AI yet. The outbox claim below
     // happens BEFORE any generation, so a racing send job loses the unique
@@ -465,14 +492,14 @@ export async function sendCampaignBatch(
       // A draft already flagged POLICY_REVIEW is awaiting human review — skip
       // without regenerating (the selection query excludes it, so it never lands
       // in outreachDrafts[0], but its lead still appears here in non-approval mode).
-      if (policyReviewLeadIds.has(lead.id)) { skipped++; continue }
+      if (policyReviewLeadIds.has(lead.id)) { skip('POLICY_REVIEW'); continue }
 
       // Approval mode: only human-approved drafts may be sent. The query above
       // includes APPROVED drafts only, so an empty drafts array here means this
       // lead has nothing approved — it must be skipped, never sent with freshly
       // generated copy. (Without this guard, generating below would bypass the
       // entire approval gate.)
-      if (approvalRequired) { skipped++; continue }
+      if (approvalRequired) { skip('NO_APPROVED_DRAFT'); continue }
 
       needGeneration = true
     }
@@ -514,13 +541,13 @@ export async function sendCampaignBatch(
         // Daily cap reached mid-batch — skip the remaining leads (across pages) and stop.
         const remaining = total - sent - skipped - failed
         console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached mid-batch for workspace ${workspaceId}; skipped remaining=${remaining}`)
-        skipped += remaining
+        skip('DAILY_CAP', remaining)
         break pageLoop
       }
       claimId = claim.id
     } catch (err) {
       // Unique violation — another attempt already owns this send. Skip (no AI spent).
-      if ((err as { code?: string }).code === 'P2002') { skipped++; continue }
+      if ((err as { code?: string }).code === 'P2002') { skip('ALREADY_SENT'); continue }
       throw err
     }
 
@@ -534,7 +561,7 @@ export async function sendCampaignBatch(
       try {
         await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
       } catch {
-        await releaseClaim(); skipped++; continue  // AI limit reached
+        await releaseClaim(); skip('AI_LIMIT'); continue  // AI limit reached
       }
 
       try {
@@ -564,7 +591,7 @@ export async function sendCampaignBatch(
           parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'send-campaign')
         } catch {
           await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
-          await releaseClaim(); skipped++; continue
+          await releaseClaim(); skip('AI_GENERATION_FAILED'); continue
         }
         subject = parsed.subject
         body    = parsed.email
@@ -584,7 +611,7 @@ export async function sendCampaignBatch(
             }
           })
           console.log(`[send-campaign] Draft for lead ${lead.id} flagged POLICY_REVIEW: ${violations.map(v => v.code).join(', ')}`)
-          await releaseClaim(); skipped++; continue
+          await releaseClaim(); skip('POLICY_REVIEW'); continue
         }
 
         // Persist the draft for reuse and fill the claim with the generated copy.
@@ -667,7 +694,7 @@ export async function sendCampaignBatch(
   }
 
   await progress?.(100)
-  return { campaignId, sent, skipped, failed }
+  return result()
 }
 
 // ── discover-prospects: provider search + import, off-request ─────────────────
