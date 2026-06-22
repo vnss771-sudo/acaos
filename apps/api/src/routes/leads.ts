@@ -6,7 +6,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
-import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
+import { computeLeadScore, getWorkspaceWeights } from '../lib/scoring.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
@@ -94,14 +94,6 @@ const updateDraftSchema = z.object({
   emailBody: z.string().optional(),
   followup: z.union([z.string(), z.null()]).optional(),
 })
-
-async function getWorkspaceWeights(workspaceId: string) {
-  const model = await prisma.scoringModel.findUnique({
-    where: { workspaceId },
-    select: { weights: true }
-  })
-  return (model?.weights as typeof DEFAULT_SCORING_WEIGHTS | null) ?? DEFAULT_SCORING_WEIGHTS
-}
 
 // List leads
 leadsRouter.get(

@@ -38,11 +38,18 @@ const FIELDS: CampaignStatField[] = ['sent', 'replied', 'interested', 'bounced',
  */
 export async function reconcileCampaignStats(opts: { rebuild?: boolean; now?: Date } = {}): Promise<ReconcileReport> {
   const now = opts.now ?? new Date()
+  // Reconcile only SETTLED days. `until` is the start of the current UTC day, so the
+  // current (partial) day is excluded: the ledger and projection are read in two
+  // separate queries, and a send committing between them would otherwise surface as
+  // transient false drift on today's row and trigger an unnecessary rebuild on every
+  // sweep. Today is live-maintained (ledger + projection written in one transaction)
+  // and gets reconciled tomorrow once it has settled.
+  const until = utcDayStart(now)
   const since = utcDayStart(new Date(now.getTime() - reconcileWindowDays() * 24 * 60 * 60 * 1000))
 
   // Ledger side: events in the window, bucketed by (workspace, campaign, day, field).
   const events = await prisma.contactEvent.findMany({
-    where: { campaignId: { not: null }, occurredAt: { gte: since } },
+    where: { campaignId: { not: null }, occurredAt: { gte: since, lt: until } },
     select: { workspaceId: true, campaignId: true, type: true, occurredAt: true },
   })
   const ledger = new Map<string, { workspaceId: string; campaignId: string; date: Date; counts: Record<CampaignStatField, number> }>()
@@ -59,8 +66,8 @@ export async function reconcileCampaignStats(opts: { rebuild?: boolean; now?: Da
     b.counts[field]++
   }
 
-  // Projection side: the stored rows over the same window.
-  const rows = await prisma.campaignDailyStats.findMany({ where: { date: { gte: since } } })
+  // Projection side: the stored rows over the same settled-day window.
+  const rows = await prisma.campaignDailyStats.findMany({ where: { date: { gte: since, lt: until } } })
   const projection = new Map<string, Record<CampaignStatField, number>>()
   for (const r of rows as Array<Record<string, unknown>>) {
     const key = `${r.campaignId as string}:${(r.date as Date).toISOString()}`
@@ -95,7 +102,9 @@ export async function reconcileCampaignStats(opts: { rebuild?: boolean; now?: Da
   let workspacesRebuilt = 0
   if (opts.rebuild) {
     for (const workspaceId of driftedWorkspaces) {
-      await rebuildCampaignStats(workspaceId, since).catch(() => {})
+      // Bound the rebuild to the same settled-day window so it never re-derives (and
+      // races) today's live-maintained row.
+      await rebuildCampaignStats(workspaceId, since, until).catch(() => {})
       workspacesRebuilt++
     }
   }

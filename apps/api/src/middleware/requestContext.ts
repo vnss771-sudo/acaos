@@ -18,9 +18,17 @@ declare global {
  * echoes it back on the response, attaches a child logger, and emits one
  * structured access-log line per completed request.
  */
+// A correlation id is echoed into response headers and structured logs (and now
+// propagated onto worker job payloads/logs), so an inbound value must be a safe,
+// bounded token — never trusted verbatim. Anything outside this charset/length
+// (e.g. a newline-injected value attempting to forge log lines) is discarded and a
+// fresh id generated instead.
+const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/
+
 export function requestContext(req: Request, res: Response, next: NextFunction): void {
   const inbound = req.headers['x-request-id']
-  const requestId = (Array.isArray(inbound) ? inbound[0] : inbound)?.trim() || randomUUID()
+  const candidate = (Array.isArray(inbound) ? inbound[0] : inbound)?.trim()
+  const requestId = candidate && SAFE_REQUEST_ID.test(candidate) ? candidate : randomUUID()
 
   req.id = requestId
   req.log = logger.child({ requestId })

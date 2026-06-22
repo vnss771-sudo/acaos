@@ -32,8 +32,7 @@ import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
-import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
+import { computeLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   generateRuleBasedRecommendation,
   toRawSignal,
@@ -57,14 +56,6 @@ let shuttingDown = false
 
 function log(queue: string, msg: string, requestId?: string) {
   logger.info(msg, { queue, service: SERVICE, releaseId: metadata.releaseId, ...(requestId ? { requestId } : {}) })
-}
-
-async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
-  const model = await prisma.scoringModel.findUnique({
-    where: { workspaceId },
-    select: { weights: true }
-  })
-  return (model?.weights as ScoringWeights | null) ?? DEFAULT_SCORING_WEIGHTS
 }
 
 // ── research-lead ─────────────────────────────────────────────────────────────

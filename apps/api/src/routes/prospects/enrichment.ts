@@ -7,6 +7,7 @@ import {
   calcWinProbability,
   getOpportunityTier,
   toRawSignal,
+  MAX_SIGNALS_FOR_SCORING,
   type SignalType,
 } from '../../lib/signalEngine.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
@@ -54,7 +55,7 @@ export function registerEnrichmentRoutes(prospectsRouter: Router) {
     }
 
     const [allSignals, icp] = await Promise.all([
-      prisma.signal.findMany({ where: { prospectId: prospect.id } }),
+      prisma.signal.findMany({ where: { prospectId: prospect.id }, orderBy: { detectedAt: 'desc' }, take: MAX_SIGNALS_FOR_SCORING }),
       getICP(prospect.workspaceId)
     ])
     const rawSignals = allSignals.map(toRawSignal)

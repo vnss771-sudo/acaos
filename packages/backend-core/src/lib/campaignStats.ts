@@ -57,17 +57,21 @@ export const EVENT_FIELD: Record<string, CampaignStatField | undefined> = {
 }
 
 /**
- * Rebuild CampaignDailyStats for a workspace (optionally from a date) by
- * re-aggregating the ContactEvent ledger. Idempotent: it zeroes the affected
- * rows' counters then re-sums, so a drifted projection converges to the ledger.
- * Used by ops/rebuild-campaign-stats.mjs.
+ * Rebuild CampaignDailyStats for a workspace by re-aggregating the ContactEvent
+ * ledger over an optional [from, to) window. Idempotent: it re-sums the affected
+ * rows' counters, so a drifted projection converges to the ledger. `to` lets a
+ * caller exclude the current (partial) day so a rebuild never races a live write.
+ * Used by ops/rebuild-campaign-stats.mjs and the reconciliation sweep.
  */
-export async function rebuildCampaignStats(workspaceId: string, from?: Date): Promise<{ rows: number }> {
+export async function rebuildCampaignStats(workspaceId: string, from?: Date, to?: Date): Promise<{ rows: number }> {
+  const occurredAt: { gte?: Date; lt?: Date } = {}
+  if (from) occurredAt.gte = from
+  if (to) occurredAt.lt = to
   const events = await prisma.contactEvent.findMany({
     where: {
       workspaceId,
       campaignId: { not: null },
-      ...(from ? { occurredAt: { gte: from } } : {}),
+      ...(from || to ? { occurredAt } : {}),
     },
     select: { campaignId: true, type: true, occurredAt: true },
   })

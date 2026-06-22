@@ -23,13 +23,17 @@ async function seedSentEvents(workspaceId: string, campaignId: string, n: number
   })
 }
 
+// Reconciliation covers only SETTLED days, so the drift fixtures seed a past day
+// (yesterday) that falls inside the trailing window but excludes the current day.
+const yesterday = () => new Date(Date.now() - 24 * 60 * 60 * 1000)
+
 test('matching ledger and projection report no drift', async () => {
   const { workspace } = await seedUserWithWorkspace()
   setEnv('STATS_RECONCILE_WINDOW_DAYS', '2')
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
-  const today = new Date()
-  await seedSentEvents(workspace.id, campaign.id, 3, today)
-  await prisma.campaignDailyStats.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, date: utcDayStart(today), sent: 3 } })
+  const when = yesterday()
+  await seedSentEvents(workspace.id, campaign.id, 3, when)
+  await prisma.campaignDailyStats.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, date: utcDayStart(when), sent: 3 } })
 
   const report = await reconcileCampaignStats({ rebuild: true })
   assert.deepEqual(report.drifted, [])
@@ -40,10 +44,10 @@ test('a drifted projection is detected and rebuilt to match the ledger', async (
   const { workspace } = await seedUserWithWorkspace()
   setEnv('STATS_RECONCILE_WINDOW_DAYS', '2')
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
-  const today = new Date()
-  await seedSentEvents(workspace.id, campaign.id, 5, today)
+  const when = yesterday()
+  await seedSentEvents(workspace.id, campaign.id, 5, when)
   // Projection wrongly says 2 (drift of 3 vs the ledger's 5).
-  await prisma.campaignDailyStats.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, date: utcDayStart(today), sent: 2 } })
+  await prisma.campaignDailyStats.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, date: utcDayStart(when), sent: 2 } })
 
   const report = await reconcileCampaignStats({ rebuild: true })
   assert.ok(report.drifted.some(d => d.field === 'sent' && d.ledger === 5 && d.projection === 2))
@@ -51,6 +55,24 @@ test('a drifted projection is detected and rebuilt to match the ledger', async (
   // After rebuild the projection converges to the ledger.
   const row = await prisma.campaignDailyStats.findFirst({ where: { campaignId: campaign.id } })
   assert.equal(row!.sent, 5)
+})
+
+test('the current (partial) day is excluded — no false drift from in-flight sends', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  setEnv('STATS_RECONCILE_WINDOW_DAYS', '2')
+  const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
+  const today = new Date()
+  // Ledger has 5 SENT today but the projection still reads 2 — exactly the transient
+  // mid-day mismatch (two separate reads racing a live write) the bound must ignore.
+  await seedSentEvents(workspace.id, campaign.id, 5, today)
+  await prisma.campaignDailyStats.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, date: utcDayStart(today), sent: 2 } })
+
+  const report = await reconcileCampaignStats({ rebuild: true })
+  assert.deepEqual(report.drifted, [], 'today has not settled and is out of the reconcile window')
+  assert.equal(report.workspacesRebuilt, 0)
+  // The live row is left untouched — never rebuilt mid-day.
+  const row = await prisma.campaignDailyStats.findFirst({ where: { campaignId: campaign.id } })
+  assert.equal(row!.sent, 2)
 })
 
 test('drift outside the reconcile window is ignored', async () => {
