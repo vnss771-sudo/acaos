@@ -950,6 +950,10 @@ model AiPromptVersion {
   drafts       OutreachDraft[]
 
   @@unique([workspaceId, type, version])
+  // One row per distinct generator config (model + params + template) so
+  // find-or-create is atomic: a concurrent duplicate-hash insert collides and
+  // collapses to the winner instead of creating a second version for the same hash.
+  @@unique([workspaceId, type, promptHash])
   @@index([workspaceId, type, isActive])
   @@index([promptHash])
 }

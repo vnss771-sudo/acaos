@@ -14,7 +14,8 @@ import {
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
 import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
-import { generateOutreach } from '@acaos/backend-core/services/openai.js'
+import { generateOutreach, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
+import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
@@ -678,6 +679,10 @@ export async function sendCampaignBatch(
         body    = parsed.email
         const followup = parsed.followup ?? null
 
+        // Record generation provenance (model + prompt version) so the draft is
+        // auditable/reproducible. Best-effort — never blocks the send.
+        const promptVersionId = await resolvePromptVersionId({ workspaceId, ...outreachGenerationMeta() })
+
         // Deterministic policy check on freshly generated copy. On a violation,
         // persist the draft as POLICY_REVIEW, release the claim, and skip — never
         // auto-send unreviewed copy that tripped a policy. (Unsubscribe compliance
@@ -686,7 +691,7 @@ export async function sendCampaignBatch(
         if (violations.length > 0) {
           await prisma.outreachDraft.create({
             data: {
-              leadId: lead.id, workspaceId, subject, emailBody: body, followup,
+              leadId: lead.id, workspaceId, subject, emailBody: body, followup, promptVersionId,
               status: 'POLICY_REVIEW',
               policyViolations: { violations: violations.map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
             }
@@ -697,7 +702,7 @@ export async function sendCampaignBatch(
 
         // Persist the draft for reuse and fill the claim with the generated copy.
         await prisma.outreachDraft.create({
-          data: { leadId: lead.id, workspaceId, subject, emailBody: body, followup }
+          data: { leadId: lead.id, workspaceId, subject, emailBody: body, followup, promptVersionId }
         })
         await prisma.outreachSent.update({ where: { id: claimId }, data: { subject, body } })
       } catch (err) {

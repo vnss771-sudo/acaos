@@ -3,7 +3,8 @@ import { Worker, Queue } from 'bullmq'
 import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
-import { generateLeadResearch, generateOutreach, analyzeReply } from '@acaos/backend-core/services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
+import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import {
   parseAiJson,
   parseLeadResearchJson,
@@ -155,13 +156,18 @@ const outreachWorker = new Worker(
     // here marks the job failed so BullMQ retries rather than persisting garbage.
     const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
 
+    // Record generation provenance (model + prompt version) so the draft is
+    // auditable/reproducible. Best-effort — never blocks draft creation.
+    const promptVersionId = await resolvePromptVersionId({ workspaceId: lead.workspaceId, ...outreachGenerationMeta() })
+
     await prisma.outreachDraft.create({
       data: {
         leadId: lead.id,
         workspaceId: lead.workspaceId,
         subject: parsed.subject,
         emailBody: parsed.email,
-        followup: parsed.followup ?? null
+        followup: parsed.followup ?? null,
+        promptVersionId,
       }
     })
 

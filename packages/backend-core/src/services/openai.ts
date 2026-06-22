@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { createHash } from 'node:crypto'
 import { ApiError } from '../lib/errors.js'
 import { hasEnv } from '../lib/env.js'
 import { openAiBreaker, CircuitOpenError } from '../lib/circuit.js'
@@ -16,6 +17,31 @@ function getOpenAiClient() {
 
 function model() {
   return process.env.OPENAI_MODEL || 'gpt-4o-mini'
+}
+
+// Sampling temperature for all generations. A constant (not inlined) so the value
+// recorded in generation provenance always matches what was actually sent.
+const TEMPERATURE = 0.4
+
+// Bump when the OUTREACH prompt template changes in a way that should be recorded
+// as a new prompt version (so old vs new drafts are distinguishable in provenance).
+export const OUTREACH_PROMPT_VERSION = 1
+
+/**
+ * Provenance descriptor for the current outreach generator: the model, sampling
+ * params, and a stable promptHash that changes whenever the template version,
+ * model, or params change. Recorded on each generated draft (via AiPromptVersion)
+ * so output is auditable and reproducible. Pure (reads env only).
+ */
+export function outreachGenerationMeta(): {
+  type: 'OUTREACH'; model: string; temperature: number; maxTokens: number; promptHash: string
+} {
+  const m = model()
+  const maxTokens = MAX_TOKENS.outreach
+  const promptHash = createHash('sha256')
+    .update(`OUTREACH|v${OUTREACH_PROMPT_VERSION}|${m}|t${TEMPERATURE}|m${maxTokens}`)
+    .digest('hex')
+  return { type: 'OUTREACH', model: m, temperature: TEMPERATURE, maxTokens, promptHash }
 }
 
 // Per-task output-token ceilings. Without max_tokens the API will generate up to
@@ -37,7 +63,7 @@ async function chat(system: string, user: string, maxTokens: number): Promise<st
       const completion = await client.chat.completions.create({
         model: model(),
         response_format: { type: 'json_object' },
-        temperature: 0.4,
+        temperature: TEMPERATURE,
         max_tokens: maxTokens,
         messages: [
           { role: 'system', content: system },
