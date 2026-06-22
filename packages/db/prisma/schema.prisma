@@ -570,13 +570,18 @@ enum LeadStage {
 model Suppression {
   id          String    @id @default(cuid())
   workspaceId String
+  // email preserves the address as supplied (trimmed) for display/audit; emailKey
+  // is the normalized (trim+lowercase) dedup key that every suppression lookup
+  // uses, so case/whitespace variants can't slip a suppressed recipient through.
   email       String
-  reason      String    @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | MANUAL
+  emailKey    String
+  reason      String    @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | MANUAL | COMPLAINT
   createdAt   DateTime  @default(now())
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  @@unique([workspaceId, email])
+  @@unique([workspaceId, emailKey])
   @@index([workspaceId])
+  @@index([workspaceId, createdAt])
 }
 
 model Prospect {

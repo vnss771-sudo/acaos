@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, isDeliverableEmail } from '../packages/backend-core/src/lib/normalize.ts'
+import { normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, isDeliverableEmail, normalizeEmail } from '../packages/backend-core/src/lib/normalize.ts'
 
 describe('normalizeDomain', () => {
   it('lowercases and strips a leading www.', () => {
@@ -78,5 +78,19 @@ describe('isDeliverableEmail', () => {
     assert.equal(isDeliverableEmail(''), false)
     assert.equal(isDeliverableEmail(null), false)
     assert.equal(isDeliverableEmail(undefined), false)
+  })
+})
+
+describe('normalizeEmail (suppression/contact key)', () => {
+  it('trims and lowercases', () => {
+    assert.equal(normalizeEmail('  Alex@Example.COM '), 'alex@example.com')
+  })
+  it('does NOT fold plus-addressing (distinct recipients)', () => {
+    assert.notEqual(normalizeEmail('john+test@example.com'), normalizeEmail('john@example.com'))
+    assert.equal(normalizeEmail('john+test@example.com'), 'john+test@example.com')
+  })
+  it('returns empty string for nullish input', () => {
+    assert.equal(normalizeEmail(null), '')
+    assert.equal(normalizeEmail(undefined), '')
   })
 })

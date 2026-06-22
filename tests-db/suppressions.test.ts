@@ -42,3 +42,30 @@ test('bulkCheckSuppression predicate normalizes both sides and is workspace-scop
   assert.equal(pred('clean@x.com'), false, 'never-suppressed address is sendable')
   assert.equal(pred('other@x.com'), false, "another workspace's suppression must not leak in")
 })
+
+test('emailKey: matching is case/whitespace-insensitive across write and read', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await suppress(workspace.id, '  STOP@Buyer.TEST ', 'BOUNCED')
+  // A differently-cased/padded variant of the same address is still suppressed.
+  assert.equal(await isSuppressed(workspace.id, 'stop@buyer.test'), true)
+  assert.equal(await isSuppressed(workspace.id, 'Stop@Buyer.Test'), true)
+  const pred = await bulkCheckSuppression(workspace.id, ['STOP@BUYER.TEST', 'other@buyer.test'])
+  assert.equal(pred('stop@buyer.test'), true)
+  assert.equal(pred('other@buyer.test'), false)
+})
+
+test('emailKey: re-suppressing a case variant updates the same row (no duplicate)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await suppress(workspace.id, 'dupe@buyer.test', 'UNSUBSCRIBED')
+  await suppress(workspace.id, 'DUPE@Buyer.test', 'BOUNCED')
+  const rows = await prisma.suppression.findMany({ where: { workspaceId: workspace.id, emailKey: 'dupe@buyer.test' } })
+  assert.equal(rows.length, 1, 'one row per normalized emailKey')
+  assert.equal(rows[0].reason, 'BOUNCED', 'the re-suppression updated the reason')
+})
+
+test('emailKey: plus-addressing is NOT folded (distinct recipients)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await suppress(workspace.id, 'john+promo@buyer.test', 'UNSUBSCRIBED')
+  assert.equal(await isSuppressed(workspace.id, 'john+promo@buyer.test'), true)
+  assert.equal(await isSuppressed(workspace.id, 'john@buyer.test'), false)
+})

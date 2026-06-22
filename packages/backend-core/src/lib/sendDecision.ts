@@ -1,4 +1,5 @@
 import { prisma } from './prisma.js'
+import { normalizeEmail } from './normalize.js'
 
 export type SendReason =
   | 'WORKSPACE_PAUSED'
@@ -68,9 +69,9 @@ export async function canSendOutreach(input: SendEligibilityInput): Promise<Send
     return { allowed: false, reason: 'ALREADY_SENT' }
   }
 
-  // 5. Check suppression status
+  // 5. Check suppression status (normalized emailKey — same key suppress() writes)
   const suppressed = await prisma.suppression.findUnique({
-    where: { workspaceId_email: { workspaceId, email: lead.email } }
+    where: { workspaceId_emailKey: { workspaceId, emailKey: normalizeEmail(lead.email) } }
   })
   if (suppressed) {
     return { allowed: false, reason: 'SUPPRESSED' }

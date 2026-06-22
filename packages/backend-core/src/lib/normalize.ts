@@ -64,6 +64,21 @@ export function isDeliverableEmail(email: string | null | undefined): boolean {
 }
 
 /**
+ * Suppression/contact-key normalization: trim + lowercase ONLY. Deliberately does
+ * NOT fold plus-addressing — for suppression and contact-frequency we treat
+ * `john+test@x.com` and `john@x.com` as DISTINCT recipients (provider-specific
+ * plus-equivalence can be layered on later if the product wants it). This is the
+ * single normalizer behind Suppression.emailKey and all suppression lookups, so
+ * both sides of every comparison are normalized the same way.
+ *
+ * Distinct from normalizeEmailKey (below), which DOES fold plus-tags and is used
+ * for prospect/lead identity dedupe.
+ */
+export function normalizeEmail(email: string | null | undefined): string {
+  return (email ?? '').trim().toLowerCase()
+}
+
+/**
  * Normalize an email for dedupe: lowercase, trim, and fold the local part's
  * plus-address tag (`alex+sales@x.com` -> `alex@x.com`). Conservative: it does
  * NOT strip dots (Gmail-specific) since that isn't universal across providers.
