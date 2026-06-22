@@ -10,6 +10,7 @@ import { recordAudit } from '../lib/audit.js'
 import { findBestMatchingOutreachSent } from '../lib/replyAttribution.js'
 import { contactEventData, recordContactEvent } from '../lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '../lib/campaignStats.js'
+import { cancelPendingFollowups } from '../services/followups.js'
 import { transitionLeadStage } from '../services/leadStageMachine.js'
 import type { LeadStage } from '@acaos/shared'
 
@@ -197,16 +198,22 @@ export async function recordProcessedReply(params: {
         },
       })
 
-      if (advance) {
-        // Advance the lead stage through the state machine (forward-only, no
-        // regression). Scope by workspaceId as defense-in-depth.
-        const transition = transitionLeadStage(lead!.stage as LeadStage, 'REPLY_INTERESTED')
-        if (transition.changed) {
-          await tx.lead.updateMany({
-            where: { id: lead!.id, workspaceId },
-            data: { stage: transition.nextStage, lastContactedAt: new Date() },
-          })
+      if (lead) {
+        if (advance) {
+          // Advance the lead stage through the state machine (forward-only, no
+          // regression). Scope by workspaceId as defense-in-depth.
+          const transition = transitionLeadStage(lead.stage as LeadStage, 'REPLY_INTERESTED')
+          if (transition.changed) {
+            await tx.lead.updateMany({
+              where: { id: lead.id, workspaceId },
+              data: { stage: transition.nextStage, lastContactedAt: new Date() },
+            })
+          }
         }
+        // Cancel any still-pending follow-ups for this lead IN THE SAME TRANSACTION
+        // as recording the reply, so a follow-up can never fire after the reply that
+        // should have stopped it.
+        await cancelPendingFollowups(tx, { workspaceId, leadId: lead.id, reason: 'REPLY_RECEIVED' })
       }
 
       // Close the outreach loop on the ONE attributed send (regardless of lead

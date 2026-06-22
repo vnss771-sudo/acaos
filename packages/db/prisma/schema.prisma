@@ -124,6 +124,7 @@ model Workspace {
   contactEvents        ContactEvent[]
   unsubscribeEvents    UnsubscribeEvent[]
   campaignDailyStats   CampaignDailyStats[]
+  followupTasks        FollowupTask[]
   processedEmails      ProcessedEmail[]
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
@@ -153,14 +154,63 @@ model Campaign {
   goalType     String
   description  String?
   workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  // Multi-step sequences are OFF by default — a campaign only schedules follow-ups
+  // when an operator explicitly enables them (safe-rollout: visible before auto-send).
+  autoFollowupsEnabled Boolean @default(false)
   leads        Lead[]
   outreachSent OutreachSent[]
   mission      Mission?
   dailyStats   CampaignDailyStats[]
+  sequenceSteps OutreachSequenceStep[]
+  followupTasks FollowupTask[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
   @@index([workspaceId])
+}
+
+// A step in a campaign's outreach sequence. Step 1 is the initial send (implicit);
+// steps >= 2 are follow-ups scheduled `delayDays` after the prior send.
+model OutreachSequenceStep {
+  id          String   @id @default(cuid())
+  campaignId  String
+  stepNumber  Int
+  delayDays   Int
+  subject     String?
+  body        String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, stepNumber])
+  @@index([campaignId, isActive])
+}
+
+// A scheduled (or sent/blocked/cancelled) follow-up for one lead at one step. The
+// @@unique([campaignId, leadId, stepNumber]) makes scheduling idempotent. PROCESSING
+// is the claimed state so two workers can't send the same follow-up.
+model FollowupTask {
+  id              String             @id @default(cuid())
+  workspaceId     String
+  campaignId      String
+  leadId          String
+  outreachSentId  String?
+  stepNumber      Int
+  status          FollowupTaskStatus @default(SCHEDULED)
+  scheduledFor    DateTime
+  cancelledReason String?
+  lastError       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead            Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, leadId, stepNumber])
+  @@index([workspaceId, status, scheduledFor])
+  @@index([campaignId, status])
+  @@index([leadId, status])
 }
 
 // First-class Mission: the user-facing control plane that ties ICP/playbook,
@@ -212,6 +262,7 @@ model Lead {
   campaign       Campaign?       @relation(fields: [campaignId], references: [id])
   outreachDrafts OutreachDraft[]
   outreachSent   OutreachSent[]
+  followupTasks  FollowupTask[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -562,6 +613,15 @@ enum UnsubscribeSource {
   ONE_CLICK
   MANUAL
   COMPLAINT
+}
+
+enum FollowupTaskStatus {
+  SCHEDULED
+  PROCESSING
+  BLOCKED
+  SENT
+  CANCELLED
+  FAILED
 }
 
 // Workspace billing tier (was a free-form String — now DB-enforced). `free` is

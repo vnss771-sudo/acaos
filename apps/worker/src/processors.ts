@@ -25,6 +25,7 @@ import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/li
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
+import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
 import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
@@ -291,7 +292,7 @@ export async function sendCampaignBatch(
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
-  const [wsCfgRecord, icp, workspace, missionCtx, draftPolicyRecord] = await Promise.all([
+  const [wsCfgRecord, icp, workspace, missionCtx, draftPolicyRecord, campaignRow] = await Promise.all([
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
     prisma.workspaceICP.findUnique({ where: { workspaceId } }),
     prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
@@ -301,7 +302,11 @@ export async function sendCampaignBatch(
     // Per-workspace draft content policy (length, forbidden phrases, etc). Optional —
     // absent means the deterministic defaults in checkDraftPolicy apply.
     prisma.workspaceDraftPolicy.findUnique({ where: { workspaceId } }),
+    // Whether this campaign opts into multi-step sequences (default false → no
+    // follow-ups are scheduled, so one-off campaigns are unaffected).
+    prisma.campaign.findUnique({ where: { id: campaignId }, select: { autoFollowupsEnabled: true } }),
   ])
+  const autoFollowupsEnabled = Boolean(campaignRow?.autoFollowupsEnabled)
   // Build the policy config once for the whole batch. null/undefined fields fall
   // through to checkDraftPolicy's deterministic defaults.
   const draftPolicy: DraftPolicyConfig | undefined = draftPolicyRecord
@@ -679,6 +684,13 @@ export async function sendCampaignBatch(
         // Advance the linked intent to SENT in the same transaction as the send.
         ...(linkedIntent ? [prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' } })] : []),
       ])
+
+      // Schedule the next sequence step (best-effort; no-op unless the campaign
+      // opted into auto-followups and an active next step exists).
+      void scheduleNextFollowup({
+        workspaceId, campaignId, leadId: lead.id, outreachSentId: claimId,
+        currentStep: 1, sentAt: new Date(), autoFollowupsEnabled,
+      }).catch(() => {})
 
       sent++
     } catch (err) {

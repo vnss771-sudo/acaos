@@ -55,6 +55,7 @@ export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | '
 export type DiscoveryRunStatus = 'RUNNING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED'
 export type SendStatus = 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | 'BOUNCED' | 'REPLIED'
 export type UnsubscribeSource = 'LINK' | 'ONE_CLICK' | 'MANUAL' | 'COMPLAINT'
+export type FollowupTaskStatus = 'SCHEDULED' | 'PROCESSING' | 'BLOCKED' | 'SENT' | 'CANCELLED' | 'FAILED'
 export type LeadStage = 'NEW' | 'RESEARCHED' | 'OUTREACH_SENT' | 'REPLIED' | 'BOOKED' | 'CLOSED' | 'DEAD'
 export type OutreachIntentStatus =
   | 'PROPOSED'
