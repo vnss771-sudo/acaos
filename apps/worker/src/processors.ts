@@ -16,6 +16,7 @@ import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateOutreach, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
+import { effectiveReplyClassification } from '@acaos/backend-core/lib/replyGating.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
@@ -1154,6 +1155,12 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // (above) but never advance the lead or feed the scoring model.
   if (parsed.isAutoReply) return
 
+  // Confidence-gate the one IRREVERSIBLE consequence (NOT_INTERESTED → DEAD): a
+  // low-confidence negative is downgraded to NEEDS_MORE_INFO so the lead is kept
+  // for human review rather than auto-killed. The raw classification/confidence were
+  // already stamped on the send above; only the automated effects use the gated value.
+  const effectiveClassification = effectiveReplyClassification(parsed.classification, parsed.confidence)
+
   const stageMap: Record<string, LeadStage> = {
     INTERESTED: 'REPLIED',
     NOT_INTERESTED: 'DEAD',
@@ -1162,7 +1169,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
     REFERRAL: 'REPLIED',
     OUT_OF_OFFICE: 'OUTREACH_SENT',
   }
-  const newStage = stageMap[parsed.classification]
+  const newStage = stageMap[effectiveClassification]
   if (newStage) {
     await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
   }
@@ -1205,7 +1212,9 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
     REFERRAL: 'INTERESTED',
     OUT_OF_OFFICE: 'NOT_INTERESTED',
   }
-  const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(parsed.classification)
+  // Use the gated classification for the scoring outcome too, so a downgraded
+  // low-confidence negative doesn't feed the learning loop a false "not replied".
+  const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(effectiveClassification)
 
   await prisma.scoringOutcome.create({
     data: {
@@ -1215,7 +1224,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       prospectId: null,
       score: lead.score,
       replied,
-      replyIntent: replyIntentMap[parsed.classification] ?? null,
+      replyIntent: replyIntentMap[effectiveClassification] ?? null,
       messageRelevance: replied ? 0.8 : 0.2,
       channelUsed: 'EMAIL',
       scoringModelId: model.id,
