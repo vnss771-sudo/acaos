@@ -490,7 +490,8 @@ campaignsRouter.post(
     const job = await enqueueSendCampaign(
       campaign.id,
       campaign.workspaceId,
-      requestedIds
+      requestedIds,
+      req.id
     )
 
     void recordAudit({

@@ -55,8 +55,8 @@ const SERVICE = 'acaos-worker'
 const metadata = getRuntimeMetadata(SERVICE)
 let shuttingDown = false
 
-function log(queue: string, msg: string) {
-  logger.info(msg, { queue, service: SERVICE, releaseId: metadata.releaseId })
+function log(queue: string, msg: string, requestId?: string) {
+  logger.info(msg, { queue, service: SERVICE, releaseId: metadata.releaseId, ...(requestId ? { requestId } : {}) })
 }
 
 async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
@@ -486,12 +486,15 @@ for (const [name, worker] of WORKER_QUEUES) {
     if (job?.processedOn && job?.finishedOn) observeJobDuration(name, (job.finishedOn - job.processedOn) / 1000)
   })
   worker.on('failed', (job, err) => {
-    log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
+    // Correlate the failure back to the originating API request when the enqueuer
+    // threaded a requestId through the payload (optional — worker-internal jobs omit it).
+    const requestId = typeof job?.data?.requestId === 'string' ? job.data.requestId : undefined
+    log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`, requestId)
     // Only count/report once the job has exhausted its retries — transient
     // failures that BullMQ will retry are noise, not faults.
     if (isFinalAttempt(job)) {
       incJob(name, 'failed')
-      captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade })
+      captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade, requestId })
     }
   })
   worker.on('error', (err) => {

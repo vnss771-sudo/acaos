@@ -147,7 +147,7 @@ jobsRouter.post(
 
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_RESEARCH')
 
-    const job = await enqueueResearchLead({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id })
+    const job = await enqueueResearchLead({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id, requestId: req.id })
     res.status(202).json({ jobId: job.id, queue: 'research-lead', status: 'queued' })
   })
 )
@@ -167,7 +167,7 @@ jobsRouter.post(
 
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_OUTREACH')
 
-    const job = await enqueueGenerateOutreach({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id })
+    const job = await enqueueGenerateOutreach({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id, requestId: req.id })
     res.status(202).json({ jobId: job.id, queue: 'generate-outreach', status: 'queued' })
   })
 )
@@ -194,7 +194,7 @@ jobsRouter.post(
 
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
-    const job = await enqueueAnalyzeReply({ replyBody, workspaceId, leadId, initiatedByUserId: user.id })
+    const job = await enqueueAnalyzeReply({ replyBody, workspaceId, leadId, initiatedByUserId: user.id, requestId: req.id })
     res.status(202).json({ jobId: job.id, queue: 'analyze-reply', status: 'queued' })
   })
 )
@@ -219,7 +219,7 @@ jobsRouter.post(
       await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
     }
 
-    const jobs = await Promise.all((leads as Array<{ id: string }>).map((l: { id: string }) => enqueueResearchLead({ leadId: l.id, workspaceId, initiatedByUserId: user.id })))
+    const jobs = await Promise.all((leads as Array<{ id: string }>).map((l: { id: string }) => enqueueResearchLead({ leadId: l.id, workspaceId, initiatedByUserId: user.id, requestId: req.id })))
     res.status(202).json({ queued: jobs.length, jobs: jobs.map(j => ({ jobId: j.id, leadId: j.name })) })
   })
 )

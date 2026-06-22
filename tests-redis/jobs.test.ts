@@ -7,6 +7,8 @@
 import { test, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { jobsRouter } from '../apps/api/src/routes/jobs.ts'
+import { requestContext } from '../apps/api/src/middleware/requestContext.ts'
+import { getQueue } from '../packages/backend-core/src/lib/queues.ts'
 import {
   prisma, resetAll, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer,
 } from './helpers/env.ts'
@@ -95,6 +97,32 @@ test('poll rejects an unknown queue name', async () => {
     headers: { Authorization: bearer(user.id) },
   })
   assert.equal(res.status, 400)
+})
+
+test('POST /research threads the API X-Request-Id into the job payload', async () => {
+  // Mount requestContext so the inbound X-Request-Id becomes req.id, the same way
+  // the production app does — then assert it survives into the real queued payload.
+  const ctxServer = await startTestServer('/api/jobs', jobsRouter, {
+    configure: (app) => app.use(requestContext),
+  })
+  try {
+    const { user, workspace } = await seedUserWithWorkspace()
+    const lead = await seedLead(workspace.id)
+    const reqId = 'req-threading-test-abc123'
+    const res = await ctxServer.request('/api/jobs/research', {
+      method: 'POST',
+      headers: { ...authHeaders(user.id), 'X-Request-Id': reqId },
+      body: JSON.stringify({ leadId: lead.id }),
+    })
+    assert.equal(res.status, 202)
+    assert.equal(res.headers.get('x-request-id'), reqId)
+
+    // The correlation id is on the real BullMQ job, ready for the worker to log.
+    const job = await getQueue('research-lead').getJob(res.body.jobId)
+    assert.equal(job?.data.requestId, reqId)
+  } finally {
+    await ctxServer.close()
+  }
 })
 
 test('POST /outreach enqueues to the generate-outreach queue', async () => {
