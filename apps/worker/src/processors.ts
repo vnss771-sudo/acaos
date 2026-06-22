@@ -24,6 +24,7 @@ import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
+import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
 import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
@@ -673,6 +674,8 @@ export async function sendCampaignBatch(
         prisma.contactEvent.create({
           data: contactEventData({ workspaceId, email: lead.email!, type: 'SENT', leadId: lead.id, campaignId, outreachSentId: claimId }),
         }),
+        // Increment the campaign's daily SENT counter atomically with the send.
+        prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'sent' })),
         // Advance the linked intent to SENT in the same transaction as the send.
         ...(linkedIntent ? [prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' } })] : []),
       ])

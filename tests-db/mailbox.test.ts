@@ -140,3 +140,22 @@ test('attribution: with no In-Reply-To, only the most recent send for the lead f
   const pe = await prisma.processedEmail.findFirst({ where: { uid: 302 } })
   assert.equal(pe!.matchMethod, 'MOST_RECENT_LEAD_SEND')
 })
+
+test('attribution: a second reply email does NOT double-count the reply', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await seedLead(workspace.id, 'OUTREACH_SENT')
+  const c1 = await seedCampaign(workspace.id)
+  const s1 = await seedSend(workspace.id, c1.id, lead.id, '<send-x@acaos>')
+
+  // First reply flips the send and records one REPLIED ContactEvent + 1 stat.
+  await recordProcessedReply({ uid: 401, messageId: '<r1@x>', inReplyTo: '<send-x@acaos>', fromAddress: 'replier@x.test', workspaceId: workspace.id, lead: { id: lead.id, stage: 'OUTREACH_SENT' } })
+  // Second reply (new uid) re-attributes to the same, now-REPLIED send.
+  await recordProcessedReply({ uid: 402, messageId: '<r2@x>', inReplyTo: '<send-x@acaos>', fromAddress: 'replier@x.test', workspaceId: workspace.id, lead: { id: lead.id, stage: 'REPLIED' } })
+
+  // The send is REPLIED once; exactly ONE REPLIED ContactEvent; reply counted once.
+  assert.equal((await prisma.outreachSent.findUnique({ where: { id: s1.id } }))!.status, 'REPLIED')
+  assert.equal(await prisma.contactEvent.count({ where: { outreachSentId: s1.id, type: 'REPLIED' } }), 1)
+  const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()))
+  const stats = await prisma.campaignDailyStats.findUnique({ where: { campaignId_date: { campaignId: c1.id, date: today } } })
+  assert.equal(stats!.replied, 1, 'a duplicate reply email must not double-count')
+})

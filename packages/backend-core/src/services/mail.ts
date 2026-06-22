@@ -9,6 +9,7 @@ import { suppress } from '../lib/suppressions.js'
 import { recordAudit } from '../lib/audit.js'
 import { findBestMatchingOutreachSent } from '../lib/replyAttribution.js'
 import { contactEventData, recordContactEvent } from '../lib/contactEvents.js'
+import { campaignDailyStatsUpsertArgs } from '../lib/campaignStats.js'
 import { transitionLeadStage } from '../services/leadStageMachine.js'
 import type { LeadStage } from '@acaos/shared'
 
@@ -210,23 +211,33 @@ export async function recordProcessedReply(params: {
 
       // Close the outreach loop on the ONE attributed send (regardless of lead
       // stage — a BOOKED/CLOSED lead that replies still deserves an accurate record).
+      // Only the FIRST reply that actually transitions the send SENT→REPLIED writes
+      // the ledger event + stat: a second reply email (a new uid that passes the
+      // idempotency gate) re-attributes to the same now-REPLIED send and flips 0
+      // rows, so it must NOT double-count the reply.
       if (match.outreachSentId) {
-        await tx.outreachSent.updateMany({
+        const flip = await tx.outreachSent.updateMany({
           where: { id: match.outreachSentId, workspaceId, status: 'SENT' },
           data: { status: 'REPLIED', repliedAt: new Date() },
         })
-        // Append the REPLIED lifecycle event in the same transaction.
-        await tx.contactEvent.create({
-          data: contactEventData({
-            workspaceId,
-            email: lead?.email ?? match.toEmail ?? fromAddress,
-            type: 'REPLIED',
-            leadId: lead?.id ?? match.leadId,
-            campaignId: match.campaignId,
-            outreachSentId: match.outreachSentId,
-            metadata: { matchMethod: match.method },
-          }),
-        })
+        if (flip.count > 0) {
+          // Append the REPLIED lifecycle event in the same transaction.
+          await tx.contactEvent.create({
+            data: contactEventData({
+              workspaceId,
+              email: lead?.email ?? match.toEmail ?? fromAddress,
+              type: 'REPLIED',
+              leadId: lead?.id ?? match.leadId,
+              campaignId: match.campaignId,
+              outreachSentId: match.outreachSentId,
+              metadata: { matchMethod: match.method },
+            }),
+          })
+          // Increment the campaign's daily REPLIED counter atomically with the flip.
+          if (match.campaignId) {
+            await tx.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId: match.campaignId, date: new Date(), field: 'replied' }))
+          }
+        }
       }
     })
   } catch (err) {
