@@ -51,6 +51,11 @@ const ingestSchema = z.object({
 })
 const keyQuerySchema = z.object({ workspaceId: workspaceIdField })
 
+function extractEmail(entry: unknown): string | null {
+  const row = entry as Record<string, unknown>
+  return typeof row?.email === 'string' ? row.email.trim().toLowerCase() : null
+}
+
 // ---------------------------------------------------------------------------
 // API-key middleware — resolves workspace from x-api-key header
 // ---------------------------------------------------------------------------
@@ -102,12 +107,7 @@ ingestRouter.post(
     }
 
     // Collect emails from the incoming batch for deduplication
-    const incomingEmails = leads
-      .map((l: unknown) => {
-        const row = l as Record<string, unknown>
-        return typeof row?.email === 'string' ? row.email.trim().toLowerCase() : null
-      })
-      .filter(Boolean) as string[]
+    const incomingEmails = leads.map(extractEmail).filter(Boolean) as string[]
 
     // Find which emails already exist in this workspace
     const existing = incomingEmails.length
@@ -125,7 +125,7 @@ ingestRouter.post(
     for (const entry of leads) {
       const l = entry as Record<string, unknown>
       if (typeof l?.businessName !== 'string' || !l.businessName.trim()) continue
-      const email = typeof l.email === 'string' ? l.email.trim().toLowerCase() || null : null
+      const email = extractEmail(entry) || null
 
       if (email) {
         if (existingEmails.has(email) || seenEmails.has(email)) continue

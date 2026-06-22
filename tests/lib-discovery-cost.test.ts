@@ -39,6 +39,39 @@ test('env overrides change the per-provider cost', () => {
   }
 })
 
+test('env overrides fall back to default for non-numeric values', () => {
+  const saved = process.env.DISCOVERY_COST_APOLLO_CENTS
+  try {
+    process.env.DISCOVERY_COST_APOLLO_CENTS = 'invalid'
+    assert.equal(discoveryProviderCostCents('apollo'), DEFAULTS.apollo)
+  } finally {
+    if (saved === undefined) delete process.env.DISCOVERY_COST_APOLLO_CENTS
+    else process.env.DISCOVERY_COST_APOLLO_CENTS = saved
+  }
+})
+
+test('env overrides fall back to default for negative values', () => {
+  const saved = process.env.DISCOVERY_COST_APOLLO_CENTS
+  try {
+    process.env.DISCOVERY_COST_APOLLO_CENTS = '-5'
+    assert.equal(discoveryProviderCostCents('apollo'), DEFAULTS.apollo)
+  } finally {
+    if (saved === undefined) delete process.env.DISCOVERY_COST_APOLLO_CENTS
+    else process.env.DISCOVERY_COST_APOLLO_CENTS = saved
+  }
+})
+
+test('env overrides fall back to default for NaN string', () => {
+  const saved = process.env.DISCOVERY_COST_APOLLO_CENTS
+  try {
+    process.env.DISCOVERY_COST_APOLLO_CENTS = 'NaN'
+    assert.equal(discoveryProviderCostCents('apollo'), DEFAULTS.apollo)
+  } finally {
+    if (saved === undefined) delete process.env.DISCOVERY_COST_APOLLO_CENTS
+    else process.env.DISCOVERY_COST_APOLLO_CENTS = saved
+  }
+})
+
 test('estimateDiscoveryCost sums weighted cost across providers', () => {
   const { totalCents, byProvider } = estimateDiscoveryCost([
     { source: 'apollo', count: 10 },
