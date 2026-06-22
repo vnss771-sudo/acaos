@@ -78,6 +78,46 @@ test('skips suppressed addresses — never dispatches, never records a send', as
   assert.equal(goodLead!.stage, 'OUTREACH_SENT')
 })
 
+test('pagination: sends across multiple pages and enforces the cap across pages', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  // Five sendable leads, paged two at a time → three pages.
+  for (let n = 0; n < 5; n++) {
+    await seedSendableLead(workspace.id, campaign.id, `reach${n}@buyer.test`)
+  }
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn, pageSize: 2 })
+
+  // All five send despite the tiny page size — paging walks every page.
+  assert.equal(result.sent, 5)
+  assert.equal(mailer.sent.length, 5)
+  assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'SENT' } }), 5)
+})
+
+test('pagination: a daily cap reached mid-paging stops and tallies the remainder', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  // Cap of 2/day; six eligible leads paged two at a time.
+  await prisma.workspaceICP.create({
+    data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 2, targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+  })
+  const campaign = await seedCampaign(workspace.id)
+  for (let n = 0; n < 6; n++) {
+    await seedSendableLead(workspace.id, campaign.id, `cap${n}@buyer.test`)
+  }
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn, pageSize: 2 })
+
+  // Only the cap's worth is dispatched; the rest are tallied skipped, and the
+  // accounting still sums to the total eligible.
+  assert.equal(result.sent, 2)
+  assert.equal(mailer.sent.length, 2)
+  assert.equal(result.sent + result.skipped + result.failed, 6)
+})
+
 test('claim timestamps: SENT carries claimedAt + sentAt, no failedAt', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)

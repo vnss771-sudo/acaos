@@ -265,8 +265,9 @@ export async function sendCampaignBatch(
   // Optional injection seam: tests pass a `sendMail` stub so the suppression,
   // idempotency, and fail-closed paths can be exercised without real SMTP (the
   // real mailer does network I/O and SSRF-pins public hosts). Defaults to the
-  // real mailer, so production callers (worker.ts) are unchanged.
-  deps: { sendMail?: typeof sendMail } = {}
+  // real mailer, so production callers (worker.ts) are unchanged. `pageSize`
+  // lets a test exercise multi-page paging without seeding hundreds of leads.
+  deps: { sendMail?: typeof sendMail; pageSize?: number } = {}
 ): Promise<SendCampaignResult> {
   const sendMailFn = deps.sendMail ?? sendMail
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
@@ -319,107 +320,26 @@ export async function sendCampaignBatch(
   // setting, so a controlled launch never auto-sends freshly generated copy.
   const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
 
-  const leads = await prisma.lead.findMany({
-    where,
-    include: {
-      // When approval is required, only include APPROVED drafts. A lead that ends
-      // up with no included draft is then skipped in the send loop below (it is
-      // NOT sent with freshly generated copy — that would bypass approval).
-      // In non-approval mode the latest draft is used as-is, EXCEPT drafts that a
-      // human or the policy checker has set aside (REJECTED / POLICY_REVIEW) —
-      // those must never be auto-sent, so they're excluded from selection.
-      outreachDrafts: {
-        where: approvalRequired
-          ? { status: 'APPROVED' }
-          : { status: { notIn: ['REJECTED', 'POLICY_REVIEW'] } },
-        orderBy: { createdAt: 'desc' },
-        take: 1
-      }
-    }
-  }) as CampaignLeadRow[]
-  // Daily send cap. The authoritative enforcement is per-lead and atomic (the
-  // outbox claim below runs inside an advisory-locked transaction via
-  // reserveDailySendSlot, so concurrent send jobs for the same workspace can't
-  // each pass an independent check and collectively overshoot). This is just the
-  // fast path: if the workspace already hit today's cap, skip the whole batch.
-  // SAFE_LAUNCH_MODE clamps the workspace's own cap down to the low safe ceiling
-  // (and imposes the ceiling even when the workspace set no limit).
   const workspaceDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
   const dailySendLimit = effectiveDailySendLimit(workspaceDailyLimit)
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
+
+  // Total eligible via one COUNT (not a full load) — drives progress and the
+  // skipped tally without holding every lead in memory.
+  const total = await prisma.lead.count({ where })
+
+  // Daily send cap fast path: if the workspace already hit today's cap, skip the
+  // whole batch. The authoritative enforcement is still the per-lead atomic
+  // reservation (reserveDailySendSlot) inside the claim, which holds across pages.
+  // SAFE_LAUNCH_MODE clamps the workspace's own cap to the low safe ceiling.
   if (dailySendLimit != null) {
     const usedToday = await prisma.outreachSent.count({
       where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } }
     })
     if (usedToday >= dailySendLimit) {
       console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
-      return { campaignId, sent: 0, skipped: leads.length, failed: 0 }
-    }
-  }
-
-  // Filter suppressed addresses before doing any AI work
-  const emailList = leads.map((l: CampaignLeadRow) => l.email!).filter(Boolean)
-  const isSuppressed = emailList.length > 0
-    ? await bulkCheckSuppression(workspaceId, emailList)
-    : () => false
-
-  // Perf: bulk-load the per-lead lookups that used to run as serial DB
-  // round-trips inside the loop (one query each for the whole batch instead of
-  // N). These are fast-path pre-filters / caches only — they never replace the
-  // atomic per-lead claim below (the unique (campaignId, leadId) constraint),
-  // which remains the real race guard. Mission status is deliberately NOT cached
-  // here: it is re-checked per lead inside the loop so an operator pause issued
-  // mid-run still aborts the remaining batch.
-  const batchLeadIds = leads.map((l: CampaignLeadRow) => l.id)
-
-  // (1) Already-sent fast-path: load existing OutreachSent rows for the batch in
-  // one query. Mirrors the old per-lead findFirst filter exactly: SENT/SENDING/
-  // FAILED are treated as "do not (re)send". The atomic claim inside the loop is
-  // still authoritative against races; this Set just avoids the per-lead query.
-  const alreadySentLeadIds: Set<string> = batchLeadIds.length > 0
-    ? new Set(
-        (await prisma.outreachSent.findMany({
-          where: { campaignId, leadId: { in: batchLeadIds }, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
-          select: { leadId: true },
-        }))
-          .map((r: { leadId: string | null }) => r.leadId)
-          .filter((id: string | null): id is string => id !== null)
-      )
-    : new Set<string>()
-
-  // (2) Pending-policy-review fast-path: leads whose latest draft was flagged by
-  // the policy checker (excluded from the selection query above) are awaiting human
-  // review — do NOT regenerate copy for them (that would burn AI credits and pile up
-  // duplicate POLICY_REVIEW drafts every batch). They're skipped before generation.
-  const policyReviewLeadIds: Set<string> = batchLeadIds.length > 0
-    ? new Set(
-        (await prisma.outreachDraft.findMany({
-          where: { leadId: { in: batchLeadIds }, status: 'POLICY_REVIEW' },
-          select: { leadId: true },
-        })).map((r: { leadId: string }) => r.leadId)
-      )
-    : new Set<string>()
-
-  // (3) Linked-intent fast-path: load APPROVED OutreachIntents for the batch in
-  // one query, keyed by leadId. Best-effort, exactly as the old per-lead lookup
-  // (.catch(() => null)); a failure leaves the map empty so sends still proceed
-  // without provenance stamping. If a lead somehow has multiple APPROVED intents
-  // the first wins, matching findFirst's single-row semantics. The selected
-  // shape (id/recommendationId/evidenceSnapshot) matches the former findFirst,
-  // so the create's provenance fields type-check identically.
-  const linkedIntentRows = batchLeadIds.length > 0
-    ? await prisma.outreachIntent
-        .findMany({
-          where: { leadId: { in: batchLeadIds }, status: 'APPROVED' },
-          select: { leadId: true, id: true, recommendationId: true, evidenceSnapshot: true },
-        })
-        .catch(() => [])
-    : []
-  const linkedIntentByLeadId = new Map<string, (typeof linkedIntentRows)[number]>()
-  for (const intent of linkedIntentRows) {
-    if (intent.leadId !== null && !linkedIntentByLeadId.has(intent.leadId)) {
-      linkedIntentByLeadId.set(intent.leadId, intent)
+      return { campaignId, sent: 0, skipped: total, failed: 0 }
     }
   }
 
@@ -430,23 +350,91 @@ export async function sendCampaignBatch(
   let sent = 0
   let skipped = 0
   let failed = 0
-  const total = leads.length
 
-  for (let i = 0; i < leads.length; i++) {
-    const lead = leads[i]
+  // Paginate eligible leads by id so a large campaign never loads them all into
+  // memory. Each page re-loads its own fast-path sets and the per-lead mission
+  // re-check still runs inside, so a pause stops mid-page (and certainly before
+  // the next page). The daily cap is enforced across pages by the per-lead
+  // advisory-locked reservation. We use an explicit `id > cursor` filter (not
+  // Prisma's positional cursor) because a lead drops out of `where` once it's
+  // sent, which would invalidate a cursor row.
+  const PAGE = deps.pageSize && deps.pageSize > 0 ? deps.pageSize : 250
+  let cursor: string | undefined
+  pageLoop: for (;;) {
+    const page = await prisma.lead.findMany({
+      where: cursor ? { AND: [where, { id: { gt: cursor } }] } : where,
+      include: {
+        // When approval is required, only include APPROVED drafts. A lead that ends
+        // up with no included draft is skipped in the send loop (never sent with
+        // freshly generated copy — that would bypass approval). In non-approval mode
+        // the latest draft is used, EXCEPT REJECTED / POLICY_REVIEW drafts a human or
+        // the policy checker set aside, which must never be auto-sent.
+        outreachDrafts: {
+          where: approvalRequired
+            ? { status: 'APPROVED' }
+            : { status: { notIn: ['REJECTED', 'POLICY_REVIEW'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
+      },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+    }) as CampaignLeadRow[]
+    if (page.length === 0) break
 
-    // Progress: 10% → 90% across the lead batch
-    await progress?.(10 + Math.floor((i / total) * 80))
+    // Per-page fast-path sets — scoped to this page's leads (one query each per
+    // page instead of one for the whole campaign). These are pre-filters/caches
+    // only; the atomic per-lead claim (unique (campaignId, leadId)) remains the
+    // real race guard. Mission status is NOT cached — it's re-checked per lead.
+    const pageLeadIds = page.map((l: CampaignLeadRow) => l.id)
+    const pageEmails = page.map((l: CampaignLeadRow) => l.email!).filter(Boolean)
+    const isSuppressed = pageEmails.length > 0
+      ? await bulkCheckSuppression(workspaceId, pageEmails)
+      : () => false
+
+    const alreadySentLeadIds: Set<string> = new Set(
+      (await prisma.outreachSent.findMany({
+        where: { campaignId, leadId: { in: pageLeadIds }, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
+        select: { leadId: true },
+      }))
+        .map((r: { leadId: string | null }) => r.leadId)
+        .filter((id: string | null): id is string => id !== null)
+    )
+
+    const policyReviewLeadIds: Set<string> = new Set(
+      (await prisma.outreachDraft.findMany({
+        where: { leadId: { in: pageLeadIds }, status: 'POLICY_REVIEW' },
+        select: { leadId: true },
+      })).map((r: { leadId: string }) => r.leadId)
+    )
+
+    const linkedIntentRows = await prisma.outreachIntent
+      .findMany({
+        where: { leadId: { in: pageLeadIds }, status: 'APPROVED' },
+        select: { leadId: true, id: true, recommendationId: true, evidenceSnapshot: true },
+      })
+      .catch(() => [])
+    const linkedIntentByLeadId = new Map<string, (typeof linkedIntentRows)[number]>()
+    for (const intent of linkedIntentRows) {
+      if (intent.leadId !== null && !linkedIntentByLeadId.has(intent.leadId)) {
+        linkedIntentByLeadId.set(intent.leadId, intent)
+      }
+    }
+
+    for (const lead of page) {
+
+    // Progress: 10% → 90% across the campaign (by leads handled so far / total).
+    await progress?.(10 + Math.floor(((sent + skipped + failed) / (total || 1)) * 80))
 
     // Mission pause/complete is an operator stop button: re-check before each lead
-    // so a pause issued mid-run halts the rest of the batch before any further AI
-    // generation, outbox claim, or SMTP dispatch.
+    // so a pause issued mid-run halts the rest of the batch (across pages) before
+    // any further AI generation, outbox claim, or SMTP dispatch.
     const blockReason = await getMissionSendBlockReason(campaignId)
     if (blockReason) {
-      const remaining = leads.length - i
+      const remaining = total - sent - skipped - failed
       console.log(`[send-campaign] Stopping campaign ${campaignId}: ${blockReason}; skipped remaining=${remaining}`)
       skipped += remaining
-      break
+      break pageLoop
     }
 
     // Cheap pre-check before any AI work: skip leads already sent to, in-flight,
@@ -523,11 +511,11 @@ export async function sendCampaignBatch(
         })
       })
       if (claim === null) {
-        // Daily cap reached mid-batch — skip the remaining leads and stop.
-        const remaining = leads.length - i
+        // Daily cap reached mid-batch — skip the remaining leads (across pages) and stop.
+        const remaining = total - sent - skipped - failed
         console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached mid-batch for workspace ${workspaceId}; skipped remaining=${remaining}`)
         skipped += remaining
-        break
+        break pageLoop
       }
       claimId = claim.id
     } catch (err) {
@@ -671,6 +659,11 @@ export async function sendCampaignBatch(
       }).catch(() => {})
       failed++
     }
+    } // end per-lead loop for this page
+
+    // Advance the cursor; a short page means we've reached the end.
+    cursor = page[page.length - 1].id
+    if (page.length < PAGE) break
   }
 
   await progress?.(100)

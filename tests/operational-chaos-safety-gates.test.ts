@@ -131,7 +131,10 @@ test('operational chaos: daily send cap counts delivered SENT rows only', () => 
 })
 
 test('operational chaos: worker re-checks mission stop before SMTP dispatch', () => {
-  const loopIdx = processors.indexOf('for (let i = 0; i < leads.length; i++)')
+  // The send worker paginates eligible leads (for…of page); the mission-stop
+  // re-check must still run inside that loop before any SMTP dispatch so an
+  // operator pause halts the batch (mid-page, and certainly before the next page).
+  const loopIdx = processors.indexOf('for (const lead of page)')
   const blockIdx = processors.indexOf('await getMissionSendBlockReason(campaignId)', loopIdx)
   const sendMailIdx = processors.indexOf('await sendMailFn(', loopIdx)
   assert.ok(loopIdx !== -1 && blockIdx !== -1 && sendMailIdx !== -1, 'worker mission stop check missing')

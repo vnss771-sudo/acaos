@@ -1,6 +1,7 @@
 import { Redis as IORedis } from 'ioredis'
 import { Queue } from 'bullmq'
 import { createHash } from 'node:crypto'
+import { CURRENT_PAYLOAD_VERSION } from './queueSchemas.js'
 
 let _connection: IORedis | null = null
 
@@ -54,21 +55,21 @@ const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 }
 // optional initiatedByUserId. Object params prevent the positional confusion that
 // previously let ingest pass a workspaceId into a `userId` field.
 export async function enqueueResearchLead(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
-  return getQueue('research-lead').add('research-lead', opts, aiJobOpts)
+  return getQueue('research-lead').add('research-lead', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
 export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
-  return getQueue('generate-outreach').add('generate-outreach', opts, aiJobOpts)
+  return getQueue('generate-outreach').add('generate-outreach', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
 export async function enqueueAnalyzeReply(opts: { replyBody: string; workspaceId: string; leadId?: string; initiatedByUserId?: string }) {
-  return getQueue('analyze-reply').add('analyze-reply', opts, aiJobOpts)
+  return getQueue('analyze-reply').add('analyze-reply', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
 export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {
   return getQueue('sync-mailbox').add(
     'sync-mailbox',
-    { workspaceId, userId },
+    { workspaceId, userId, schemaVersion: CURRENT_PAYLOAD_VERSION },
     { attempts: 2, backoff: { type: 'exponential', delay: 10000 } }
   )
 }
@@ -79,7 +80,7 @@ export async function getJobById(queueName: string, jobId: string) {
 }
 
 export async function enqueueScoreProspects(workspaceId: string) {
-  return getQueue('score-prospects').add('score-prospects', { workspaceId }, defaultJobOpts)
+  return getQueue('score-prospects').add('score-prospects', { workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 // Async prospect discovery. attempts:1 — a discovery run calls a metered, paid
@@ -87,18 +88,18 @@ export async function enqueueScoreProspects(workspaceId: string) {
 // failed run must not silently re-hit the provider; failures surface as a FAILED
 // (or PARTIAL) DiscoveryRun for the operator instead of being auto-retried.
 export async function enqueueDiscoverProspects(runId: string, workspaceId: string) {
-  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId }, {
+  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
     attempts: 1,
     ...jobRetention,
   })
 }
 
 export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string) {
-  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId }, defaultJobOpts)
+  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 export async function enqueueCalibrate(workspaceId: string) {
-  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, defaultJobOpts)
+  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 // Deterministic jobId so repeated "launch" clicks within the same minute collapse
@@ -121,7 +122,7 @@ export function sendCampaignJobId(
 }
 
 export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
-  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds }, {
+  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
     jobId: sendCampaignJobId(campaignId, workspaceId, leadIds),
     attempts: 2,
     backoff: { type: 'exponential', delay: 10_000 },
