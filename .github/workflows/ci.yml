@@ -50,6 +50,9 @@ jobs:
       - name: Check test-tier isolation
         run: npm run check:test-tiers
 
+      - name: Check safety-critical modules stay tested
+        run: npm run check:critical-test-coverage
+
       - name: Check offline Prisma stub is in sync
         run: npm run check:offline-stub
 
