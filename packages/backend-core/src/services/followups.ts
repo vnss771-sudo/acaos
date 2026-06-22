@@ -12,6 +12,7 @@ export type FollowupCancelReason =
   | 'REPLY_RECEIVED'
   | 'BOUNCE'
   | 'UNSUBSCRIBE'
+  | 'COMPLAINT'
   | 'LEAD_TERMINAL'
   | 'CAMPAIGN_PAUSED'
   | 'MISSION_PAUSED'

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { detectBounceRecipients, classifyBounce, softBounceSuppressThreshold } from '../packages/backend-core/src/services/mail.ts'
+import { detectBounceRecipients, classifyBounce, softBounceSuppressThreshold, detectComplaintRecipients } from '../packages/backend-core/src/services/mail.ts'
 
 test('detects a DSN bounce and extracts the Final-Recipient', () => {
   const body = [
@@ -67,6 +67,36 @@ test('classify: permanent phrases without a code are hard', () => {
 
 test('classify: an unrecognized bounce body is unknown (treated as hard by the caller)', () => {
   assert.equal(classifyBounce('Returned mail', 'Your message could not be processed for an unspecified reason.'), 'unknown')
+})
+
+// ── detectComplaintRecipients: ARF feedback-loop reports ───────────────────────
+test('complaint: extracts the original recipient from an ARF report', () => {
+  const body = [
+    'This is an email abuse report for an email message received on 2026-06-20.',
+    'Content-Type: message/feedback-report',
+    'Feedback-Type: abuse',
+    'User-Agent: SomeFBL/1.0',
+    'Original-Rcpt-To: angry@buyer.test',
+  ].join('\n')
+  const r = detectComplaintRecipients('FW: spam complaint', 'fbl@provider.test', body)
+  assert.deepEqual(r, ['angry@buyer.test'])
+})
+
+test('complaint: falls back to the embedded original To header', () => {
+  const body = [
+    'Content-Type: multipart/report; report-type=feedback-report',
+    '--- original message ---',
+    'To: target@corp.test',
+    'Subject: Our offer',
+  ].join('\n')
+  const r = detectComplaintRecipients('abuse report', 'scomp@isp.test', body)
+  assert.ok(r.includes('target@corp.test'))
+})
+
+test('complaint: a normal reply mentioning "complaint" is NOT treated as one', () => {
+  // No structured feedback-report signal → not a complaint (conservative).
+  const r = detectComplaintRecipients('Re: complaint about pricing', 'lead@company.test', 'I have a complaint about your pricing.')
+  assert.deepEqual(r, [])
 })
 
 test('soft-bounce threshold: defaults to 3 and honors a valid override', () => {

@@ -137,6 +137,75 @@ export async function applyBounces(
   return bounced
 }
 
+/**
+ * Apply complaint (ARF feedback-loop) handling for a batch of complained-about
+ * addresses: suppress with reason COMPLAINT, record an UnsubscribeEvent(source=
+ * COMPLAINT) (which the sender-reputation circuit breaker reads as the complaint
+ * signal), and cancel any pending follow-ups for the lead. A complaint is the
+ * strongest opt-out signal there is — one is always enough to stop, with no
+ * threshold. SAME SAFETY INVARIANT as bounces: only addresses we ACTUALLY sent to
+ * are ever touched. Extracted from syncMailboxOnce so it's testable without IMAP.
+ * Returns the number of complaints handled.
+ */
+export async function applyComplaints(workspaceId: string, addresses: string[]): Promise<number> {
+  const candidates = [...new Set(addresses.map(a => a.toLowerCase()))]
+  if (candidates.length === 0) return 0
+
+  // Link each complaint to the most-recent send to that address (for the event /
+  // follow-up cancellation), and enforce the "only addresses we sent to" invariant.
+  const sentRows = await prisma.outreachSent.findMany({
+    where: { workspaceId, toEmail: { in: candidates } },
+    select: { id: true, toEmail: true, leadId: true, campaignId: true },
+    orderBy: { claimedAt: 'desc' },
+  })
+  const byAddr = new Map<string, { id: string; leadId: string | null; campaignId: string | null }>()
+  for (const r of sentRows as Array<{ id: string; toEmail: string; leadId: string | null; campaignId: string | null }>) {
+    const k = r.toEmail.toLowerCase()
+    if (!byAddr.has(k)) byAddr.set(k, { id: r.id, leadId: r.leadId, campaignId: r.campaignId })
+  }
+
+  let count = 0
+  for (const addr of candidates) {
+    const send = byAddr.get(addr)
+    if (!send) continue // never sent to → ignore (safety invariant)
+    await suppress(workspaceId, addr, 'COMPLAINT')
+    await prisma.unsubscribeEvent.create({
+      data: { workspaceId, emailKey: normalizeEmail(addr), source: 'COMPLAINT', campaignId: send.campaignId, outreachSentId: send.id },
+    }).catch(() => {})
+    if (send.leadId) {
+      await cancelPendingFollowups(prisma, { workspaceId, leadId: send.leadId, reason: 'COMPLAINT' }).catch(() => {})
+    }
+    void recordAudit({ workspaceId, type: 'email.complaint', entityType: 'suppression', metadata: { email: addr } })
+    count++
+  }
+  return count
+}
+
+// A feedback-loop / ARF (RFC 5965) complaint report: the recipient marked our
+// mail as spam and their provider sent us an abuse report. Detection is
+// deliberately CONSERVATIVE — we require the structured feedback-report signal, not
+// a fuzzy subject match — so a normal reply that merely mentions "complaint" can't
+// trigger a wrongful suppression. As with bounces, the real safety comes from the
+// caller acting only on addresses we actually sent to.
+const COMPLAINT_REPORT = /report-type=["']?feedback-report|feedback-type:\s*abuse|this is (an?|a) (email )?abuse (report|complaint)/i
+
+// Extract the complained-about recipient(s) from an ARF report: the address(es) WE
+// sent to, identified by the standard ARF identification fields, falling back to
+// the embedded original "To:" header. Returns [] when the message isn't a complaint.
+export function detectComplaintRecipients(subject: string, fromAddress: string, body: string): string[] {
+  if (!COMPLAINT_REPORT.test(body || '')) return []
+  const recips = new Set<string>()
+  for (const m of (body || '').matchAll(/(?:original-rcpt-to|original-recipient|removal-recipient|x-hmxmroriginalrecipient):\s*(?:rfc822;)?\s*([^\s;<>]+@[^\s;<>]+)/gi)) {
+    recips.add(m[1].toLowerCase().replace(/[>.,;]+$/, ''))
+  }
+  if (recips.size === 0) {
+    for (const m of (body || '').matchAll(/^to:\s*[^\n]*?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gim)) {
+      recips.add(m[1].toLowerCase())
+    }
+  }
+  return [...recips]
+}
+
 function getRequiredEnv(key: string) {
   const value = process.env[key]?.trim()
   if (!value) throw new ApiError(503, `${key} is not configured`)
@@ -379,6 +448,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
   queued: number
   skipped: number
   bounced: number
+  complained: number
 }> {
   let ImapFlow: any
   try {
@@ -453,6 +523,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       body: string
       bounceRecipients: string[]
       bounceType: BounceClass
+      complaintRecipients: string[]
     }
 
     const toProcess: ParsedMsg[] = []
@@ -482,12 +553,13 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       const bounceRecipients = detectBounceRecipients(subject, fromAddress, body)
       // Classify from the FULL body (DSN status lines), before reply-text extraction.
       const bounceType: BounceClass = bounceRecipients.length > 0 ? classifyBounce(subject, body) : 'unknown'
+      const complaintRecipients = bounceRecipients.length === 0 ? detectComplaintRecipients(subject, fromAddress, body) : []
       const replyBody = extractReplyBody(body)
 
-      // Keep bounces even if their reply text is trivial; otherwise skip empties.
-      if (bounceRecipients.length === 0 && replyBody.length < 5) continue
+      // Keep bounces/complaints even if their reply text is trivial; otherwise skip empties.
+      if (bounceRecipients.length === 0 && complaintRecipients.length === 0 && replyBody.length < 5) continue
 
-      toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients, bounceType })
+      toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients, bounceType, complaintRecipients })
     }
 
     // Advance the persisted cursor to the highest UID we inspected. Best-effort: a
@@ -504,7 +576,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     }
 
     if (toProcess.length === 0) {
-      return { inspected, matched: 0, queued: 0, skipped: 0, bounced: 0 }
+      return { inspected, matched: 0, queued: 0, skipped: 0, bounced: 0, complained: 0 }
     }
 
     // ── Bounce handling ────────────────────────────────────────────────────────
@@ -524,8 +596,24 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       }
     }
 
-    // Replies = everything that isn't a handled bounce.
-    const replyMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length === 0) : toProcess
+    // ── Complaint (ARF feedback-loop) handling ───────────────────────────────────
+    // Spam-complaint reports: suppress (COMPLAINT) + record the complaint event the
+    // reputation breaker reads + cancel pending follow-ups. Same safety invariant as
+    // bounces — only addresses we actually sent to are touched.
+    const complaintMsgs = handleBounces ? toProcess.filter(m => m.bounceRecipients.length === 0 && m.complaintRecipients.length > 0) : []
+    let complained = 0
+    if (complaintMsgs.length > 0) {
+      complained = await applyComplaints(workspaceId!, complaintMsgs.flatMap(m => m.complaintRecipients))
+      for (const m of complaintMsgs) {
+        await recordProcessedReply({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
+        processedUids.push(m.uid)
+      }
+    }
+
+    // Replies = everything that isn't a handled bounce or complaint.
+    const replyMsgs = handleBounces
+      ? toProcess.filter(m => m.bounceRecipients.length === 0 && m.complaintRecipients.length === 0)
+      : toProcess
 
     // Find leads matching any of the sender addresses, scoped to the workspace
     // when known so replies can never bleed across tenant boundaries.
@@ -575,7 +663,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       }
     }
 
-    return { inspected, matched, queued, skipped: replyMsgs.length - matched, bounced }
+    return { inspected, matched, queued, skipped: replyMsgs.length - matched, bounced, complained }
   } finally {
     try { await client.logout() } catch { client.close() }
   }
