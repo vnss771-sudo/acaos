@@ -37,6 +37,9 @@ function spec() {
     usageRecord: { findMany: async () => [{ action: 'AI_RESEARCH', count: 2 }] },
     workspace: { findUnique: async () => ({ plan: 'free', subscriptionStatus: null }) },
     discoveryRun: { groupBy: async () => [] },
+    // For GET /reputation: 100 sends, 8 bounces (8% > 5% default) → unhealthy.
+    contactEvent: { count: async (a: any) => (a?.where?.type === 'BOUNCED' ? 8 : a?.where?.type === 'SENT' ? 100 : 0) },
+    unsubscribeEvent: { count: async () => 0 },
   }
 }
 
@@ -99,4 +102,18 @@ test('GET /campaigns aggregates per-campaign stats', async () => {
   assert.equal(res.status, 200)
   assert.equal(res.body.campaigns[0].totalLeads, 5)
   assert.equal(res.body.campaigns[0].activeLeads, 1) // one REPLIED
+})
+
+test('GET /reputation denies a non-member workspace', async () => {
+  assert.equal((await server.request(`/api/stats/reputation?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
+})
+test('GET /reputation returns the trailing rates, verdict, and guard mode', async () => {
+  const res = await server.request(`/api/stats/reputation?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.totalSends, 100)
+  assert.equal(res.body.bounces, 8)
+  assert.equal(res.body.bounceRate, 0.08)
+  assert.equal(res.body.healthy, false)
+  assert.equal(res.body.reason, 'BOUNCE_RATE_HIGH')
+  assert.ok(['off', 'observe', 'enforce'].includes(res.body.guardMode))
 })

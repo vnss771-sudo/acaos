@@ -7,6 +7,8 @@ import { getMonthlyUsage } from '../lib/limits.js'
 import { getScoreTier } from '../lib/scoring.js'
 import { statsCache } from '../lib/statsCache.js'
 import { parseQuery, workspaceIdField } from '../lib/validate.js'
+import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
+import { reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { z } from 'zod'
 
 // Shared query schema — mirrors `String(... || '').trim()` + `if (!workspaceId) 400`.
@@ -29,6 +31,23 @@ statsRouter.get(
 
     const payload = await statsCache.get(workspaceId, () => buildStats(workspaceId))
     res.json(payload)
+  })
+)
+
+// Sender-reputation snapshot: the trailing bounce/complaint rates the circuit
+// breaker reads, plus the current guard mode. Lets an operator SEE the numbers
+// observe-mode is logging and decide when to graduate to 'enforce'. Read-only.
+statsRouter.get(
+  '/reputation',
+  asyncHandler(async (req, res) => {
+    const user = req.user!
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const verdict = await evaluateSenderReputation(workspaceId)
+    res.json({ guardMode: reputationGuardMode(), ...verdict })
   })
 )
 
