@@ -6,6 +6,7 @@ import { enqueueAnalyzeReply } from '../lib/queues.js'
 import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { resolvePublicMailHost, type PinnedHost } from '../lib/ssrf.js'
 import { suppress } from '../lib/suppressions.js'
+import { normalizeEmail } from '../lib/normalize.js'
 import { recordAudit } from '../lib/audit.js'
 import { findBestMatchingOutreachSent } from '../lib/replyAttribution.js'
 import { contactEventData, recordContactEvent } from '../lib/contactEvents.js'
@@ -34,6 +35,106 @@ export function detectBounceRecipients(subject: string, fromAddress: string, bod
     }
   }
   return [...recips]
+}
+
+export type BounceClass = 'hard' | 'soft' | 'unknown'
+
+// Classify a bounce/NDR as hard (permanent) vs soft (transient) vs unknown, from
+// the DSN/NDR text. Priority: an RFC 3463 enhanced Status field (4.x.x soft /
+// 5.x.x hard) wins; else a bare SMTP reply code (4xx soft / 5xx hard); else
+// well-known transient phrases (mailbox full / over quota / greylist / try again)
+// mark soft, and well-known permanent phrases (user unknown / no such user / address
+// rejected) mark hard. Default 'unknown'. The caller treats anything NOT confidently
+// soft as a hard bounce, so the existing suppress-on-bounce behaviour is preserved
+// for every case except clearly-transient ones — only a soft bounce gets leniency.
+export function classifyBounce(subject: string, body: string): BounceClass {
+  const text = `${subject || ''}\n${body || ''}`
+  // 1. RFC 3463 enhanced status code (e.g. "Status: 5.1.1").
+  const status = text.match(/status:\s*([245])\.\d{1,3}\.\d{1,3}/i)
+  if (status) return status[1] === '5' ? 'hard' : 'soft' // 2.x.x (success) treated as non-permanent
+  // 2. Bare SMTP reply code at a token boundary (e.g. "550 ..." or "smtp; 452 ...").
+  const reply = text.match(/(?:^|\s|;)([45])\d{2}(?:[ -]|$)/m)
+  if (reply) return reply[1] === '5' ? 'hard' : 'soft'
+  // 3. Transient phrases → soft.
+  if (/(mailbox full|over[ -]?quota|quota exceeded|insufficient (system )?storage|greylist|try again|temporar|deferred|too many|rate limit)/i.test(text)) return 'soft'
+  // 4. Permanent phrases → hard.
+  if (/(user unknown|no such (user|recipient|mailbox)|does not exist|unknown recipient|mailbox unavailable|no longer (in use|active)|address rejected|recipient rejected|account .{0,20}disabled|invalid (recipient|mailbox|address))/i.test(text)) return 'hard'
+  return 'unknown'
+}
+
+// Repeated soft bounces eventually suppress an address (a persistently-failing
+// mailbox is effectively dead). Default 3; env-overridable, read live.
+export function softBounceSuppressThreshold(): number {
+  const n = Number(process.env.SOFT_BOUNCE_SUPPRESS_THRESHOLD)
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3
+}
+
+/**
+ * Apply bounce handling for a batch of parsed bounce messages: mark the matching
+ * sends BOUNCED, record a class-tagged BOUNCED lifecycle event, and suppress the
+ * address — immediately for hard/unknown bounces (unchanged behaviour), or only
+ * once repeated soft bounces cross the threshold for transient (4.x.x) ones.
+ *
+ * SAFETY INVARIANT (unchanged): only addresses we ACTUALLY sent outreach to
+ * (present in OutreachSent) are ever touched, so a stray address in a DSN body
+ * can't poison the suppression list. Extracted from syncMailboxOnce so the
+ * suppression logic is testable against a real DB without an IMAP server.
+ * Returns the number of bounced addresses handled.
+ */
+export async function applyBounces(
+  workspaceId: string,
+  bounces: Array<{ recipients: string[]; bounceType: BounceClass }>,
+): Promise<number> {
+  const candidates = [...new Set(bounces.flatMap(b => b.recipients))]
+  if (candidates.length === 0) return 0
+
+  // An address is treated leniently (soft) ONLY when every message referencing it
+  // is confidently soft. A single hard or unknown classification forces immediate
+  // suppression — so existing behaviour is unchanged except for clearly-transient
+  // (4.x.x) bounces.
+  const softOnly = new Set<string>()
+  for (const addr of candidates) {
+    const classes = bounces.filter(b => b.recipients.includes(addr)).map(b => b.bounceType)
+    if (classes.length > 0 && classes.every(c => c === 'soft')) softOnly.add(addr)
+  }
+
+  const sentRows = await prisma.outreachSent.findMany({
+    where: { workspaceId, toEmail: { in: candidates } },
+    select: { toEmail: true },
+  })
+  const sentSet = new Set((sentRows as Array<{ toEmail: string }>).map(r => r.toEmail.toLowerCase()))
+
+  let bounced = 0
+  for (const addr of candidates.filter(a => sentSet.has(a))) {
+    const soft = softOnly.has(addr)
+    // The send DID bounce regardless of class: mark it BOUNCED and record the
+    // lifecycle event (tagged with the class) so stats/reputation see it.
+    await prisma.outreachSent.updateMany({
+      where: { workspaceId, toEmail: addr, status: { in: ['SENT', 'SENDING'] } },
+      data: { status: 'BOUNCED' },
+    })
+    bounced++
+    const bounceType = soft ? 'soft' : 'hard'
+    void recordAudit({ workspaceId, type: 'email.bounced', entityType: 'suppression', metadata: { email: addr, bounceType } })
+    // Awaited (not fire-and-forget) so the soft-bounce count below is consistent.
+    await recordContactEvent({ workspaceId, email: addr, type: 'BOUNCED', metadata: { bounceType } }).catch(() => {})
+
+    if (!soft) {
+      // Hard / unknown bounce → suppress immediately (unchanged behaviour).
+      await suppress(workspaceId, addr, 'BOUNCED')
+      continue
+    }
+    // Soft bounce: a transient failure (mailbox full / greylist) must not
+    // permanently kill a deliverable address. Suppress only once repeated soft
+    // bounces cross the threshold. The just-recorded event is included in the count.
+    const softCount = await prisma.contactEvent.count({
+      where: { workspaceId, emailKey: normalizeEmail(addr), type: 'BOUNCED', metadata: { path: ['bounceType'], equals: 'soft' } },
+    }).catch(() => 0)
+    if (softCount >= softBounceSuppressThreshold()) {
+      await suppress(workspaceId, addr, 'BOUNCED')
+    }
+  }
+  return bounced
 }
 
 function getRequiredEnv(key: string) {
@@ -351,6 +452,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       subject: string
       body: string
       bounceRecipients: string[]
+      bounceType: BounceClass
     }
 
     const toProcess: ParsedMsg[] = []
@@ -378,12 +480,14 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       const subject: string = msg.envelope?.subject ?? ''
       const body = msg.source ? extractPlainText(msg.source) : ''
       const bounceRecipients = detectBounceRecipients(subject, fromAddress, body)
+      // Classify from the FULL body (DSN status lines), before reply-text extraction.
+      const bounceType: BounceClass = bounceRecipients.length > 0 ? classifyBounce(subject, body) : 'unknown'
       const replyBody = extractReplyBody(body)
 
       // Keep bounces even if their reply text is trivial; otherwise skip empties.
       if (bounceRecipients.length === 0 && replyBody.length < 5) continue
 
-      toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients })
+      toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients, bounceType })
     }
 
     // Advance the persisted cursor to the highest UID we inspected. Best-effort: a
@@ -413,23 +517,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     let bounced = 0
     const processedUids: number[] = []
     if (bounceMsgs.length > 0) {
-      const candidates = [...new Set(bounceMsgs.flatMap(m => m.bounceRecipients))]
-      const sentRows = await prisma.outreachSent.findMany({
-        where: { workspaceId, toEmail: { in: candidates } },
-        select: { toEmail: true },
-      })
-      const sentSet = new Set((sentRows as Array<{ toEmail: string }>).map(r => r.toEmail.toLowerCase()))
-      for (const addr of candidates.filter(a => sentSet.has(a))) {
-        await suppress(workspaceId!, addr, 'BOUNCED')
-        await prisma.outreachSent.updateMany({
-          where: { workspaceId, toEmail: addr, status: { in: ['SENT', 'SENDING'] } },
-          data: { status: 'BOUNCED' },
-        })
-        bounced++
-        void recordAudit({ workspaceId, type: 'email.bounced', entityType: 'suppression', metadata: { email: addr } })
-        // Append a BOUNCED lifecycle event so contact-policy/stats see the bounce.
-        void recordContactEvent({ workspaceId: workspaceId!, email: addr, type: 'BOUNCED' }).catch(() => {})
-      }
+      bounced = await applyBounces(workspaceId!, bounceMsgs.map(m => ({ recipients: m.bounceRecipients, bounceType: m.bounceType })))
       for (const m of bounceMsgs) {
         await recordProcessedReply({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
         processedUids.push(m.uid)
