@@ -20,6 +20,7 @@ import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@acaos/backend-core/lib/limits.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
+import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
@@ -359,7 +360,9 @@ export async function sendCampaignBatch(
   const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
 
   const workspaceDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
-  const dailySendLimit = effectiveDailySendLimit(workspaceDailyLimit)
+  // Effective cap = safe-launch clamp, then the opt-in warmup ramp (the more
+  // restrictive of the two). Warmup is a no-op unless warmupStartedAt is set.
+  const dailySendLimit = applyWarmupCap(effectiveDailySendLimit(workspaceDailyLimit), icp?.warmupStartedAt ?? null)
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
 
@@ -788,7 +791,7 @@ export async function sendFollowupTask(
     prisma.lead.findUnique({ where: { id: leadId }, select: { email: true, stage: true } }),
     prisma.outreachSequenceStep.findUnique({ where: { campaignId_stepNumber: { campaignId, stepNumber } }, select: { subject: true, body: true, isActive: true } }),
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
-    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, warmupStartedAt: true } }),
   ])
 
   // Guards (each leaves the task in a terminal, explainable state).
@@ -828,7 +831,7 @@ export async function sendFollowupTask(
 
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
   const wsDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
-  const dailySendLimit = effectiveDailySendLimit(wsDailyLimit)
+  const dailySendLimit = applyWarmupCap(effectiveDailySendLimit(wsDailyLimit), icp?.warmupStartedAt ?? null)
 
   // Claim the outbox row for THIS step (unique on campaignId, leadId, sequenceStep).
   let claimId: string

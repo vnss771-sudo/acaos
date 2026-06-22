@@ -982,6 +982,10 @@ model WorkspaceICP {
   outreachTone        String?   // professional | casual | direct
   approvalMode        Boolean   @default(true)
   dailySendLimit      Int       @default(50)
+  // Opt-in domain warmup: when set, the effective daily send cap ramps up from a
+  // low ceiling over the warmup schedule (see lib/warmup.ts) instead of allowing
+  // the full dailySendLimit on day one. null = no warmup (unchanged behaviour).
+  warmupStartedAt     DateTime?
   excludedIndustries  String[]
   playbook            String?
   createdAt           DateTime  @default(now())
