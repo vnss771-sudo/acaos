@@ -26,6 +26,7 @@ import {
   SendFollowupPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
+import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
@@ -444,8 +445,13 @@ const retentionWorker = new Worker(
     log('retention-purge', 'Starting retention sweep')
     const deleted = await purgeExpiredData()
     const total = Object.values(deleted).reduce((a, b) => a + b, 0)
-    log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}`)
-    return deleted
+    // Reclaim outbox rows stranded in SENDING by a crashed dispatch — they otherwise
+    // count against the send cap forever. Fail-closed (→ FAILED, never re-sent).
+    const staleRecovered = await recoverStaleSends().catch((e) => {
+      log('retention-purge', `stale-send recovery failed: ${(e as Error).message}`); return 0
+    })
+    log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
+    return { ...deleted, staleSendsRecovered: staleRecovered }
   },
   { connection, concurrency: 1 }
 )

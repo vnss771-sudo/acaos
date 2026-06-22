@@ -35,9 +35,56 @@
 ## Security / Step-up
 - STEP_UP_MAX_AGE_MIN — step-up re-auth freshness window (minutes) for sensitive mutations (billing, admin promotion, MFA disable). Default 15. Required: no.
 
+## Launch Controls & Feature Flags
+All read live from the environment — flipping any of these takes effect on the next request/job with **no restart or deploy**. See `packages/backend-core/src/lib/launchControls.ts`.
+
+### Blast-radius kill switches (default ON — operators opt OUT)
+- FEATURE_AI — AI features (research, outreach generation, reply analysis). Default `true`.
+- FEATURE_SEND — outbound email sending. Default `true`.
+- FEATURE_MAILBOX_SYNC — IMAP mailbox sync (reply/bounce ingest). Default `true`.
+- FEATURE_DISCOVERY — prospect discovery. Default `true`.
+
+### Safe launch (default OFF — conservative controlled rollout)
+- SAFE_LAUNCH_MODE — forces human approval of every outbound draft and clamps every workspace's daily send cap to a low ceiling. Default `false`.
+- SAFE_LAUNCH_DAILY_SEND_CAP — the clamped daily ceiling applied to all workspaces while SAFE_LAUNCH_MODE is on. Default 20.
+
+### Automatic follow-ups (opt-IN — default OFF)
+- FOLLOWUPS_ENABLED — master switch for the automatic multi-step follow-up sender. Default `false`. On top of this, each campaign must set `autoFollowupsEnabled`. Both must be true before any follow-up is dispatched.
+- FOLLOWUP_SCAN_INTERVAL_MS — how often the worker scans for due follow-up tasks. Default 60000 (1 min).
+
+### Sender-reputation circuit breaker
+- REPUTATION_GUARD_MODE — `off` | `observe` | `enforce`. Default `observe` (computes and logs a degraded reputation but does NOT block; graduate to `enforce` once observed numbers look right).
+- REPUTATION_WINDOW_DAYS — trailing window for the bounce/complaint rate. Default 7.
+- REPUTATION_MIN_SENDS — minimum sends in the window before the guard can trip (avoids acting on noise). Default 50.
+- REPUTATION_MAX_BOUNCE_RATE — bounce-rate threshold (0–1). Default 0.05 (5%).
+- REPUTATION_MAX_COMPLAINT_RATE — complaint-rate threshold (0–1). Default 0.003 (0.3%).
+
+### Domain warmup (opt-IN per workspace via `WorkspaceICP.warmupStartedAt`)
+- WARMUP_SCHEDULE — comma-separated per-day caps for the ramp. Default `20,40,80,150,300,500,750,1000`. With no `warmupStartedAt` set on a workspace, warmup is a no-op.
+
+### Send pacing & caps
+- PER_DOMAIN_DAILY_CAP — max sends to a single recipient domain per UTC day. Unset/0 = disabled (default). Opt-in.
+- STALE_SENDING_RECOVERY_MINUTES — age after which a stuck `SENDING` outbox row is reclaimed as FAILED by the maintenance sweep (frees the cap). Default 120.
+  (Per-workspace daily/monthly caps and quiet-hours send windows live on `WorkspaceICP`: `dailySendLimit`, `monthlySendLimit`, `sendWindowStartHour`/`sendWindowEndHour`/`sendTimezone`/`sendWeekdaysOnly`.)
+
+### Abuse prevention
+- BLOCK_DISPOSABLE_EMAILS — reject signups from known throwaway email providers. Default `true`. Set `false` to disable.
+- DISPOSABLE_EMAIL_DOMAINS — comma-separated extra domains to treat as disposable, merged with the built-in list.
+
+### AI governance
+- REPLY_CLASSIFICATION_MIN_CONFIDENCE — minimum confidence (0–100) below which a `NOT_INTERESTED` reply is NOT acted on as an irreversible DEAD transition (downgraded to human review). Default 60. Set 0 to always act on the label.
+- SOFT_BOUNCE_SUPPRESS_THRESHOLD — number of repeated soft bounces before an address is suppressed (hard/unknown bounces suppress immediately). Default 3.
+- OPENAI_MAX_TOKENS_RESEARCH / OPENAI_MAX_TOKENS_OUTREACH / OPENAI_MAX_TOKENS_REPLY — per-task output-token ceilings. Defaults 1500 / 1200 / 700.
+
+## Observability
+- METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production.
+- LOG_LEVEL — `debug` | `info` | `warn` | `error`. Default `info`.
+- SENTRY_DSN — error-reporting transport. Optional (no-op when unset).
+- WORKER_HEALTH_PORT — port for the worker's `/live` `/ready` `/metrics` server. Default 9090 (or platform `$PORT`).
+
 ## Data Retention
-The worker periodically purges aged data. The per-class `*_DAYS` windows override the defaults documented in `docs/DATA_RETENTION.md`. All optional.
-- RETENTION_PURGE_INTERVAL_MS — how often the worker runs the purge job, in ms. Default 86400000 (24h). Required: no.
+The worker periodically purges aged data and reclaims stale `SENDING` rows. The per-class `*_DAYS` windows override the defaults documented in `docs/DATA_RETENTION.md`. All optional.
+- RETENTION_PURGE_INTERVAL_MS — how often the worker runs the purge + stale-send recovery job, in ms. Default 86400000 (24h). Required: no.
 - RETENTION_PROCESSED_EMAIL_DAYS — retention window for processed inbound emails (days). Default 90. Required: no.
 - RETENTION_OUTREACH_SENT_DAYS — retention window for sent outreach records (days). Default 548 (~18mo). Required: no.
 - RETENTION_DISCOVERY_RUN_DAYS — retention window for discovery run history (days). Default 365. Required: no.

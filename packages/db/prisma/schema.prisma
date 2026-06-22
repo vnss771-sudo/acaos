@@ -685,6 +685,9 @@ model ContactEvent {
 
   @@index([workspaceId, emailKey, occurredAt])
   @@index([workspaceId, campaignId, occurredAt])
+  // Backs the sender-reputation guard's per-type windowed counts (workspaceId+type
+  // over a trailing window, no emailKey/campaignId) — runs once per send batch.
+  @@index([workspaceId, type, occurredAt])
   @@index([outreachSentId])
 }
 
