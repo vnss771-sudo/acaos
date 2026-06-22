@@ -91,6 +91,23 @@ export const SendCampaignPayloadSchema = z.object({
 })
 export type SendCampaignPayload = z.infer<typeof SendCampaignPayloadSchema>
 
+// One due follow-up step to dispatch. taskId points at a FollowupTask the worker
+// atomically claims (SCHEDULED→PROCESSING) before sending; workspaceId is carried
+// for tenant correlation in logs. The scheduler-driven scan job carries no taskId
+// (it enqueues per-task children), hence taskId is optional and refined: a worker
+// with a taskId dispatches it, otherwise it runs the due-task scan.
+export const SendFollowupPayloadSchema = z
+  .object({
+    taskId: id.optional(),
+    workspaceId: id.optional(),
+    scan: z.boolean().optional(),
+    ...meta,
+  })
+  .refine((d) => typeof d.taskId === 'string' || d.scan === true, {
+    message: 'either taskId or scan is required',
+  })
+export type SendFollowupPayload = z.infer<typeof SendFollowupPayloadSchema>
+
 // The retention sweep is platform-wide (no workspace) and carries no parameters;
 // an empty object keeps it on the same validated-payload contract as every other
 // queue so a malformed enqueue still fails fast rather than silently.

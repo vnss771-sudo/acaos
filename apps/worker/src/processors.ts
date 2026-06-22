@@ -26,12 +26,13 @@ import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
 import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
+import { canContactRecipient } from '@acaos/backend-core/services/contactPolicy.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
 import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import type { ICPConfig } from '@acaos/backend-core/lib/signalEngine.js'
 import { randomBytes } from 'crypto'
-import type { LeadStage } from '@acaos/shared'
+import type { LeadStage, FollowupTaskStatus } from '@acaos/shared'
 
 type Progress = (n: number) => unknown
 
@@ -719,6 +720,137 @@ export async function sendCampaignBatch(
 
   await progress?.(100)
   return result()
+}
+
+// ── send-followup: dispatch one due sequence step ─────────────────────────────
+// Reuses the claim-first send mechanics for a single FollowupTask. Gated by the
+// campaign's autoFollowupsEnabled AND the global FOLLOWUPS_ENABLED (checked by the
+// worker before calling this). Every dispatch re-runs canContactRecipient, so a
+// reply/bounce/unsubscribe/terminal-stage/cap that happened since scheduling stops
+// the send. The task is claimed SCHEDULED→PROCESSING atomically so two workers
+// can't double-send.
+export type SendFollowupStatus = 'SENT' | 'FAILED' | 'BLOCKED' | 'CANCELLED' | 'SKIPPED'
+export interface SendFollowupResult { taskId: string; status: SendFollowupStatus; reason?: string }
+
+export async function sendFollowupTask(
+  taskId: string,
+  deps: { sendMail?: typeof sendMail } = {}
+): Promise<SendFollowupResult> {
+  const sendMailFn = deps.sendMail ?? sendMail
+
+  // Atomic claim: only one worker can move a task out of SCHEDULED.
+  const claimed = await prisma.followupTask.updateMany({
+    where: { id: taskId, status: 'SCHEDULED' },
+    data: { status: 'PROCESSING' },
+  })
+  if (claimed.count === 0) return { taskId, status: 'SKIPPED', reason: 'not SCHEDULED' }
+
+  const task = await prisma.followupTask.findUnique({ where: { id: taskId } })
+  if (!task) return { taskId, status: 'SKIPPED', reason: 'gone' }
+  const { workspaceId, campaignId, leadId, stepNumber } = task
+
+  // Move the task to a terminal/explainable DB state and surface a result. The
+  // result status ('SKIPPED') and the persisted FollowupTaskStatus can differ:
+  // a cap-deferred task reports SKIPPED but is parked back at SCHEDULED.
+  const finish = async (
+    result: SendFollowupStatus,
+    dbStatus: FollowupTaskStatus,
+    data: Prisma.FollowupTaskUpdateInput = {},
+  ): Promise<SendFollowupResult> => {
+    await prisma.followupTask.update({ where: { id: taskId }, data: { status: dbStatus, ...data } }).catch(() => {})
+    const reason = typeof data.cancelledReason === 'string' ? data.cancelledReason
+      : typeof data.lastError === 'string' ? data.lastError : undefined
+    return { taskId, status: result, reason }
+  }
+
+  const [campaign, lead, step, wsCfg, icp] = await Promise.all([
+    prisma.campaign.findUnique({ where: { id: campaignId }, select: { autoFollowupsEnabled: true } }),
+    prisma.lead.findUnique({ where: { id: leadId }, select: { email: true, stage: true } }),
+    prisma.outreachSequenceStep.findUnique({ where: { campaignId_stepNumber: { campaignId, stepNumber } }, select: { subject: true, body: true, isActive: true } }),
+    prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true } }),
+  ])
+
+  // Guards (each leaves the task in a terminal, explainable state).
+  if (!campaign?.autoFollowupsEnabled) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'CAMPAIGN_PAUSED' })
+  const missionBlock = await getMissionSendBlockReason(campaignId)
+  if (missionBlock) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'MISSION_PAUSED' })
+  if (!lead?.email) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'LEAD_GONE' })
+  if (!step || !step.isActive) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'STEP_INACTIVE' })
+  const smtpCfg: SmtpConfig | null = wsCfg ?? null
+  if (!isMailConfigured(smtpCfg)) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SMTP_NOT_CONFIGURED' })
+
+  // Contact policy: re-checked at send time, not just at scheduling.
+  const decision = await canContactRecipient({ workspaceId, email: lead.email, leadId })
+  if (!decision.allowed) return finish('BLOCKED', 'BLOCKED', { cancelledReason: decision.reason })
+
+  // Build the follow-up email from the sequence step.
+  const subject = (step.subject && step.subject.trim()) || 'Following up'
+  const body = step.body
+  const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const unsubscribeToken = randomBytes(24).toString('hex')
+  const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
+  const unsubscribeUrl = `${escHtml(appUrl)}/api/unsubscribe/${unsubscribeToken}`
+  const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.</p>`
+  const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
+  const textBody = `${body}\n\nYou received this email because you matched our outreach criteria. To stop receiving emails, unsubscribe: ${unsubscribeUrl}`
+
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+  const wsDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
+  const dailySendLimit = effectiveDailySendLimit(wsDailyLimit)
+
+  // Claim the outbox row for THIS step (unique on campaignId, leadId, sequenceStep).
+  let claimId: string
+  try {
+    const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (dailySendLimit != null) {
+        const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
+        if (!ok) return null
+      }
+      return tx.outreachSent.create({
+        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, subject, body, unsubscribeToken, status: 'SENDING' },
+        select: { id: true },
+      })
+    })
+    if (claim === null) {
+      // Daily cap reached — park the task back at SCHEDULED (not a terminal state,
+      // so no cancelledReason) to retry on a later run.
+      await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+      return { taskId, status: 'SKIPPED', reason: 'DAILY_CAP_EXCEEDED' }
+    }
+    claimId = claim.id
+  } catch (err) {
+    // This step was already sent (race) — mark the task done, don't double-send.
+    if ((err as { code?: string }).code === 'P2002') return finish('SENT', 'SENT')
+    throw err
+  }
+
+  try {
+    const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
+      text: textBody,
+      headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+    })
+    const msgId = (info as { messageId?: string }).messageId ?? null
+    await prisma.$transaction([
+      prisma.outreachSent.update({ where: { id: claimId }, data: { messageId: msgId, status: 'SENT', sentAt: new Date() } }),
+      prisma.lead.update({ where: { id: leadId }, data: { lastContactedAt: new Date() } }),
+      prisma.contactEvent.create({ data: contactEventData({ workspaceId, email: lead.email!, type: 'SENT', leadId, campaignId, outreachSentId: claimId }) }),
+      prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'sent' })),
+      prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SENT', outreachSentId: claimId } }),
+    ])
+    // Schedule the next step in the sequence. Awaited (so it's attempted before
+    // the job completes) but best-effort: the send already committed, so a
+    // scheduling hiccup must never fail it — the periodic scan re-drives anything
+    // missed and scheduleNextFollowup is idempotent.
+    await scheduleNextFollowup({ workspaceId, campaignId, leadId, outreachSentId: claimId, currentStep: stepNumber, sentAt: new Date(), autoFollowupsEnabled: true })
+      .catch((e) => console.error(`[send-followup] schedule-next failed for task ${taskId}: ${e instanceof Error ? e.message : e}`))
+    return { taskId, status: 'SENT' }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'SMTP send failed'
+    await prisma.outreachSent.update({ where: { id: claimId }, data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) } }).catch(() => {})
+    await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'FAILED', lastError: message.slice(0, 500) } }).catch(() => {})
+    return { taskId, status: 'FAILED', reason: message }
+  }
 }
 
 // ── discover-prospects: provider search + import, off-request ─────────────────

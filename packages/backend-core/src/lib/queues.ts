@@ -134,6 +134,41 @@ export async function enqueueSendCampaign(campaignId: string, workspaceId: strin
   })
 }
 
+// Enqueue one due follow-up step. The jobId is per (task, minute) so two
+// overlapping scans in the same minute can't double-enqueue the same task, while a
+// cap-deferred task (parked back at SCHEDULED) is re-picked on the next minute's
+// scan. The real double-send guard is the processor's atomic SCHEDULED→PROCESSING
+// claim — this is just flood control. attempts:2 with a long backoff (past the AI
+// circuit breaker) but follow-ups never burn quota on retry since send is idempotent
+// per (campaign, lead, step).
+export function sendFollowupJobId(taskId: string, now: number = Date.now()): string {
+  return `send-followup-${taskId}-${Math.floor(now / 60_000)}`
+}
+
+export async function enqueueSendFollowup(taskId: string, workspaceId?: string) {
+  return getQueue('send-followup').add(
+    'send-followup',
+    { taskId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    { jobId: sendFollowupJobId(taskId), attempts: 2, backoff: { type: 'exponential', delay: 30_000 }, ...jobRetention },
+  )
+}
+
+// Scan for due, SCHEDULED follow-up tasks and enqueue a per-task send job for each.
+// The worker's scheduler calls this on an interval ONLY when FOLLOWUPS_ENABLED, so
+// when the global flag is off no follow-up ever leaves the queue. Bounded per scan
+// so a backlog drains steadily rather than flooding the queue in one tick.
+export async function enqueueDueFollowups(now: Date = new Date(), limit = 500): Promise<number> {
+  const { prisma } = await import('./prisma.js')
+  const due = await prisma.followupTask.findMany({
+    where: { status: 'SCHEDULED', scheduledFor: { lte: now } },
+    select: { id: true, workspaceId: true },
+    orderBy: { scheduledFor: 'asc' },
+    take: limit,
+  })
+  for (const t of due) await enqueueSendFollowup(t.id, t.workspaceId)
+  return due.length
+}
+
 // On-demand trigger for the retention sweep (the worker also runs it daily). The
 // fixed jobId collapses concurrent manual triggers within the same minute.
 export async function enqueueRetentionPurge() {
@@ -148,7 +183,7 @@ export async function enqueueRetentionPurge() {
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
-  'discover-prospects', 'retention-purge'
+  'discover-prospects', 'retention-purge', 'send-followup'
 ]
 
 export async function getQueueStats() {

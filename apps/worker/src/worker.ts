@@ -22,9 +22,10 @@ import {
   SendCampaignPayloadSchema,
   DiscoverProspectsPayloadSchema,
   RetentionPurgePayloadSchema,
+  SendFollowupPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
-import { isFeatureEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
@@ -32,8 +33,8 @@ import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch } from './processors.js'
-import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask } from './processors.js'
+import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
@@ -382,6 +383,34 @@ const sendCampaignWorker = new Worker(
   { connection, concurrency: 2 }
 )
 
+// ── send-followup ─────────────────────────────────────────────────────────────
+// Automatic multi-step follow-up sender. DOUBLE-gated and DORMANT by default: the
+// global FEATURE_SEND kill-switch AND the opt-IN FOLLOWUPS_ENABLED flag must both
+// be on, on top of each campaign's autoFollowupsEnabled (re-checked inside
+// sendFollowupTask). With FOLLOWUPS_ENABLED off (the default) both the periodic
+// scan and any per-task job short-circuit to a no-op, so the worker is wired and
+// visible in metrics but sends nothing until an operator explicitly turns it on.
+// Two job shapes share this queue: `{ scan: true }` (the scheduler-driven sweep
+// that enqueues per-task children) and `{ taskId }` (dispatch one due step).
+const sendFollowupWorker = new Worker(
+  'send-followup',
+  async (job) => {
+    const { taskId, scan } = parseJobPayload(SendFollowupPayloadSchema, 'send-followup', job.data)
+    if (!isFeatureEnabled('send')) { log('send-followup', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled' } }
+    if (!areFollowupsEnabled()) { log('send-followup', 'skipped: FOLLOWUPS_ENABLED off'); return { skipped: true, reason: 'FOLLOWUPS_ENABLED off' } }
+    if (scan) {
+      const enqueued = await enqueueDueFollowups()
+      if (enqueued > 0) log('send-followup', `Scan enqueued ${enqueued} due follow-up(s)`)
+      return { scan: true, enqueued }
+    }
+    log('send-followup', `Dispatching task=${taskId}`)
+    const result = await sendFollowupTask(taskId!)
+    log('send-followup', `Done task=${taskId} status=${result.status}${result.reason ? ` reason=${result.reason}` : ''}`)
+    return result
+  },
+  { connection, concurrency: 2 }
+)
+
 // ── calibrate-scoring ─────────────────────────────────────────────────────────
 const calibrateWorker = new Worker(
   'calibrate-scoring',
@@ -425,6 +454,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
+  ['send-followup',           sendFollowupWorker],
   ['retention-purge',         retentionWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
@@ -479,6 +509,21 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
   ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
 }
 
+// ── Repeatable follow-up due-task scan (every 1 min by default) ───────────────
+// The scheduler is ALWAYS registered (idempotent), but every scan job no-ops
+// unless FOLLOWUPS_ENABLED is on (checked in the worker), so this stays dormant by
+// default — the schedule exists and is visible without sending anything. Interval
+// overridable via FOLLOWUP_SCAN_INTERVAL_MS.
+{
+  const followupQueue = new Queue('send-followup', { connection })
+  const every = Number(process.env.FOLLOWUP_SCAN_INTERVAL_MS || 60 * 1000)
+  followupQueue.upsertJobScheduler(
+    'followup-due-scan',
+    { every },
+    { name: 'followup-due-scan', data: { scan: true }, opts: { attempts: 1, removeOnComplete: { count: 10 }, removeOnFail: { count: 20 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule follow-up scan:', err.message))
+}
+
 // Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
@@ -525,6 +570,7 @@ async function shutdown(signal: string, exitCode = 0) {
     recommendWorker.close(),
     calibrateWorker.close(),
     sendCampaignWorker.close(),
+    sendFollowupWorker.close(),
     discoverWorker.close(),
     retentionWorker.close(),
   ])

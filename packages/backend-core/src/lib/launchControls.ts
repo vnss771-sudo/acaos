@@ -55,6 +55,16 @@ export function isSafeLaunchMode(): boolean {
   return parseBool(process.env.SAFE_LAUNCH_MODE, false)
 }
 
+/**
+ * Global kill-switch for the automatic follow-up sender. Unlike the opt-OUT
+ * feature flags above, this is opt-IN — DEFAULT OFF — so the send-followup worker
+ * never dispatches a sequence step until an operator explicitly turns it on
+ * (FOLLOWUPS_ENABLED=true), on top of each campaign's own autoFollowupsEnabled.
+ */
+export function areFollowupsEnabled(): boolean {
+  return parseBool(process.env.FOLLOWUPS_ENABLED, false)
+}
+
 // The low daily send ceiling applied to EVERY workspace while safe-launch is on.
 // Overridable via SAFE_LAUNCH_DAILY_SEND_CAP; a non-positive/invalid value falls
 // back to the default.
