@@ -83,6 +83,13 @@ export function validateConfig(): void {
     if ((process.env.COOKIE_SAMESITE || '').toLowerCase() === 'none' && process.env.COOKIE_SECURE === 'false') {
       problems.push('COOKIE_SAMESITE=none requires Secure cookies')
     }
+    // RATE_LIMIT_DISABLED is a test/E2E-only escape hatch (apps/api middleware
+    // bypasses every limiter when it is set). In production it would strip the
+    // general/auth/AI/API-key/mail/sync/unsubscribe throttles, so a single stray
+    // env var must fail boot rather than silently disable abuse protection.
+    if (process.env.RATE_LIMIT_DISABLED === 'true') {
+      problems.push('RATE_LIMIT_DISABLED=true is not allowed in production (it disables all rate limiting)')
+    }
     if (getAllowedOrigins().length === 0) {
       // Warn but don't crash — CORS middleware will reject cross-origin requests
       // regardless. This allows the API to start before the web frontend URL is known.
