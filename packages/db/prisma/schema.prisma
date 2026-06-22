@@ -497,7 +497,8 @@ enum DraftStatus {
   REJECTED
   SENT
   SKIPPED
-  POLICY_REVIEW  // Draft generated but has policy violations; requires review
+  // Draft generated but has policy violations; requires review before send.
+  POLICY_REVIEW
 }
 
 enum MissionStatus {

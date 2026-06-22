@@ -50,7 +50,7 @@ export type OutcomeStage =
   | 'WON'
   | 'LOST'
 
-export type DraftStatus = 'DRAFTED' | 'APPROVED' | 'REJECTED' | 'SENT' | 'SKIPPED'
+export type DraftStatus = 'DRAFTED' | 'APPROVED' | 'REJECTED' | 'SENT' | 'SKIPPED' | 'POLICY_REVIEW'
 export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
 export type DiscoveryRunStatus = 'RUNNING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED'
 export type SendStatus = 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | 'BOUNCED' | 'REPLIED'

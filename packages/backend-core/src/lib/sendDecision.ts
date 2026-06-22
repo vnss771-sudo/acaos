@@ -1,4 +1,4 @@
-import { prisma } from '../services/prisma.js'
+import { prisma } from './prisma.js'
 
 export type SendReason =
   | 'WORKSPACE_PAUSED'
@@ -51,12 +51,12 @@ export async function canSendOutreach(input: SendEligibilityInput): Promise<Send
     return { allowed: false, reason: 'EMAIL_UNVERIFIED' }
   }
 
-  // 3. Check lead exists
+  // 3. Check lead exists and has a deliverable email address
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     select: { id: true, email: true }
   })
-  if (!lead) {
+  if (!lead || !lead.email) {
     return { allowed: false, reason: 'LEAD_NOT_FOUND' }
   }
 
@@ -76,20 +76,22 @@ export async function canSendOutreach(input: SendEligibilityInput): Promise<Send
     return { allowed: false, reason: 'SUPPRESSED' }
   }
 
-  // 6. Check campaign status (via mission)
+  // 6. Check campaign exists and its mission is not paused/complete.
+  // A campaign may have no mission (legacy/direct campaigns); only an explicit
+  // PAUSED/COMPLETE mission blocks — a missing mission is not a stop signal.
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, missionId: true }
+    select: { id: true }
   })
   if (!campaign) {
     return { allowed: false, reason: 'CAMPAIGN_PAUSED' }
   }
 
   const mission = await prisma.mission.findUnique({
-    where: { id: campaign.missionId },
-    select: { id: true, status: true }
+    where: { campaignId: campaign.id },
+    select: { status: true }
   })
-  if (mission?.status !== 'ACTIVE') {
+  if (mission && (mission.status === 'PAUSED' || mission.status === 'COMPLETE')) {
     return { allowed: false, reason: 'MISSION_PAUSED' }
   }
 

@@ -1,134 +1,115 @@
-import { describe, it, expect } from 'vitest'
-import { checkDraftPolicy, formatViolations } from '@acaos/backend-core/lib/policyCheck'
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { checkDraftPolicy, formatViolations } from '../packages/backend-core/src/lib/policyCheck.ts'
 
-describe('Draft Policy Checks', () => {
-  describe('Subject length validation', () => {
-    it('rejects subject that is too short', () => {
-      const draft = { subject: 'hi', emailBody: 'This is a nice long email body with many words to satisfy the minimum length requirement and more text here.' }
-      const violations = checkDraftPolicy(draft, { minSubjectLength: 5 })
-      expect(violations.some(v => v.code === 'SUBJECT_TOO_SHORT')).toBe(true)
-    })
+// A compliant body reused across cases: long enough, has an unsubscribe notice,
+// no risky language. Individual cases override subject/body to exercise one rule.
+const GOOD_BODY =
+  'I noticed you work in commercial HVAC and thought our scheduling tool might help. ' +
+  'Happy to share more if useful. You can unsubscribe any time.'
 
-    it('rejects subject that is too long', () => {
-      const draft = {
-        subject: 'A'.repeat(100),
-        emailBody: 'This is a nice long email body with many words to satisfy the minimum length requirement and more text here.'
-      }
-      const violations = checkDraftPolicy(draft, { maxSubjectLength: 80 })
-      expect(violations.some(v => v.code === 'SUBJECT_TOO_LONG')).toBe(true)
-    })
-
-    it('allows subject within acceptable range', () => {
-      const draft = {
-        subject: 'Check out this cool product',
-        emailBody: 'This is a nice long email body with many words to satisfy the minimum length requirement and more text here.'
-      }
-      const violations = checkDraftPolicy(draft, {
-        minSubjectLength: 5,
-        maxSubjectLength: 100
-      })
-      expect(violations.filter(v => v.code.includes('SUBJECT'))).toHaveLength(0)
-    })
+describe('checkDraftPolicy — subject length', () => {
+  it('rejects a subject below the minimum', () => {
+    const violations = checkDraftPolicy({ subject: 'hi', emailBody: GOOD_BODY }, { minSubjectLength: 5 })
+    assert.ok(violations.some(v => v.code === 'SUBJECT_TOO_SHORT'))
   })
 
-  describe('Body length validation', () => {
-    it('rejects body that is too short', () => {
-      const draft = {
-        subject: 'Good Subject Line Here',
-        emailBody: 'Too short'
-      }
-      const violations = checkDraftPolicy(draft, { minBodyLength: 30 })
-      expect(violations.some(v => v.code === 'BODY_TOO_SHORT')).toBe(true)
-    })
-
-    it('rejects body that is too long', () => {
-      const draft = {
-        subject: 'Good Subject Line Here',
-        emailBody: 'A'.repeat(5000)
-      }
-      const violations = checkDraftPolicy(draft, { maxBodyLength: 3000 })
-      expect(violations.some(v => v.code === 'BODY_TOO_LONG')).toBe(true)
-    })
+  it('rejects a subject above the maximum', () => {
+    const violations = checkDraftPolicy({ subject: 'A'.repeat(100), emailBody: GOOD_BODY }, { maxSubjectLength: 80 })
+    assert.ok(violations.some(v => v.code === 'SUBJECT_TOO_LONG'))
   })
 
-  describe('Forbidden phrases', () => {
-    it('detects forbidden phrases (case-insensitive)', () => {
-      const draft = {
-        subject: 'Opportunity',
-        emailBody: 'This is a GUARANTEED way to make money fast'
-      }
-      const violations = checkDraftPolicy(draft, {
-        forbiddenPhrases: ['guaranteed', 'make money']
-      })
-      expect(violations.some(v => v.code === 'FORBIDDEN_PHRASE')).toBe(true)
-    })
+  it('accepts a subject within range', () => {
+    const violations = checkDraftPolicy(
+      { subject: 'Check out this product', emailBody: GOOD_BODY },
+      { minSubjectLength: 5, maxSubjectLength: 100 }
+    )
+    assert.equal(violations.filter(v => v.code.startsWith('SUBJECT')).length, 0)
+  })
+})
 
-    it('allows content without forbidden phrases', () => {
-      const draft = {
-        subject: 'Opportunity',
-        emailBody: 'I noticed you work in tech and might be interested in our service. Let me know if you want to chat!'
-      }
-      const violations = checkDraftPolicy(draft, {
-        forbiddenPhrases: ['guaranteed', 'make money']
-      })
-      expect(violations.filter(v => v.code === 'FORBIDDEN_PHRASE')).toHaveLength(0)
-    })
+describe('checkDraftPolicy — body length', () => {
+  it('rejects a body below the minimum', () => {
+    const violations = checkDraftPolicy({ subject: 'Good Subject Line', emailBody: 'too short' }, { minBodyLength: 30 })
+    assert.ok(violations.some(v => v.code === 'BODY_TOO_SHORT'))
   })
 
-  describe('Unsubscribe compliance', () => {
-    it('flags emails without unsubscribe mention', () => {
-      const draft = {
-        subject: 'Product Update',
-        emailBody: 'Check out our new features!'
-      }
-      const violations = checkDraftPolicy(draft)
-      expect(violations.some(v => v.code === 'MISSING_UNSUBSCRIBE')).toBe(true)
-    })
+  it('rejects a body above the maximum', () => {
+    const violations = checkDraftPolicy({ subject: 'Good Subject Line', emailBody: 'A'.repeat(5000) }, { maxBodyLength: 3000 })
+    assert.ok(violations.some(v => v.code === 'BODY_TOO_LONG'))
+  })
+})
 
-    it('passes with unsubscribe link', () => {
-      const draft = {
-        subject: 'Product Update',
-        emailBody: 'Check out our new features! Click here to unsubscribe.'
-      }
-      const violations = checkDraftPolicy(draft)
-      expect(violations.some(v => v.code === 'MISSING_UNSUBSCRIBE')).toBe(false)
-    })
+describe('checkDraftPolicy — forbidden phrases', () => {
+  it('detects a forbidden phrase case-insensitively', () => {
+    const violations = checkDraftPolicy(
+      { subject: 'Opportunity', emailBody: 'This is a GUARANTEED win. Unsubscribe here.' },
+      { forbiddenPhrases: ['guaranteed'] }
+    )
+    assert.ok(violations.some(v => v.code === 'FORBIDDEN_PHRASE'))
   })
 
-  describe('Risky language detection', () => {
-    it('flags guarantees', () => {
-      const draft = {
-        subject: 'Guaranteed Results',
-        emailBody: 'Our product is 100% guaranteed to increase your revenue by 50% or your money back'
-      }
-      const violations = checkDraftPolicy(draft)
-      expect(violations.some(v => v.code === 'RISKY_LANGUAGE')).toBe(true)
-    })
+  it('passes when no forbidden phrase is present', () => {
+    const violations = checkDraftPolicy(
+      { subject: 'Opportunity', emailBody: GOOD_BODY },
+      { forbiddenPhrases: ['viagra', 'lottery'] }
+    )
+    assert.equal(violations.filter(v => v.code === 'FORBIDDEN_PHRASE').length, 0)
+  })
+})
 
-    it('allows reasonable claims', () => {
-      const draft = {
-        subject: 'Opportunity',
-        emailBody: 'Our clients have seen improvements in their processes. Unsubscribe here.'
-      }
-      const violations = checkDraftPolicy(draft)
-      expect(violations.some(v => v.code === 'RISKY_LANGUAGE')).toBe(false)
-    })
+describe('checkDraftPolicy — unsubscribe compliance (opt-in)', () => {
+  it('does NOT flag a missing unsubscribe by default (footer guarantees it)', () => {
+    const violations = checkDraftPolicy({ subject: 'Product Update', emailBody: 'Check out our new features today!' })
+    assert.ok(!violations.some(v => v.code === 'MISSING_UNSUBSCRIBE'))
   })
 
-  describe('Formatting and reporting', () => {
-    it('formats violations clearly', () => {
-      const violations = [
-        { code: 'SUBJECT_TOO_SHORT', message: 'Subject line is too short' },
-        { code: 'MISSING_UNSUBSCRIBE', message: 'Email body must include an unsubscribe link' }
-      ]
-      const formatted = formatViolations(violations)
-      expect(formatted).toContain('SUBJECT_TOO_SHORT')
-      expect(formatted).toContain('MISSING_UNSUBSCRIBE')
-    })
+  it('flags a missing unsubscribe only when explicitly required', () => {
+    const violations = checkDraftPolicy(
+      { subject: 'Product Update', emailBody: 'Check out our new features today!' },
+      { requireUnsubscribeInBody: true }
+    )
+    assert.ok(violations.some(v => v.code === 'MISSING_UNSUBSCRIBE'))
+  })
 
-    it('returns empty string when no violations', () => {
-      const formatted = formatViolations([])
-      expect(formatted).toBe('')
+  it('passes when an unsubscribe notice is present and required', () => {
+    const violations = checkDraftPolicy(
+      { subject: 'Product Update', emailBody: GOOD_BODY },
+      { requireUnsubscribeInBody: true }
+    )
+    assert.ok(!violations.some(v => v.code === 'MISSING_UNSUBSCRIBE'))
+  })
+})
+
+describe('checkDraftPolicy — risky language', () => {
+  it('flags guarantee-style language', () => {
+    const violations = checkDraftPolicy({
+      subject: 'Results',
+      emailBody: 'Our product is 100% guaranteed to grow revenue. Unsubscribe here.'
     })
+    assert.ok(violations.some(v => v.code === 'RISKY_LANGUAGE'))
+  })
+
+  it('allows reasonable, hedged claims', () => {
+    const violations = checkDraftPolicy({
+      subject: 'Opportunity',
+      emailBody: 'Our clients have seen improvements in their processes. Unsubscribe here.'
+    })
+    assert.ok(!violations.some(v => v.code === 'RISKY_LANGUAGE'))
+  })
+})
+
+describe('formatViolations', () => {
+  it('renders code and message for each violation', () => {
+    const formatted = formatViolations([
+      { code: 'SUBJECT_TOO_SHORT', message: 'Subject line is too short' },
+      { code: 'MISSING_UNSUBSCRIBE', message: 'Email body must include an unsubscribe link' }
+    ])
+    assert.ok(formatted.includes('SUBJECT_TOO_SHORT'))
+    assert.ok(formatted.includes('MISSING_UNSUBSCRIBE'))
+  })
+
+  it('returns an empty string for no violations', () => {
+    assert.equal(formatViolations([]), '')
   })
 })

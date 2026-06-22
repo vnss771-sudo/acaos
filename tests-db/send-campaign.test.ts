@@ -138,3 +138,39 @@ test('mission stop: a PAUSED mission halts the batch before any dispatch', async
   assert.deepEqual(mailer.sent, [], 'a paused mission must not dispatch anything')
   assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id } }), 0)
 })
+
+test('policy review: a draft flagged POLICY_REVIEW is never auto-sent', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  // Non-approval workspace so the send path uses the latest draft as-is.
+  await prisma.workspaceICP.create({
+    data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+  })
+  const lead = await prisma.lead.create({
+    data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' },
+  })
+  // The lead's only draft was set aside by the policy checker.
+  await prisma.outreachDraft.create({
+    data: {
+      leadId: lead.id, workspaceId: workspace.id,
+      subject: 'Guaranteed results', emailBody: 'This is a GUARANTEED win for you.',
+      status: 'POLICY_REVIEW',
+      policyViolations: { violations: [{ code: 'RISKY_LANGUAGE', message: 'guarantee' }] },
+    },
+  })
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  // The flagged lead is skipped, never dispatched, and no send row is created.
+  assert.equal(result.sent, 0)
+  assert.equal(result.skipped, 1)
+  assert.deepEqual(mailer.sent, [], 'a POLICY_REVIEW draft must never be sent')
+  assert.equal(await prisma.outreachSent.count({ where: { leadId: lead.id } }), 0)
+  // The lead is not advanced — it stays eligible once a human resolves the review.
+  const after = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(after!.stage, 'RESEARCHED')
+  // No duplicate draft was generated for the flagged lead.
+  assert.equal(await prisma.outreachDraft.count({ where: { leadId: lead.id } }), 1)
+})

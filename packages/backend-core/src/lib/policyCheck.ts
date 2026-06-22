@@ -15,6 +15,11 @@ export interface DraftPolicyConfig {
   maxBodyLength?: number
   forbiddenPhrases?: string[]
   requireTemplate?: boolean
+  // Opt-in: require the body itself to contain an unsubscribe notice. OFF by
+  // default because ACAOS appends a compliant List-Unsubscribe footer to every
+  // send (see worker send path) — turning this on would false-positive on the
+  // raw draft body and block sends. Enable only for channels with no footer.
+  requireUnsubscribeInBody?: boolean
 }
 
 const DEFAULT_POLICY: Required<DraftPolicyConfig> = {
@@ -24,6 +29,7 @@ const DEFAULT_POLICY: Required<DraftPolicyConfig> = {
   maxBodyLength: 3000,
   forbiddenPhrases: [],
   requireTemplate: false,
+  requireUnsubscribeInBody: false,
 }
 
 export function checkDraftPolicy(
@@ -77,12 +83,17 @@ export function checkDraftPolicy(
     }
   }
 
-  // Check for unsubscribe link (RFC 2369 compliance)
-  if (!body.includes('unsubscribe') && !body.includes('List-Unsubscribe')) {
-    violations.push({
-      code: 'MISSING_UNSUBSCRIBE',
-      message: 'Email body must include an unsubscribe link or notice'
-    })
+  // Check for unsubscribe notice — opt-in only. ACAOS guarantees a compliant
+  // List-Unsubscribe footer on every send, so the raw draft body is not required
+  // to carry one unless the workspace explicitly enables this.
+  if (finalPolicy.requireUnsubscribeInBody) {
+    const lowerForUnsub = body.toLowerCase()
+    if (!lowerForUnsub.includes('unsubscribe') && !lowerForUnsub.includes('list-unsubscribe')) {
+      violations.push({
+        code: 'MISSING_UNSUBSCRIBE',
+        message: 'Email body must include an unsubscribe link or notice'
+      })
+    }
   }
 
   // Check for false claims (simple patterns)

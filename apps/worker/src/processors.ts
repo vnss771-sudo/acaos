@@ -21,6 +21,7 @@ import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@
 import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
+import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
 import { randomBytes } from 'crypto'
 import type { LeadStage } from '@acaos/shared'
 
@@ -267,14 +268,29 @@ export async function sendCampaignBatch(
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
-  const [wsCfgRecord, icp, workspace, missionCtx] = await Promise.all([
+  const [wsCfgRecord, icp, workspace, missionCtx, draftPolicyRecord] = await Promise.all([
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
     prisma.workspaceICP.findUnique({ where: { workspaceId } }),
     prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
     // Per-mission outreach overrides (offer + target customer), if this campaign
     // is the execution arm of a mission. campaignId is unique on Mission.
     prisma.mission.findUnique({ where: { campaignId }, select: { targetCustomer: true, offer: true } }),
+    // Per-workspace draft content policy (length, forbidden phrases, etc). Optional —
+    // absent means the deterministic defaults in checkDraftPolicy apply.
+    prisma.workspaceDraftPolicy.findUnique({ where: { workspaceId } }),
   ])
+  // Build the policy config once for the whole batch. null/undefined fields fall
+  // through to checkDraftPolicy's deterministic defaults.
+  const draftPolicy: DraftPolicyConfig | undefined = draftPolicyRecord
+    ? {
+        minSubjectLength: draftPolicyRecord.minSubjectLength,
+        maxSubjectLength: draftPolicyRecord.maxSubjectLength,
+        minBodyLength: draftPolicyRecord.minBodyLength,
+        maxBodyLength: draftPolicyRecord.maxBodyLength,
+        forbiddenPhrases: draftPolicyRecord.forbiddenPhrases,
+        requireTemplate: draftPolicyRecord.requireTemplate,
+      }
+    : undefined
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
 
@@ -305,8 +321,13 @@ export async function sendCampaignBatch(
       // When approval is required, only include APPROVED drafts. A lead that ends
       // up with no included draft is then skipped in the send loop below (it is
       // NOT sent with freshly generated copy — that would bypass approval).
+      // In non-approval mode the latest draft is used as-is, EXCEPT drafts that a
+      // human or the policy checker has set aside (REJECTED / POLICY_REVIEW) —
+      // those must never be auto-sent, so they're excluded from selection.
       outreachDrafts: {
-        where: approvalRequired ? { status: 'APPROVED' } : undefined,
+        where: approvalRequired
+          ? { status: 'APPROVED' }
+          : { status: { notIn: ['REJECTED', 'POLICY_REVIEW'] } },
         orderBy: { createdAt: 'desc' },
         take: 1
       }
@@ -360,6 +381,19 @@ export async function sendCampaignBatch(
         }))
           .map((r: { leadId: string | null }) => r.leadId)
           .filter((id: string | null): id is string => id !== null)
+      )
+    : new Set<string>()
+
+  // (2) Pending-policy-review fast-path: leads whose latest draft was flagged by
+  // the policy checker (excluded from the selection query above) are awaiting human
+  // review — do NOT regenerate copy for them (that would burn AI credits and pile up
+  // duplicate POLICY_REVIEW drafts every batch). They're skipped before generation.
+  const policyReviewLeadIds: Set<string> = batchLeadIds.length > 0
+    ? new Set(
+        (await prisma.outreachDraft.findMany({
+          where: { leadId: { in: batchLeadIds }, status: 'POLICY_REVIEW' },
+          select: { leadId: true },
+        })).map((r: { leadId: string }) => r.leadId)
       )
     : new Set<string>()
 
@@ -432,6 +466,11 @@ export async function sendCampaignBatch(
       subject = lead.outreachDrafts[0].subject
       body = lead.outreachDrafts[0].emailBody
     } else {
+      // A draft already flagged POLICY_REVIEW is awaiting human review — skip
+      // without regenerating (the selection query excludes it, so it never lands
+      // in outreachDrafts[0], but its lead still appears here in non-approval mode).
+      if (policyReviewLeadIds.has(lead.id)) { skipped++; continue }
+
       // Approval mode: only human-approved drafts may be sent. The query above
       // includes APPROVED drafts only, so an empty drafts array here means this
       // lead has nothing approved — it must be skipped, never sent with freshly
@@ -478,6 +517,28 @@ export async function sendCampaignBatch(
         }
         subject = parsed.subject
         body    = parsed.email
+
+        // Deterministic policy check on freshly generated copy. If the AI output
+        // violates content rules (length, forbidden phrases, risky claims), persist
+        // it as POLICY_REVIEW with the violations recorded and skip the send — never
+        // auto-send unreviewed copy that tripped a policy. (Unsubscribe compliance is
+        // NOT checked here: the send footer guarantees a List-Unsubscribe link.)
+        const violations = checkDraftPolicy({ subject, emailBody: body }, draftPolicy)
+        if (violations.length > 0) {
+          await prisma.outreachDraft.create({
+            data: {
+              leadId:      lead.id,
+              workspaceId,
+              subject,
+              emailBody: body,
+              followup: parsed.followup ?? null,
+              status: 'POLICY_REVIEW',
+              policyViolations: { violations: violations.map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
+            }
+          })
+          console.log(`[send-campaign] Draft for lead ${lead.id} flagged POLICY_REVIEW: ${violations.map(v => v.code).join(', ')}`)
+          skipped++; continue
+        }
 
         // Persist the draft so future sends reuse it
         await prisma.outreachDraft.create({
