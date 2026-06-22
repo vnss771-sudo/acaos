@@ -307,6 +307,10 @@ model OutreachSent {
   workspaceId      String
   campaignId       String?
   leadId           String?
+  // Which step of the campaign sequence this send is (1 = initial send, >= 2 are
+  // follow-ups). Part of the outbox unique so a lead can receive multiple sends in
+  // one campaign (a sequence) while each (campaign, lead, step) stays at-most-once.
+  sequenceStep     Int       @default(1)
   toEmail          String
   // Nullable because the outbox row is now CLAIMED before the draft copy is known
   // (claim-first: reserve the unique (campaignId,leadId) slot before spending AI so
@@ -360,9 +364,11 @@ model OutreachSent {
   // Standalone time index for the global retention purge (sentAt < cutoff), which
   // the workspace-first compound above can't serve.
   @@index([sentAt])
-  // Outbox idempotency: at most one send row per (campaign, lead). Postgres
-  // treats NULLs as distinct, so non-campaign/non-lead sends are unaffected.
-  @@unique([campaignId, leadId])
+  // Outbox idempotency: at most one send row per (campaign, lead, sequenceStep) —
+  // so a sequence can send to a lead more than once (step 1, 2, …) while each step
+  // stays at-most-once. Postgres treats NULLs as distinct, so non-campaign/non-lead
+  // sends are unaffected.
+  @@unique([campaignId, leadId, sequenceStep])
 }
 
 

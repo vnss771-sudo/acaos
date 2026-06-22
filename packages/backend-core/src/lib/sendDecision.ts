@@ -61,9 +61,11 @@ export async function canSendOutreach(input: SendEligibilityInput): Promise<Send
     return { allowed: false, reason: 'LEAD_NOT_FOUND' }
   }
 
-  // 4. Check not already sent (idempotency check)
-  const existing = await prisma.outreachSent.findUnique({
-    where: { campaignId_leadId: { campaignId, leadId } }
+  // 4. Check not already sent (idempotency check). Any step counts — if the lead
+  //    has any send for this campaign, the initial outreach already went out.
+  const existing = await prisma.outreachSent.findFirst({
+    where: { campaignId, leadId },
+    select: { id: true },
   })
   if (existing) {
     return { allowed: false, reason: 'ALREADY_SENT' }

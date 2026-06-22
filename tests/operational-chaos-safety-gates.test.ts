@@ -28,11 +28,15 @@ function modelBlock(name: string) {
   return m![1]
 }
 
-test('operational chaos: OutreachSent must uniquely identify campaign+lead sends', () => {
+test('operational chaos: OutreachSent must uniquely identify campaign+lead+step sends', () => {
   const outreach = modelBlock('OutreachSent')
-  const hasCompositeUnique = /@@unique\s*\(\s*\[\s*campaignId\s*,\s*leadId\s*\]/.test(outreach)
-    || /@@unique\s*\(\s*\[\s*leadId\s*,\s*campaignId\s*\]/.test(outreach)
-  assert.ok(hasCompositeUnique, 'Missing @@unique([campaignId, leadId]).')
+  // Outbox idempotency is per (campaign, lead, sequenceStep): a sequence may send
+  // to a lead more than once, but each step stays at-most-once. campaignId+leadId
+  // must still anchor the composite (in either order, with the step).
+  const hasCompositeUnique =
+    /@@unique\s*\(\s*\[\s*campaignId\s*,\s*leadId\s*,\s*sequenceStep\s*\]/.test(outreach)
+    || /@@unique\s*\(\s*\[\s*campaignId\s*,\s*leadId\s*\]/.test(outreach)
+  assert.ok(hasCompositeUnique, 'Missing @@unique([campaignId, leadId, sequenceStep]).')
 })
 
 test('operational chaos: send flow should reserve an outbox row before SMTP dispatch', () => {
