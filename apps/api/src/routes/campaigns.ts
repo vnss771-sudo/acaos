@@ -3,7 +3,7 @@ import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '.
 import { requireFeature } from '../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
@@ -177,7 +177,7 @@ campaignsRouter.patch(
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, existing.workspaceId, 'campaign:update')
 
     const updates: { name?: string; goalType?: string; description?: string } = {}
     if (typeof body.name === 'string' && body.name.trim()) {
@@ -549,7 +549,7 @@ campaignsRouter.post(
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, campaign.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, campaign.workspaceId, 'campaign:retry_failed')
 
     const result = await prisma.outreachSent.deleteMany({
       where: { campaignId: campaign.id, status: 'FAILED' },

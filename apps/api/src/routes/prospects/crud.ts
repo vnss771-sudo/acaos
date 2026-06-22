@@ -11,6 +11,7 @@ import {
   freshnessState,
 } from '../../lib/signalEngine.js'
 import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { listSources } from '../../lib/prospectSources.js'
 import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
@@ -353,7 +354,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     if (!existing) throw new ApiError(404, 'Prospect not found')
 
     const userId = req.user!.id
-    await assertMinimumWorkspaceRole(userId, existing.workspaceId, 'admin')
+    await assertWorkspacePermission(userId, existing.workspaceId, 'prospects:delete')
 
     await prisma.prospect.delete({ where: { id: req.params.id as string } })
     void recordAudit({

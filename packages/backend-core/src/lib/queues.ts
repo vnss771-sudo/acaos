@@ -70,7 +70,10 @@ export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {
   return getQueue('sync-mailbox').add(
     'sync-mailbox',
     { workspaceId, userId, schemaVersion: CURRENT_PAYLOAD_VERSION },
-    { attempts: 2, backoff: { type: 'exponential', delay: 10000 } }
+    // Bounded retention like every other queue — the auto-sync scheduler enqueues
+    // these continuously, so without it completed/failed sync jobs grow unbounded
+    // in Redis.
+    { attempts: 2, backoff: { type: 'exponential', delay: 10000 }, ...jobRetention }
   )
 }
 

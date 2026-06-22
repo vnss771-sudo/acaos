@@ -389,7 +389,7 @@ leadsRouter.delete(
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
-    await assertMinimumWorkspaceRole(user.id, lead.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, lead.workspaceId, 'leads:delete')
 
     await prisma.lead.delete({ where: { id: leadId } })
     invalidateWorkspaceStats(lead.workspaceId) // removing a lead changes totals/funnel
@@ -408,7 +408,7 @@ leadsRouter.post(
     const user = req.user!
     const { workspaceId, ids } = parseBody(bulkDeleteSchema, req)
 
-    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, workspaceId, 'leads:delete')
 
     const result = await prisma.lead.deleteMany({
       where: { id: { in: ids }, workspaceId }
