@@ -5,6 +5,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueResearchLead } from '../lib/queues.js'
+import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { checkAndIncrementAiUsage, reserveLeadCapacity } from '../lib/limits.js'
 import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
@@ -111,6 +112,7 @@ ingestRouter.post(
         businessName: String(l.businessName).trim().slice(0, MAX_SHORT),
         contactName: typeof l.contactName === 'string' ? l.contactName.trim() || null : null,
         email,
+        emailKey: normalizeEmailKey(email),
         phone: typeof l.phone === 'string' ? l.phone.trim() || null : null,
         website: typeof l.website === 'string' ? l.website.trim() || null : null,
         city: typeof l.city === 'string' ? l.city.trim() || null : null,

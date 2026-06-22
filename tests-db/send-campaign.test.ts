@@ -78,6 +78,126 @@ test('skips suppressed addresses — never dispatches, never records a send', as
   assert.equal(goodLead!.stage, 'OUTREACH_SENT')
 })
 
+test('pagination: sends across multiple pages and enforces the cap across pages', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  // Five sendable leads, paged two at a time → three pages.
+  for (let n = 0; n < 5; n++) {
+    await seedSendableLead(workspace.id, campaign.id, `reach${n}@buyer.test`)
+  }
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn, pageSize: 2 })
+
+  // All five send despite the tiny page size — paging walks every page.
+  assert.equal(result.sent, 5)
+  assert.equal(mailer.sent.length, 5)
+  assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'SENT' } }), 5)
+})
+
+test('pagination: a daily cap reached mid-paging stops and tallies the remainder', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  // Cap of 2/day; six eligible leads paged two at a time.
+  await prisma.workspaceICP.create({
+    data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 2, targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+  })
+  const campaign = await seedCampaign(workspace.id)
+  for (let n = 0; n < 6; n++) {
+    await seedSendableLead(workspace.id, campaign.id, `cap${n}@buyer.test`)
+  }
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn, pageSize: 2 })
+
+  // Only the cap's worth is dispatched; the rest are tallied skipped, and the
+  // accounting still sums to the total eligible.
+  assert.equal(result.sent, 2)
+  assert.equal(mailer.sent.length, 2)
+  assert.equal(result.sent + result.skipped + result.failed, 6)
+})
+
+test('skip accounting: breaks skipped down by reason (suppressed + invalid email)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const good = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+  await seedSendableLead(workspace.id, campaign.id, 'stop@buyer.test')
+  await suppress(workspace.id, 'stop@buyer.test', 'UNSUBSCRIBED')
+  // A lead whose email is structurally invalid → INVALID_EMAIL, never dispatched.
+  const badLead = await prisma.lead.create({
+    data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Bad', email: 'not-an-email', stage: 'RESEARCHED' },
+  })
+  await prisma.outreachDraft.create({ data: { leadId: badLead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there' } })
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  assert.equal(result.sent, 1)
+  assert.equal(result.skipped, 2)
+  assert.equal(result.skippedByReason.SUPPRESSED, 1)
+  assert.equal(result.skippedByReason.INVALID_EMAIL, 1)
+  // The breakdown sums to the total skipped.
+  const sum = Object.values(result.skippedByReason).reduce((a, b) => a + b, 0)
+  assert.equal(sum, result.skipped)
+  // Only the valid, non-suppressed recipient was dispatched.
+  assert.deepEqual(mailer.sent, ['reach@buyer.test'])
+  assert.equal((await prisma.outreachSent.findFirst({ where: { leadId: good.id } }))!.status, 'SENT')
+})
+
+test('contact ledger: a successful send appends a SENT ContactEvent (normalized key)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedSendableLead(workspace.id, campaign.id, 'Reach@Buyer.TEST')
+
+  const mailer = recordingMailer()
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const events = await prisma.contactEvent.findMany({ where: { workspaceId: workspace.id, leadId: lead.id } })
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'SENT')
+  assert.equal(events[0].campaignId, campaign.id)
+  assert.equal(events[0].emailKey, 'reach@buyer.test', 'ledger emailKey is normalized')
+  // The ledger row is tied to the outbox send.
+  const send = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
+  assert.equal(events[0].outreachSentId, send!.id)
+})
+
+test('claim timestamps: SENT carries claimedAt + sentAt, no failedAt', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer()
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const send = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
+  assert.equal(send!.status, 'SENT')
+  assert.ok(send!.claimedAt, 'claimedAt is set at claim time')
+  assert.ok(send!.sentAt, 'sentAt is set on SMTP accept')
+  assert.equal(send!.failedAt, null, 'a successful send has no failedAt')
+  // The claim was reserved no later than the send was accepted.
+  assert.ok(send!.claimedAt.getTime() <= send!.sentAt.getTime())
+})
+
+test('claim timestamps: an SMTP rejection records failedAt and keeps claimedAt', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+
+  const mailer = recordingMailer({ throwOn: () => true })
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const send = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
+  assert.equal(send!.status, 'FAILED')
+  assert.ok(send!.claimedAt, 'claimedAt survives a failed dispatch')
+  assert.ok(send!.failedAt, 'failedAt records when SMTP rejected the send')
+})
+
 test('idempotent: a lead already sent for this campaign is not re-sent', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)
@@ -137,4 +257,40 @@ test('mission stop: a PAUSED mission halts the batch before any dispatch', async
   assert.equal(result.sent, 0)
   assert.deepEqual(mailer.sent, [], 'a paused mission must not dispatch anything')
   assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id } }), 0)
+})
+
+test('policy review: a draft flagged POLICY_REVIEW is never auto-sent', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  // Non-approval workspace so the send path uses the latest draft as-is.
+  await prisma.workspaceICP.create({
+    data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+  })
+  const lead = await prisma.lead.create({
+    data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' },
+  })
+  // The lead's only draft was set aside by the policy checker.
+  await prisma.outreachDraft.create({
+    data: {
+      leadId: lead.id, workspaceId: workspace.id,
+      subject: 'Guaranteed results', emailBody: 'This is a GUARANTEED win for you.',
+      status: 'POLICY_REVIEW',
+      policyViolations: { violations: [{ code: 'RISKY_LANGUAGE', message: 'guarantee' }] },
+    },
+  })
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  // The flagged lead is skipped, never dispatched, and no send row is created.
+  assert.equal(result.sent, 0)
+  assert.equal(result.skipped, 1)
+  assert.deepEqual(mailer.sent, [], 'a POLICY_REVIEW draft must never be sent')
+  assert.equal(await prisma.outreachSent.count({ where: { leadId: lead.id } }), 0)
+  // The lead is not advanced — it stays eligible once a human resolves the review.
+  const after = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(after!.stage, 'RESEARCHED')
+  // No duplicate draft was generated for the flagged lead.
+  assert.equal(await prisma.outreachDraft.count({ where: { leadId: lead.id } }), 1)
 })

@@ -50,10 +50,12 @@ export type OutcomeStage =
   | 'WON'
   | 'LOST'
 
-export type DraftStatus = 'DRAFTED' | 'APPROVED' | 'REJECTED' | 'SENT' | 'SKIPPED'
+export type DraftStatus = 'DRAFTED' | 'APPROVED' | 'REJECTED' | 'SENT' | 'SKIPPED' | 'POLICY_REVIEW'
 export type MissionStatus = 'DRAFT' | 'DISCOVERING' | 'REVIEWING' | 'ACTIVE' | 'PAUSED' | 'COMPLETE'
 export type DiscoveryRunStatus = 'RUNNING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED'
 export type SendStatus = 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | 'BOUNCED' | 'REPLIED'
+export type UnsubscribeSource = 'LINK' | 'ONE_CLICK' | 'MANUAL' | 'COMPLAINT'
+export type FollowupTaskStatus = 'SCHEDULED' | 'PROCESSING' | 'BLOCKED' | 'SENT' | 'CANCELLED' | 'FAILED'
 export type LeadStage = 'NEW' | 'RESEARCHED' | 'OUTREACH_SENT' | 'REPLIED' | 'BOOKED' | 'CLOSED' | 'DEAD'
 export type OutreachIntentStatus =
   | 'PROPOSED'
@@ -368,7 +370,10 @@ export interface RouteContracts {
 
   // Prospects
   'POST /api/prospects': { body: CreateProspectRequest; response: unknown }
-  'POST /api/prospects/discover': { body: DiscoverProspectsRequest; response: { discovered: number; skipped: number; total: number } }
+  // Async: returns 202 with the DiscoveryRun id once the provider search +
+  // import are enqueued. Poll GET /api/prospects/discovery-runs for status/counts.
+  // `deduped` is true when an identical run was already in flight.
+  'POST /api/prospects/discover': { body: DiscoverProspectsRequest; response: { runId: string; jobId?: string; queue?: string; status: string; deduped?: boolean; message?: string } }
   'POST /api/prospects/import': { body: ImportProspectsRequest; response: { imported: number; skipped: number; failed: number; errors: string[] } }
   'POST /api/prospects/:id/rescore': { params: { id: string }; response: unknown }
   'POST /api/prospects/:id/recommend': { params: { id: string }; response: unknown }

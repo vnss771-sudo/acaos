@@ -28,11 +28,15 @@ function modelBlock(name: string) {
   return m![1]
 }
 
-test('operational chaos: OutreachSent must uniquely identify campaign+lead sends', () => {
+test('operational chaos: OutreachSent must uniquely identify campaign+lead+step sends', () => {
   const outreach = modelBlock('OutreachSent')
-  const hasCompositeUnique = /@@unique\s*\(\s*\[\s*campaignId\s*,\s*leadId\s*\]/.test(outreach)
-    || /@@unique\s*\(\s*\[\s*leadId\s*,\s*campaignId\s*\]/.test(outreach)
-  assert.ok(hasCompositeUnique, 'Missing @@unique([campaignId, leadId]).')
+  // Outbox idempotency is per (campaign, lead, sequenceStep): a sequence may send
+  // to a lead more than once, but each step stays at-most-once. campaignId+leadId
+  // must still anchor the composite (in either order, with the step).
+  const hasCompositeUnique =
+    /@@unique\s*\(\s*\[\s*campaignId\s*,\s*leadId\s*,\s*sequenceStep\s*\]/.test(outreach)
+    || /@@unique\s*\(\s*\[\s*campaignId\s*,\s*leadId\s*\]/.test(outreach)
+  assert.ok(hasCompositeUnique, 'Missing @@unique([campaignId, leadId, sequenceStep]).')
 })
 
 test('operational chaos: send flow should reserve an outbox row before SMTP dispatch', () => {
@@ -94,9 +98,9 @@ test('operational chaos: worker must skip unapproved leads before any AI generat
   // draft-generation branch and run BEFORE generateOutreach, or the entire
   // approval gate is bypassed at send time.
   const draftCheckIdx = processors.indexOf('if (lead.outreachDrafts[0])')
-  // The guard now reads `approvalRequired` (the workspace's approvalMode OR forced
-  // on by SAFE_LAUNCH_MODE) rather than the raw workspace flag — same invariant.
-  const skipGuardIdx = processors.indexOf('if (approvalRequired) { skipped++; continue }')
+  // The guard reads `approvalRequired` (the workspace's approvalMode OR forced on
+  // by SAFE_LAUNCH_MODE) and records a NO_APPROVED_DRAFT skip — same invariant.
+  const skipGuardIdx = processors.indexOf("if (approvalRequired) { skip('NO_APPROVED_DRAFT'); continue }")
   const generateIdx = processors.indexOf('generateOutreach(')
   assert.notEqual(draftCheckIdx, -1, 'Could not locate the draft-presence check')
   assert.notEqual(skipGuardIdx, -1, 'Missing approval-mode skip guard in the draft-generation branch')
@@ -131,7 +135,10 @@ test('operational chaos: daily send cap counts delivered SENT rows only', () => 
 })
 
 test('operational chaos: worker re-checks mission stop before SMTP dispatch', () => {
-  const loopIdx = processors.indexOf('for (let i = 0; i < leads.length; i++)')
+  // The send worker paginates eligible leads (for…of page); the mission-stop
+  // re-check must still run inside that loop before any SMTP dispatch so an
+  // operator pause halts the batch (mid-page, and certainly before the next page).
+  const loopIdx = processors.indexOf('for (const lead of page)')
   const blockIdx = processors.indexOf('await getMissionSendBlockReason(campaignId)', loopIdx)
   const sendMailIdx = processors.indexOf('await sendMailFn(', loopIdx)
   assert.ok(loopIdx !== -1 && blockIdx !== -1 && sendMailIdx !== -1, 'worker mission stop check missing')

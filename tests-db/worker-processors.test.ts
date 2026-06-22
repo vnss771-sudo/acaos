@@ -141,16 +141,45 @@ test('applyReplyAnalysis stamps reply metadata on the send, advances the lead, a
   assert.equal(outcome!.prospectId, null) // lead-sourced outcome
 })
 
-test('applyReplyAnalysis on a NOT_INTERESTED reply marks the lead DEAD and outcome not-replied', async () => {
+test('applyReplyAnalysis on a HIGH-confidence NOT_INTERESTED marks the lead DEAD and outcome not-replied', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const { lead } = await seedRepliedLeadWithSend(workspace.id)
+
+  await applyReplyAnalysis(lead.id, { classification: 'NOT_INTERESTED', confidence: 95, isAutoReply: false })
+
+  const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(updatedLead!.stage, 'DEAD')
+  const outcome = await prisma.scoringOutcome.findFirst({ where: { leadId: lead.id } })
+  assert.equal(outcome!.replied, false)
+})
+
+test('applyReplyAnalysis confidence-gates a LOW-confidence NOT_INTERESTED: lead kept (REPLIED), not DEAD', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const { lead, send } = await seedRepliedLeadWithSend(workspace.id)
+
+  // The model says NOT_INTERESTED but is only 30% confident — must NOT irreversibly
+  // kill the lead. It's downgraded to a conservative REPLIED for human review.
+  await applyReplyAnalysis(lead.id, { classification: 'NOT_INTERESTED', confidence: 30, isAutoReply: false })
+
+  const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(updatedLead!.stage, 'REPLIED', 'a shaky negative does not auto-kill the lead')
+  // The RAW classification + confidence are still recorded on the send for the inbox.
+  const updatedSend = await prisma.outreachSent.findUnique({ where: { id: send.id } })
+  assert.equal(updatedSend!.replyIntent, 'NOT_INTERESTED')
+  assert.equal(updatedSend!.replyConfidence, 30)
+  // The scoring outcome reflects the gated (conservative) value, not a false negative.
+  const outcome = await prisma.scoringOutcome.findFirst({ where: { leadId: lead.id } })
+  assert.equal(outcome!.replied, true)
+})
+
+test('applyReplyAnalysis: a NOT_INTERESTED with no confidence is treated conservatively (kept)', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const { lead } = await seedRepliedLeadWithSend(workspace.id)
 
   await applyReplyAnalysis(lead.id, { classification: 'NOT_INTERESTED', isAutoReply: false })
 
   const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
-  assert.equal(updatedLead!.stage, 'DEAD')
-  const outcome = await prisma.scoringOutcome.findFirst({ where: { leadId: lead.id } })
-  assert.equal(outcome!.replied, false)
+  assert.equal(updatedLead!.stage, 'REPLIED', 'absent confidence fails safe — lead is kept, not killed')
 })
 
 test('applyReplyAnalysis on an auto-reply stamps the send but does NOT advance the lead or score', async () => {

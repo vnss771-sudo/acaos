@@ -1,6 +1,7 @@
 import { Redis as IORedis } from 'ioredis'
 import { Queue } from 'bullmq'
 import { createHash } from 'node:crypto'
+import { CURRENT_PAYLOAD_VERSION } from './queueSchemas.js'
 
 let _connection: IORedis | null = null
 
@@ -54,22 +55,25 @@ const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 }
 // optional initiatedByUserId. Object params prevent the positional confusion that
 // previously let ingest pass a workspaceId into a `userId` field.
 export async function enqueueResearchLead(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
-  return getQueue('research-lead').add('research-lead', opts, aiJobOpts)
+  return getQueue('research-lead').add('research-lead', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
 export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
-  return getQueue('generate-outreach').add('generate-outreach', opts, aiJobOpts)
+  return getQueue('generate-outreach').add('generate-outreach', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
 export async function enqueueAnalyzeReply(opts: { replyBody: string; workspaceId: string; leadId?: string; initiatedByUserId?: string }) {
-  return getQueue('analyze-reply').add('analyze-reply', opts, aiJobOpts)
+  return getQueue('analyze-reply').add('analyze-reply', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
 export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {
   return getQueue('sync-mailbox').add(
     'sync-mailbox',
-    { workspaceId, userId },
-    { attempts: 2, backoff: { type: 'exponential', delay: 10000 } }
+    { workspaceId, userId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    // Bounded retention like every other queue — the auto-sync scheduler enqueues
+    // these continuously, so without it completed/failed sync jobs grow unbounded
+    // in Redis.
+    { attempts: 2, backoff: { type: 'exponential', delay: 10000 }, ...jobRetention }
   )
 }
 
@@ -79,15 +83,26 @@ export async function getJobById(queueName: string, jobId: string) {
 }
 
 export async function enqueueScoreProspects(workspaceId: string) {
-  return getQueue('score-prospects').add('score-prospects', { workspaceId }, defaultJobOpts)
+  return getQueue('score-prospects').add('score-prospects', { workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+}
+
+// Async prospect discovery. attempts:1 — a discovery run calls a metered, paid
+// provider and the route already consumed the workspace's discovery quota, so a
+// failed run must not silently re-hit the provider; failures surface as a FAILED
+// (or PARTIAL) DiscoveryRun for the operator instead of being auto-retried.
+export async function enqueueDiscoverProspects(runId: string, workspaceId: string) {
+  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
+    attempts: 1,
+    ...jobRetention,
+  })
 }
 
 export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string) {
-  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId }, defaultJobOpts)
+  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 export async function enqueueCalibrate(workspaceId: string) {
-  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId }, defaultJobOpts)
+  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 // Deterministic jobId so repeated "launch" clicks within the same minute collapse
@@ -110,13 +125,48 @@ export function sendCampaignJobId(
 }
 
 export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
-  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds }, {
+  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
     jobId: sendCampaignJobId(campaignId, workspaceId, leadIds),
     attempts: 2,
     backoff: { type: 'exponential', delay: 10_000 },
-    removeOnComplete: 200,
-    removeOnFail: 200
+    removeOnComplete: { count: 1000, age: 86_400 },
+    removeOnFail: { count: 5000, age: 30 * 86_400 }
   })
+}
+
+// Enqueue one due follow-up step. The jobId is per (task, minute) so two
+// overlapping scans in the same minute can't double-enqueue the same task, while a
+// cap-deferred task (parked back at SCHEDULED) is re-picked on the next minute's
+// scan. The real double-send guard is the processor's atomic SCHEDULED→PROCESSING
+// claim — this is just flood control. attempts:2 with a long backoff (past the AI
+// circuit breaker) but follow-ups never burn quota on retry since send is idempotent
+// per (campaign, lead, step).
+export function sendFollowupJobId(taskId: string, now: number = Date.now()): string {
+  return `send-followup-${taskId}-${Math.floor(now / 60_000)}`
+}
+
+export async function enqueueSendFollowup(taskId: string, workspaceId?: string) {
+  return getQueue('send-followup').add(
+    'send-followup',
+    { taskId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    { jobId: sendFollowupJobId(taskId), attempts: 2, backoff: { type: 'exponential', delay: 30_000 }, ...jobRetention },
+  )
+}
+
+// Scan for due, SCHEDULED follow-up tasks and enqueue a per-task send job for each.
+// The worker's scheduler calls this on an interval ONLY when FOLLOWUPS_ENABLED, so
+// when the global flag is off no follow-up ever leaves the queue. Bounded per scan
+// so a backlog drains steadily rather than flooding the queue in one tick.
+export async function enqueueDueFollowups(now: Date = new Date(), limit = 500): Promise<number> {
+  const { prisma } = await import('./prisma.js')
+  const due = await prisma.followupTask.findMany({
+    where: { status: 'SCHEDULED', scheduledFor: { lte: now } },
+    select: { id: true, workspaceId: true },
+    orderBy: { scheduledFor: 'asc' },
+    take: limit,
+  })
+  for (const t of due) await enqueueSendFollowup(t.id, t.workspaceId)
+  return due.length
 }
 
 // On-demand trigger for the retention sweep (the worker also runs it daily). The
@@ -133,7 +183,7 @@ export async function enqueueRetentionPurge() {
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
-  'retention-purge'
+  'discover-prospects', 'retention-purge', 'send-followup'
 ]
 
 export async function getQueueStats() {

@@ -13,6 +13,7 @@ import {
   getMonthlyUsage,
   getPlanInfo,
   getPlanCatalog,
+  utcMonthStart,
 } from '../packages/backend-core/src/lib/limits.ts'
 import { createFakePrisma, installPrisma, resetPrisma, type FakePrisma } from './helpers/integration.ts'
 
@@ -152,4 +153,11 @@ test('getPlanCatalog matches getPlanInfo for the enforced numbers', () => {
     assert.equal(catalog[plan].maxLeads, info.maxLeads)
     assert.equal(catalog[plan].aiCallsPerMonth, info.aiCallsPerMonth)
   }
+})
+
+test('utcMonthStart returns midnight on the first of the UTC month', () => {
+  const s = utcMonthStart(new Date('2026-06-22T15:30:00Z'))
+  assert.equal(s.toISOString(), '2026-06-01T00:00:00.000Z')
+  // Works at a month boundary regardless of local tz (UTC-based).
+  assert.equal(utcMonthStart(new Date('2026-01-31T23:59:59Z')).toISOString(), '2026-01-01T00:00:00.000Z')
 })

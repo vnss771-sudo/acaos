@@ -33,3 +33,25 @@ export function captureError(err: unknown, context?: ErrorContext): void {
     console.error('[observability] error reporter threw:', transportError)
   }
 }
+
+// Pluggable provider-call metric seam. providerClient (in backend-core) records
+// every outbound provider call's outcome, but the prometheus registry lives in
+// the API process. The API wires its incProviderCall counter in here at startup;
+// the worker can wire its own or leave it a no-op. Dependency-free and a no-op
+// until registered, so backend-core never imports the API's metrics module.
+export type ProviderCallObserver = (provider: string, operation: string, outcome: string) => void
+
+let providerCallObserver: ProviderCallObserver | null = null
+
+export function setProviderCallObserver(fn: ProviderCallObserver | null): void {
+  providerCallObserver = fn
+}
+
+export function recordProviderCall(provider: string, operation: string, outcome: string): void {
+  if (!providerCallObserver) return
+  try {
+    providerCallObserver(provider, operation, outcome)
+  } catch (observerError) {
+    console.error('[observability] provider-call observer threw:', observerError)
+  }
+}

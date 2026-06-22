@@ -2,8 +2,14 @@ import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { callProvider, ProviderError } from '../apps/api/src/lib/providerClient.ts'
 import { FetchTimeoutError } from '../apps/api/src/lib/fetchWithTimeout.ts'
-import { resetMetrics, renderMetrics } from '../apps/api/src/lib/metrics.ts'
+import { resetMetrics, renderMetrics, incProviderCall } from '../apps/api/src/lib/metrics.ts'
+import { setProviderCallObserver } from '../packages/backend-core/src/lib/observability.ts'
 import { CircuitBreaker, CircuitOpenError } from '../packages/backend-core/src/lib/circuit.ts'
+
+// providerClient (backend-core) reports outcomes through the observability seam;
+// the API wires its prometheus counter into that seam at startup. Mirror that
+// wiring here so the metering assertions exercise the real end-to-end path.
+setProviderCallObserver(incProviderCall)
 
 beforeEach(() => resetMetrics())
 

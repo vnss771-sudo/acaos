@@ -28,10 +28,9 @@ export function nonEmpty<T>(arr: T[] | null | undefined): T[] | undefined {
   return arr && arr.length > 0 ? arr : undefined
 }
 
-export function normalizeDomain(domain: string | null | undefined): string | null {
-  if (!domain) return null
-  return domain.toLowerCase().replace(/^www\./, '')
-}
+// Canonical normalizers live in backend-core so the API and worker share one
+// implementation. Re-exported here so existing import sites keep working.
+export { normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 
 // Load an OutreachIntent for a write action: verifies the prospect exists, the
 // caller has workspace access, and the intent belongs to that prospect.

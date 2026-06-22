@@ -5,7 +5,9 @@ import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
+import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
@@ -164,6 +166,7 @@ leadsRouter.post(
       campaignId: body.campaignId || null,
       contactName: typeof body.contactName === 'string' ? body.contactName.trim() || null : null,
       email: typeof body.email === 'string' ? body.email.trim().toLowerCase() || null : null,
+      emailKey: typeof body.email === 'string' ? normalizeEmailKey(body.email) : null,
       website: typeof body.website === 'string' ? body.website.trim() || null : null,
       city: typeof body.city === 'string' ? body.city.trim() || null : null,
       category: typeof body.category === 'string' ? body.category.trim() || null : null,
@@ -192,7 +195,7 @@ leadsRouter.post(
     const user = req.user!
     const { workspaceId, leads } = parseBody(importLeadsSchema, req)
 
-    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, workspaceId, 'leads:import')
 
     const weights = await getWorkspaceWeights(workspaceId)
 
@@ -205,6 +208,7 @@ leadsRouter.post(
           campaignId: typeof l.campaignId === 'string' ? l.campaignId || null : null,
           contactName: typeof l.contactName === 'string' ? l.contactName.trim() || null : null,
           email: typeof l.email === 'string' ? l.email.trim().toLowerCase() || null : null,
+          emailKey: typeof l.email === 'string' ? normalizeEmailKey(l.email) : null,
           website: typeof l.website === 'string' ? l.website.trim() || null : null,
           city: typeof l.city === 'string' ? l.city.trim() || null : null,
           category: typeof l.category === 'string' ? l.category.trim() || null : null,
@@ -385,7 +389,7 @@ leadsRouter.delete(
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
 
-    await assertMinimumWorkspaceRole(user.id, lead.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, lead.workspaceId, 'leads:delete')
 
     await prisma.lead.delete({ where: { id: leadId } })
     invalidateWorkspaceStats(lead.workspaceId) // removing a lead changes totals/funnel
@@ -404,7 +408,7 @@ leadsRouter.post(
     const user = req.user!
     const { workspaceId, ids } = parseBody(bulkDeleteSchema, req)
 
-    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, workspaceId, 'leads:delete')
 
     const result = await prisma.lead.deleteMany({
       where: { id: { in: ids }, workspaceId }

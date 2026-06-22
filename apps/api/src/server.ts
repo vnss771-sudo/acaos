@@ -39,6 +39,8 @@ import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { getRedis } from './lib/redis.js'
 import { initErrorReporting } from './lib/errorReporting.js'
+import { setProviderCallObserver } from '@acaos/backend-core/lib/observability.js'
+import { incProviderCall } from './lib/metrics.js'
 import { attachBreakerStore } from './lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 
@@ -215,6 +217,10 @@ getRedis().connect().catch((err: Error) => {
 })
 
 void initErrorReporting()
+
+// Route provider-call outcomes from backend-core (providerClient) into the API's
+// prometheus counter. backend-core stays metrics-agnostic via this seam.
+setProviderCallObserver(incProviderCall)
 
 if (process.env.REDIS_URL) {
   attachBreakerStore(createRedisBreakerStore(getRedis()))

@@ -3,7 +3,8 @@ import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '.
 import { requireFeature } from '../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
-import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
@@ -131,7 +132,7 @@ campaignsRouter.post(
     const user = req.user!
     const { workspaceId, name, goalType, description } = req.body as z.infer<typeof createCampaignSchema>
 
-    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, workspaceId, 'campaign:create')
 
     const campaign = await prisma.campaign.create({
       data: { workspaceId, name, goalType, description }
@@ -176,7 +177,7 @@ campaignsRouter.patch(
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, existing.workspaceId, 'campaign:update')
 
     const updates: { name?: string; goalType?: string; description?: string } = {}
     if (typeof body.name === 'string' && body.name.trim()) {
@@ -272,6 +273,122 @@ campaignsRouter.get(
   })
 )
 
+// Campaign send preflight — dry-run eligibility check without queueing.
+// Shows exact count of leads eligible to send to, blockers if any, and estimated batches.
+// Lets frontend decide whether to proceed or show "send blocked" UX.
+campaignsRouter.get(
+  '/:id/preflight',
+  asyncHandler(async (req, res) => {
+    const user = req.user!
+    const { id: campaignId } = parseParams(campaignParamsSchema, req)
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      include: { _count: { select: { leads: true } } }
+    })
+    if (!campaign) throw new ApiError(404, 'Campaign not found')
+
+    const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    // Production deliverability gate (same as /send endpoint)
+    const readiness = await getSendReadiness(campaign.workspaceId)
+    const blockers: { name: string; hint: string }[] = []
+    let ready = true
+
+    if (isProduction() && !readiness.ready) {
+      ready = false
+      blockers.push({
+        name: 'deliverabilityNotConfigured',
+        hint: 'SMTP and CAN-SPAM sender identity (business name + postal address) must be configured'
+      })
+    }
+
+    // Mission status check
+    const mission = await prisma.mission.findUnique({
+      where: { campaignId: campaign.id },
+      select: { status: true }
+    }).catch(() => null)
+
+    if (mission?.status === 'PAUSED' || mission?.status === 'COMPLETE') {
+      ready = false
+      blockers.push({
+        name: 'missionNotActive',
+        hint: `Mission is ${mission.status.toLowerCase()} — resume or create a new mission before sending`
+      })
+    }
+
+    // Eligible leads (basic: has email, not already reached terminal stage)
+    const where = {
+      campaignId: campaign.id,
+      email: { not: null as null },
+      stage: { notIn: ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as LeadStage[] },
+    }
+    const totalEligible = await prisma.lead.count({ where })
+
+    // Approval mode check
+    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: campaign.workspaceId } })
+    let approvedEligible = totalEligible
+
+    if (icp?.approvalMode) {
+      approvedEligible = await prisma.lead.count({
+        where: { ...where, outreachDrafts: { some: { status: 'APPROVED' } } }
+      })
+      if (approvedEligible === 0) {
+        ready = false
+        blockers.push({
+          name: 'noApprovedDrafts',
+          hint: 'Approval mode enabled — approve at least one outreach in the Review Queue before sending'
+        })
+      }
+    }
+
+    // Daily cap check
+    let cappedEligible = approvedEligible
+    let cappedByDaily = false
+
+    if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
+      const startOfToday = new Date()
+      startOfToday.setHours(0, 0, 0, 0)
+      const sentToday = await prisma.outreachSent.count({
+        where: { workspaceId: campaign.workspaceId, status: 'SENT', sentAt: { gte: startOfToday } }
+      })
+      const remaining = Math.max(0, icp.dailySendLimit - sentToday)
+
+      if (remaining === 0) {
+        ready = false
+        blockers.push({
+          name: 'dailyCapReached',
+          hint: `Daily send limit of ${icp.dailySendLimit} reached for today — ${approvedEligible} eligible leads will send tomorrow`
+        })
+      } else if (remaining < approvedEligible) {
+        cappedEligible = remaining
+        cappedByDaily = true
+      }
+    }
+
+    // Estimate batches (default: 100 leads per batch, configurable)
+    const batchSize = 100
+    const estimatedDailyBatches = Math.ceil(cappedEligible / batchSize)
+
+    res.json({
+      campaignId: campaign.id,
+      totalLeads: campaign._count.leads,
+      totalEligible: totalEligible,
+      approvedEligible: approvedEligible,
+      cappedEligible: cappedEligible,
+      cappedByDaily,
+      requiresApproval: icp?.approvalMode ?? false,
+      dailySendLimit: icp?.dailySendLimit || null,
+      estimatedDailyBatches,
+      ready,
+      blockers,
+      message: ready
+        ? `${cappedEligible} lead${cappedEligible !== 1 ? 's' : ''} ready to send${cappedByDaily ? ` (capped by daily limit of ${icp?.dailySendLimit})` : ''}`
+        : `Send blocked: ${blockers.map(b => b.name).join(', ')}`
+    })
+  })
+)
+
 // Launch campaign — enqueues batch email send for all leads with email addresses.
 // Optional body: { leadIds?: string[] } to restrict to specific leads.
 // Returns a jobId for progress polling via GET /api/jobs/:queue/:id.
@@ -290,7 +407,7 @@ campaignsRouter.post(
     })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, campaign.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, campaign.workspaceId, 'campaign:send')
 
     // Production send-readiness / compliance gate. The frontend checks SPF/DKIM
     // and sender setup before launch, but a direct API caller must not be able to
@@ -408,7 +525,7 @@ campaignsRouter.delete(
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, existing.workspaceId, 'campaign:delete')
 
     await prisma.campaign.delete({ where: { id: campaignId } })
     // Deleting a campaign changes campaignCount and (via cascade) lead totals/funnel.
@@ -432,7 +549,7 @@ campaignsRouter.post(
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
 
-    await assertMinimumWorkspaceRole(user.id, campaign.workspaceId, 'admin')
+    await assertWorkspacePermission(user.id, campaign.workspaceId, 'campaign:retry_failed')
 
     const result = await prisma.outreachSent.deleteMany({
       where: { campaignId: campaign.id, status: 'FAILED' },

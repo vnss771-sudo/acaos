@@ -62,6 +62,11 @@ export function normalizeWorkspaceRole(role: string | null | undefined): Workspa
   return role === 'owner' || role === 'admin' ? role : 'member'
 }
 
+/** Non-throwing role comparison: does `role` meet at least `min` in the hierarchy? */
+export function roleMeetsMinimum(role: WorkspaceRole, min: WorkspaceRole): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[min]
+}
+
 // Membership role cache. After the JWT auth lookup, nearly every authed request
 // checks workspace membership — historically a second per-request DB round-trip
 // on the entire data surface (leads, prospects, stats, intelligence, …). This

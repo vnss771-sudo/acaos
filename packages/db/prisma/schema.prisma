@@ -43,6 +43,10 @@ model DiscoveryRun {
   source        String
   status        DiscoveryRunStatus @default(RUNNING)
   query         Json?
+  // Stable hash of (source + canonical query) — lets a repeated discover request
+  // collapse onto an already-RUNNING run instead of starting a duplicate provider
+  // search (and double-charging quota). Nullable: legacy rows stay null.
+  queryHash     String?
   resultCount   Int       @default(0)
   importedCount Int       @default(0)
   skippedCount  Int       @default(0)
@@ -55,6 +59,8 @@ model DiscoveryRun {
 
   @@index([workspaceId, startedAt])
   @@index([missionId])
+  // Serves the in-flight dedup lookup (workspace + queryHash + RUNNING).
+  @@index([workspaceId, queryHash])
   // Standalone time index for the global retention purge (startedAt < cutoff).
   @@index([startedAt])
 }
@@ -115,10 +121,16 @@ model Workspace {
   emailConfig          WorkspaceEmailConfig?
   invites              WorkspaceInvite[]
   suppressions         Suppression[]
+  contactEvents        ContactEvent[]
+  unsubscribeEvents    UnsubscribeEvent[]
+  campaignDailyStats   CampaignDailyStats[]
+  followupTasks        FollowupTask[]
   processedEmails      ProcessedEmail[]
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
   evidenceSources      EvidenceSource[]
+  aiPromptVersions     AiPromptVersion[]
+  draftPolicy          WorkspaceDraftPolicy?
 }
 
 model Membership {
@@ -142,13 +154,63 @@ model Campaign {
   goalType     String
   description  String?
   workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  // Multi-step sequences are OFF by default — a campaign only schedules follow-ups
+  // when an operator explicitly enables them (safe-rollout: visible before auto-send).
+  autoFollowupsEnabled Boolean @default(false)
   leads        Lead[]
   outreachSent OutreachSent[]
   mission      Mission?
+  dailyStats   CampaignDailyStats[]
+  sequenceSteps OutreachSequenceStep[]
+  followupTasks FollowupTask[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
   @@index([workspaceId])
+}
+
+// A step in a campaign's outreach sequence. Step 1 is the initial send (implicit);
+// steps >= 2 are follow-ups scheduled `delayDays` after the prior send.
+model OutreachSequenceStep {
+  id          String   @id @default(cuid())
+  campaignId  String
+  stepNumber  Int
+  delayDays   Int
+  subject     String?
+  body        String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, stepNumber])
+  @@index([campaignId, isActive])
+}
+
+// A scheduled (or sent/blocked/cancelled) follow-up for one lead at one step. The
+// @@unique([campaignId, leadId, stepNumber]) makes scheduling idempotent. PROCESSING
+// is the claimed state so two workers can't send the same follow-up.
+model FollowupTask {
+  id              String             @id @default(cuid())
+  workspaceId     String
+  campaignId      String
+  leadId          String
+  outreachSentId  String?
+  stepNumber      Int
+  status          FollowupTaskStatus @default(SCHEDULED)
+  scheduledFor    DateTime
+  cancelledReason String?
+  lastError       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead            Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, leadId, stepNumber])
+  @@index([workspaceId, status, scheduledFor])
+  @@index([campaignId, status])
+  @@index([leadId, status])
 }
 
 // First-class Mission: the user-facing control plane that ties ICP/playbook,
@@ -193,16 +255,21 @@ model Lead {
   stage          LeadStage       @default(NEW)
   sourceTag      String?
   lastContactedAt DateTime?
+  // Normalized email for dedupe (lowercased, plus-tag folded). Nullable: legacy
+  // rows and leads without an email stay null.
+  emailKey       String?
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign       Campaign?       @relation(fields: [campaignId], references: [id])
   outreachDrafts OutreachDraft[]
   outreachSent   OutreachSent[]
+  followupTasks  FollowupTask[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
   @@index([workspaceId])
   @@index([workspaceId, stage])
   @@index([workspaceId, email])
+  @@index([workspaceId, emailKey])
   // Serves the default leads list (ORDER BY score DESC, createdAt DESC scoped to a
   // workspace) via a backward index scan instead of a full sort per request.
   @@index([workspaceId, score, createdAt])
@@ -210,22 +277,26 @@ model Lead {
 }
 
 model OutreachDraft {
-  id           String    @id @default(cuid())
-  leadId       String
-  workspaceId  String
-  subject      String
-  emailBody    String
-  followup     String?
-  status       DraftStatus @default(DRAFTED)
-  reviewedAt   DateTime?
-  reviewedBy   String?   // userId of approver/rejecter
-  createdAt    DateTime  @default(now())
-  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id               String    @id @default(cuid())
+  leadId           String
+  workspaceId      String
+  subject          String
+  emailBody        String
+  followup         String?
+  status           DraftStatus @default(DRAFTED)
+  promptVersionId  String?   // Which AI prompt/version generated this draft
+  policyViolations Json?     // {violations: string[]} if policy check failed
+  reviewedAt       DateTime?
+  reviewedBy       String?   // userId of approver/rejecter
+  createdAt        DateTime  @default(now())
+  lead             Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  promptVersion    AiPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
 
   @@index([leadId])
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([promptVersionId])
 }
 
 // Tracks every email sent via a campaign — provides closed-loop reply correlation.
@@ -236,9 +307,17 @@ model OutreachSent {
   workspaceId      String
   campaignId       String?
   leadId           String?
+  // Which step of the campaign sequence this send is (1 = initial send, >= 2 are
+  // follow-ups). Part of the outbox unique so a lead can receive multiple sends in
+  // one campaign (a sequence) while each (campaign, lead, step) stays at-most-once.
+  sequenceStep     Int       @default(1)
   toEmail          String
-  subject          String
-  body             String
+  // Nullable because the outbox row is now CLAIMED before the draft copy is known
+  // (claim-first: reserve the unique (campaignId,leadId) slot before spending AI so
+  // a racing job can't double-generate). Filled in once the draft is prepared; a
+  // SENT/FAILED row always carries them.
+  subject          String?
+  body             String?
   messageId        String?   @unique  // SMTP Message-ID for reply correlation
   // Outbox lifecycle: SENDING (claimed, pre-dispatch) -> SENT, or -> FAILED on a
   // known SMTP rejection. A crash after dispatch leaves the row SENDING
@@ -262,6 +341,13 @@ model OutreachSent {
   outreachIntentId String?
   recommendationId String?
   evidenceSnapshot Json?
+  // claimedAt: when the platform reserved the send (row insert). Stable even after
+  // sentAt is set, so it's the authoritative "when did we claim this" timestamp.
+  // failedAt: when SMTP definitively rejected it. sentAt: kept (defaults at claim,
+  // overwritten with the real accept time on SENT) for back-compat with the
+  // existing stats/retention/index paths.
+  claimedAt        DateTime  @default(now())
+  failedAt         DateTime?
   sentAt           DateTime  @default(now())
   workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign         Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
@@ -278,9 +364,11 @@ model OutreachSent {
   // Standalone time index for the global retention purge (sentAt < cutoff), which
   // the workspace-first compound above can't serve.
   @@index([sentAt])
-  // Outbox idempotency: at most one send row per (campaign, lead). Postgres
-  // treats NULLs as distinct, so non-campaign/non-lead sends are unaffected.
-  @@unique([campaignId, leadId])
+  // Outbox idempotency: at most one send row per (campaign, lead, sequenceStep) —
+  // so a sequence can send to a lead more than once (step 1, 2, …) while each step
+  // stays at-most-once. Postgres treats NULLs as distinct, so non-campaign/non-lead
+  // sends are unaffected.
+  @@unique([campaignId, leadId, sequenceStep])
 }
 
 
@@ -360,12 +448,17 @@ model ProcessedEmail {
   uid         Int
   messageId   String?
   fromAddress String?
+  // Reply attribution: which OutreachSent this inbound message was matched to, and
+  // by which method, so operators can see (and audit) unmatched/ambiguous replies.
+  matchedOutreachSentId String?
+  matchMethod           String?  // MESSAGE_ID | EMAIL_UNIQUE | MOST_RECENT_LEAD_SEND | NO_MATCH
   processedAt DateTime  @default(now())
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, uid])
   @@unique([workspaceId, messageId])
   @@index([workspaceId])
+  @@index([workspaceId, matchedOutreachSentId])
   // Retention purge scans processedAt < cutoff (workspace-agnostic).
   @@index([processedAt])
 }
@@ -491,6 +584,8 @@ enum DraftStatus {
   REJECTED
   SENT
   SKIPPED
+  // Draft generated but has policy violations; requires review before send.
+  POLICY_REVIEW
 }
 
 enum MissionStatus {
@@ -519,6 +614,22 @@ enum SendStatus {
   REPLIED
 }
 
+enum UnsubscribeSource {
+  LINK
+  ONE_CLICK
+  MANUAL
+  COMPLAINT
+}
+
+enum FollowupTaskStatus {
+  SCHEDULED
+  PROCESSING
+  BLOCKED
+  SENT
+  CANCELLED
+  FAILED
+}
+
 // Workspace billing tier (was a free-form String — now DB-enforced). `free` is
 // the default/lapsed tier; `starter` and `growth` are the paid Stripe plans.
 enum BillingPlan {
@@ -541,13 +652,82 @@ enum LeadStage {
 model Suppression {
   id          String    @id @default(cuid())
   workspaceId String
+  // email preserves the address as supplied (trimmed) for display/audit; emailKey
+  // is the normalized (trim+lowercase) dedup key that every suppression lookup
+  // uses, so case/whitespace variants can't slip a suppressed recipient through.
   email       String
-  reason      String    @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | MANUAL
+  emailKey    String
+  reason      String    @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | MANUAL | COMPLAINT
   createdAt   DateTime  @default(now())
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  @@unique([workspaceId, email])
+  @@unique([workspaceId, emailKey])
   @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+}
+
+// Durable, append-only ledger of every outreach lifecycle event for a recipient.
+// The source of truth that contact-policy (recency / monthly-cap), campaign stats,
+// and forensic timelines read from — so those don't have to scan/interpret
+// OutreachSent. Scalar leadId/campaignId/outreachSentId (no FKs) so history
+// survives deletion of the referenced rows. emailKey is normalized (trim+lower).
+model ContactEvent {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  emailKey       String
+  leadId         String?
+  campaignId     String?
+  outreachSentId String?
+  type           String    // SENT | REPLIED | BOUNCED | UNSUBSCRIBED | FAILED
+  occurredAt     DateTime  @default(now())
+  metadata       Json?
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, emailKey, occurredAt])
+  @@index([workspaceId, campaignId, occurredAt])
+  @@index([outreachSentId])
+}
+
+// Per-campaign, per-day funnel counters — a fast read-model so dashboards don't
+// scan/aggregate the whole OutreachSent/ContactEvent history. Live-incremented in
+// the same transaction as the SENT/REPLIED lifecycle writes, and fully
+// reconstructable from the ContactEvent ledger (ops/rebuild-campaign-stats.mjs) if
+// it ever drifts. `date` is the UTC day start.
+model CampaignDailyStats {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  campaignId   String
+  date         DateTime
+  sent         Int      @default(0)
+  replied      Int      @default(0)
+  interested   Int      @default(0)
+  bounced      Int      @default(0)
+  unsubscribed Int      @default(0)
+  failed       Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+  @@index([workspaceId, date])
+}
+
+// Audit ledger of unsubscribe events, separate from the Suppression list (which is
+// the current state). Keeps WHEN/HOW/from-WHICH-send each opt-out happened for
+// compliance and reporting, even after a suppression row is edited or purged.
+model UnsubscribeEvent {
+  id             String            @id @default(cuid())
+  workspaceId    String
+  emailKey       String
+  source         UnsubscribeSource
+  campaignId     String?
+  outreachSentId String?
+  occurredAt     DateTime          @default(now())
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, emailKey])
 }
 
 model Prospect {
@@ -556,6 +736,11 @@ model Prospect {
   companyName      String
   domain           String?
   domainKey        String?      // normalized domain: lowercased, www-stripped
+  // Normalized company name for dedupe (lowercased, punctuation/whitespace
+  // collapsed, legal-entity suffix dropped). Nullable: legacy rows stay null.
+  companyNameKey   String?
+  // Normalized contact email for dedupe (lowercased, plus-tag folded). Nullable.
+  emailKey         String?
   industry         String?
   employeeCount    Int?
   estimatedRevenue Int?    // cents
@@ -599,7 +784,13 @@ model Prospect {
   @@index([workspaceId, buyingStage])
   @@index([workspaceId, outcomeStage])
   @@index([workspaceId, domainKey])
+  @@index([workspaceId, companyNameKey])
+  @@index([workspaceId, emailKey])
   @@index([missionId])
+  // NOTE: a PARTIAL UNIQUE index on (workspaceId, domainKey) WHERE domainKey IS
+  // NOT NULL is defined in migration 20260622030000_prospect_domain_unique.
+  // Prisma can't express filtered unique indexes, so it lives in raw SQL only;
+  // it's the concurrency-safe guard behind the check-then-create discovery dedup.
 }
 
 model Signal {
@@ -743,6 +934,46 @@ model ProspectOutcome {
   @@index([prospectId])
 }
 
+model AiPromptVersion {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  type         String    // OUTREACH | REPLY_ANALYSIS | SCORING | RECOMMENDATIONS
+  version      Int       // auto-increment per (workspace, type)
+  promptHash   String    // SHA-256 hash of prompt template
+  model        String    // gpt-4-turbo | gpt-4o | claude-3-sonnet etc.
+  maxTokens    Int?
+  temperature  Float?
+  metadata     Json?     // {tags: ["safe-launch"], author: "system"} etc.
+  isActive     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  drafts       OutreachDraft[]
+
+  @@unique([workspaceId, type, version])
+  // One row per distinct generator config (model + params + template) so
+  // find-or-create is atomic: a concurrent duplicate-hash insert collides and
+  // collapses to the winner instead of creating a second version for the same hash.
+  @@unique([workspaceId, type, promptHash])
+  @@index([workspaceId, type, isActive])
+  @@index([promptHash])
+}
+
+model WorkspaceDraftPolicy {
+  id                   String    @id @default(cuid())
+  workspaceId          String    @unique
+  minSubjectLength     Int       @default(5)
+  maxSubjectLength     Int       @default(80)
+  minBodyLength        Int       @default(30)
+  maxBodyLength        Int       @default(3000)
+  forbiddenPhrases     String[]  @default([])
+  requireTemplate      Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
 model WorkspaceICP {
   id                  String    @id @default(cuid())
   workspaceId         String    @unique
@@ -755,6 +986,22 @@ model WorkspaceICP {
   outreachTone        String?   // professional | casual | direct
   approvalMode        Boolean   @default(true)
   dailySendLimit      Int       @default(50)
+  // Opt-in monthly send ceiling — a coarse backstop to the daily cap against
+  // sustained high volume. null = no monthly ceiling (unchanged behaviour). Counts
+  // SENT+SENDING in the current UTC calendar month; enforcement is a batch fast-path
+  // so overshoot is bounded by at most one day's cap.
+  monthlySendLimit    Int?
+  // Opt-in domain warmup: when set, the effective daily send cap ramps up from a
+  // low ceiling over the warmup schedule (see lib/warmup.ts) instead of allowing
+  // the full dailySendLimit on day one. null = no warmup (unchanged behaviour).
+  warmupStartedAt     DateTime?
+  // Opt-in send window (quiet hours). When both hours are set, outbound is allowed
+  // only within [startHour, endHour) local to sendTimezone, optionally weekdays
+  // only. null hours = no window (unchanged behaviour). See lib/sendWindow.ts.
+  sendWindowStartHour Int?
+  sendWindowEndHour   Int?
+  sendTimezone        String?
+  sendWeekdaysOnly    Boolean   @default(false)
   excludedIndustries  String[]
   playbook            String?
   createdAt           DateTime  @default(now())

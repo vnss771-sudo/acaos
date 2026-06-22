@@ -438,15 +438,12 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       const res = await route('POST /api/prospects/discover', {
         body: { workspaceId: workspace.id, source: sourceName, ...(discoverMissionId ? { missionId: discoverMissionId } : {}) }
       })
-      if (res.discovered === 0 && res.total === 0) {
-        toast.error('No results — try broadening your ICP settings')
-      } else {
-        toast.success(
-          `Found ${res.discovered} new prospect${res.discovered !== 1 ? 's' : ''}` +
-          (res.skipped ? ` · ${res.skipped} already tracked` : '')
-        )
-        if (res.discovered > 0) load()
-      }
+      // Discovery now runs asynchronously: the provider search + import happen in a
+      // worker. Surface that it started; the runs list (loadRuns) and prospect list
+      // refresh as the run finalizes.
+      toast.success(res.deduped
+        ? 'Discovery already running for this query — results will appear shortly.'
+        : 'Discovery started — new prospects will appear shortly.')
     } catch (e: unknown) { toast.error((e as Error).message) }
     finally { setDiscovering(false); loadRuns() }
   }

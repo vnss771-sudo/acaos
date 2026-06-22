@@ -100,3 +100,26 @@ test('send-campaign payload: requires campaignId + workspaceId and accepts optio
     (err: unknown) => err instanceof UnrecoverableError && /workspaceId/.test((err as Error).message),
   )
 })
+
+test('payload versioning: accepts an optional schemaVersion + requestId envelope', () => {
+  const out = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', {
+    campaignId: 'c1', workspaceId: 'ws_1', schemaVersion: 1, requestId: 'req_abc',
+  })
+  assert.equal(out.schemaVersion, 1)
+  assert.equal(out.requestId, 'req_abc')
+})
+
+test('payload versioning: a payload with no version still validates (older producer)', () => {
+  const out = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', {
+    campaignId: 'c1', workspaceId: 'ws_1',
+  })
+  assert.equal(out.schemaVersion, undefined)
+})
+
+test('payload versioning: an unknown extra field is stripped, not rejected (newer producer)', () => {
+  const out = parseJobPayload(ScoreProspectsPayloadSchema, 'score-prospects', {
+    workspaceId: 'ws_1', schemaVersion: 2, somethingNew: 'ignored',
+  }) as Record<string, unknown>
+  assert.equal(out.workspaceId, 'ws_1')
+  assert.equal('somethingNew' in out, false)
+})

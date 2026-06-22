@@ -14,6 +14,17 @@ const ADMIN_CAPS: Permission[] = [
   'api_keys:manage',
   'icp:update',
   'mail:send_test',
+  'campaign:create',
+  'campaign:update',
+  'campaign:send',
+  'campaign:retry_failed',
+  'campaign:delete',
+  'campaign:approve_draft',
+  'leads:import',
+  'leads:delete',
+  'prospects:discover',
+  'prospects:import',
+  'prospects:delete',
 ]
 const OWNER_ONLY_CAPS: Permission[] = ['members:grant_admin', 'members:remove', 'model:reset']
 const ALL_CAPS: Permission[] = [...ADMIN_CAPS, ...OWNER_ONLY_CAPS]

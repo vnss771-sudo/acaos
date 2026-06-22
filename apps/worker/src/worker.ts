@@ -3,7 +3,8 @@ import { Worker, Queue } from 'bullmq'
 import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
-import { generateLeadResearch, generateOutreach, analyzeReply } from '@acaos/backend-core/services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
+import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import {
   parseAiJson,
   parseLeadResearchJson,
@@ -20,10 +21,12 @@ import {
   GenerateRecommendationsPayloadSchema,
   CalibrateScoringPayloadSchema,
   SendCampaignPayloadSchema,
+  DiscoverProspectsPayloadSchema,
   RetentionPurgePayloadSchema,
+  SendFollowupPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
-import { isFeatureEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
 import type { ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
@@ -31,8 +34,8 @@ import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis } from './processors.js'
-import { enqueueGenerateRecommendations } from '@acaos/backend-core/lib/queues.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask } from './processors.js'
+import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
@@ -153,13 +156,18 @@ const outreachWorker = new Worker(
     // here marks the job failed so BullMQ retries rather than persisting garbage.
     const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
 
+    // Record generation provenance (model + prompt version) so the draft is
+    // auditable/reproducible. Best-effort — never blocks draft creation.
+    const promptVersionId = await resolvePromptVersionId({ workspaceId: lead.workspaceId, ...outreachGenerationMeta() })
+
     await prisma.outreachDraft.create({
       data: {
         leadId: lead.id,
         workspaceId: lead.workspaceId,
         subject: parsed.subject,
         emailBody: parsed.email,
-        followup: parsed.followup ?? null
+        followup: parsed.followup ?? null,
+        promptVersionId,
       }
     })
 
@@ -243,7 +251,7 @@ const mailboxWorker = new Worker(
     }
     const result = await syncMailboxOnce(cfg as any, workspaceId)
     await job.updateProgress(100)
-    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued} bounced=${result.bounced}`)
+    log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued} bounced=${result.bounced} complained=${result.complained}`)
     return result
   },
   { connection, concurrency: 1 }
@@ -267,6 +275,24 @@ const scoreProspectsWorker = new Worker(
     return result
   },
   { connection, concurrency: 1 }
+)
+
+// ── discover-prospects ────────────────────────────────────────────────────────
+// Off-request prospect discovery: the /discover route creates the RUNNING run +
+// enqueues this; here we call the provider and import results, finalizing the run
+// as SUCCEEDED / PARTIAL / FAILED. Gated by the same 'discovery' feature flag the
+// route checks. Low concurrency — provider calls are metered and rate-limited.
+const discoverWorker = new Worker(
+  'discover-prospects',
+  async (job) => {
+    const { runId, workspaceId } = parseJobPayload(DiscoverProspectsPayloadSchema, 'discover-prospects', job.data)
+    if (!isFeatureEnabled('discovery')) { log('discover-prospects', 'skipped: FEATURE_DISCOVERY disabled'); return { skipped: true, reason: 'FEATURE_DISCOVERY disabled' } }
+    log('discover-prospects', `Discovering run=${runId} workspace=${workspaceId}`)
+    const result = await discoverProspectsBatch(runId, workspaceId, (n) => job.updateProgress(n))
+    log('discover-prospects', `Done run=${runId} status=${result.status} imported=${result.imported} skipped=${result.skipped}`)
+    return result
+  },
+  { connection, concurrency: 2 }
 )
 
 // ── generate-recommendations ──────────────────────────────────────────────────
@@ -354,7 +380,38 @@ const sendCampaignWorker = new Worker(
     if (!isFeatureEnabled('send')) { log('send-campaign', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled', sent: 0, skipped_count: leadIds?.length ?? 0 } }
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
     const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
-    log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`)
+    // Compact skip breakdown (non-zero reasons only) so the operator log answers
+    // "why didn't these send?" at a glance.
+    const reasons = Object.entries(result.skippedByReason).filter(([, n]) => n > 0).map(([r, n]) => `${r}=${n}`).join(' ')
+    log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}${reasons ? ` [${reasons}]` : ''}`)
+    return result
+  },
+  { connection, concurrency: 2 }
+)
+
+// ── send-followup ─────────────────────────────────────────────────────────────
+// Automatic multi-step follow-up sender. DOUBLE-gated and DORMANT by default: the
+// global FEATURE_SEND kill-switch AND the opt-IN FOLLOWUPS_ENABLED flag must both
+// be on, on top of each campaign's autoFollowupsEnabled (re-checked inside
+// sendFollowupTask). With FOLLOWUPS_ENABLED off (the default) both the periodic
+// scan and any per-task job short-circuit to a no-op, so the worker is wired and
+// visible in metrics but sends nothing until an operator explicitly turns it on.
+// Two job shapes share this queue: `{ scan: true }` (the scheduler-driven sweep
+// that enqueues per-task children) and `{ taskId }` (dispatch one due step).
+const sendFollowupWorker = new Worker(
+  'send-followup',
+  async (job) => {
+    const { taskId, scan } = parseJobPayload(SendFollowupPayloadSchema, 'send-followup', job.data)
+    if (!isFeatureEnabled('send')) { log('send-followup', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled' } }
+    if (!areFollowupsEnabled()) { log('send-followup', 'skipped: FOLLOWUPS_ENABLED off'); return { skipped: true, reason: 'FOLLOWUPS_ENABLED off' } }
+    if (scan) {
+      const enqueued = await enqueueDueFollowups()
+      if (enqueued > 0) log('send-followup', `Scan enqueued ${enqueued} due follow-up(s)`)
+      return { scan: true, enqueued }
+    }
+    log('send-followup', `Dispatching task=${taskId}`)
+    const result = await sendFollowupTask(taskId!)
+    log('send-followup', `Done task=${taskId} status=${result.status}${result.reason ? ` reason=${result.reason}` : ''}`)
     return result
   },
   { connection, concurrency: 2 }
@@ -403,6 +460,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['generate-recommendations',recommendWorker],
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
+  ['send-followup',           sendFollowupWorker],
   ['retention-purge',         retentionWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
@@ -457,6 +515,21 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
   ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
 }
 
+// ── Repeatable follow-up due-task scan (every 1 min by default) ───────────────
+// The scheduler is ALWAYS registered (idempotent), but every scan job no-ops
+// unless FOLLOWUPS_ENABLED is on (checked in the worker), so this stays dormant by
+// default — the schedule exists and is visible without sending anything. Interval
+// overridable via FOLLOWUP_SCAN_INTERVAL_MS.
+{
+  const followupQueue = new Queue('send-followup', { connection })
+  const every = Number(process.env.FOLLOWUP_SCAN_INTERVAL_MS || 60 * 1000)
+  followupQueue.upsertJobScheduler(
+    'followup-due-scan',
+    { every },
+    { name: 'followup-due-scan', data: { scan: true }, opts: { attempts: 1, removeOnComplete: { count: 10 }, removeOnFail: { count: 20 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule follow-up scan:', err.message))
+}
+
 // Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
@@ -503,6 +576,8 @@ async function shutdown(signal: string, exitCode = 0) {
     recommendWorker.close(),
     calibrateWorker.close(),
     sendCampaignWorker.close(),
+    sendFollowupWorker.close(),
+    discoverWorker.close(),
     retentionWorker.close(),
   ])
   await prisma.$disconnect()
