@@ -119,6 +119,8 @@ model Workspace {
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
   evidenceSources      EvidenceSource[]
+  aiPromptVersions     AiPromptVersion[]
+  draftPolicy          WorkspaceDraftPolicy?
 }
 
 model Membership {
@@ -210,22 +212,26 @@ model Lead {
 }
 
 model OutreachDraft {
-  id           String    @id @default(cuid())
-  leadId       String
-  workspaceId  String
-  subject      String
-  emailBody    String
-  followup     String?
-  status       DraftStatus @default(DRAFTED)
-  reviewedAt   DateTime?
-  reviewedBy   String?   // userId of approver/rejecter
-  createdAt    DateTime  @default(now())
-  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id               String    @id @default(cuid())
+  leadId           String
+  workspaceId      String
+  subject          String
+  emailBody        String
+  followup         String?
+  status           DraftStatus @default(DRAFTED)
+  promptVersionId  String?   // Which AI prompt/version generated this draft
+  policyViolations Json?     // {violations: string[]} if policy check failed
+  reviewedAt       DateTime?
+  reviewedBy       String?   // userId of approver/rejecter
+  createdAt        DateTime  @default(now())
+  lead             Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  promptVersion    AiPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
 
   @@index([leadId])
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([promptVersionId])
 }
 
 // Tracks every email sent via a campaign — provides closed-loop reply correlation.
@@ -491,6 +497,7 @@ enum DraftStatus {
   REJECTED
   SENT
   SKIPPED
+  POLICY_REVIEW  // Draft generated but has policy violations; requires review
 }
 
 enum MissionStatus {
@@ -741,6 +748,42 @@ model ProspectOutcome {
 
   @@index([workspaceId])
   @@index([prospectId])
+}
+
+model AiPromptVersion {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  type         String    // OUTREACH | REPLY_ANALYSIS | SCORING | RECOMMENDATIONS
+  version      Int       // auto-increment per (workspace, type)
+  promptHash   String    // SHA-256 hash of prompt template
+  model        String    // gpt-4-turbo | gpt-4o | claude-3-sonnet etc.
+  maxTokens    Int?
+  temperature  Float?
+  metadata     Json?     // {tags: ["safe-launch"], author: "system"} etc.
+  isActive     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  drafts       OutreachDraft[]
+
+  @@unique([workspaceId, type, version])
+  @@index([workspaceId, type, isActive])
+  @@index([promptHash])
+}
+
+model WorkspaceDraftPolicy {
+  id                   String    @id @default(cuid())
+  workspaceId          String    @unique
+  minSubjectLength     Int       @default(5)
+  maxSubjectLength     Int       @default(80)
+  minBodyLength        Int       @default(30)
+  maxBodyLength        Int       @default(3000)
+  forbiddenPhrases     String[]  @default([])
+  requireTemplate      Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 model WorkspaceICP {

@@ -114,8 +114,8 @@ export async function enqueueSendCampaign(campaignId: string, workspaceId: strin
     jobId: sendCampaignJobId(campaignId, workspaceId, leadIds),
     attempts: 2,
     backoff: { type: 'exponential', delay: 10_000 },
-    removeOnComplete: 200,
-    removeOnFail: 200
+    removeOnComplete: { count: 1000, age: 86_400 },
+    removeOnFail: { count: 5000, age: 30 * 86_400 }
   })
 }
 
