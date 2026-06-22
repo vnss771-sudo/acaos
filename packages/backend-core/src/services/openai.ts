@@ -19,6 +19,16 @@ function model() {
   return process.env.OPENAI_MODEL || 'gpt-4o-mini'
 }
 
+// Optional fallback model used when the primary model's circuit breaker is OPEN.
+// Set OPENAI_FALLBACK_MODEL (e.g. 'gpt-3.5-turbo') to enable transparent failover:
+// instead of returning a 503, the worker/API retries the same prompt on the
+// cheaper/more-available fallback model. Leave unset to keep the existing behaviour
+// (503 on circuit open). The fallback runs outside the primary circuit so it can
+// succeed while the primary is tripping; its own errors still propagate normally.
+function fallbackModel(): string | null {
+  return process.env.OPENAI_FALLBACK_MODEL?.trim() || null
+}
+
 // Sampling temperature for all generations. A constant (not inlined) so the value
 // recorded in generation provenance always matches what was actually sent.
 const TEMPERATURE = 0.4
@@ -74,6 +84,29 @@ async function chat(system: string, user: string, maxTokens: number): Promise<st
     })
   } catch (err) {
     if (err instanceof CircuitOpenError) {
+      // Primary circuit is open. Try the fallback model if one is configured so a
+      // transient primary outage doesn't drop jobs that could succeed on a fallback.
+      const fb = fallbackModel()
+      if (fb) {
+        try {
+          const client = getOpenAiClient()
+          const completion = await client.chat.completions.create({
+            model: fb,
+            response_format: { type: 'json_object' },
+            temperature: TEMPERATURE,
+            max_tokens: maxTokens,
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: user }
+            ]
+          })
+          return completion.choices[0]?.message?.content ?? '{}'
+        } catch (fbErr) {
+          // Fallback also failed — surface a clean 503 rather than leaking the
+          // internal OpenAI error to callers.
+          throw new ApiError(503, 'AI service temporarily unavailable — try again shortly')
+        }
+      }
       throw new ApiError(503, 'AI service temporarily unavailable — try again shortly')
     }
     throw err

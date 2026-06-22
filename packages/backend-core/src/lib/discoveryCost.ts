@@ -10,11 +10,28 @@
 // These are deliberately rough, tunable estimates (USD cents per run), not
 // invoices. They feed reporting/observability only; the enforced monthly
 // discovery quota is a separate, plan-priced concept and is unaffected.
+//
+// All per-provider defaults are env-overridable so operators can track their
+// actual pricing without a code change:
+//   DISCOVERY_COST_APOLLO_CENTS        (default: 5)
+//   DISCOVERY_COST_GOOGLE_PLACES_CENTS (default: 3)
+//   DISCOVERY_COST_HUNTER_CENTS        (default: 2)
 
-export const DISCOVERY_PROVIDER_COST_CENTS: Record<string, number> = {
-  apollo: 5,         // Apollo credits are the priciest per company search
-  google_places: 3,  // Places Text Search ≈ $32 / 1k requests
-  hunter: 2,         // domain lookup
+function envCents(envVar: string, dflt: number): number {
+  const raw = process.env[envVar]
+  if (!raw) return dflt
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : dflt
+}
+
+// Base defaults (code-level). Read from env at call-time so a running process
+// picks up updates without a restart (e.g. via an env-update + reload).
+function providerCostCents(): Record<string, number> {
+  return {
+    apollo: envCents('DISCOVERY_COST_APOLLO_CENTS', 5),         // Apollo credits are the priciest per company search
+    google_places: envCents('DISCOVERY_COST_GOOGLE_PLACES_CENTS', 3),  // Places Text Search ≈ $32 / 1k requests
+    hunter: envCents('DISCOVERY_COST_HUNTER_CENTS', 2),         // domain lookup
+  }
 }
 
 // Sources with no external per-call cost (the built-in example source, manual
@@ -22,7 +39,7 @@ export const DISCOVERY_PROVIDER_COST_CENTS: Record<string, number> = {
 export const DEFAULT_DISCOVERY_COST_CENTS = 0
 
 export function discoveryProviderCostCents(source: string): number {
-  return DISCOVERY_PROVIDER_COST_CENTS[source] ?? DEFAULT_DISCOVERY_COST_CENTS
+  return providerCostCents()[source] ?? DEFAULT_DISCOVERY_COST_CENTS
 }
 
 export type DiscoveryRunsBySource = Array<{ source: string; count: number }>
