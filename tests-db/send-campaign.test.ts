@@ -146,6 +146,25 @@ test('skip accounting: breaks skipped down by reason (suppressed + invalid email
   assert.equal((await prisma.outreachSent.findFirst({ where: { leadId: good.id } }))!.status, 'SENT')
 })
 
+test('contact ledger: a successful send appends a SENT ContactEvent (normalized key)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const lead = await seedSendableLead(workspace.id, campaign.id, 'Reach@Buyer.TEST')
+
+  const mailer = recordingMailer()
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const events = await prisma.contactEvent.findMany({ where: { workspaceId: workspace.id, leadId: lead.id } })
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'SENT')
+  assert.equal(events[0].campaignId, campaign.id)
+  assert.equal(events[0].emailKey, 'reach@buyer.test', 'ledger emailKey is normalized')
+  // The ledger row is tied to the outbox send.
+  const send = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
+  assert.equal(events[0].outreachSentId, send!.id)
+})
+
 test('claim timestamps: SENT carries claimedAt + sentAt, no failedAt', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)

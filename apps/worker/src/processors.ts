@@ -23,6 +23,7 @@ import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
+import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
 import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
@@ -667,6 +668,11 @@ export async function sendCampaignBatch(
           where: { id: lead.id },
           data: { stage: 'OUTREACH_SENT', lastContactedAt: new Date() }
         }),
+        // Append the SENT lifecycle event to the contact ledger in the SAME
+        // transaction as the send, so the ledger can never disagree with the outbox.
+        prisma.contactEvent.create({
+          data: contactEventData({ workspaceId, email: lead.email!, type: 'SENT', leadId: lead.id, campaignId, outreachSentId: claimId }),
+        }),
         // Advance the linked intent to SENT in the same transaction as the send.
         ...(linkedIntent ? [prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' } })] : []),
       ])
@@ -684,6 +690,9 @@ export async function sendCampaignBatch(
         where: { id: claimId },
         data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
       }).catch(() => {})
+      // Best-effort FAILED ledger entry (not in a tx with the update — a ledger
+      // hiccup must never mask the SMTP failure itself).
+      void recordContactEvent({ workspaceId, email: lead.email!, type: 'FAILED', leadId: lead.id, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }).catch(() => {})
       failed++
     }
     } // end per-lead loop for this page

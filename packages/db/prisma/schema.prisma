@@ -121,6 +121,7 @@ model Workspace {
   emailConfig          WorkspaceEmailConfig?
   invites              WorkspaceInvite[]
   suppressions         Suppression[]
+  contactEvents        ContactEvent[]
   processedEmails      ProcessedEmail[]
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
@@ -582,6 +583,28 @@ model Suppression {
   @@unique([workspaceId, emailKey])
   @@index([workspaceId])
   @@index([workspaceId, createdAt])
+}
+
+// Durable, append-only ledger of every outreach lifecycle event for a recipient.
+// The source of truth that contact-policy (recency / monthly-cap), campaign stats,
+// and forensic timelines read from — so those don't have to scan/interpret
+// OutreachSent. Scalar leadId/campaignId/outreachSentId (no FKs) so history
+// survives deletion of the referenced rows. emailKey is normalized (trim+lower).
+model ContactEvent {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  emailKey       String
+  leadId         String?
+  campaignId     String?
+  outreachSentId String?
+  type           String    // SENT | REPLIED | BOUNCED | UNSUBSCRIBED | FAILED
+  occurredAt     DateTime  @default(now())
+  metadata       Json?
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, emailKey, occurredAt])
+  @@index([workspaceId, campaignId, occurredAt])
+  @@index([outreachSentId])
 }
 
 model Prospect {
