@@ -41,6 +41,7 @@ const MIRRORED = [
   'MissionStatus',
   'DiscoveryRunStatus',
   'SendStatus',
+  'UnsubscribeSource',
   'BillingPlan',
   'LeadStage',
   'OutreachIntentStatus',

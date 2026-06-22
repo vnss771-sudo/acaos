@@ -122,6 +122,7 @@ model Workspace {
   invites              WorkspaceInvite[]
   suppressions         Suppression[]
   contactEvents        ContactEvent[]
+  unsubscribeEvents    UnsubscribeEvent[]
   processedEmails      ProcessedEmail[]
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
@@ -554,6 +555,13 @@ enum SendStatus {
   REPLIED
 }
 
+enum UnsubscribeSource {
+  LINK
+  ONE_CLICK
+  MANUAL
+  COMPLAINT
+}
+
 // Workspace billing tier (was a free-form String — now DB-enforced). `free` is
 // the default/lapsed tier; `starter` and `growth` are the paid Stripe plans.
 enum BillingPlan {
@@ -610,6 +618,23 @@ model ContactEvent {
   @@index([workspaceId, emailKey, occurredAt])
   @@index([workspaceId, campaignId, occurredAt])
   @@index([outreachSentId])
+}
+
+// Audit ledger of unsubscribe events, separate from the Suppression list (which is
+// the current state). Keeps WHEN/HOW/from-WHICH-send each opt-out happened for
+// compliance and reporting, even after a suppression row is edited or purged.
+model UnsubscribeEvent {
+  id             String            @id @default(cuid())
+  workspaceId    String
+  emailKey       String
+  source         UnsubscribeSource
+  campaignId     String?
+  outreachSentId String?
+  occurredAt     DateTime          @default(now())
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, emailKey])
 }
 
 model Prospect {

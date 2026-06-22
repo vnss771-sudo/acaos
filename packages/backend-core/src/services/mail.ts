@@ -8,7 +8,7 @@ import { resolvePublicMailHost, type PinnedHost } from '../lib/ssrf.js'
 import { suppress } from '../lib/suppressions.js'
 import { recordAudit } from '../lib/audit.js'
 import { findBestMatchingOutreachSent } from '../lib/replyAttribution.js'
-import { contactEventData } from '../lib/contactEvents.js'
+import { contactEventData, recordContactEvent } from '../lib/contactEvents.js'
 import { transitionLeadStage } from '../services/leadStageMachine.js'
 import type { LeadStage } from '@acaos/shared'
 
@@ -409,6 +409,8 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
         })
         bounced++
         void recordAudit({ workspaceId, type: 'email.bounced', entityType: 'suppression', metadata: { email: addr } })
+        // Append a BOUNCED lifecycle event so contact-policy/stats see the bounce.
+        void recordContactEvent({ workspaceId: workspaceId!, email: addr, type: 'BOUNCED' }).catch(() => {})
       }
       for (const m of bounceMsgs) {
         await recordProcessedReply({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })

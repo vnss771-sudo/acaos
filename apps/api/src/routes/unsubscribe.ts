@@ -3,6 +3,8 @@ import { requireAuth } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { suppress } from '../lib/suppressions.js'
+import { recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
+import { normalizeEmail } from '@acaos/backend-core/lib/normalize.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
 import { unsubscribeRateLimit } from '../middleware/rateLimit.js'
 import { escapeHtml } from '../lib/html.js'
@@ -18,7 +20,7 @@ async function lookupToken(token: string) {
   if (!token) throw new ApiError(400, 'Token required')
   const record = await prisma.outreachSent.findUnique({
     where: { unsubscribeToken: token },
-    select: { id: true, toEmail: true, workspaceId: true }
+    select: { id: true, toEmail: true, workspaceId: true, campaignId: true, leadId: true }
   })
   if (!record) throw new ApiError(404, 'Unsubscribe link not found')
   return record
@@ -62,7 +64,26 @@ unsubscribeRouter.post(
   unsubscribeRateLimit,
   asyncHandler(async (req, res) => {
     const record = await lookupToken(String(req.params.token || '').trim())
+    // Suppression (current state) is the critical safety effect.
     await suppress(record.workspaceId, record.toEmail, 'UNSUBSCRIBED')
+    // Best-effort audit ledger: an UnsubscribeEvent for compliance/reporting and a
+    // UNSUBSCRIBED ContactEvent for the lifecycle ledger. Wrapped so a ledger hiccup
+    // can never fail an opt-out (the suppression already applied).
+    try {
+      await prisma.unsubscribeEvent.create({
+        data: {
+          workspaceId: record.workspaceId,
+          emailKey: normalizeEmail(record.toEmail),
+          source: 'LINK',
+          campaignId: record.campaignId,
+          outreachSentId: record.id,
+        },
+      })
+      await recordContactEvent({
+        workspaceId: record.workspaceId, email: record.toEmail, type: 'UNSUBSCRIBED',
+        leadId: record.leadId, campaignId: record.campaignId, outreachSentId: record.id,
+      })
+    } catch { /* audit-only: never block the opt-out */ }
 
     // Respond in kind: JSON for API/one-click clients, an HTML confirmation for
     // a browser that submitted the form.
