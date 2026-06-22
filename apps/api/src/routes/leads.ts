@@ -6,6 +6,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '../lib/scoring.js'
+import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
@@ -164,6 +165,7 @@ leadsRouter.post(
       campaignId: body.campaignId || null,
       contactName: typeof body.contactName === 'string' ? body.contactName.trim() || null : null,
       email: typeof body.email === 'string' ? body.email.trim().toLowerCase() || null : null,
+      emailKey: typeof body.email === 'string' ? normalizeEmailKey(body.email) : null,
       website: typeof body.website === 'string' ? body.website.trim() || null : null,
       city: typeof body.city === 'string' ? body.city.trim() || null : null,
       category: typeof body.category === 'string' ? body.category.trim() || null : null,
@@ -205,6 +207,7 @@ leadsRouter.post(
           campaignId: typeof l.campaignId === 'string' ? l.campaignId || null : null,
           contactName: typeof l.contactName === 'string' ? l.contactName.trim() || null : null,
           email: typeof l.email === 'string' ? l.email.trim().toLowerCase() || null : null,
+          emailKey: typeof l.email === 'string' ? normalizeEmailKey(l.email) : null,
           website: typeof l.website === 'string' ? l.website.trim() || null : null,
           city: typeof l.city === 'string' ? l.city.trim() || null : null,
           category: typeof l.category === 'string' ? l.category.trim() || null : null,

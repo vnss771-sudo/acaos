@@ -20,7 +20,7 @@ import { getPack } from '../../lib/packs/index.js'
 import { dollarsToCents } from '../../lib/money.js'
 import { validate } from '../../lib/validate.js'
 import { z } from 'zod'
-import { discoverSchema, nonEmpty, normalizeDomain, getICP, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import { discoverSchema, nonEmpty, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, IMPORT_SIGNAL_TYPES } from './helpers.js'
 import { workspaceIdField } from '../../lib/validate.js'
 
 // POST /import body. Mirrors the prior checks: workspaceId required (400), rows a
@@ -163,6 +163,8 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
           companyName:  c.companyName,
           domain:       meta.domain,
           domainKey:    normalizeDomain(meta.domain),
+          companyNameKey: normalizeCompanyNameKey(c.companyName),
+          emailKey:     normalizeEmailKey(meta.contactEmail),
           industry:     meta.industry,
           employeeCount: meta.employeeCount,
           location:     meta.location,
@@ -260,6 +262,8 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
             companyName,
             domain:        meta.domain,
             domainKey:     normalizeDomain(meta.domain),
+            companyNameKey: normalizeCompanyNameKey(companyName),
+            emailKey:      normalizeEmailKey(meta.contactEmail),
             industry:      meta.industry,
             employeeCount: meta.employeeCount,
             location:      meta.location,
@@ -331,6 +335,8 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
           prospect = await prisma.prospect.create({
             data: {
               workspaceId, companyName, domain, domainKey,
+              companyNameKey: normalizeCompanyNameKey(companyName),
+              emailKey: normalizeEmailKey(row.contactEmail ? String(row.contactEmail) : null),
               industry: row.industry ? String(row.industry) : null,
               location: row.location ? String(row.location) : null,
               contactEmail: row.contactEmail ? String(row.contactEmail) : null,

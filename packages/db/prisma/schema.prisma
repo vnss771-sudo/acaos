@@ -195,6 +195,9 @@ model Lead {
   stage          LeadStage       @default(NEW)
   sourceTag      String?
   lastContactedAt DateTime?
+  // Normalized email for dedupe (lowercased, plus-tag folded). Nullable: legacy
+  // rows and leads without an email stay null.
+  emailKey       String?
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign       Campaign?       @relation(fields: [campaignId], references: [id])
   outreachDrafts OutreachDraft[]
@@ -205,6 +208,7 @@ model Lead {
   @@index([workspaceId])
   @@index([workspaceId, stage])
   @@index([workspaceId, email])
+  @@index([workspaceId, emailKey])
   // Serves the default leads list (ORDER BY score DESC, createdAt DESC scoped to a
   // workspace) via a backward index scan instead of a full sort per request.
   @@index([workspaceId, score, createdAt])
@@ -564,6 +568,11 @@ model Prospect {
   companyName      String
   domain           String?
   domainKey        String?      // normalized domain: lowercased, www-stripped
+  // Normalized company name for dedupe (lowercased, punctuation/whitespace
+  // collapsed, legal-entity suffix dropped). Nullable: legacy rows stay null.
+  companyNameKey   String?
+  // Normalized contact email for dedupe (lowercased, plus-tag folded). Nullable.
+  emailKey         String?
   industry         String?
   employeeCount    Int?
   estimatedRevenue Int?    // cents
@@ -607,6 +616,8 @@ model Prospect {
   @@index([workspaceId, buyingStage])
   @@index([workspaceId, outcomeStage])
   @@index([workspaceId, domainKey])
+  @@index([workspaceId, companyNameKey])
+  @@index([workspaceId, emailKey])
   @@index([missionId])
 }
 

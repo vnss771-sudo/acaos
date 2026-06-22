@@ -3,6 +3,7 @@
 // back to the intent so the worker stamps provenance and flips it to SENT.
 // This closes the last manual seam between the intelligence track and sending.
 import { prisma } from './prisma.js'
+import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 
 const DEFAULT_CAMPAIGN_NAME = 'ACAOS Radar'
 
@@ -45,6 +46,7 @@ export async function materializeOutreachIntent(args: {
         workspaceId, campaignId,
         businessName: prospect.companyName,
         email: prospect.contactEmail,
+        emailKey: normalizeEmailKey(prospect.contactEmail),
         contactName: prospect.contactName,
         website: prospect.domain,
         city: prospect.location,
