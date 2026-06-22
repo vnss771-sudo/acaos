@@ -189,6 +189,21 @@ export async function reserveDailySendSlot(
   return used < dailyLimit
 }
 
+/**
+ * Acquire the per-workspace send advisory lock inside a transaction without
+ * counting sends. Use this when the only per-send check is the per-domain cap
+ * (no workspace daily limit is configured), so the domain count query is still
+ * serialized across concurrent workers and can't overshoot the cap.
+ * `pg_advisory_xact_lock` is idempotent within a transaction — calling it after
+ * `reserveDailySendSlot` (which already acquires the same lock) is a no-op.
+ */
+export async function acquireSendLock(
+  tx: Prisma.TransactionClient,
+  workspaceId: string
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`send:${workspaceId}`}))`
+}
+
 // Start of the current month in UTC — matches the UTC month window used by the
 // usage counters so the discovery-cost view lines up with the quota period.
 function startOfMonthUtc(): Date {

@@ -12,11 +12,34 @@ import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '..
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import type { Prisma } from '@prisma/client'
+import type { Request } from 'express'
 
 export const ingestRouter = Router()
 
 const MAX_BATCH = 500
 const MAX_SHORT = 200
+
+// The workspace data resolved from a valid ingest API key. Attached to the
+// request by requireIngestKey and read in the POST /api/ingest handler.
+type IngestWorkspace = { id: string; plan: string }
+type IngestRequest = Request & { ingestWorkspace: IngestWorkspace }
+
+// The shape of a validated, ready-to-insert lead row (after per-field sanitisation).
+type LeadInsertRow = {
+  workspaceId: string
+  campaignId: string | null
+  sourceTag: string | null
+  businessName: string
+  contactName: string | null
+  email: string | null
+  emailKey: string | null
+  phone: string | null
+  website: string | null
+  city: string | null
+  category: string | null
+  notes: string | null
+  score: number
+}
 
 // Validate the batch envelope; per-row shaping stays lenient below (a row with no
 // businessName is skipped, not rejected) to preserve the ingest contract.
@@ -27,6 +50,11 @@ const ingestSchema = z.object({
   autoResearch: z.boolean().optional().default(true),
 })
 const keyQuerySchema = z.object({ workspaceId: workspaceIdField })
+
+function extractEmail(entry: unknown): string | null {
+  const row = entry as Record<string, unknown>
+  return typeof row?.email === 'string' ? row.email.trim().toLowerCase() : null
+}
 
 // ---------------------------------------------------------------------------
 // API-key middleware — resolves workspace from x-api-key header
@@ -42,18 +70,18 @@ async function requireIngestKey(
     return
   }
   const hash = hashApiKey(key)
-  let workspace = getCachedWorkspace(hash)
-  if (!workspace) {
+  const cached = getCachedWorkspace(hash)
+  const workspace: IngestWorkspace | null = cached ?? await (async () => {
     const row = await prisma.workspace.findUnique({
       where: { ingestApiKey: hash },
       select: { id: true, plan: true }
     })
-    if (!row) { res.status(401).json({ error: 'Invalid API key' }); return }
-    setCachedWorkspace(hash, row)
-    workspace = row
-  }
+    if (row) setCachedWorkspace(hash, row)
+    return row
+  })()
+  if (!workspace) { res.status(401).json({ error: 'Invalid API key' }); return }
   // Attach workspace so the route handler doesn't re-fetch it
-  ;(req as import('express').Request & { ingestWorkspace: typeof workspace }).ingestWorkspace = workspace
+  ;(req as IngestRequest).ingestWorkspace = workspace
   next()
 }
 
@@ -67,7 +95,7 @@ ingestRouter.post(
   apiKeyRateLimit,
   requireIngestKey,
   asyncHandler(async (req, res) => {
-    const workspace = (req as any).ingestWorkspace
+    const workspace = (req as IngestRequest).ingestWorkspace
     const { leads, campaignId, sourceTag, autoResearch } = parseBody(ingestSchema, req)
 
     const tag = typeof sourceTag === 'string' ? sourceTag.trim().slice(0, 100) || null : null
@@ -79,9 +107,7 @@ ingestRouter.post(
     }
 
     // Collect emails from the incoming batch for deduplication
-    const incomingEmails = leads
-      .map((l: any) => (typeof l?.email === 'string' ? l.email.trim().toLowerCase() : null))
-      .filter(Boolean) as string[]
+    const incomingEmails = leads.map(extractEmail).filter(Boolean) as string[]
 
     // Find which emails already exist in this workspace
     const existing = incomingEmails.length
@@ -90,15 +116,16 @@ ingestRouter.post(
           select: { email: true }
         })
       : []
-    const existingEmails = new Set((existing as Array<{ email: string | null }>).map((l: { email: string | null }) => l.email!.toLowerCase()))
+    const existingEmails = new Set((existing as Array<{ email: string | null }>).map((l) => l.email!.toLowerCase()))
 
     // Deduplicate the batch itself (first occurrence wins)
     const seenEmails = new Set<string>()
-    const rows: any[] = []
+    const rows: LeadInsertRow[] = []
 
-    for (const l of leads) {
+    for (const entry of leads) {
+      const l = entry as Record<string, unknown>
       if (typeof l?.businessName !== 'string' || !l.businessName.trim()) continue
-      const email = typeof l.email === 'string' ? l.email.trim().toLowerCase() || null : null
+      const email = extractEmail(entry) || null
 
       if (email) {
         if (existingEmails.has(email) || seenEmails.has(email)) continue

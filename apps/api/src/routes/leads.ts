@@ -210,7 +210,7 @@ leadsRouter.post(
         return { ...row, score: computeLeadScore(row, weights) }
       })
 
-    const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
+    const campaignIds = [...new Set(rows.map((r) => r.campaignId).filter(Boolean))]
     for (const cid of campaignIds) await assertCampaignInWorkspace(cid, workspaceId)
 
     // Reserve capacity and insert atomically under a per-workspace lock so the

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import {
   signJwt,
@@ -85,7 +86,7 @@ authRouter.post(
     const workspaceName = buildWorkspaceName(name, email)
     const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
 
-    const result = await prisma.$transaction(async (tx: any) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const user = await tx.user.create({
         data: { email, name, passwordHash },
         select: { id: true, email: true, name: true }
