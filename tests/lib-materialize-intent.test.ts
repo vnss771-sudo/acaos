@@ -15,7 +15,7 @@ test('materialize creates default campaign + lead + APPROVED draft and links the
   installPrisma(fake)
 
   const out = await materializeOutreachIntent({
-    intent: { id: 'oi1', workspaceId: 'w', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: 'F' },
+    intent: { id: 'oi1', workspaceId: 'w', status: 'APPROVED', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: 'F' },
     prospect: { companyName: 'Acme Plumbing', contactEmail: 'c@acme.test', contactName: 'C', domain: 'acme.test', location: 'Brisbane', industry: 'Plumbing' },
   })
 
@@ -36,7 +36,7 @@ test('materialize reuses a provided campaign and an existing lead by email', asy
   installPrisma(fake)
 
   const out = await materializeOutreachIntent({
-    intent: { id: 'oi1', workspaceId: 'w', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: null },
+    intent: { id: 'oi1', workspaceId: 'w', status: 'APPROVED', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: null },
     prospect: { companyName: 'X', contactEmail: 'c@x.test', contactName: null, domain: null, location: null, industry: null },
     campaignId: 'provided-camp',
   })
@@ -45,4 +45,25 @@ test('materialize reuses a provided campaign and an existing lead by email', asy
   assert.equal(out.leadId, 'existing-lead')
   assert.equal(fake.callsTo('lead', 'update').length, 1)
   assert.equal(fake.callsTo('lead', 'create').length, 0)
+})
+
+test('materialize refuses a non-APPROVED intent (defense-in-depth invariant)', async () => {
+  // No prisma calls should happen — the guard throws before any write.
+  const fake = createFakePrisma({
+    campaign: { findFirst: async () => { throw new Error('should not be reached') } },
+    outreachDraft: { create: async () => { throw new Error('should not be reached') } },
+  })
+  installPrisma(fake)
+
+  for (const status of ['PROPOSED', 'DRAFTED', 'REJECTED', 'SENT']) {
+    await assert.rejects(
+      () => materializeOutreachIntent({
+        intent: { id: 'oi1', workspaceId: 'w', status, leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: null },
+        prospect: { companyName: 'X', contactEmail: 'c@x.test', contactName: null, domain: null, location: null, industry: null },
+      }),
+      (err: any) => err.statusCode === 409 && /not APPROVED/.test(err.message),
+      `status ${status} must be rejected`,
+    )
+  }
+  assert.equal(fake.callsTo('outreachDraft', 'create').length, 0, 'no draft is created for a non-APPROVED intent')
 })

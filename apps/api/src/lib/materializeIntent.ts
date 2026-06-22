@@ -3,6 +3,7 @@
 // back to the intent so the worker stamps provenance and flips it to SENT.
 // This closes the last manual seam between the intelligence track and sending.
 import { prisma } from './prisma.js'
+import { ApiError } from '@acaos/backend-core/lib/errors.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 
 const DEFAULT_CAMPAIGN_NAME = 'ACAOS Radar'
@@ -22,13 +23,20 @@ async function resolveCampaignId(workspaceId: string, campaignId?: string | null
 
 export async function materializeOutreachIntent(args: {
   intent: {
-    id: string; workspaceId: string; leadId: string | null
+    id: string; workspaceId: string; status: string; leadId: string | null
     draftSubject: string | null; draftBody: string | null; draftFollowup: string | null
   }
   prospect: { companyName: string; contactEmail: string | null; contactName: string | null; domain: string | null; location: string | null; industry: string | null }
   campaignId?: string | null
 }): Promise<{ leadId: string; campaignId: string; draftId: string }> {
   const { intent, prospect } = args
+  // Invariant (defense-in-depth): materialising creates an APPROVED draft that the
+  // approval-mode worker will send, so ONLY an APPROVED intent may be materialised.
+  // The route 409s earlier for UX; this guard holds regardless of caller and also
+  // blocks a REJECTED/PROPOSED/DRAFTED/SENT intent from ever reaching the send path.
+  if (intent.status !== 'APPROVED') {
+    throw new ApiError(409, `Intent ${intent.id} is ${intent.status}, not APPROVED — cannot materialise`)
+  }
   const workspaceId = intent.workspaceId
   const campaignId = await resolveCampaignId(workspaceId, args.campaignId)
 
