@@ -21,6 +21,7 @@ import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
+import { perDomainDailyCap, emailDomain, tallyDomains } from '@acaos/backend-core/lib/sendPacing.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
@@ -253,6 +254,7 @@ export type SendSkipReason =
   | 'DAILY_CAP'
   | 'MISSION_PAUSED'
   | 'REPUTATION_BLOCKED'
+  | 'DOMAIN_PACED'
 
 type SendCampaignResult = {
   campaignId: string
@@ -333,7 +335,7 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
@@ -401,6 +403,19 @@ export async function sendCampaignBatch(
       }
     }
   }
+
+  // Per-recipient-domain pacing (opt-in via PER_DOMAIN_DAILY_CAP). Seed today's
+  // per-domain counts once, then enforce + increment in the loop so a campaign heavy
+  // on one provider can't burst past the cap — across pages and prior runs today.
+  const perDomainCap = perDomainDailyCap()
+  const domainCounts: Map<string, number> | null = perDomainCap != null
+    ? tallyDomains(
+        (await prisma.outreachSent.findMany({
+          where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } },
+          select: { toEmail: true },
+        })).map((r: { toEmail: string }) => r.toEmail),
+      )
+    : null
 
   const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
 
@@ -507,6 +522,12 @@ export async function sendCampaignBatch(
     // Reject structurally-invalid addresses before claiming/generating — a bad
     // address would only burn an SMTP attempt and hurt sender reputation.
     if (!isDeliverableEmail(lead.email)) { skip('INVALID_EMAIL'); continue }
+
+    // Per-domain pacing: don't burst past the provider's tolerance for one domain.
+    if (domainCounts) {
+      const d = emailDomain(lead.email)
+      if (d && (domainCounts.get(d) ?? 0) >= perDomainCap!) { skip('DOMAIN_PACED'); continue }
+    }
 
     // Resolve the draft source WITHOUT spending AI yet. The outbox claim below
     // happens BEFORE any generation, so a racing send job loses the unique
@@ -717,6 +738,7 @@ export async function sendCampaignBatch(
       }).catch(() => {})
 
       sent++
+      if (domainCounts) { const d = emailDomain(lead.email); if (d) domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1) }
     } catch (err) {
       // Known SMTP rejection (nodemailer throws only when the provider did NOT
       // accept the message). Mark the claim FAILED with the error + failedAt for
@@ -832,6 +854,23 @@ export async function sendFollowupTask(
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
   const wsDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
   const dailySendLimit = applyWarmupCap(effectiveDailySendLimit(wsDailyLimit), icp?.warmupStartedAt ?? null)
+
+  // Per-domain pacing (opt-in). If this recipient's domain already hit its daily
+  // ceiling, defer: park the task back at SCHEDULED to retry on a later scan rather
+  // than burst past the provider's tolerance.
+  const perDomainCap = perDomainDailyCap()
+  if (perDomainCap != null) {
+    const domain = emailDomain(lead.email)
+    if (domain) {
+      const domainToday = await prisma.outreachSent.count({
+        where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmail: { endsWith: `@${domain}` } },
+      })
+      if (domainToday >= perDomainCap) {
+        await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+        return { taskId, status: 'SKIPPED', reason: 'DOMAIN_PACED' }
+      }
+    }
+  }
 
   // Claim the outbox row for THIS step (unique on campaignId, leadId, sequenceStep).
   let claimId: string
