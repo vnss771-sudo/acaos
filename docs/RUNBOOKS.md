@@ -96,3 +96,51 @@ Symptom: `GET /api/ready` 503 while `/api/live` is 200; jobs stall.
 Probe reports the serving cert expires in <14 days. Renew/rotate the certificate
 at the edge (the app emits HSTS in production). Not user-impacting yet — handle in
 business hours, but before expiry.
+
+## FollowupBacklogGrowing
+>200 follow-up tasks are due but unsent for 15m (`acaos_followup_due_unsent`).
+1. Confirm follow-ups are meant to be on: `FOLLOWUPS_ENABLED=true` and the campaign's
+   `autoFollowupsEnabled`. If off by design, this is expected — silence the alert.
+2. Check the `send-followup` queue depth and the `followup-due-scan` scheduler; a
+   stuck scan or `FEATURE_SEND=false` stops dispatch.
+3. Check `FollowupTasksStuck` (claimed-but-not-completing) and worker health.
+   Deep dive: `runbooks/followups-not-sending.md`.
+
+## FollowupTasksStuck
+>50 follow-up tasks stuck in PROCESSING for 15m — claimed by a worker that then
+crashed mid-dispatch.
+1. These hold no further sends; the per-step outbox unique prevents double-send.
+2. Relate to stale-SENDING recovery (`STALE_SENDING_RECOVERY_MINUTES`) — the daily
+   maintenance sweep reclaims abandoned SENDING rows; PROCESSING tasks may need a
+   manual reset to SCHEDULED if a deploy interrupted them.
+
+## ReputationEnforceBlocking
+Sends are being halted by the sender-reputation guard in enforce mode
+(`acaos_reputation_enforce_blocks_total` rising). **Customer sends are stopping.**
+1. Identify the workspace: `GET /api/stats/reputation?workspaceId=…` returns
+   `bounceRate`, `complaintRate`, `totalSends`, `reason`, `thresholds`.
+2. If the block is correct (genuinely high bounces), fix deliverability first —
+   see `runbooks/high-bounce-rate.md`.
+3. To stop blocking while investigating: `REPUTATION_GUARD_MODE=observe` (still logs,
+   doesn't block). Tune thresholds via `REPUTATION_MAX_BOUNCE_RATE` etc.
+   Deep dive: `runbooks/reputation-guard-enforcement.md`.
+
+## SenderReputationDegraded
+A workspace is over a bounce/complaint threshold (`acaos_sender_workspaces_unhealthy>0`).
+Fires in observe mode too — an early warning before enforce would block. Diagnose
+via `/api/stats/reputation`; see `runbooks/high-bounce-rate.md`.
+
+## BounceRateSpike
+A workspace's trailing bounce rate exceeds 5%. Pause/curb that workspace's sends,
+investigate the list source and recent campaigns. See `runbooks/high-bounce-rate.md`.
+
+## ComplaintRateSpike
+A workspace's complaint rate exceeds 0.3%. Treat as urgent — complaints damage the
+sending domain fastest. Review content/targeting; see `runbooks/high-bounce-rate.md`.
+
+## WarmupStuck
+A workspace's warmup day index hasn't advanced in 24h while warmup is active.
+1. Confirm `WorkspaceICP.warmupStartedAt` is set and in the past.
+2. Compare expected day vs `WARMUP_SCHEDULE`; the effective cap is
+   `min(dailySendLimit, warmupDailyCap)` — `SAFE_LAUNCH_DAILY_SEND_CAP` may be the
+   binding constraint instead. Deep dive: `runbooks/warmup-not-progressing.md`.
