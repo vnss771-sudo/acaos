@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkDraftPolicy, formatViolations } from '../packages/backend-core/src/lib/policyCheck.ts'
+import { checkDraftPolicy, formatViolations, countLinks } from '../packages/backend-core/src/lib/policyCheck.ts'
 
 // A compliant body reused across cases: long enough, has an unsubscribe notice,
 // no risky language. Individual cases override subject/body to exercise one rule.
@@ -96,6 +96,31 @@ describe('checkDraftPolicy — risky language', () => {
       emailBody: 'Our clients have seen improvements in their processes. Unsubscribe here.'
     })
     assert.ok(!violations.some(v => v.code === 'RISKY_LANGUAGE'))
+  })
+})
+
+describe('checkDraftPolicy — link count', () => {
+  it('counts http(s) links in a body', () => {
+    assert.equal(countLinks('see https://a.test and http://b.test/x'), 2)
+    assert.equal(countLinks('no links here'), 0)
+  })
+
+  it('flags a link-stuffed body as TOO_MANY_LINKS', () => {
+    const body = 'Deals: ' + Array.from({ length: 10 }, (_, i) => `https://promo${i}.test/x`).join(' ') + ' Unsubscribe here.'
+    const violations = checkDraftPolicy({ subject: 'Great deals for you', emailBody: body })
+    assert.ok(violations.some(v => v.code === 'TOO_MANY_LINKS'))
+  })
+
+  it('does not flag normal outreach with a couple of links', () => {
+    const body = 'Saw your work — here is our site https://acme.test and a case study https://acme.test/case. Unsubscribe here.'
+    const violations = checkDraftPolicy({ subject: 'Quick question', emailBody: body })
+    assert.ok(!violations.some(v => v.code === 'TOO_MANY_LINKS'))
+  })
+
+  it('respects an explicit maxLinks override and can be disabled with 0', () => {
+    const body = 'a https://1.test b https://2.test c https://3.test'
+    assert.ok(checkDraftPolicy({ subject: 'Three links here', emailBody: body }, { maxLinks: 2 }).some(v => v.code === 'TOO_MANY_LINKS'))
+    assert.ok(!checkDraftPolicy({ subject: 'Three links here', emailBody: body }, { maxLinks: 0 }).some(v => v.code === 'TOO_MANY_LINKS'))
   })
 })
 

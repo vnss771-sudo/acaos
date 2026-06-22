@@ -20,6 +20,11 @@ export interface DraftPolicyConfig {
   // send (see worker send path) — turning this on would false-positive on the
   // raw draft body and block sends. Enable only for channels with no footer.
   requireUnsubscribeInBody?: boolean
+  // Maximum number of links in the body. Excessive links are a strong spam signal
+  // (link farms, tracking-pixel stuffing). The default is generous so normal
+  // outreach (0–2 links) never trips it — and the compliant unsubscribe footer is
+  // appended AFTER this check, so it isn't counted. 0 disables the rule.
+  maxLinks?: number
 }
 
 const DEFAULT_POLICY: Required<DraftPolicyConfig> = {
@@ -30,6 +35,13 @@ const DEFAULT_POLICY: Required<DraftPolicyConfig> = {
   forbiddenPhrases: [],
   requireTemplate: false,
   requireUnsubscribeInBody: false,
+  maxLinks: 8,
+}
+
+/** Count http(s) links in a block of text. Pure; exported for testing. */
+export function countLinks(text: string): number {
+  const matches = text.match(/https?:\/\/[^\s<>"')\]]+/gi)
+  return matches ? matches.length : 0
 }
 
 export function checkDraftPolicy(
@@ -92,6 +104,18 @@ export function checkDraftPolicy(
       violations.push({
         code: 'MISSING_UNSUBSCRIBE',
         message: 'Email body must include an unsubscribe link or notice'
+      })
+    }
+  }
+
+  // Too many links — a strong spam signal. Generous default; the unsubscribe
+  // footer is appended after this check, so it isn't counted here.
+  if (finalPolicy.maxLinks > 0) {
+    const linkCount = countLinks(body)
+    if (linkCount > finalPolicy.maxLinks) {
+      violations.push({
+        code: 'TOO_MANY_LINKS',
+        message: `Email contains too many links (${linkCount}; max ${finalPolicy.maxLinks})`
       })
     }
   }
