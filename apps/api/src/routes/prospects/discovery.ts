@@ -193,6 +193,10 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
         })
         imported++
       } catch (err) {
+        // P2002 on (workspaceId, domainKey): the row's domain already exists in
+        // this workspace — a duplicate, not an error. Count it skipped so a CSV
+        // re-upload is idempotent instead of surfacing a constraint message.
+        if ((err as { code?: string }).code === 'P2002') { skipped++; continue }
         errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
       }
     }
@@ -241,20 +245,33 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
         if (prospect) {
           prospectsReused++
         } else {
-          prospect = await prisma.prospect.create({
-            data: {
-              workspaceId, companyName, domain, domainKey,
-              companyNameKey: normalizeCompanyNameKey(companyName),
-              emailKey: normalizeEmailKey(row.contactEmail ? String(row.contactEmail) : null),
-              industry: row.industry ? String(row.industry) : null,
-              location: row.location ? String(row.location) : null,
-              contactEmail: row.contactEmail ? String(row.contactEmail) : null,
-              contactName: row.contactName ? String(row.contactName) : null,
-              sourceTag: 'signal_import',
-            },
-            select: { id: true },
-          })
-          prospectsCreated++
+          try {
+            prospect = await prisma.prospect.create({
+              data: {
+                workspaceId, companyName, domain, domainKey,
+                companyNameKey: normalizeCompanyNameKey(companyName),
+                emailKey: normalizeEmailKey(row.contactEmail ? String(row.contactEmail) : null),
+                industry: row.industry ? String(row.industry) : null,
+                location: row.location ? String(row.location) : null,
+                contactEmail: row.contactEmail ? String(row.contactEmail) : null,
+                contactName: row.contactName ? String(row.contactName) : null,
+                sourceTag: 'signal_import',
+              },
+              select: { id: true },
+            })
+            prospectsCreated++
+          } catch (err) {
+            // P2002 on (workspaceId, domainKey): a concurrent import created this
+            // prospect between our find and create. Re-find and reuse it so the
+            // signal still attaches rather than failing the row.
+            if ((err as { code?: string }).code === 'P2002' && domainKey) {
+              prospect = await prisma.prospect.findFirst({ where: { workspaceId, domainKey }, select: { id: true } })
+              if (!prospect) throw err
+              prospectsReused++
+            } else {
+              throw err
+            }
+          }
         }
 
         await ingestSignal({

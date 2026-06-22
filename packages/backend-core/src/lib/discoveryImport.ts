@@ -78,28 +78,45 @@ export async function importDiscoveredProspects(input: ImportDiscoveredInput): P
     const buyingStage = detectBuyingStage([], scores.opportunityScore)
     const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
 
-    const created = await prisma.prospect.create({
-      data: {
-        workspaceId,
-        companyName: c.companyName,
-        domain: meta.domain,
-        domainKey: dk,
-        companyNameKey: normalizeCompanyNameKey(c.companyName),
-        emailKey: normalizeEmailKey(meta.contactEmail),
-        industry: meta.industry,
-        employeeCount: meta.employeeCount,
-        location: meta.location,
-        description: c.description ?? null,
-        contactName: meta.contactName,
-        contactEmail: meta.contactEmail,
-        contactTitle: c.contactTitle ?? null,
-        sourceTag: sourceName,
-        missionId,
-        ...scores,
-        buyingStage,
-        winProbability,
-      },
-    })
+    let created: { id: string }
+    try {
+      created = await prisma.prospect.create({
+        data: {
+          workspaceId,
+          companyName: c.companyName,
+          domain: meta.domain,
+          domainKey: dk,
+          companyNameKey: normalizeCompanyNameKey(c.companyName),
+          emailKey: normalizeEmailKey(meta.contactEmail),
+          industry: meta.industry,
+          employeeCount: meta.employeeCount,
+          location: meta.location,
+          description: c.description ?? null,
+          contactName: meta.contactName,
+          contactEmail: meta.contactEmail,
+          contactTitle: c.contactTitle ?? null,
+          sourceTag: sourceName,
+          missionId,
+          ...scores,
+          buyingStage,
+          winProbability,
+        },
+        select: { id: true },
+      })
+    } catch (err) {
+      // P2002 = the (workspaceId, domainKey) partial unique index fired: a
+      // concurrent run already created this prospect between our check and insert.
+      // That's a successful dedup, not a failure — count it skipped and move on so
+      // a race never escalates to a PARTIAL run. Any other error propagates.
+      if ((err as { code?: string }).code === 'P2002') {
+        if (dk) existingDomains.add(dk)
+        existingNames.add(nk)
+        skipped++
+        onProgress?.(imported, skipped)
+        continue
+      }
+      throw err
+    }
 
     // Seed HIRING/FUNDING signals from the candidate payload — no extra API call.
     const now = new Date()

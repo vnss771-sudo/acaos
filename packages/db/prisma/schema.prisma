@@ -625,6 +625,10 @@ model Prospect {
   @@index([workspaceId, companyNameKey])
   @@index([workspaceId, emailKey])
   @@index([missionId])
+  // NOTE: a PARTIAL UNIQUE index on (workspaceId, domainKey) WHERE domainKey IS
+  // NOT NULL is defined in migration 20260622030000_prospect_domain_unique.
+  // Prisma can't express filtered unique indexes, so it lives in raw SQL only;
+  // it's the concurrency-safe guard behind the check-then-create discovery dedup.
 }
 
 model Signal {

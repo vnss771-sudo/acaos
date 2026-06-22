@@ -101,6 +101,27 @@ test('guard: a run not in RUNNING state is not reprocessed', async () => {
   assert.equal(searched, false, 'an already-finalized run must not call the provider')
 })
 
+test('dedup: a duplicate domainKey is rejected by the partial unique index', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  // Seed an existing prospect whose domainKey collides with a candidate's.
+  await prisma.prospect.create({
+    data: { workspaceId: workspace.id, companyName: 'Acme One', domain: 'acme.example', domainKey: 'acme.example' },
+  })
+  // A second insert with the same (workspaceId, domainKey) must be rejected.
+  await assert.rejects(
+    () => prisma.prospect.create({
+      data: { workspaceId: workspace.id, companyName: 'Acme Two', domain: 'acme.example', domainKey: 'acme.example' },
+    }),
+    (err: unknown) => (err as { code?: string }).code === 'P2002',
+  )
+  // A different workspace may reuse the same domainKey (the index is per-workspace).
+  const other = await seedUserWithWorkspace()
+  await prisma.prospect.create({
+    data: { workspaceId: other.workspace.id, companyName: 'Acme Other', domain: 'acme.example', domainKey: 'acme.example' },
+  })
+  assert.equal(await prisma.prospect.count({ where: { domainKey: 'acme.example' } }), 2)
+})
+
 test('guard: a run from another workspace is rejected', async () => {
   const a = await seedUserWithWorkspace()
   const b = await seedUserWithWorkspace()
