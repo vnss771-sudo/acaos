@@ -101,7 +101,9 @@ test('operational chaos: worker must skip unapproved leads before any AI generat
   // The guard reads `approvalRequired` (the workspace's approvalMode OR forced on
   // by SAFE_LAUNCH_MODE) and records a NO_APPROVED_DRAFT skip — same invariant.
   const skipGuardIdx = processors.indexOf("if (approvalRequired) { skip('NO_APPROVED_DRAFT'); continue }")
-  const generateIdx = processors.indexOf('generateOutreach(')
+  // The call is dispatched via the injectable `generateOutreachFn` seam (tests stub
+  // it); match that form rather than the bare generator name.
+  const generateIdx = processors.indexOf('generateOutreachFn(')
   assert.notEqual(draftCheckIdx, -1, 'Could not locate the draft-presence check')
   assert.notEqual(skipGuardIdx, -1, 'Missing approval-mode skip guard in the draft-generation branch')
   assert.notEqual(generateIdx, -1, 'Could not locate generateOutreach call')
