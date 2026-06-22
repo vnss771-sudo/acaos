@@ -1,10 +1,43 @@
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  incJob, observeJobDuration, resetWorkerMetrics, renderWorkerMetrics,
+  incJob, observeJobDuration, resetWorkerMetrics, renderWorkerMetrics, incReputationBlock,
 } from '../apps/worker/src/lib/metrics.ts'
 
 beforeEach(() => resetWorkerMetrics())
+
+test('reputation enforce-block counter renders per queue', () => {
+  incReputationBlock('send-campaign')
+  incReputationBlock('send-campaign')
+  incReputationBlock('send-followup')
+  const out = renderWorkerMetrics()
+  assert.match(out, /acaos_reputation_enforce_blocks_total\{queue="send-campaign"\} 2/)
+  assert.match(out, /acaos_reputation_enforce_blocks_total\{queue="send-followup"\} 1/)
+})
+
+test('domain snapshot renders follow-up backlog, reputation, and warmup gauges', () => {
+  const out = renderWorkerMetrics([], {
+    followupTasks: { SCHEDULED: 12, PROCESSING: 1, BLOCKED: 3 },
+    followupDueUnsent: 7,
+    reputation: { evaluated: 2, unhealthy: 1, perWorkspace: [
+      { workspaceId: 'ws1', bounceRate: 0.08, complaintRate: 0.001, healthy: false },
+    ] },
+    warmup: [{ workspaceId: 'ws2', day: 3, cap: 80 }],
+  })
+  assert.match(out, /acaos_followup_tasks\{status="SCHEDULED"\} 12/)
+  assert.match(out, /acaos_followup_due_unsent 7/)
+  assert.match(out, /acaos_sender_workspaces_unhealthy 1/)
+  assert.match(out, /acaos_sender_bounce_rate\{workspace="ws1"\} 0\.08/)
+  assert.match(out, /acaos_sender_reputation_healthy\{workspace="ws1"\} 0/)
+  assert.match(out, /acaos_warmup_day\{workspace="ws2"\} 3/)
+  assert.match(out, /acaos_warmup_cap\{workspace="ws2"\} 80/)
+})
+
+test('domain snapshot is omitted when not provided (no empty gauges)', () => {
+  const out = renderWorkerMetrics()
+  assert.doesNotMatch(out, /acaos_followup_tasks/)
+  assert.doesNotMatch(out, /acaos_warmup_day/)
+})
 
 test('incJob counts per queue and result', () => {
   incJob('send-campaign', 'completed')

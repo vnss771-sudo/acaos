@@ -54,22 +54,22 @@ const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 }
 // Job payloads are scoped by workspaceId (authoritative for polling/auth) plus an
 // optional initiatedByUserId. Object params prevent the positional confusion that
 // previously let ingest pass a workspaceId into a `userId` field.
-export async function enqueueResearchLead(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
+export async function enqueueResearchLead(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string; requestId?: string }) {
   return getQueue('research-lead').add('research-lead', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
-export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string }) {
+export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string; requestId?: string }) {
   return getQueue('generate-outreach').add('generate-outreach', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
-export async function enqueueAnalyzeReply(opts: { replyBody: string; workspaceId: string; leadId?: string; initiatedByUserId?: string }) {
+export async function enqueueAnalyzeReply(opts: { replyBody: string; workspaceId: string; leadId?: string; initiatedByUserId?: string; requestId?: string }) {
   return getQueue('analyze-reply').add('analyze-reply', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
-export async function enqueueSyncMailbox(workspaceId: string, userId?: string) {
+export async function enqueueSyncMailbox(workspaceId: string, userId?: string, requestId?: string) {
   return getQueue('sync-mailbox').add(
     'sync-mailbox',
-    { workspaceId, userId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    { workspaceId, userId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION },
     // Bounded retention like every other queue — the auto-sync scheduler enqueues
     // these continuously, so without it completed/failed sync jobs grow unbounded
     // in Redis.
@@ -82,27 +82,27 @@ export async function getJobById(queueName: string, jobId: string) {
   return Job.fromId(getQueue(queueName), jobId)
 }
 
-export async function enqueueScoreProspects(workspaceId: string) {
-  return getQueue('score-prospects').add('score-prospects', { workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+export async function enqueueScoreProspects(workspaceId: string, requestId?: string) {
+  return getQueue('score-prospects').add('score-prospects', { workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 // Async prospect discovery. attempts:1 — a discovery run calls a metered, paid
 // provider and the route already consumed the workspace's discovery quota, so a
 // failed run must not silently re-hit the provider; failures surface as a FAILED
 // (or PARTIAL) DiscoveryRun for the operator instead of being auto-retried.
-export async function enqueueDiscoverProspects(runId: string, workspaceId: string) {
-  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
+export async function enqueueDiscoverProspects(runId: string, workspaceId: string, requestId?: string) {
+  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
     attempts: 1,
     ...jobRetention,
   })
 }
 
-export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string) {
-  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string, requestId?: string) {
+  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
-export async function enqueueCalibrate(workspaceId: string) {
-  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+export async function enqueueCalibrate(workspaceId: string, requestId?: string) {
+  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
 }
 
 // Deterministic jobId so repeated "launch" clicks within the same minute collapse
@@ -124,8 +124,8 @@ export function sendCampaignJobId(
   return `send-campaign-${workspaceId}-${campaignId}-${leadHash}-${minuteBucket}`
 }
 
-export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[]) {
-  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
+export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[], requestId?: string) {
+  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
     jobId: sendCampaignJobId(campaignId, workspaceId, leadIds),
     attempts: 2,
     backoff: { type: 'exponential', delay: 10_000 },
@@ -145,10 +145,10 @@ export function sendFollowupJobId(taskId: string, now: number = Date.now()): str
   return `send-followup-${taskId}-${Math.floor(now / 60_000)}`
 }
 
-export async function enqueueSendFollowup(taskId: string, workspaceId?: string) {
+export async function enqueueSendFollowup(taskId: string, workspaceId?: string, requestId?: string) {
   return getQueue('send-followup').add(
     'send-followup',
-    { taskId, workspaceId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    { taskId, workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION },
     { jobId: sendFollowupJobId(taskId), attempts: 2, backoff: { type: 'exponential', delay: 30_000 }, ...jobRetention },
   )
 }

@@ -2,7 +2,9 @@ import 'dotenv/config'
 import { Worker, Queue } from 'bullmq'
 import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
-import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
+import { incJob, observeJobDuration, type QueueDepth, type DomainSnapshot } from './lib/metrics.js'
+import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
+import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import {
@@ -26,6 +28,8 @@ import {
   SendFollowupPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
+import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
+import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { computeLeadScore, DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
@@ -51,8 +55,8 @@ const SERVICE = 'acaos-worker'
 const metadata = getRuntimeMetadata(SERVICE)
 let shuttingDown = false
 
-function log(queue: string, msg: string) {
-  logger.info(msg, { queue, service: SERVICE, releaseId: metadata.releaseId })
+function log(queue: string, msg: string, requestId?: string) {
+  logger.info(msg, { queue, service: SERVICE, releaseId: metadata.releaseId, ...(requestId ? { requestId } : {}) })
 }
 
 async function getWorkspaceWeights(workspaceId: string): Promise<ScoringWeights> {
@@ -444,8 +448,21 @@ const retentionWorker = new Worker(
     log('retention-purge', 'Starting retention sweep')
     const deleted = await purgeExpiredData()
     const total = Object.values(deleted).reduce((a, b) => a + b, 0)
-    log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}`)
-    return deleted
+    // Reclaim outbox rows stranded in SENDING by a crashed dispatch — they otherwise
+    // count against the send cap forever. Fail-closed (→ FAILED, never re-sent).
+    const staleRecovered = await recoverStaleSends().catch((e) => {
+      log('retention-purge', `stale-send recovery failed: ${(e as Error).message}`); return 0
+    })
+    // Opt-in ledger↔projection reconciliation: detect CampaignDailyStats drift from
+    // the ContactEvent ledger and rebuild any drifted workspace. Default-off.
+    const reconcile = reconcileEnabled()
+      ? await reconcileCampaignStats({ rebuild: true }).catch((e) => {
+          log('retention-purge', `stats reconcile failed: ${(e as Error).message}`); return null
+        })
+      : null
+    if (reconcile) log('retention-purge', `stats reconcile: checked=${reconcile.campaignsChecked} drift=${reconcile.drifted.length} rebuilt=${reconcile.workspacesRebuilt}`)
+    log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
+    return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0 }
   },
   { connection, concurrency: 1 }
 )
@@ -469,12 +486,15 @@ for (const [name, worker] of WORKER_QUEUES) {
     if (job?.processedOn && job?.finishedOn) observeJobDuration(name, (job.finishedOn - job.processedOn) / 1000)
   })
   worker.on('failed', (job, err) => {
-    log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`)
+    // Correlate the failure back to the originating API request when the enqueuer
+    // threaded a requestId through the payload (optional — worker-internal jobs omit it).
+    const requestId = typeof job?.data?.requestId === 'string' ? job.data.requestId : undefined
+    log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`, requestId)
     // Only count/report once the job has exhausted its retries — transient
     // failures that BullMQ will retry are noise, not faults.
     if (isFinalAttempt(job)) {
       incJob(name, 'failed')
-      captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade })
+      captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade, requestId })
     }
   })
   worker.on('error', (err) => {
@@ -490,6 +510,52 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
     queue: name,
     counts: await getQueue(name).getJobCounts(...DEPTH_STATES),
   })))
+}
+
+// Scrape-time deliverability snapshot for /metrics: follow-up backlog, reputation
+// (bounded), and warmup state. Each piece is independently best-effort — a failure
+// yields an empty field, never a failed scrape. Queries are indexed and bounded.
+const REPUTATION_SCRAPE_LIMIT = 50
+async function collectDomainMetrics(): Promise<DomainSnapshot> {
+  const snapshot: DomainSnapshot = {}
+
+  // Follow-up backlog by status + due-but-unsent (one groupBy + one count, indexed).
+  try {
+    const grouped = await prisma.followupTask.groupBy({ by: ['status'], _count: { _all: true } })
+    snapshot.followupTasks = Object.fromEntries(grouped.map((g: { status: string; _count: { _all: number } }) => [g.status as string, g._count._all]))
+    snapshot.followupDueUnsent = await prisma.followupTask.count({ where: { status: 'SCHEDULED', scheduledFor: { lte: new Date() } } })
+  } catch { /* leave absent */ }
+
+  // Reputation: evaluate only workspaces that sent in the window (bounded set, capped).
+  try {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const active = await prisma.contactEvent.groupBy({
+      by: ['workspaceId'], where: { type: 'SENT', occurredAt: { gte: since } }, _count: { _all: true },
+      orderBy: { _count: { workspaceId: 'desc' } }, take: REPUTATION_SCRAPE_LIMIT,
+    })
+    const perWorkspace: NonNullable<DomainSnapshot['reputation']>['perWorkspace'] = []
+    let unhealthy = 0
+    for (const a of active) {
+      const v = await evaluateSenderReputation(a.workspaceId).catch(() => null)
+      if (!v) continue
+      if (!v.healthy) unhealthy++
+      perWorkspace.push({ workspaceId: a.workspaceId, bounceRate: v.bounceRate, complaintRate: v.complaintRate, healthy: v.healthy })
+    }
+    snapshot.reputation = { evaluated: perWorkspace.length, unhealthy, perWorkspace }
+  } catch { /* leave absent */ }
+
+  // Warmup: only opt-in workspaces (warmupStartedAt set) — naturally bounded.
+  try {
+    const warming = await prisma.workspaceICP.findMany({ where: { warmupStartedAt: { not: null } }, select: { workspaceId: true, warmupStartedAt: true } })
+    const now = new Date()
+    snapshot.warmup = warming.map((w: { workspaceId: string; warmupStartedAt: Date | null }) => {
+      const cap = warmupDailyCap(w.warmupStartedAt!, now)
+      const dayIndex = Math.floor((now.getTime() - w.warmupStartedAt!.getTime()) / 86_400_000)
+      return { workspaceId: w.workspaceId, day: cap == null ? 0 : dayIndex + 1, cap: cap ?? 0 }
+    })
+  } catch { /* leave absent */ }
+
+  return snapshot
 }
 
 // ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
@@ -547,6 +613,7 @@ const healthServer = startHealthServer(
   Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
   {
     collectQueueDepths,
+    collectDomainMetrics,
     isReady: () => !shuttingDown && connection.status === 'ready',
   },
 )

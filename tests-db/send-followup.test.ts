@@ -225,3 +225,26 @@ test('idempotent: a step already in the outbox marks the task SENT without re-se
   assert.deepEqual(mailer.sent, [], 'the duplicate claim short-circuits before SMTP')
   assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id, leadId: lead.id, sequenceStep: 2 } }), 1)
 })
+
+test('FAILED: an SMTP rejection records the failure in the outbox, ledger, and stats atomically', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id, true)
+  await seedStep(campaign.id, 2, 3)
+  const lead = await seedLead(workspace.id, campaign.id)
+  const task = await seedDueTask(workspace.id, campaign.id, lead.id, 2)
+
+  const mailer = recordingMailer({ throwOn: () => true })
+  const res = await sendFollowupTask(task.id, { sendMail: mailer.fn })
+
+  assert.equal(res.status, 'FAILED')
+  // The step's outbox row is FAILED (fail-closed) ...
+  const send = await prisma.outreachSent.findFirst({ where: { campaignId: campaign.id, leadId: lead.id, sequenceStep: 2 } })
+  assert.equal(send!.status, 'FAILED')
+  // ... the task is FAILED ...
+  assert.equal((await prisma.followupTask.findUnique({ where: { id: task.id } }))!.status, 'FAILED')
+  // ... and the failure reaches the ledger + daily stats (previously the follow-up
+  // FAILED path wrote neither).
+  assert.ok(await prisma.contactEvent.findFirst({ where: { leadId: lead.id, type: 'FAILED' } }))
+  assert.equal((await prisma.campaignDailyStats.findFirst({ where: { campaignId: campaign.id } }))!.failed, 1)
+})

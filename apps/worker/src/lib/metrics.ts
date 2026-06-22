@@ -19,6 +19,13 @@ export function incJob(queue: string, result: JobResult): void {
   else jobTotals.set(key, { queue, result, value: 1 })
 }
 
+// Reputation enforce-blocks: a discrete event (a send halted in enforce mode), so a
+// counter — keyed by queue only (2 series), never by workspace, to bound cardinality.
+const reputationBlocks = new Map<string, number>()
+export function incReputationBlock(queue: 'send-campaign' | 'send-followup'): void {
+  reputationBlocks.set(queue, (reputationBlocks.get(queue) ?? 0) + 1)
+}
+
 export function observeJobDuration(queue: string, seconds: number): void {
   let h = jobDurations.get(queue)
   if (!h) {
@@ -35,6 +42,7 @@ export function observeJobDuration(queue: string, seconds: number): void {
 export function resetWorkerMetrics(): void {
   jobTotals.clear()
   jobDurations.clear()
+  reputationBlocks.clear()
 }
 
 function esc(v: string): string {
@@ -47,7 +55,22 @@ function lbl(labels: Record<string, string>): string {
 
 export type QueueDepth = { queue: string; counts: Record<string, number> }
 
-export function renderWorkerMetrics(depths: QueueDepth[] = []): string {
+// Scrape-time snapshot of DB-derived deliverability state, collected on each /metrics
+// scrape (mirrors the queue-depth collector). All fields optional so a collection
+// failure degrades to "absent" rather than failing the scrape.
+export type DomainSnapshot = {
+  followupTasks?: Record<string, number> // FollowupTaskStatus -> count (platform-wide)
+  followupDueUnsent?: number
+  reputation?: {
+    evaluated: number
+    unhealthy: number
+    // Bounded set (capped) of notable workspaces — never the full tenant list.
+    perWorkspace?: Array<{ workspaceId: string; bounceRate: number; complaintRate: number; healthy: boolean }>
+  }
+  warmup?: Array<{ workspaceId: string; day: number; cap: number }> // opt-in only, naturally bounded
+}
+
+export function renderWorkerMetrics(depths: QueueDepth[] = [], domain: DomainSnapshot = {}): string {
   const lines: string[] = []
 
   lines.push('# HELP worker_jobs_total Background jobs processed by queue and result.')
@@ -73,6 +96,58 @@ export function renderWorkerMetrics(depths: QueueDepth[] = []): string {
     for (const [state, n] of Object.entries(d.counts)) {
       lines.push(`bullmq_queue_jobs${lbl({ queue: d.queue, state })} ${n}`)
     }
+  }
+
+  lines.push('# HELP acaos_reputation_enforce_blocks_total Sends blocked by the reputation guard in enforce mode.')
+  lines.push('# TYPE acaos_reputation_enforce_blocks_total counter')
+  for (const [queue, n] of reputationBlocks.entries()) {
+    lines.push(`acaos_reputation_enforce_blocks_total${lbl({ queue })} ${n}`)
+  }
+
+  if (domain.followupTasks) {
+    lines.push('# HELP acaos_followup_tasks Follow-up tasks by status (platform-wide).')
+    lines.push('# TYPE acaos_followup_tasks gauge')
+    for (const [status, n] of Object.entries(domain.followupTasks)) {
+      lines.push(`acaos_followup_tasks${lbl({ status })} ${n}`)
+    }
+  }
+  if (domain.followupDueUnsent != null) {
+    lines.push('# HELP acaos_followup_due_unsent Scheduled follow-up tasks that are due but not yet sent.')
+    lines.push('# TYPE acaos_followup_due_unsent gauge')
+    lines.push(`acaos_followup_due_unsent ${domain.followupDueUnsent}`)
+  }
+  if (domain.reputation) {
+    lines.push('# HELP acaos_sender_workspaces_evaluated Workspaces evaluated by the reputation guard this scrape.')
+    lines.push('# TYPE acaos_sender_workspaces_evaluated gauge')
+    lines.push(`acaos_sender_workspaces_evaluated ${domain.reputation.evaluated}`)
+    lines.push('# HELP acaos_sender_workspaces_unhealthy Workspaces currently over a bounce/complaint threshold.')
+    lines.push('# TYPE acaos_sender_workspaces_unhealthy gauge')
+    lines.push(`acaos_sender_workspaces_unhealthy ${domain.reputation.unhealthy}`)
+    if (domain.reputation.perWorkspace?.length) {
+      lines.push('# HELP acaos_sender_bounce_rate Trailing bounce rate per notable workspace.')
+      lines.push('# TYPE acaos_sender_bounce_rate gauge')
+      for (const w of domain.reputation.perWorkspace) {
+        lines.push(`acaos_sender_bounce_rate${lbl({ workspace: w.workspaceId })} ${w.bounceRate}`)
+      }
+      lines.push('# HELP acaos_sender_complaint_rate Trailing complaint rate per notable workspace.')
+      lines.push('# TYPE acaos_sender_complaint_rate gauge')
+      for (const w of domain.reputation.perWorkspace) {
+        lines.push(`acaos_sender_complaint_rate${lbl({ workspace: w.workspaceId })} ${w.complaintRate}`)
+      }
+      lines.push('# HELP acaos_sender_reputation_healthy 1 if the workspace is under thresholds, else 0.')
+      lines.push('# TYPE acaos_sender_reputation_healthy gauge')
+      for (const w of domain.reputation.perWorkspace) {
+        lines.push(`acaos_sender_reputation_healthy${lbl({ workspace: w.workspaceId })} ${w.healthy ? 1 : 0}`)
+      }
+    }
+  }
+  if (domain.warmup?.length) {
+    lines.push('# HELP acaos_warmup_day Current warmup day per warming workspace (0 = ramp complete).')
+    lines.push('# TYPE acaos_warmup_day gauge')
+    for (const w of domain.warmup) lines.push(`acaos_warmup_day${lbl({ workspace: w.workspaceId })} ${w.day}`)
+    lines.push('# HELP acaos_warmup_cap Current warmup daily cap per warming workspace.')
+    lines.push('# TYPE acaos_warmup_cap gauge')
+    for (const w of domain.warmup) lines.push(`acaos_warmup_cap${lbl({ workspace: w.workspaceId })} ${w.cap}`)
   }
 
   lines.push('# HELP acaos_build_info Immutable build and release metadata.')

@@ -119,7 +119,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
       select: { id: true },
     })
 
-    const job = await enqueueDiscoverProspects(run.id, workspaceId)
+    const job = await enqueueDiscoverProspects(run.id, workspaceId, req.id)
 
     void recordAudit({
       workspaceId, actorUserId: userId, type: 'discovery.enqueued',
@@ -296,7 +296,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     }
 
     // Score the workspace once — this cascades into auto-recommendations + intents.
-    if (signalsIngested > 0) enqueueScoreProspects(workspaceId).catch(() => {})
+    if (signalsIngested > 0) enqueueScoreProspects(workspaceId, req.id).catch(() => {})
 
     res.status(201).json({ prospectsCreated, prospectsReused, signalsIngested, failed: errors.length, errors: errors.slice(0, 20) })
   }))

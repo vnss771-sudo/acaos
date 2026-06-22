@@ -301,7 +301,7 @@ missionsRouter.post(
     if (!mission) throw new ApiError(404, 'Mission not found')
     await assertMinimumWorkspaceRole(user.id, mission.workspaceId, 'admin')
 
-    enqueueScoreProspects(mission.workspaceId).catch(() => {})
+    enqueueScoreProspects(mission.workspaceId, req.id).catch(() => {})
     void recordAudit({
       workspaceId: mission.workspaceId, actorUserId: user.id, type: 'mission.score',
       entityType: 'mission', entityId: mission.id,

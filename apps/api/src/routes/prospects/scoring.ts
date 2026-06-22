@@ -96,8 +96,8 @@ export function registerScoringRoutes(prospectsRouter: Router) {
 
     // Trigger background jobs on definitive outcomes
     if (['WON', 'LOST'].includes(req.body.stage)) {
-      enqueueScoreProspects(prospect.workspaceId).catch(() => {})
-      enqueueCalibrate(prospect.workspaceId).catch(() => {})
+      enqueueScoreProspects(prospect.workspaceId, req.id).catch(() => {})
+      enqueueCalibrate(prospect.workspaceId, req.id).catch(() => {})
     }
 
     res.json({

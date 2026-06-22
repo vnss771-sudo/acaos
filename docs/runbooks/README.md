@@ -26,6 +26,9 @@ SLO targets and alert thresholds: [`SLO.md`](SLO.md) (and the formal table in
 | [`imap-auth-failure.md`](imap-auth-failure.md) | Mailbox sync failing; replies/bounces not ingested |
 | [`stuck-campaign-send.md`](stuck-campaign-send.md) | `OutreachSent` rows stuck `SENDING`; send job hung |
 | [`high-bounce-rate.md`](high-bounce-rate.md) | Bounce/complaint spike; sender reputation at risk |
+| [`reputation-guard-enforcement.md`](reputation-guard-enforcement.md) | Sends halted by the reputation guard (enforce mode); "why did sends stop?" |
+| [`followups-not-sending.md`](followups-not-sending.md) | Follow-up backlog growing; tasks stuck or follow-ups disabled |
+| [`warmup-not-progressing.md`](warmup-not-progressing.md) | A workspace's warmup ramp is stuck / capped lower than expected |
 | [`accidental-over-sending.md`](accidental-over-sending.md) | Too many emails going out; need an emergency stop |
 | [`failed-migration.md`](failed-migration.md) | `prisma migrate deploy` failed or partially applied |
 | [`suspected-data-breach.md`](suspected-data-breach.md) | Suspected unauthorized access / data exposure |

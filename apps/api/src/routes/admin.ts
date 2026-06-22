@@ -5,6 +5,12 @@ import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/a
 import { recordAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
 import { parseQuery } from '../lib/validate.js'
+import { pingDatabase, pingRedis, withTimeout, PROBE_TIMEOUT_MS } from '../lib/health.js'
+import {
+  launchControlsSnapshot,
+  reputationGuardMode,
+  areFollowupsEnabled,
+} from '@acaos/backend-core/lib/launchControls.js'
 import { z } from 'zod'
 import type { AuthUser } from '../types/auth.js'
 
@@ -142,6 +148,35 @@ adminRouter.get(
   asyncHandler(async (_req, res) => {
     const stats = await getQueueStats()
     res.json({ queues: stats })
+  })
+)
+
+// Read-only operational status: the live launch-control snapshot (kill switches,
+// safe-launch, reputation-guard mode, follow-up master switch), queue depths, and
+// dependency liveness — one call an operator/runbook can hit to answer "what is
+// the system configured to do right now, and is its plumbing healthy?". Pure
+// reads; inherits the platform-admin gate above (no new auth surface).
+adminRouter.get(
+  '/status',
+  asyncHandler(async (_req, res) => {
+    // Queue depths require Redis. With the shared connection's lazyConnect +
+    // maxRetriesPerRequest:null, a getJobCounts against an unreachable Redis never
+    // rejects — it queues forever — so bound it and degrade to null rather than
+    // letting an operator's status probe hang. dependencies.redis still reports
+    // the true liveness.
+    const [database, redis, queues] = await Promise.all([
+      pingDatabase(),
+      pingRedis(),
+      withTimeout(getQueueStats(), PROBE_TIMEOUT_MS).catch(() => null),
+    ])
+    res.json({
+      launchControls: launchControlsSnapshot(),
+      reputationGuardMode: reputationGuardMode(),
+      followupsEnabled: areFollowupsEnabled(),
+      dependencies: { database, redis },
+      queues,
+      timestamp: new Date().toISOString(),
+    })
   })
 )
 

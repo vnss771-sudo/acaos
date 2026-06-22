@@ -2,10 +2,11 @@ import http from 'node:http'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { isProduction } from '@acaos/backend-core/lib/config.js'
-import { renderWorkerMetrics, METRICS_CONTENT_TYPE, type QueueDepth } from './lib/metrics.js'
+import { renderWorkerMetrics, METRICS_CONTENT_TYPE, type QueueDepth, type DomainSnapshot } from './lib/metrics.js'
 
 type HealthOptions = {
   collectQueueDepths?: () => Promise<QueueDepth[]>
+  collectDomainMetrics?: () => Promise<DomainSnapshot>
   isReady?: () => boolean | Promise<boolean>
 }
 
@@ -76,15 +77,16 @@ export function startHealthServer(port: number, opts: HealthOptions = {}): http.
         res.end(JSON.stringify({ error: 'Unauthorized' }))
         return
       }
-      const finish = (depths: QueueDepth[]) => {
+      const finish = (depths: QueueDepth[], domain: DomainSnapshot) => {
         res.writeHead(200, { 'Content-Type': METRICS_CONTENT_TYPE })
-        res.end(renderWorkerMetrics(depths))
+        res.end(renderWorkerMetrics(depths, domain))
       }
-      const collect = opts.collectQueueDepths
-      if (!collect) { finish([]); return }
-      collect()
-        .then(finish)
-        .catch(() => finish([]))
+      // Collect queue depths and the domain snapshot in parallel; either failing
+      // degrades to empty rather than failing the scrape.
+      Promise.all([
+        opts.collectQueueDepths?.().catch(() => [] as QueueDepth[]) ?? Promise.resolve([] as QueueDepth[]),
+        opts.collectDomainMetrics?.().catch(() => ({} as DomainSnapshot)) ?? Promise.resolve({} as DomainSnapshot),
+      ]).then(([depths, domain]) => finish(depths, domain))
       return
     }
 

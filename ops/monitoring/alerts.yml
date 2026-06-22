@@ -109,6 +109,65 @@ groups:
           summary: "Failed-job count growing on {{ $labels.queue }}"
           description: "More than 50 jobs entered the failed state in the last hour on {{ $labels.queue }}."
 
+  # Deliverability + sender-reputation signals (worker scrape-time gauges/counters).
+  - name: acaos-deliverability
+    rules:
+      - alert: FollowupBacklogGrowing
+        expr: acaos_followup_due_unsent > 200
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Follow-up due-task backlog growing"
+          description: "More than 200 follow-up tasks are due but unsent for 15m — the due-scan may be stuck or send is disabled. Runbook: docs/RUNBOOKS.md#followupbackloggrowing"
+
+      - alert: FollowupTasksStuck
+        expr: acaos_followup_tasks{status="PROCESSING"} > 50
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Follow-up tasks stuck in PROCESSING"
+          description: "More than 50 follow-up tasks are claimed (PROCESSING) but not completing for 15m — likely crashed dispatches. Runbook: docs/RUNBOOKS.md#followuptasksstuck"
+
+      - alert: ReputationEnforceBlocking
+        expr: increase(acaos_reputation_enforce_blocks_total[15m]) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Reputation guard is blocking sends (enforce mode)"
+          description: "Sends are being halted by the reputation guard. Investigate the degraded workspace(s). Runbook: docs/RUNBOOKS.md#reputationenforceblocking"
+
+      - alert: SenderReputationDegraded
+        expr: acaos_sender_workspaces_unhealthy > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "One or more workspaces are over a reputation threshold"
+          description: "A workspace's bounce/complaint rate is over threshold (fires in observe mode too — early warning before enforce blocks). Runbook: docs/RUNBOOKS.md#senderreputationdegraded"
+
+      - alert: BounceRateSpike
+        expr: max(acaos_sender_bounce_rate) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A workspace bounce rate exceeds 5%"
+          description: "Trailing bounce rate is above the ESP hard-bounce alarm. Runbook: docs/RUNBOOKS.md#bounceratespike"
+
+      - alert: ComplaintRateSpike
+        expr: max(acaos_sender_complaint_rate) > 0.003
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A workspace complaint rate exceeds 0.3%"
+          description: "Trailing complaint rate is above the alarm threshold. Runbook: docs/RUNBOOKS.md#complaintratespike"
+
+      - alert: WarmupStuck
+        expr: changes(acaos_warmup_day[24h]) == 0 and acaos_warmup_cap > 0
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "A workspace warmup is not progressing"
+          description: "warmup day index hasn't advanced in 24h while warmup is active — check warmupStartedAt / WARMUP_SCHEDULE. Runbook: docs/RUNBOOKS.md#warmupstuck"
+
   # External uptime, observed by the blackbox_exporter probes (prometheus.yml).
   # These fire even when /metrics itself can't be scraped (process down, edge
   # outage, TLS expiry) — the user-facing signal.

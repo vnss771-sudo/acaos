@@ -23,13 +23,13 @@ import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonth
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
-import { perDomainDailyCap, emailDomain, tallyDomains } from '@acaos/backend-core/lib/sendPacing.js'
+import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
-import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
+import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
 import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
 import { canContactRecipient } from '@acaos/backend-core/services/contactPolicy.js'
@@ -39,6 +39,7 @@ import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import type { ICPConfig } from '@acaos/backend-core/lib/signalEngine.js'
 import { randomBytes } from 'crypto'
 import type { LeadStage, FollowupTaskStatus } from '@acaos/shared'
+import { incReputationBlock } from './lib/metrics.js'
 
 type Progress = (n: number) => unknown
 
@@ -298,9 +299,13 @@ export async function sendCampaignBatch(
   // real mailer does network I/O and SSRF-pins public hosts). Defaults to the
   // real mailer, so production callers (worker.ts) are unchanged. `pageSize`
   // lets a test exercise multi-page paging without seeding hundreds of leads.
-  deps: { sendMail?: typeof sendMail; pageSize?: number } = {}
+  deps: { sendMail?: typeof sendMail; generateOutreach?: typeof generateOutreach; pageSize?: number } = {}
 ): Promise<SendCampaignResult> {
   const sendMailFn = deps.sendMail ?? sendMail
+  // Injection seam (tests): generation is otherwise a live OpenAI call, so the
+  // failure→refund/skip paths can't be exercised without it. Defaults to the real
+  // generator, so production callers (worker.ts) are unchanged.
+  const generateOutreachFn = deps.generateOutreach ?? generateOutreach
   // Load workspace-specific SMTP config (falls back to env vars in sendMail)
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
@@ -419,6 +424,7 @@ export async function sendCampaignBatch(
       console.warn(`[send-campaign] reputation ${rep.reason} for workspace ${workspaceId} ` +
         `(bounceRate=${rep.bounceRate.toFixed(3)} complaintRate=${rep.complaintRate.toFixed(3)} sends=${rep.totalSends}) mode=${guardMode}`)
       if (guardMode === 'enforce') {
+        incReputationBlock('send-campaign')
         skip('REPUTATION_BLOCKED', total)
         return result()
       }
@@ -440,12 +446,15 @@ export async function sendCampaignBatch(
   // per-domain counts once, then enforce + increment in the loop so a campaign heavy
   // on one provider can't burst past the cap — across pages and prior runs today.
   const perDomainCap = perDomainDailyCap()
+  // Seed via an INDEXED groupBy (one row per distinct domain), not a full-day load
+  // of every send into memory. Backed by (workspaceId, toEmailDomain, status, sentAt).
   const domainCounts: Map<string, number> | null = perDomainCap != null
-    ? tallyDomains(
-        (await prisma.outreachSent.findMany({
-          where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } },
-          select: { toEmail: true },
-        })).map((r: { toEmail: string }) => r.toEmail),
+    ? new Map(
+        (await prisma.outreachSent.groupBy({
+          by: ['toEmailDomain'],
+          where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmailDomain: { not: null } },
+          _count: { _all: true },
+        })).map((r: { toEmailDomain: string | null; _count: { _all: number } }) => [r.toEmailDomain as string, r._count._all]),
       )
     : null
 
@@ -610,7 +619,7 @@ export async function sendCampaignBatch(
         return tx.outreachSent.create({
           data: {
             workspaceId, campaignId, leadId: lead.id,
-            toEmail: lead.email!, subject, body,
+            toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body,
             unsubscribeToken, status: 'SENDING',
             ...(linkedIntent ? {
               outreachIntentId: linkedIntent.id,
@@ -649,7 +658,7 @@ export async function sendCampaignBatch(
       }
 
       try {
-        const raw = await generateOutreach({
+        const raw = await generateOutreachFn({
           businessName: lead.businessName,
           category:      lead.category   ?? undefined,
           city:          lead.city        ?? undefined,
@@ -791,13 +800,20 @@ export async function sendCampaignBatch(
       // also never resent.) Operators can clear FAILED rows to deliberately retry.
       const message = err instanceof Error ? err.message : 'SMTP send failed'
       console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${message}`)
-      await prisma.outreachSent.update({
-        where: { id: claimId },
-        data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
-      }).catch(() => {})
-      // Best-effort FAILED ledger entry (not in a tx with the update — a ledger
-      // hiccup must never mask the SMTP failure itself).
-      void recordContactEvent({ workspaceId, email: lead.email!, type: 'FAILED', leadId: lead.id, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }).catch(() => {})
+      // Mark the claim FAILED, append the FAILED ledger event, and bump the daily
+      // failed counter ATOMICALLY (mirrors the SENT path) so the ledger/stats can't
+      // disagree with the outbox. The whole tx is best-effort wrapped — a ledger
+      // hiccup must never mask the SMTP failure itself (we still count it failed).
+      await prisma.$transaction([
+        prisma.outreachSent.update({
+          where: { id: claimId },
+          data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
+        }),
+        prisma.contactEvent.create({
+          data: contactEventData({ workspaceId, email: lead.email!, type: 'FAILED', leadId: lead.id, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }),
+        }),
+        prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'failed' })),
+      ]).catch((e) => console.error(`[send-campaign] FAILED-record tx error for lead ${lead.id}: ${e instanceof Error ? e.message : e}`))
       failed++
     }
     } // end per-lead loop for this page
@@ -875,7 +891,7 @@ export async function sendFollowupTask(
   if (guardMode !== 'off') {
     const rep = await evaluateSenderReputation(workspaceId).catch(() => null)
     if (rep && !rep.healthy) {
-      if (guardMode === 'enforce') return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'REPUTATION_BLOCKED' })
+      if (guardMode === 'enforce') { incReputationBlock('send-followup'); return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'REPUTATION_BLOCKED' }) }
       console.warn(`[send-followup] reputation ${rep.reason} for workspace ${workspaceId} (observe) — proceeding`)
     }
   }
@@ -928,7 +944,7 @@ export async function sendFollowupTask(
     const domain = emailDomain(lead.email)
     if (domain) {
       const domainToday = await prisma.outreachSent.count({
-        where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmail: { endsWith: `@${domain}` } },
+        where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmailDomain: domain },
       })
       if (domainToday >= perDomainCap) {
         await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
@@ -946,7 +962,7 @@ export async function sendFollowupTask(
         if (!ok) return null
       }
       return tx.outreachSent.create({
-        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, subject, body, unsubscribeToken, status: 'SENDING' },
+        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body, unsubscribeToken, status: 'SENDING' },
         select: { id: true },
       })
     })
@@ -985,8 +1001,16 @@ export async function sendFollowupTask(
     return { taskId, status: 'SENT' }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'SMTP send failed'
-    await prisma.outreachSent.update({ where: { id: claimId }, data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) } }).catch(() => {})
-    await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'FAILED', lastError: message.slice(0, 500) } }).catch(() => {})
+    // Atomic FAILED record: outbox → FAILED, a FAILED ledger event, the daily failed
+    // counter, and the task → FAILED, in one transaction. Previously the follow-up
+    // failure path wrote NO ContactEvent/stat at all, so follow-up SMTP failures were
+    // invisible to the ledger and CampaignDailyStats — fixed here.
+    await prisma.$transaction([
+      prisma.outreachSent.update({ where: { id: claimId }, data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) } }),
+      prisma.contactEvent.create({ data: contactEventData({ workspaceId, email: lead.email!, type: 'FAILED', leadId, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }) }),
+      prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'failed' })),
+      prisma.followupTask.update({ where: { id: taskId }, data: { status: 'FAILED', lastError: message.slice(0, 500) } }),
+    ]).catch((e) => console.error(`[send-followup] FAILED-record tx error for task ${taskId}: ${e instanceof Error ? e.message : e}`))
     return { taskId, status: 'FAILED', reason: message }
   }
 }
