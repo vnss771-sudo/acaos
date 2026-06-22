@@ -2,7 +2,9 @@ import 'dotenv/config'
 import { Worker, Queue } from 'bullmq'
 import { connection, getQueue } from './lib/queue.js'
 import { startHealthServer } from './health.js'
-import { incJob, observeJobDuration, type QueueDepth } from './lib/metrics.js'
+import { incJob, observeJobDuration, type QueueDepth, type DomainSnapshot } from './lib/metrics.js'
+import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
+import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import {
@@ -507,6 +509,52 @@ async function collectQueueDepths(): Promise<QueueDepth[]> {
   })))
 }
 
+// Scrape-time deliverability snapshot for /metrics: follow-up backlog, reputation
+// (bounded), and warmup state. Each piece is independently best-effort — a failure
+// yields an empty field, never a failed scrape. Queries are indexed and bounded.
+const REPUTATION_SCRAPE_LIMIT = 50
+async function collectDomainMetrics(): Promise<DomainSnapshot> {
+  const snapshot: DomainSnapshot = {}
+
+  // Follow-up backlog by status + due-but-unsent (one groupBy + one count, indexed).
+  try {
+    const grouped = await prisma.followupTask.groupBy({ by: ['status'], _count: { _all: true } })
+    snapshot.followupTasks = Object.fromEntries(grouped.map((g) => [g.status as string, g._count._all]))
+    snapshot.followupDueUnsent = await prisma.followupTask.count({ where: { status: 'SCHEDULED', scheduledFor: { lte: new Date() } } })
+  } catch { /* leave absent */ }
+
+  // Reputation: evaluate only workspaces that sent in the window (bounded set, capped).
+  try {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const active = await prisma.contactEvent.groupBy({
+      by: ['workspaceId'], where: { type: 'SENT', occurredAt: { gte: since } }, _count: { _all: true },
+      orderBy: { _count: { workspaceId: 'desc' } }, take: REPUTATION_SCRAPE_LIMIT,
+    })
+    const perWorkspace: NonNullable<DomainSnapshot['reputation']>['perWorkspace'] = []
+    let unhealthy = 0
+    for (const a of active) {
+      const v = await evaluateSenderReputation(a.workspaceId).catch(() => null)
+      if (!v) continue
+      if (!v.healthy) unhealthy++
+      perWorkspace.push({ workspaceId: a.workspaceId, bounceRate: v.bounceRate, complaintRate: v.complaintRate, healthy: v.healthy })
+    }
+    snapshot.reputation = { evaluated: perWorkspace.length, unhealthy, perWorkspace }
+  } catch { /* leave absent */ }
+
+  // Warmup: only opt-in workspaces (warmupStartedAt set) — naturally bounded.
+  try {
+    const warming = await prisma.workspaceICP.findMany({ where: { warmupStartedAt: { not: null } }, select: { workspaceId: true, warmupStartedAt: true } })
+    const now = new Date()
+    snapshot.warmup = warming.map((w) => {
+      const cap = warmupDailyCap(w.warmupStartedAt!, now)
+      const dayIndex = Math.floor((now.getTime() - w.warmupStartedAt!.getTime()) / 86_400_000)
+      return { workspaceId: w.workspaceId, day: cap == null ? 0 : dayIndex + 1, cap: cap ?? 0 }
+    })
+  } catch { /* leave absent */ }
+
+  return snapshot
+}
+
 // ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
 // upsertJobScheduler is idempotent — safe to call on every worker restart.
 {
@@ -562,6 +610,7 @@ const healthServer = startHealthServer(
   Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
   {
     collectQueueDepths,
+    collectDomainMetrics,
     isReady: () => !shuttingDown && connection.status === 'ready',
   },
 )

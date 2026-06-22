@@ -39,6 +39,7 @@ import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import type { ICPConfig } from '@acaos/backend-core/lib/signalEngine.js'
 import { randomBytes } from 'crypto'
 import type { LeadStage, FollowupTaskStatus } from '@acaos/shared'
+import { incReputationBlock } from './lib/metrics.js'
 
 type Progress = (n: number) => unknown
 
@@ -423,6 +424,7 @@ export async function sendCampaignBatch(
       console.warn(`[send-campaign] reputation ${rep.reason} for workspace ${workspaceId} ` +
         `(bounceRate=${rep.bounceRate.toFixed(3)} complaintRate=${rep.complaintRate.toFixed(3)} sends=${rep.totalSends}) mode=${guardMode}`)
       if (guardMode === 'enforce') {
+        incReputationBlock('send-campaign')
         skip('REPUTATION_BLOCKED', total)
         return result()
       }
@@ -889,7 +891,7 @@ export async function sendFollowupTask(
   if (guardMode !== 'off') {
     const rep = await evaluateSenderReputation(workspaceId).catch(() => null)
     if (rep && !rep.healthy) {
-      if (guardMode === 'enforce') return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'REPUTATION_BLOCKED' })
+      if (guardMode === 'enforce') { incReputationBlock('send-followup'); return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'REPUTATION_BLOCKED' }) }
       console.warn(`[send-followup] reputation ${rep.reason} for workspace ${workspaceId} (observe) — proceeding`)
     }
   }
