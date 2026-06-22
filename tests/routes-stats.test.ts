@@ -40,6 +40,16 @@ function spec() {
     // For GET /reputation: 100 sends, 8 bounces (8% > 5% default) → unhealthy.
     contactEvent: { count: async (a: any) => (a?.where?.type === 'BOUNCED' ? 8 : a?.where?.type === 'SENT' ? 100 : 0) },
     unsubscribeEvent: { count: async () => 0 },
+    // For GET /ai-prompts: one prompt version with 3 approved / 1 rejected.
+    outreachDraft: {
+      groupBy: async () => [
+        { promptVersionId: 'pv1', status: 'APPROVED', _count: { _all: 3 } },
+        { promptVersionId: 'pv1', status: 'REJECTED', _count: { _all: 1 } },
+      ],
+    },
+    aiPromptVersion: {
+      findMany: async () => [{ id: 'pv1', type: 'OUTREACH', version: 1, model: 'gpt-4o-mini', createdAt: new Date() }],
+    },
   }
 }
 
@@ -116,4 +126,18 @@ test('GET /reputation returns the trailing rates, verdict, and guard mode', asyn
   assert.equal(res.body.healthy, false)
   assert.equal(res.body.reason, 'BOUNCE_RATE_HIGH')
   assert.ok(['off', 'observe', 'enforce'].includes(res.body.guardMode))
+})
+
+test('GET /ai-prompts denies a non-member workspace', async () => {
+  assert.equal((await server.request(`/api/stats/ai-prompts?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
+})
+test('GET /ai-prompts returns per-prompt-version draft-quality rates', async () => {
+  const res = await server.request(`/api/stats/ai-prompts?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.promptVersions.length, 1)
+  const pv = res.body.promptVersions[0]
+  assert.equal(pv.version, 1)
+  assert.equal(pv.model, 'gpt-4o-mini')
+  assert.equal(pv.approvalRate, 0.75) // 3 approved / 4 reviewed
+  assert.equal(pv.rejectionRate, 0.25)
 })

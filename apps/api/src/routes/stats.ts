@@ -9,6 +9,7 @@ import { statsCache } from '../lib/statsCache.js'
 import { parseQuery, workspaceIdField } from '../lib/validate.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
+import { promptVersionQuality } from '@acaos/backend-core/lib/promptQuality.js'
 import { z } from 'zod'
 
 // Shared query schema — mirrors `String(... || '').trim()` + `if (!workspaceId) 400`.
@@ -48,6 +49,23 @@ statsRouter.get(
 
     const verdict = await evaluateSenderReputation(workspaceId)
     res.json({ guardMode: reputationGuardMode(), ...verdict })
+  })
+)
+
+// AI draft-quality by prompt version: approval / rejection / policy-review rates per
+// prompt+model version, so an operator can spot a prompt or model change that
+// worsened copy quality (drift). Read-only.
+statsRouter.get(
+  '/ai-prompts',
+  asyncHandler(async (req, res) => {
+    const user = req.user!
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const promptVersions = await promptVersionQuality(workspaceId)
+    res.json({ promptVersions })
   })
 )
 
