@@ -233,3 +233,11 @@ npm run smoke:deploy -- --api-url https://api.example.com --worker-url https://w
 Docker/release pipelines stamp `ACAOS_RELEASE_VERSION`, `ACAOS_RELEASE_SHA`, and
 `ACAOS_BUILD_TIME` into the API and worker so `/api/ready`, `/ready`, `/metrics`,
 and the `X-Acaos-Release-Id` header all describe the running release.
+
+**On Railway, no manual stamping is required for the commit:** when the explicit
+vars above are absent, the running build reads the platform's built-in
+`RAILWAY_GIT_COMMIT_SHA`, so `/api/ready` and `/metrics` always report the deployed
+commit (and a `releaseId` of `<version>+<sha>`) and a deploy is traceable to source.
+For a human-readable semantic `version` and `buildTime`, set `ACAOS_RELEASE_VERSION`
+and `ACAOS_BUILD_TIME` as service variables (e.g. pipe `npm run release:metadata:env`
+into the service env) — otherwise `version` shows `0.0.0-dev`.

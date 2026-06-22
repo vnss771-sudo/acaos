@@ -22,7 +22,14 @@ export function getRuntimeMetadata(service: string): RuntimeMetadata {
     ?? readEnv('npm_package_version')
     ?? process.env.npm_package_version
     ?? '0.0.0-dev'
-  const commit = readEnv('ACAOS_RELEASE_SHA') ?? readEnv('GITHUB_SHA') ?? null
+  // Commit precedence: an explicitly-stamped release SHA, then CI's GITHUB_SHA,
+  // then the platform's built-in deploy SHA. The last lets a Railway deploy
+  // self-report its exact commit with ZERO extra configuration — without it the
+  // running build reports commit:null and can't be traced back to source.
+  const commit = readEnv('ACAOS_RELEASE_SHA')
+    ?? readEnv('GITHUB_SHA')
+    ?? readEnv('RAILWAY_GIT_COMMIT_SHA')
+    ?? null
   const buildTime = readEnv('ACAOS_BUILD_TIME') ?? null
   const releaseId = readEnv('ACAOS_RELEASE_ID')
     ?? (commit ? `${version}+${commit.slice(0, 12)}` : version)
