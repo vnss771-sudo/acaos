@@ -519,7 +519,7 @@ async function collectDomainMetrics(): Promise<DomainSnapshot> {
   // Follow-up backlog by status + due-but-unsent (one groupBy + one count, indexed).
   try {
     const grouped = await prisma.followupTask.groupBy({ by: ['status'], _count: { _all: true } })
-    snapshot.followupTasks = Object.fromEntries(grouped.map((g) => [g.status as string, g._count._all]))
+    snapshot.followupTasks = Object.fromEntries(grouped.map((g: { status: string; _count: { _all: number } }) => [g.status as string, g._count._all]))
     snapshot.followupDueUnsent = await prisma.followupTask.count({ where: { status: 'SCHEDULED', scheduledFor: { lte: new Date() } } })
   } catch { /* leave absent */ }
 
@@ -545,7 +545,7 @@ async function collectDomainMetrics(): Promise<DomainSnapshot> {
   try {
     const warming = await prisma.workspaceICP.findMany({ where: { warmupStartedAt: { not: null } }, select: { workspaceId: true, warmupStartedAt: true } })
     const now = new Date()
-    snapshot.warmup = warming.map((w) => {
+    snapshot.warmup = warming.map((w: { workspaceId: string; warmupStartedAt: Date | null }) => {
       const cap = warmupDailyCap(w.warmupStartedAt!, now)
       const dayIndex = Math.floor((now.getTime() - w.warmupStartedAt!.getTime()) / 86_400_000)
       return { workspaceId: w.workspaceId, day: cap == null ? 0 : dayIndex + 1, cap: cap ?? 0 }
