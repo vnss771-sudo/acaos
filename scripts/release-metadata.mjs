@@ -28,10 +28,10 @@ function value(name, fallback) {
 }
 
 const version = value('ACAOS_RELEASE_VERSION', value('npm_package_version', readPackageVersion()))
-const commit = value('ACAOS_RELEASE_SHA', value('GITHUB_SHA', git(['rev-parse', 'HEAD']) || 'unknown'))
+const commit = value('ACAOS_RELEASE_SHA', value('GITHUB_SHA', value('RAILWAY_GIT_COMMIT_SHA', git(['rev-parse', 'HEAD']) || 'unknown')))
 const buildTime = value('ACAOS_BUILD_TIME', new Date().toISOString())
 const releaseId = value('ACAOS_RELEASE_ID', commit && commit !== 'unknown' ? `${version}+${commit.slice(0, 12)}` : version)
-const sourceRef = value('ACAOS_SOURCE_REF', value('GITHUB_REF_NAME', git(['rev-parse', '--abbrev-ref', 'HEAD']) || 'unknown'))
+const sourceRef = value('ACAOS_SOURCE_REF', value('GITHUB_REF_NAME', value('RAILWAY_GIT_BRANCH', git(['rev-parse', '--abbrev-ref', 'HEAD']) || 'unknown')))
 
 const metadata = {
   version,
