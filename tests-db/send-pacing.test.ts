@@ -53,9 +53,10 @@ test('per-domain cap: counts sends already made today toward the cap', async () 
   await seedSmtp(workspace.id)
   setEnv('PER_DOMAIN_DAILY_CAP', '2')
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
-  // Two gmail sends already went out today (a prior run).
+  // Two gmail sends already went out today (a prior run). Real sends carry
+  // toEmailDomain (set at claim time / backfilled), which the indexed seed reads.
   for (let i = 0; i < 2; i++) {
-    await prisma.outreachSent.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, toEmail: `prior${i}@gmail.com`, subject: 'Hi', body: 'x', status: 'SENT', sentAt: new Date() } })
+    await prisma.outreachSent.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, toEmail: `prior${i}@gmail.com`, toEmailDomain: 'gmail.com', subject: 'Hi', body: 'x', status: 'SENT', sentAt: new Date() } })
   }
   await seedLead(workspace.id, campaign.id, 'new@gmail.com')
 
@@ -65,6 +66,19 @@ test('per-domain cap: counts sends already made today toward the cap', async () 
   assert.equal(result.sent, 0, 'the domain already hit its cap today')
   assert.equal(result.skippedByReason.DOMAIN_PACED, 1)
   assert.deepEqual(mailer.sent, [])
+})
+
+test('claim persists toEmailDomain so pacing reads an indexed aggregate', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
+  await seedLead(workspace.id, campaign.id, 'Reach@Gmail.com')
+
+  const mailer = recordingMailer()
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  const send = await prisma.outreachSent.findFirst({ where: { campaignId: campaign.id } })
+  assert.equal(send!.toEmailDomain, 'gmail.com', 'domain is extracted + lowercased at claim time')
 })
 
 test('disabled by default: no cap env → all send (unchanged behaviour)', async () => {

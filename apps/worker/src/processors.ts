@@ -23,7 +23,7 @@ import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonth
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
-import { perDomainDailyCap, emailDomain, tallyDomains } from '@acaos/backend-core/lib/sendPacing.js'
+import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
@@ -444,12 +444,15 @@ export async function sendCampaignBatch(
   // per-domain counts once, then enforce + increment in the loop so a campaign heavy
   // on one provider can't burst past the cap — across pages and prior runs today.
   const perDomainCap = perDomainDailyCap()
+  // Seed via an INDEXED groupBy (one row per distinct domain), not a full-day load
+  // of every send into memory. Backed by (workspaceId, toEmailDomain, status, sentAt).
   const domainCounts: Map<string, number> | null = perDomainCap != null
-    ? tallyDomains(
-        (await prisma.outreachSent.findMany({
-          where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } },
-          select: { toEmail: true },
-        })).map((r: { toEmail: string }) => r.toEmail),
+    ? new Map(
+        (await prisma.outreachSent.groupBy({
+          by: ['toEmailDomain'],
+          where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmailDomain: { not: null } },
+          _count: { _all: true },
+        })).map((r: { toEmailDomain: string | null; _count: { _all: number } }) => [r.toEmailDomain as string, r._count._all]),
       )
     : null
 
@@ -614,7 +617,7 @@ export async function sendCampaignBatch(
         return tx.outreachSent.create({
           data: {
             workspaceId, campaignId, leadId: lead.id,
-            toEmail: lead.email!, subject, body,
+            toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body,
             unsubscribeToken, status: 'SENDING',
             ...(linkedIntent ? {
               outreachIntentId: linkedIntent.id,
@@ -932,7 +935,7 @@ export async function sendFollowupTask(
     const domain = emailDomain(lead.email)
     if (domain) {
       const domainToday = await prisma.outreachSent.count({
-        where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmail: { endsWith: `@${domain}` } },
+        where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmailDomain: domain },
       })
       if (domainToday >= perDomainCap) {
         await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
@@ -950,7 +953,7 @@ export async function sendFollowupTask(
         if (!ok) return null
       }
       return tx.outreachSent.create({
-        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, subject, body, unsubscribeToken, status: 'SENDING' },
+        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body, unsubscribeToken, status: 'SENDING' },
         select: { id: true },
       })
     })

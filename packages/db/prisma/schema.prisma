@@ -312,6 +312,10 @@ model OutreachSent {
   // one campaign (a sequence) while each (campaign, lead, step) stays at-most-once.
   sequenceStep     Int       @default(1)
   toEmail          String
+  // Lowercased recipient-domain part, set at claim time. Lets per-domain pacing use
+  // an indexed aggregate instead of loading the whole day's sends / an unindexed
+  // toEmail suffix scan. Nullable (additive); legacy rows backfilled from toEmail.
+  toEmailDomain    String?
   // Nullable because the outbox row is now CLAIMED before the draft copy is known
   // (claim-first: reserve the unique (campaignId,leadId) slot before spending AI so
   // a racing job can't double-generate). Filled in once the draft is prepared; a
@@ -361,6 +365,9 @@ model OutreachSent {
   // Serves the per-workspace deliverability counters (status + window filters in
   // the campaigns/mission stats and the send loop).
   @@index([workspaceId, status, sentAt])
+  // Backs per-domain pacing: count today's sends to one recipient domain
+  // (workspaceId + toEmailDomain + status, range on sentAt) without a full-day load.
+  @@index([workspaceId, toEmailDomain, status, sentAt])
   // Standalone time index for the global retention purge (sentAt < cutoff), which
   // the workspace-first compound above can't serve.
   @@index([sentAt])
