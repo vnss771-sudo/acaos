@@ -986,6 +986,13 @@ model WorkspaceICP {
   // low ceiling over the warmup schedule (see lib/warmup.ts) instead of allowing
   // the full dailySendLimit on day one. null = no warmup (unchanged behaviour).
   warmupStartedAt     DateTime?
+  // Opt-in send window (quiet hours). When both hours are set, outbound is allowed
+  // only within [startHour, endHour) local to sendTimezone, optionally weekdays
+  // only. null hours = no window (unchanged behaviour). See lib/sendWindow.ts.
+  sendWindowStartHour Int?
+  sendWindowEndHour   Int?
+  sendTimezone        String?
+  sendWeekdaysOnly    Boolean   @default(false)
   excludedIndustries  String[]
   playbook            String?
   createdAt           DateTime  @default(now())

@@ -22,6 +22,7 @@ import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } f
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain, tallyDomains } from '@acaos/backend-core/lib/sendPacing.js'
+import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
@@ -255,6 +256,7 @@ export type SendSkipReason =
   | 'MISSION_PAUSED'
   | 'REPUTATION_BLOCKED'
   | 'DOMAIN_PACED'
+  | 'OUTSIDE_SEND_WINDOW'
 
 type SendCampaignResult = {
   campaignId: string
@@ -335,7 +337,7 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
@@ -402,6 +404,17 @@ export async function sendCampaignBatch(
         return result()
       }
     }
+  }
+
+  // Opt-in send window (quiet hours): outside the workspace's configured window,
+  // halt the batch before any dispatch. Leads are NOT failed/advanced — they stay
+  // eligible for the next launch (same semantics as a mission pause). A no-op
+  // unless a window is configured on the workspace ICP.
+  const sendWindow = resolveSendWindow(icp)
+  if (sendWindow && !isWithinSendWindow(new Date(), sendWindow)) {
+    console.log(`[send-campaign] Outside send window for workspace ${workspaceId}; halting (eligible=${total})`)
+    skip('OUTSIDE_SEND_WINDOW', total)
+    return result()
   }
 
   // Per-recipient-domain pacing (opt-in via PER_DOMAIN_DAILY_CAP). Seed today's
@@ -813,7 +826,7 @@ export async function sendFollowupTask(
     prisma.lead.findUnique({ where: { id: leadId }, select: { email: true, stage: true } }),
     prisma.outreachSequenceStep.findUnique({ where: { campaignId_stepNumber: { campaignId, stepNumber } }, select: { subject: true, body: true, isActive: true } }),
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
-    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, warmupStartedAt: true } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, warmupStartedAt: true, sendWindowStartHour: true, sendWindowEndHour: true, sendTimezone: true, sendWeekdaysOnly: true } }),
   ])
 
   // Guards (each leaves the task in a terminal, explainable state).
@@ -854,6 +867,14 @@ export async function sendFollowupTask(
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
   const wsDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
   const dailySendLimit = applyWarmupCap(effectiveDailySendLimit(wsDailyLimit), icp?.warmupStartedAt ?? null)
+
+  // Opt-in send window: outside quiet hours, defer — park the task back at SCHEDULED
+  // so the next scan retries it once the window reopens. A no-op unless configured.
+  const sendWindow = resolveSendWindow(icp)
+  if (sendWindow && !isWithinSendWindow(new Date(), sendWindow)) {
+    await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+    return { taskId, status: 'SKIPPED', reason: 'OUTSIDE_SEND_WINDOW' }
+  }
 
   // Per-domain pacing (opt-in). If this recipient's domain already hit its daily
   // ceiling, defer: park the task back at SCHEDULED to retry on a later scan rather
