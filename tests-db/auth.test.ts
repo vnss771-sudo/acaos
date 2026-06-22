@@ -82,6 +82,19 @@ test('signup is rejected for a duplicate email (unique constraint upheld)', asyn
   assert.equal(await prisma.user.count(), 1)
 })
 
+test('concurrent duplicate signup yields one 201 and one controlled 409 (never a 500)', async () => {
+  // Two simultaneous signups for the same email can both pass the existence
+  // pre-check and race into the User.email unique index. The loser must surface
+  // a clean 409 (mapped from the P2002), not a leaked 500. Outcome is invariant
+  // regardless of which request wins the race.
+  const body = { email: 'race@acme.test', password: 'sup3rsecret1', name: 'Race' }
+  const results = await Promise.all([post('/api/auth/signup', body), post('/api/auth/signup', body)])
+  const statuses = results.map((r) => r.status).sort()
+  assert.deepEqual(statuses, [201, 409], `expected one 201 + one 409, got ${statuses.join(', ')}`)
+  // Exactly one account was created — the unique index held.
+  assert.equal(await prisma.user.count(), 1)
+})
+
 test('two signups produce distinct, unique workspace slugs', async () => {
   await post('/api/auth/signup', { email: 'a@acme.test', password: 'sup3rsecret1', name: 'Acme' })
   await post('/api/auth/signup', { email: 'b@acme.test', password: 'sup3rsecret1', name: 'Acme' })

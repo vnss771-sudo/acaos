@@ -64,6 +64,19 @@ const failures = checks.filter((c) => c.status === 'fail')
 const warnings = checks.filter((c) => c.status === 'warn')
 console.log(`\nSummary: ${checks.length - failures.length - warnings.length} ok, ${warnings.length} warning(s), ${failures.length} failure(s).`)
 
+// Make the offline-stub state impossible to miss: a green typecheck/build on the
+// stub does NOT prove the code compiles against the real Prisma client, so local
+// release confidence can be overstated. Call it out loudly and point at the gate.
+if (stubInstalled && !realClient) {
+  console.log(
+    '\n⚠️  Prisma OFFLINE STUB is installed (not the real generated client).\n' +
+    '    typecheck/build can pass against the `any`-typed stub and still hide real\n' +
+    '    schema/type drift. Before trusting a release: run `npm run prisma:generate`\n' +
+    '    in a networked environment, then `npm run check:prisma-real` (or the full\n' +
+    '    `npm run verify:release`, which asserts the real client first).'
+  )
+}
+
 if (failures.length > 0) {
   console.log('\nFix failure(s) before running verify/build gates.')
   process.exit(1)

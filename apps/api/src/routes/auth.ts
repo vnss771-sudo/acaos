@@ -98,6 +98,19 @@ authRouter.post(
         data: { userId: user.id, workspaceId: workspace.id, role: 'owner' }
       })
       return { user, workspace }
+    }).catch((err: unknown) => {
+      // A concurrent signup with the same email can slip past the existence
+      // pre-check above and collide on the User.email unique index. Surface the
+      // same controlled 409 rather than a 500. Only remap when the violation is
+      // on email — any other unique collision (e.g. a slug race) is rethrown.
+      if ((err as { code?: string }).code === 'P2002') {
+        const target = (err as { meta?: { target?: unknown } }).meta?.target
+        const onEmail = Array.isArray(target)
+          ? target.includes('email')
+          : !target || String(target).includes('email')
+        if (onEmail) throw new ApiError(409, 'Email already registered')
+      }
+      throw err
     })
 
     const { token, refreshToken } = issueTokens(result.user.id)
