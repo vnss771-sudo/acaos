@@ -33,6 +33,7 @@ const CRITICAL = [
   // Auth/session/CSRF primitives.
   'apps/api/src/lib/cookies.ts',
   'apps/api/src/lib/sseTickets.ts',
+  'apps/api/src/lib/readiness.ts',
   'packages/backend-core/src/lib/jwt.ts',
   'packages/backend-core/src/lib/totp.ts',
   'packages/backend-core/src/lib/encrypt.ts',

@@ -1,5 +1,4 @@
 import 'dotenv/config'
-import { createHash, timingSafeEqual } from 'node:crypto'
 import express from 'express'
 import cors from 'cors'
 import compression from 'compression'
@@ -32,6 +31,7 @@ import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
 import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
+import { timingSafeBearerMatch, readinessDetailAllowed } from './lib/readiness.js'
 import { parseTrustProxy } from './lib/trustProxy.js'
 import { captureError } from './lib/observability.js'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
@@ -45,16 +45,6 @@ import { attachBreakerStore } from './lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 
 validateConfig()
-
-// Constant-time bearer-token check. Hashing both sides to a fixed-length digest
-// before comparing means timingSafeEqual never sees a length mismatch (it throws
-// on unequal lengths) and the comparison leaks neither the token's length nor a
-// matching prefix via timing. Matches the timingSafeEqual style used for TOTP.
-function timingSafeBearerMatch(authorization: string | undefined, token: string): boolean {
-  const presented = createHash('sha256').update(authorization ?? '').digest()
-  const expected = createHash('sha256').update(`Bearer ${token}`).digest()
-  return timingSafeEqual(presented, expected)
-}
 
 const SERVICE = 'acaos-api'
 const metadata = getRuntimeMetadata(SERVICE)
@@ -105,18 +95,26 @@ app.get('/metrics', (req, res) => {
 
 app.use(generalRateLimit)
 
-app.get('/api/live', (_req, res) => {
-  res.json({
-    ok: true,
+// Minimal, public-safe status body: a boolean health signal plus service and
+// release identity (releaseId/version are non-sensitive and needed by deploy
+// smoke checks). Dependency state, config gaps, env and commit are added only for
+// authorized callers — see readinessDetailAllowed.
+function publicStatus(ok: boolean): Record<string, unknown> {
+  return {
+    ok,
+    status: ok ? 'ok' : 'unavailable',
     service: SERVICE,
     releaseId: metadata.releaseId,
     version: metadata.version,
-    commit: metadata.commit,
     timestamp: new Date().toISOString(),
-  })
+  }
+}
+
+app.get('/api/live', (_req, res) => {
+  res.json(publicStatus(true))
 })
 
-app.get('/api/ready', async (_req, res) => {
+app.get('/api/ready', async (req, res) => {
   const report = getReadinessReport()
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
   setDependencyUp('postgres', dbOk)
@@ -128,18 +126,12 @@ app.get('/api/ready', async (_req, res) => {
   // re-added when Redis recovers. Dev/test (no Redis) are not gated.
   const ok = report.ready && dbOk && (!isProduction() || redisOk)
 
-  res.status(ok ? 200 : 503).json({
-    ok,
-    ready: ok,
-    db: dbOk,
-    redis: redisOk,
-    config: report,
-    service: SERVICE,
-    releaseId: metadata.releaseId,
-    version: metadata.version,
-    commit: metadata.commit,
-    timestamp: new Date().toISOString(),
-  })
+  const body = publicStatus(ok)
+  body.ready = ok
+  if (readinessDetailAllowed(req.headers.authorization)) {
+    Object.assign(body, { db: dbOk, redis: redisOk, config: report, env: metadata.environment, commit: metadata.commit, buildTime: metadata.buildTime })
+  }
+  res.status(ok ? 200 : 503).json(body)
 })
 
 // Strict readiness: like /api/ready, but ALSO requires Redis. Point a load
@@ -148,44 +140,31 @@ app.get('/api/ready', async (_req, res) => {
 // traffic with Redis down is worse than briefly shedding it. /api/ready stays
 // lenient (Redis optional) for deployments that tolerate degraded rate limiting
 // during a transient Redis blip.
-app.get('/api/ready/strict', async (_req, res) => {
+app.get('/api/ready/strict', async (req, res) => {
   const report = getReadinessReport()
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
   setDependencyUp('postgres', dbOk)
   setDependencyUp('redis', redisOk)
   const ok = report.ready && dbOk && redisOk
 
-  res.status(ok ? 200 : 503).json({
-    ok,
-    ready: ok,
-    db: dbOk,
-    redis: redisOk,
-    config: report,
-    service: SERVICE,
-    releaseId: metadata.releaseId,
-    version: metadata.version,
-    commit: metadata.commit,
-    timestamp: new Date().toISOString(),
-  })
+  const body = publicStatus(ok)
+  body.ready = ok
+  if (readinessDetailAllowed(req.headers.authorization)) {
+    Object.assign(body, { db: dbOk, redis: redisOk, config: report, env: metadata.environment, commit: metadata.commit, buildTime: metadata.buildTime })
+  }
+  res.status(ok ? 200 : 503).json(body)
 })
 
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', async (req, res) => {
   const [dbOk, redisOk] = await Promise.all([pingDatabase(), pingRedis()])
   setDependencyUp('postgres', dbOk)
   setDependencyUp('redis', redisOk)
   const ok = dbOk
-  res.status(ok ? 200 : 503).json({
-    ok,
-    db: dbOk,
-    redis: redisOk,
-    service: SERVICE,
-    releaseId: metadata.releaseId,
-    version: metadata.version,
-    commit: metadata.commit,
-    buildTime: metadata.buildTime,
-    env: metadata.environment,
-    timestamp: new Date().toISOString(),
-  })
+  const body = publicStatus(ok)
+  if (readinessDetailAllowed(req.headers.authorization)) {
+    Object.assign(body, { db: dbOk, redis: redisOk, env: metadata.environment, commit: metadata.commit, buildTime: metadata.buildTime })
+  }
+  res.status(ok ? 200 : 503).json(body)
 })
 
 app.use('/api/auth', authRouter)
