@@ -17,7 +17,7 @@ import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendation
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
-import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot } from '@acaos/backend-core/lib/limits.js'
+import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
@@ -253,6 +253,7 @@ export type SendSkipReason =
   | 'AI_LIMIT'
   | 'AI_GENERATION_FAILED'
   | 'DAILY_CAP'
+  | 'MONTHLY_CAP'
   | 'MISSION_PAUSED'
   | 'REPUTATION_BLOCKED'
   | 'DOMAIN_PACED'
@@ -336,7 +337,7 @@ export async function sendCampaignBatch(
   // Per-reason skip accounting so the result explains WHY leads didn't send.
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
-    POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MISSION_PAUSED: 0,
+    POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
     REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n }
@@ -385,6 +386,21 @@ export async function sendCampaignBatch(
     if (usedToday >= dailySendLimit) {
       console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
       skip('DAILY_CAP', total)
+      return result()
+    }
+  }
+
+  // Monthly send ceiling fast path (opt-in): a coarse backstop to the daily cap. A
+  // batch is halted once the workspace hits its monthly limit; overshoot is bounded
+  // by at most one day's cap since each day's batch is independently daily-capped.
+  const monthlySendLimit = icp?.monthlySendLimit && icp.monthlySendLimit > 0 ? icp.monthlySendLimit : null
+  if (monthlySendLimit != null) {
+    const usedThisMonth = await prisma.outreachSent.count({
+      where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: utcMonthStart() } }
+    })
+    if (usedThisMonth >= monthlySendLimit) {
+      console.log(`[send-campaign] Monthly limit of ${monthlySendLimit} reached for workspace ${workspaceId}`)
+      skip('MONTHLY_CAP', total)
       return result()
     }
   }
@@ -826,7 +842,7 @@ export async function sendFollowupTask(
     prisma.lead.findUnique({ where: { id: leadId }, select: { email: true, stage: true } }),
     prisma.outreachSequenceStep.findUnique({ where: { campaignId_stepNumber: { campaignId, stepNumber } }, select: { subject: true, body: true, isActive: true } }),
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
-    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, warmupStartedAt: true, sendWindowStartHour: true, sendWindowEndHour: true, sendTimezone: true, sendWeekdaysOnly: true } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, monthlySendLimit: true, warmupStartedAt: true, sendWindowStartHour: true, sendWindowEndHour: true, sendTimezone: true, sendWeekdaysOnly: true } }),
   ])
 
   // Guards (each leaves the task in a terminal, explainable state).
@@ -874,6 +890,19 @@ export async function sendFollowupTask(
   if (sendWindow && !isWithinSendWindow(new Date(), sendWindow)) {
     await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
     return { taskId, status: 'SKIPPED', reason: 'OUTSIDE_SEND_WINDOW' }
+  }
+
+  // Monthly send ceiling (opt-in): defer if the workspace hit its monthly limit —
+  // park back at SCHEDULED so the scanner retries (and naturally proceeds next month).
+  const monthlySendLimit = icp?.monthlySendLimit && icp.monthlySendLimit > 0 ? icp.monthlySendLimit : null
+  if (monthlySendLimit != null) {
+    const usedThisMonth = await prisma.outreachSent.count({
+      where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: utcMonthStart() } },
+    })
+    if (usedThisMonth >= monthlySendLimit) {
+      await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+      return { taskId, status: 'SKIPPED', reason: 'MONTHLY_CAP' }
+    }
   }
 
   // Per-domain pacing (opt-in). If this recipient's domain already hit its daily

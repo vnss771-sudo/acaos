@@ -982,6 +982,11 @@ model WorkspaceICP {
   outreachTone        String?   // professional | casual | direct
   approvalMode        Boolean   @default(true)
   dailySendLimit      Int       @default(50)
+  // Opt-in monthly send ceiling — a coarse backstop to the daily cap against
+  // sustained high volume. null = no monthly ceiling (unchanged behaviour). Counts
+  // SENT+SENDING in the current UTC calendar month; enforcement is a batch fast-path
+  // so overshoot is bounded by at most one day's cap.
+  monthlySendLimit    Int?
   // Opt-in domain warmup: when set, the effective daily send cap ramps up from a
   // low ceiling over the warmup schedule (see lib/warmup.ts) instead of allowing
   // the full dailySendLimit on day one. null = no warmup (unchanged behaviour).

@@ -28,6 +28,14 @@ function currentMonth(): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
+/**
+ * Start of the current UTC calendar month for `now` — the window boundary for the
+ * monthly send ceiling. UTC for the same reason as currentMonth(). Pure.
+ */
+export function utcMonthStart(now: Date = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+}
+
 function resolvePlan(plan: string | null | undefined): Plan {
   if (plan === 'starter' || plan === 'growth') return plan
   return 'free'
