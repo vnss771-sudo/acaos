@@ -5,7 +5,7 @@ import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth, type DomainSnapshot } from './lib/metrics.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
-import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
 import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
@@ -79,12 +79,21 @@ const researchWorker = new Worker(
 
     await job.updateProgress(10)
 
+    // Frame the research prompt for the workspace's actual vertical, not the
+    // hardcoded field-service default — otherwise a SaaS/other-vertical workspace
+    // gets analysis framed around plumbing/HVAC/etc.
+    const wsIcp = await prisma.workspaceICP.findUnique({
+      where: { workspaceId },
+      select: { targetIndustries: true, businessType: true, outreachTone: true },
+    })
+
     const raw = await generateLeadResearch({
       businessName: lead.businessName,
       website: lead.website ?? undefined,
       category: lead.category ?? undefined,
       city: lead.city ?? undefined,
-      notes: lead.notes ?? undefined
+      notes: lead.notes ?? undefined,
+      icp: toIcpContext(wsIcp),
     })
 
     await job.updateProgress(60)
@@ -214,13 +223,21 @@ const outreachWorker = new Worker(
 
     await job.updateProgress(10)
 
+    // Frame outreach for the workspace's vertical/tone (not the field-service
+    // default), mirroring the campaign send path.
+    const wsIcp = await prisma.workspaceICP.findUnique({
+      where: { workspaceId },
+      select: { targetIndustries: true, businessType: true, outreachTone: true },
+    })
+
     const raw = await generateOutreach({
       businessName: lead.businessName,
       category: lead.category ?? undefined,
       city: lead.city ?? undefined,
       contactName: lead.contactName ?? undefined,
       aiSummary: lead.aiSummary ?? undefined,
-      outreachAngle: lead.outreachAngle ?? undefined
+      outreachAngle: lead.outreachAngle ?? undefined,
+      icp: toIcpContext(wsIcp),
     })
 
     await job.updateProgress(80)

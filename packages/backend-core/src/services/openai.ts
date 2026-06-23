@@ -128,6 +128,22 @@ export type IcpContext = {
   targetCustomer?: string
 }
 
+// Map a stored WorkspaceICP record to the prompt IcpContext so research/outreach
+// generation is framed for the workspace's actual vertical instead of the hardcoded
+// field-service default. Structural input (no Prisma type) to keep backend-core
+// decoupled. Mission-level offer/targetCustomer are layered on separately by the
+// campaign sender; this carries the workspace-wide fields.
+export function toIcpContext(
+  wsIcp: { targetIndustries?: string[]; businessType?: string | null; outreachTone?: string | null } | null | undefined,
+): IcpContext | undefined {
+  if (!wsIcp) return undefined
+  return {
+    targetIndustries: wsIcp.targetIndustries,
+    businessType: wsIcp.businessType ?? undefined,
+    outreachTone: wsIcp.outreachTone ?? undefined,
+  }
+}
+
 export function buildVerticalDesc(icp: IcpContext | undefined): string {
   // A mission's targetCustomer is the most specific description of who we're
   // selling to; fall back to the workspace ICP industries, then the default.
