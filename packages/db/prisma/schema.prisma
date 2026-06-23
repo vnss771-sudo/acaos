@@ -251,6 +251,11 @@ model Lead {
   notes          String?
   aiSummary      String?
   outreachAngle  String?
+  // Auditable lead-research intelligence snapshot: the deterministic score
+  // rationale (signals + topReasons), provenance-labelled evidence, riskFlags,
+  // recommendedAction, and overall confidence. Captured by the research worker so
+  // the "why" survives on the lead record and is surfaced in the UI/API.
+  aiIntelligence Json?
   score          Int             @default(0)
   stage          LeadStage       @default(NEW)
   sourceTag      String?

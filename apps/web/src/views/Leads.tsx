@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/shared'
-import type { Lead, Workspace, Campaign, OutreachDraft } from '../types.js'
+import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
@@ -65,6 +65,78 @@ function ScorePill({ score }: { score: number }) {
       <span style={s.badge(TIER_COLOR[tier])}>{tier}</span>
       <span style={{ color: colors.amber, fontSize: 13, fontWeight: 700 }}>{score}</span>
     </span>
+  )
+}
+
+const EVIDENCE_TYPE_COLOR: Record<string, string> = {
+  confirmed: colors.green,
+  observed: colors.blue,
+  inferred: colors.amber,
+}
+const CONFIDENCE_COLOR: Record<string, string> = {
+  high: colors.green,
+  medium: colors.amber,
+  low: colors.textFaint,
+}
+const ACTION_LABEL: Record<string, string> = {
+  auto_draft: 'Auto-draft OK',
+  manual_review_then_draft: 'Manual review first',
+  skip: 'Skip',
+}
+
+// Evidence-backed intelligence: the deterministic "why this score", the
+// provenance-labelled evidence behind the assessment, and the caveats a human
+// should weigh before trusting it.
+function IntelligencePanel({ intel }: { intel: LeadIntelligence }) {
+  const topReasons = intel.topReasons ?? []
+  const evidence = intel.evidence ?? []
+  const riskFlags = intel.riskFlags ?? []
+  if (topReasons.length === 0 && evidence.length === 0 && riskFlags.length === 0 && !intel.recommendedAction) return null
+  return (
+    <div style={{ ...s.cardInner, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Lead Intelligence</div>
+        {intel.confidence && <span style={s.badge(CONFIDENCE_COLOR[intel.confidence] ?? colors.textFaint)}>{intel.confidence} confidence</span>}
+        {intel.recommendedAction && <span style={{ ...s.badge(colors.blue), marginLeft: 'auto' }}>{ACTION_LABEL[intel.recommendedAction] ?? intel.recommendedAction}</span>}
+      </div>
+
+      {topReasons.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>WHY THIS SCORE</div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
+            {topReasons.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {evidence.length > 0 && (
+        <div style={{ marginBottom: riskFlags.length > 0 ? 10 : 0 }}>
+          <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>EVIDENCE</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {evidence.map((ev, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <span style={s.badge(EVIDENCE_TYPE_COLOR[ev.type] ?? colors.textFaint)}>{ev.type}</span>
+                <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.5, flex: 1 }}>
+                  {ev.sourceUrl
+                    ? <a href={ev.sourceUrl} target="_blank" rel="noreferrer" style={{ color: colors.blueLight }}>{ev.signal}</a>
+                    : ev.signal}
+                </span>
+                <span style={{ color: CONFIDENCE_COLOR[ev.confidence] ?? colors.textFaint, fontSize: 11, fontWeight: 600 }}>{ev.confidence}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {riskFlags.length > 0 && (
+        <div>
+          <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>RISK FLAGS</div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: colors.amber, fontSize: 12, lineHeight: 1.6 }}>
+            {riskFlags.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -221,7 +293,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
           ].map(({ label, field }) => (
             <div key={field}>
               <label style={s.label} htmlFor="leads-field-0">{label}</label>
-              <input id="leads-field-0" style={s.input} value={(form as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
+              <input id="leads-field-0" style={s.input} value={(form as unknown as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
             </div>
           ))}
           <div>
@@ -275,6 +347,9 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
           )}
         </div>
       )}
+
+      {/* Evidence-backed intelligence (score rationale, evidence, risk flags) */}
+      {lead.aiIntelligence && <IntelligencePanel intel={lead.aiIntelligence} />}
 
       {/* Outreach drafts */}
       {drafts.length > 0 && (

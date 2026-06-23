@@ -213,6 +213,8 @@ Your emails achieve 15–30% reply rates because they:
 
 NEVER state a fact about the recipient you weren't given. Infer their industry from the business NAME (e.g. "Acme Plumbing" = plumbing, "Smith Electrical" = electrical) — never assume it from the seller's target market. If a detail is uncertain, frame it as a question ("how are you handling scheduling as you grow?"), not a claim. Stating something false — like calling a plumbing company a "manufacturer" — instantly destroys credibility and is worse than saying nothing.
 
+NEVER claim to know the recipient's internal problems. BANNED openers: "I noticed you're struggling with…", "I know you're dealing with…", "you're clearly overwhelmed by…". You have NOT seen inside their business. Speak in general terms about what businesses like theirs commonly hit ("a lot of growing plumbing teams reach a point where dispatch starts eating admin time") and turn it into a question — never a diagnosis of THEM specifically.
+
 Return ONLY a valid JSON object with these exact keys:
 - subject (string): Under 8 words. No "Intro:", no emoji. Feels like an internal forward, not a campaign email. Example: "scheduling for ${input.businessName || 'your team'}".
 - email (string): The full email body. No subject line, no sign-off — body only. Under 90 words. Personalised opener referencing their specific business. One clear question CTA at the end.

@@ -13,6 +13,7 @@ import {
   OutreachDraftOutputSchema,
   ReplyAnalysisOutputSchema,
 } from '@acaos/backend-core/lib/aiSchemas.js'
+import { assertOutreachTone } from '@acaos/backend-core/lib/outreachTone.js'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
@@ -109,11 +110,32 @@ const researchWorker = new Worker(
 
     await job.updateProgress(80)
 
+    // Auditable intelligence snapshot persisted on the lead: the deterministic
+    // score rationale plus the model's provenance-labelled evidence. JSON-only
+    // values (no undefined) so it round-trips cleanly through the JSONB column.
+    const aiIntelligence = {
+      capturedAt: new Date().toISOString(),
+      finalScore,
+      computedScore,
+      tier: explanation.tier,
+      modelIcpScore: typeof parsed.icpScore === 'number' ? parsed.icpScore : null,
+      topReasons: explanation.topReasons,
+      signals: explanation.signals,
+      evidence: parsed.evidence ?? [],
+      riskFlags: parsed.riskFlags ?? [],
+      recommendedAction: parsed.recommendedAction ?? null,
+      confidence: parsed.confidence ?? null,
+      digitalMaturity: parsed.digitalMaturity ?? null,
+      estimatedTeamSize: parsed.estimatedTeamSize ?? null,
+      hiringSignals: parsed.hiringSignals ?? null,
+    }
+
     await prisma.lead.update({
       where: { id: leadId },
       data: {
         aiSummary: parsed.aiSummary ?? null,
         outreachAngle: parsed.outreachAngle ?? null,
+        aiIntelligence,
         score: finalScore,
         stage: 'RESEARCHED'
       }
@@ -164,6 +186,14 @@ const outreachWorker = new Worker(
     // Strict: a draft missing subject/email is unusable. Fail closed — throwing
     // here marks the job failed so BullMQ retries rather than persisting garbage.
     const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
+
+    // Tone guardrail: reject "creepy", presumptuous copy that asserts private
+    // knowledge of the recipient's problems as fact (fail closed → BullMQ
+    // regenerates). Buzzword warnings are surfaced but do not block.
+    const toneWarnings = assertOutreachTone(parsed)
+    if (toneWarnings.length > 0) {
+      log('generate-outreach', `tone warnings leadId=${leadId}: ${toneWarnings.map((w) => w.match).join(', ')}`)
+    }
 
     // Record generation provenance (model + prompt version) so the draft is
     // auditable/reproducible. Best-effort — never blocks draft creation.
