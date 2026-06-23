@@ -40,7 +40,7 @@ import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import type { ICPConfig } from '@acaos/backend-core/lib/signalEngine.js'
 import { randomBytes } from 'crypto'
 import type { LeadStage, FollowupTaskStatus } from '@acaos/shared'
-import { incReputationBlock } from './lib/metrics.js'
+import { incReputationBlock, incSendOutcome } from './lib/metrics.js'
 
 type Progress = (n: number) => unknown
 
@@ -349,7 +349,7 @@ export async function sendCampaignBatch(
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
     REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0,
   }
-  const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n }
+  const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
 
   // Don't even start a batch for a paused/completed mission.
@@ -729,13 +729,13 @@ export async function sendCampaignBatch(
         console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
         // Generation failed after reserving the AI call — refund it and release.
         await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
-        await releaseClaim(); failed++; continue
+        await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue
       }
     }
 
     // Past this point subject/body are non-null (reused draft or freshly generated).
     // Guard defensively so a logic slip fails this one lead, not the whole batch.
-    if (subject == null || body == null) { await releaseClaim(); failed++; continue }
+    if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue }
 
     const escHtml = (s: string) =>
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -792,6 +792,7 @@ export async function sendCampaignBatch(
       }).catch(() => {})
 
       sent++
+      incSendOutcome('send-campaign', 'sent')
       if (domainCounts) { const d = emailDomain(lead.email); if (d) domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1) }
     } catch (err) {
       // Known SMTP rejection (nodemailer throws only when the provider did NOT
@@ -816,6 +817,7 @@ export async function sendCampaignBatch(
         prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'failed' })),
       ]).catch((e) => console.error(`[send-campaign] FAILED-record tx error for lead ${lead.id}: ${e instanceof Error ? e.message : e}`))
       failed++
+      incSendOutcome('send-campaign', 'failed')
     }
     } // end per-lead loop for this page
 

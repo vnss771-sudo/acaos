@@ -38,6 +38,7 @@ import {
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask } from './processors.js'
+import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
@@ -258,7 +259,7 @@ const scoreProspectsWorker = new Worker(
   async (job) => {
     const { workspaceId } = parseJobPayload(ScoreProspectsPayloadSchema, 'score-prospects', job.data)
     log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
-    const result = await scoreProspects(workspaceId, (n) => job.updateProgress(n))
+    const result = await runInWorkspaceContext(workspaceId, () => scoreProspects(workspaceId, (n) => job.updateProgress(n)))
     log('score-prospects', `Done: ${result.updated} prospects rescored`)
     // Auto-advance the spine: prospects that cleared the threshold get a
     // recommendation generated. The generate-recommendations worker dedupes, so
@@ -283,7 +284,7 @@ const discoverWorker = new Worker(
     const { runId, workspaceId } = parseJobPayload(DiscoverProspectsPayloadSchema, 'discover-prospects', job.data)
     if (!isFeatureEnabled('discovery')) { log('discover-prospects', 'skipped: FEATURE_DISCOVERY disabled'); return { skipped: true, reason: 'FEATURE_DISCOVERY disabled' } }
     log('discover-prospects', `Discovering run=${runId} workspace=${workspaceId}`)
-    const result = await discoverProspectsBatch(runId, workspaceId, (n) => job.updateProgress(n))
+    const result = await runInWorkspaceContext(workspaceId, () => discoverProspectsBatch(runId, workspaceId, (n) => job.updateProgress(n)))
     log('discover-prospects', `Done run=${runId} status=${result.status} imported=${result.imported} skipped=${result.skipped}`)
     return result
   },
@@ -374,7 +375,7 @@ const sendCampaignWorker = new Worker(
     const { campaignId, workspaceId, leadIds } = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', job.data)
     if (!isFeatureEnabled('send')) { log('send-campaign', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled', sent: 0, skipped_count: leadIds?.length ?? 0 } }
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
-    const result = await sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n))
+    const result = await runInWorkspaceContext(workspaceId, () => sendCampaignBatch(campaignId, workspaceId, leadIds, (n) => job.updateProgress(n)))
     // Compact skip breakdown (non-zero reasons only) so the operator log answers
     // "why didn't these send?" at a glance.
     const reasons = Object.entries(result.skippedByReason).filter(([, n]) => n > 0).map(([r, n]) => `${r}=${n}`).join(' ')
@@ -418,7 +419,7 @@ const calibrateWorker = new Worker(
   async (job) => {
     const { workspaceId } = parseJobPayload(CalibrateScoringPayloadSchema, 'calibrate-scoring', job.data)
     log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
-    const stats = await calibrateScoring(workspaceId, (n) => job.updateProgress(n))
+    const stats = await runInWorkspaceContext(workspaceId, () => calibrateScoring(workspaceId, (n) => job.updateProgress(n)))
     if (!stats.calibrated) {
       log('calibrate-scoring', `Skipped: ${stats.reason} (${stats.totalOutcomes} outcomes)`)
     } else {
