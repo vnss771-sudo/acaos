@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/shared'
-import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence } from '../types.js'
+import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence, LeadEvidenceRow } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
@@ -86,10 +86,13 @@ const ACTION_LABEL: Record<string, string> = {
 
 // Evidence-backed intelligence: the deterministic "why this score", the
 // provenance-labelled evidence behind the assessment, and the caveats a human
-// should weigh before trusting it.
-function IntelligencePanel({ intel }: { intel: LeadIntelligence }) {
+// should weigh before trusting it. Prefers the persisted LeadEvidenceSource rows
+// (the queryable provenance) and falls back to the JSON snapshot's evidence.
+function IntelligencePanel({ intel, rows }: { intel: LeadIntelligence; rows?: LeadEvidenceRow[] }) {
   const topReasons = intel.topReasons ?? []
-  const evidence = intel.evidence ?? []
+  const evidence = rows && rows.length > 0
+    ? rows.map((r) => ({ signal: r.signal, type: r.evidenceType, confidence: r.confidence, sourceUrl: r.sourceUrl }))
+    : (intel.evidence ?? [])
   const riskFlags = intel.riskFlags ?? []
   if (topReasons.length === 0 && evidence.length === 0 && riskFlags.length === 0 && !intel.recommendedAction) return null
   return (
@@ -174,12 +177,18 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({ ...lead })
   const [drafts, setDrafts] = useState<OutreachDraft[]>([])
+  const [evidenceRows, setEvidenceRows] = useState<LeadEvidenceRow[]>([])
   const [saving, setSaving] = useState(false)
   const [activeJobs, setActiveJobs] = useState<Record<string, { state: string; progress: number }>>({})
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map())
 
+  const loadEvidence = useCallback(() => {
+    api<{ evidence: LeadEvidenceRow[] }>(`/api/leads/${lead.id}/evidence`).then(d => setEvidenceRows(d.evidence || [])).catch(() => {})
+  }, [api, lead.id])
+
   useEffect(() => {
     api<{ drafts: OutreachDraft[] }>(`/api/leads/${lead.id}/drafts`).then(d => setDrafts(d.drafts)).catch(() => {})
+    loadEvidence()
     return () => { eventSourcesRef.current.forEach(es => es.close()) }
   }, [lead.id])
 
@@ -245,6 +254,7 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
         try {
           const updated = await api<{ lead: Lead }>(`/api/leads/${lead.id}`)
           onUpdate(updated.lead)
+          if (type === 'research') loadEvidence()
           if (type === 'outreach') {
             const ds = await api<{ drafts: OutreachDraft[] }>(`/api/leads/${lead.id}/drafts`)
             setDrafts(ds.drafts)
@@ -349,7 +359,9 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
       )}
 
       {/* Evidence-backed intelligence (score rationale, evidence, risk flags) */}
-      {lead.aiIntelligence && <IntelligencePanel intel={lead.aiIntelligence} />}
+      {(lead.aiIntelligence || evidenceRows.length > 0) && (
+        <IntelligencePanel intel={lead.aiIntelligence ?? {}} rows={evidenceRows} />
+      )}
 
       {/* Outreach drafts */}
       {drafts.length > 0 && (

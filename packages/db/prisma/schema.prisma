@@ -113,6 +113,7 @@ model Workspace {
   usageRecords         UsageRecord[]
   prospects            Prospect[]
   signals              Signal[]
+  leadEvidenceSources  LeadEvidenceSource[]
   recommendations      Recommendation[]
   outreachIntents      OutreachIntent[]
   prospectOutcomes     ProspectOutcome[]
@@ -268,6 +269,7 @@ model Lead {
   outreachDrafts OutreachDraft[]
   outreachSent   OutreachSent[]
   followupTasks  FollowupTask[]
+  evidenceSources LeadEvidenceSource[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -279,6 +281,35 @@ model Lead {
   // workspace) via a backward index scan instead of a full sort per request.
   @@index([workspaceId, score, createdAt])
   @@index([campaignId])
+}
+
+// Auditable, queryable provenance for a Lead's research evidence — the relational
+// counterpart to the prospect-track EvidenceSource, scoped to a Lead instead of a
+// Prospect (the two intelligence tracks stay deliberately separate; see the
+// "Lead id corrupting data" note on EvidenceSource). One row per evidence item, so
+// the lead's "why" survives as structured rows (not only the aiIntelligence JSON
+// snapshot) and can answer "what's the source / how strong is it?".
+model LeadEvidenceSource {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  leadId       String
+  // Provenance strength of THIS observation (NOT the model's self-rated certainty):
+  // confirmed (a source we hold) | observed (seen in provided text) | inferred (the
+  // model's hypothesis — the weakest, and the safe default).
+  evidenceType String    @default("inferred")
+  // Categorical confidence the evidence supports the claim: low | medium | high.
+  confidence   String    @default("low")
+  signal       String    // the observation text
+  provider     String    @default("llm-research") // llm-research | website | manual
+  sourceType   String    @default("inference")    // website | notes | inference | external
+  sourceUrl    String?
+  observedAt   DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, leadId])
+  @@index([leadId])
 }
 
 model OutreachDraft {

@@ -14,6 +14,7 @@ import {
   ReplyAnalysisOutputSchema,
 } from '@acaos/backend-core/lib/aiSchemas.js'
 import { assertOutreachTone } from '@acaos/backend-core/lib/outreachTone.js'
+import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
@@ -130,15 +131,20 @@ const researchWorker = new Worker(
       hiringSignals: parsed.hiringSignals ?? null,
     }
 
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: {
-        aiSummary: parsed.aiSummary ?? null,
-        outreachAngle: parsed.outreachAngle ?? null,
-        aiIntelligence,
-        score: finalScore,
-        stage: 'RESEARCHED'
-      }
+    // Atomic: persist the lead's intelligence snapshot AND replace its normalized
+    // evidence rows together, so a re-research can't leave stale evidence behind.
+    await prisma.$transaction(async (tx) => {
+      await tx.lead.update({
+        where: { id: leadId },
+        data: {
+          aiSummary: parsed.aiSummary ?? null,
+          outreachAngle: parsed.outreachAngle ?? null,
+          aiIntelligence,
+          score: finalScore,
+          stage: 'RESEARCHED'
+        }
+      })
+      await replaceLeadEvidence(tx, { workspaceId: lead.workspaceId, leadId, evidence: parsed.evidence })
     })
 
     await job.updateProgress(100)

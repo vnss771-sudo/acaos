@@ -198,6 +198,19 @@ export type EvidenceItem = {
   sourceUrl?: string | null
 }
 
+// A persisted LeadEvidenceSource row (the relational provenance behind a lead's
+// assessment), fetched from GET /api/leads/:id/evidence.
+export type LeadEvidenceRow = {
+  id: string
+  evidenceType: EvidenceType
+  confidence: ConfidenceLevel
+  signal: string
+  provider: string
+  sourceType: string
+  sourceUrl?: string | null
+  observedAt?: string
+}
+
 // Auditable lead-research intelligence snapshot persisted on the lead by the
 // research worker (the JSONB `aiIntelligence` column).
 export type LeadIntelligence = {
