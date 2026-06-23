@@ -58,7 +58,7 @@ export async function enqueueResearchLead(opts: { leadId: string; workspaceId: s
   return getQueue('research-lead').add('research-lead', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 
-export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string; requestId?: string }) {
+export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string; requestId?: string; override?: boolean }) {
   return getQueue('generate-outreach').add('generate-outreach', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
 }
 

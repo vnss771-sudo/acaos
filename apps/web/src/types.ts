@@ -243,6 +243,10 @@ export type Lead = {
   aiSummary?: string | null
   outreachAngle?: string | null
   aiIntelligence?: LeadIntelligence | null
+  // Set when the outreach gate suppressed generation for a poor-fit lead
+  // (recommendedAction=skip). Null once a human overrides and a draft is made.
+  outreachSkippedAt?: string | null
+  outreachSkipReason?: string | null
   score: number
   stage: LeadStage
   campaignId?: string | null

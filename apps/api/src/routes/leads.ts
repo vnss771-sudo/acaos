@@ -41,6 +41,9 @@ const listLeadsQuerySchema = z.object({
   campaignId: z.string().trim().optional(),
   stage: z.string().trim().optional(),
   search: z.string().trim().optional(),
+  // 'true' restricts to leads suppressed by the outreach gate (the poor-fit
+  // review queue).
+  skipped: z.string().trim().optional(),
   page: z.coerce.number().int().positive().optional().catch(undefined),
   limit: z.coerce.number().int().positive().optional().catch(undefined),
 })
@@ -115,6 +118,7 @@ leadsRouter.get(
       workspaceId,
       ...(campaignId ? { campaignId } : {}),
       ...(stage && isLeadStage(stage) ? { stage } : {}),
+      ...(q.skipped === 'true' ? { outreachSkippedAt: { not: null } } : {}),
       ...(search ? {
         OR: [
           { businessName: { contains: search, mode: 'insensitive' as const } },

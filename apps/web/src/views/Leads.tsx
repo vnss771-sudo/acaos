@@ -246,9 +246,9 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
     }
   }
 
-  async function enqueue(type: 'research' | 'outreach') {
+  async function enqueue(type: 'research' | 'outreach', opts: { override?: boolean } = {}) {
     try {
-      const d = await route('POST /api/jobs/:type', { params: { type }, body: { leadId: lead.id } })
+      const d = await route('POST /api/jobs/:type', { params: { type }, body: { leadId: lead.id, ...(opts.override ? { override: true } : {}) } })
       streamJob(d.queue, d.jobId, type, async () => {
         // Refresh lead data after completion
         try {
@@ -340,6 +340,16 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
         </div>
       )}
 
+      {/* Poor-fit suppression banner */}
+      {lead.outreachSkippedAt && (
+        <div style={{ ...s.cardInner, borderLeft: `3px solid ${colors.amber}`, marginBottom: 16 }}>
+          <div style={{ color: colors.amber, fontWeight: 700, fontSize: 13 }}>⏭ Outreach skipped — poor fit</div>
+          <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+            {lead.outreachSkipReason || 'Research recommended skipping this lead.'} No draft was generated. Use “Generate anyway” to draft it into manual review.
+          </div>
+        </div>
+      )}
+
       {/* AI fields */}
       {(lead.aiSummary || lead.outreachAngle) && (
         <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
@@ -392,11 +402,14 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
           {activeJobs.research ? <><Spinner size={12} /> Researching…</> : '✦ Research'}
         </button>
         <button
-          style={{ ...s.btnSm, background: '#2d1d5e' }}
+          style={{ ...s.btnSm, background: lead.outreachSkippedAt ? '#5e3a1d' : '#2d1d5e' }}
           disabled={!!activeJobs.outreach}
-          onClick={() => enqueue('outreach')}
+          onClick={() => enqueue('outreach', { override: !!lead.outreachSkippedAt })}
+          title={lead.outreachSkippedAt ? 'Research recommended skipping; generate anyway into manual review' : undefined}
         >
-          {activeJobs.outreach ? <><Spinner size={12} /> Generating…</> : '✉ Generate Outreach'}
+          {activeJobs.outreach
+            ? <><Spinner size={12} /> Generating…</>
+            : lead.outreachSkippedAt ? '✉ Generate anyway' : '✉ Generate Outreach'}
         </button>
       </div>
 
@@ -435,6 +448,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [stageFilter, setStageFilter] = useState('')
+  const [skippedOnly, setSkippedOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Lead | null>(null)
   const [adding, setAdding] = useState(false)
@@ -461,12 +475,13 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     setLoading(true)
     const params = new URLSearchParams({ workspaceId: workspace.id, page: String(page), limit: String(LIMIT) })
     if (stageFilter) params.set('stage', stageFilter)
+    if (skippedOnly) params.set('skipped', 'true')
     if (search.trim()) params.set('search', search.trim())
     api<{ leads: Lead[]; total: number }>(`/api/leads?${params}`)
       .then(d => { if (reqId === leadsReqRef.current) { setLeads(d.leads || []); setTotal(d.total || 0) } })
       .catch(e => { if (reqId === leadsReqRef.current) toast.error(e.message) })
       .finally(() => { if (reqId === leadsReqRef.current) setLoading(false) })
-  }, [workspace?.id, page, stageFilter, search])
+  }, [workspace?.id, page, stageFilter, skippedOnly, search])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
 
@@ -611,6 +626,14 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
           onChange={e => { setSearch(e.target.value); setPage(1) }}
         />
 
+        <button
+          style={{ ...s.btnSm, background: skippedOnly ? colors.amber : '#1f2937', color: skippedOnly ? '#000' : colors.textMuted, fontWeight: skippedOnly ? 700 : 400 }}
+          title="Show only poor-fit leads the outreach gate skipped"
+          onClick={() => { setSkippedOnly(v => !v); setPage(1) }}
+        >
+          ⏭ Skipped
+        </button>
+
         <span style={{ color: colors.textFaint, fontSize: 13 }}>{total} leads</span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -736,7 +759,10 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
                   <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
                     <input type="checkbox" checked={selectedIds.has(lead.id)} onChange={() => toggleSelect(lead.id)} />
                   </td>
-                  <td style={{ padding: '10px 12px', color: colors.text, fontSize: 14, fontWeight: 500 }}>{lead.businessName}</td>
+                  <td style={{ padding: '10px 12px', color: colors.text, fontSize: 14, fontWeight: 500 }}>
+                    {lead.businessName}
+                    {lead.outreachSkippedAt && <span style={{ ...s.badge(colors.amber), marginLeft: 6 }} title="Outreach skipped — poor fit">skipped</span>}
+                  </td>
                   <td style={{ padding: '10px 12px', color: colors.textMuted, fontSize: 13 }}>{lead.contactName || '–'}</td>
                   <td style={{ padding: '10px 12px', color: colors.textMuted, fontSize: 13 }}>{lead.email || '–'}</td>
                   <td style={{ padding: '10px 12px', color: colors.textFaint, fontSize: 12 }}>{lead.category || '–'}</td>
