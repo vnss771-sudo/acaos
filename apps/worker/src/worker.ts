@@ -15,6 +15,8 @@ import {
 } from '@acaos/backend-core/lib/aiSchemas.js'
 import { assertOutreachTone } from '@acaos/backend-core/lib/outreachTone.js'
 import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
+import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
+import { refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
@@ -168,13 +170,32 @@ const researchWorker = new Worker(
 const outreachWorker = new Worker(
   'generate-outreach',
   async (job) => {
-    const { leadId, workspaceId } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
+    const { leadId, workspaceId, override } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
     if (!isFeatureEnabled('ai')) { log('generate-outreach', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('generate-outreach', `Processing leadId=${leadId}`)
 
     // Tenant-scoped fetch: never act on a lead outside the job's workspace.
     const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
     if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
+
+    // Outreach gate: honour the research recommendedAction. A poor-fit ("skip")
+    // lead is suppressed (no model call) and marked for the review queue; a human
+    // can override, which generates a draft into POLICY_REVIEW. manual_review and
+    // override both force POLICY_REVIEW. auto_draft / none → normal DRAFTED flow.
+    const intel = (lead.aiIntelligence ?? null) as { recommendedAction?: string } | null
+    const gate = resolveOutreachGate({ recommendedAction: intel?.recommendedAction, override })
+
+    if (!gate.generate) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: { outreachSkippedAt: new Date(), outreachSkipReason: gate.skipReason },
+      })
+      // No model call was made — free the AI_OUTREACH credit the API metered up front.
+      await refundAiUsage(lead.workspaceId, 'AI_OUTREACH')
+      await job.updateProgress(100)
+      log('generate-outreach', `suppressed leadId=${leadId}: ${gate.skipReason}`)
+      return { leadId, skipped: true, reason: gate.skipReason }
+    }
 
     await job.updateProgress(10)
 
@@ -212,9 +233,17 @@ const outreachWorker = new Worker(
         subject: parsed.subject,
         emailBody: parsed.email,
         followup: parsed.followup ?? null,
+        // Gated status: POLICY_REVIEW when research asked for manual review or a
+        // human overrode a skip (held for a human); otherwise the normal DRAFTED.
+        status: gate.draftStatus,
         promptVersionId,
       }
     })
+
+    // A successful (over)ride generation clears any prior poor-fit suppression.
+    if (lead.outreachSkippedAt) {
+      await prisma.lead.update({ where: { id: lead.id }, data: { outreachSkippedAt: null, outreachSkipReason: null } })
+    }
 
     // Generating a draft is NOT a send. Do not advance the lead to
     // OUTREACH_SENT here — sendCampaignBatch excludes that stage from the send

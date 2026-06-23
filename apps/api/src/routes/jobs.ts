@@ -152,12 +152,14 @@ jobsRouter.post(
   })
 )
 
+const outreachBodySchema = z.object({ leadId: nonEmptyString, override: z.boolean().optional() })
+
 jobsRouter.post(
   '/outreach',
   aiRateLimit,
   asyncHandler(async (req, res) => {
     const user = req.user!
-    const { leadId } = parseBody(leadIdBodySchema, req)
+    const { leadId, override } = parseBody(outreachBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
     if (!lead) throw new ApiError(404, 'Lead not found')
@@ -165,9 +167,11 @@ jobsRouter.post(
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
+    // Meter up front; the worker refunds AI_OUTREACH if a poor-fit gate suppresses
+    // generation (no model call is made in that case).
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_OUTREACH')
 
-    const job = await enqueueGenerateOutreach({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id, requestId: req.id })
+    const job = await enqueueGenerateOutreach({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id, requestId: req.id, override })
     res.status(202).json({ jobId: job.id, queue: 'generate-outreach', status: 'queued' })
   })
 )

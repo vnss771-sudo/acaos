@@ -268,6 +268,9 @@ export interface BulkLeadStageRequest { workspaceId: string; ids: string[]; stag
 export interface JobEnqueueRequest {
   leadId?: string
   workspaceId?: string
+  // Outreach only: human override of a poor-fit (skip) suppression — generate the
+  // draft anyway, into POLICY_REVIEW.
+  override?: boolean
   replyBody?: string
   businessName?: string
   website?: string

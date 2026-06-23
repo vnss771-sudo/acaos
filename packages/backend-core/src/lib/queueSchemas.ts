@@ -40,6 +40,9 @@ export const GenerateOutreachPayloadSchema = z.object({
   leadId: id,
   workspaceId: id,
   initiatedByUserId: id.optional(),
+  // Human override of a poor-fit (recommendedAction=skip) suppression: generate
+  // the draft anyway, but force it into POLICY_REVIEW (never auto-send).
+  override: z.boolean().optional(),
   ...meta,
 })
 export type GenerateOutreachPayload = z.infer<typeof GenerateOutreachPayloadSchema>

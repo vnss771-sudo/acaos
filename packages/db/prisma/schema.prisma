@@ -257,6 +257,12 @@ model Lead {
   // recommendedAction, and overall confidence. Captured by the research worker so
   // the "why" survives on the lead record and is surfaced in the UI/API.
   aiIntelligence Json?
+  // Outreach gate (recommendedAction): when research recommends skipping a
+  // poor-fit lead, generation is suppressed and the lead is marked here instead
+  // of getting a draft. A human can override (which clears this and generates a
+  // draft into POLICY_REVIEW). Null = not gated.
+  outreachSkippedAt  DateTime?
+  outreachSkipReason String?
   score          Int             @default(0)
   stage          LeadStage       @default(NEW)
   sourceTag      String?
