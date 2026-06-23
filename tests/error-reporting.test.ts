@@ -1,6 +1,7 @@
-// Tests for the optional Sentry bootstrap. @sentry/node is intentionally NOT a
-// dependency, so the "DSN set" path exercises the graceful-degradation branch
-// (SDK absent -> warn + stay no-op), and the "no DSN" path is the dev/CI default.
+// Tests for the Sentry bootstrap. @sentry/node IS now a dependency (so production
+// actually captures errors), loaded via a dynamic import that keeps it optional at
+// build time. The "DSN set" path therefore initializes and registers a reporter;
+// the "no DSN" / blank-DSN paths remain clean no-ops (the dev/CI default).
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -21,11 +22,12 @@ test('no SENTRY_DSN: init is a no-op, no reporter registered', async () => {
   assert.equal(hasErrorReporter(), false)
 })
 
-test('SENTRY_DSN set but SDK absent: degrades gracefully (no throw, no reporter)', async () => {
+test('SENTRY_DSN set with SDK installed: initializes and registers a reporter', async () => {
   process.env.SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0'
-  // @sentry/node is not installed, so the dynamic import rejects and is caught.
+  // @sentry/node is installed and the DSN is well-formed, so init succeeds and the
+  // captureError seam gets a live reporter (no network call is made here).
   await assert.doesNotReject(() => initErrorReporting())
-  assert.equal(hasErrorReporter(), false)
+  assert.equal(hasErrorReporter(), true)
 })
 
 test('blank SENTRY_DSN is treated as unset', async () => {

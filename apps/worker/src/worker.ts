@@ -548,6 +548,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
   ['send-followup',           sendFollowupWorker],
+  ['discover-prospects',      discoverWorker],
   ['retention-purge',         retentionWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
