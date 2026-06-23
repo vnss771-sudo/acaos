@@ -26,6 +26,21 @@ export function incReputationBlock(queue: 'send-campaign' | 'send-followup'): vo
   reputationBlocks.set(queue, (reputationBlocks.get(queue) ?? 0) + 1)
 }
 
+// Per-batch send outcomes: every lead a send job handled ends as `sent`, `failed`,
+// or one of the skip reasons (cap hit, policy review, AI limit, …). The send path
+// enforces these invariants but previously only logged them, so an operator couldn't
+// see WHY a batch didn't send without log-diving. A counter keyed by queue + outcome
+// only — the outcome set is a small fixed enum (~15 values), never keyed by
+// workspace, so cardinality stays bounded.
+const sendOutcomes = new Map<string, { queue: string; outcome: string; value: number }>()
+export function incSendOutcome(queue: string, outcome: string, n = 1): void {
+  if (n <= 0) return
+  const key = `${queue}\x1f${outcome}`
+  const e = sendOutcomes.get(key)
+  if (e) e.value += n
+  else sendOutcomes.set(key, { queue, outcome, value: n })
+}
+
 export function observeJobDuration(queue: string, seconds: number): void {
   let h = jobDurations.get(queue)
   if (!h) {
@@ -43,6 +58,7 @@ export function resetWorkerMetrics(): void {
   jobTotals.clear()
   jobDurations.clear()
   reputationBlocks.clear()
+  sendOutcomes.clear()
 }
 
 function esc(v: string): string {
@@ -102,6 +118,12 @@ export function renderWorkerMetrics(depths: QueueDepth[] = [], domain: DomainSna
   lines.push('# TYPE acaos_reputation_enforce_blocks_total counter')
   for (const [queue, n] of reputationBlocks.entries()) {
     lines.push(`acaos_reputation_enforce_blocks_total${lbl({ queue })} ${n}`)
+  }
+
+  lines.push('# HELP acaos_send_outcomes_total Per-lead send outcomes by queue and outcome (sent, failed, or skip reason).')
+  lines.push('# TYPE acaos_send_outcomes_total counter')
+  for (const { queue, outcome, value } of sendOutcomes.values()) {
+    lines.push(`acaos_send_outcomes_total${lbl({ queue, outcome })} ${value}`)
   }
 
   if (domain.followupTasks) {

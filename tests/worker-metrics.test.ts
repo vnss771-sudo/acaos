@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   incJob, observeJobDuration, resetWorkerMetrics, renderWorkerMetrics, incReputationBlock,
+  incSendOutcome,
 } from '../apps/worker/src/lib/metrics.ts'
 
 beforeEach(() => resetWorkerMetrics())
@@ -13,6 +14,25 @@ test('reputation enforce-block counter renders per queue', () => {
   const out = renderWorkerMetrics()
   assert.match(out, /acaos_reputation_enforce_blocks_total\{queue="send-campaign"\} 2/)
   assert.match(out, /acaos_reputation_enforce_blocks_total\{queue="send-followup"\} 1/)
+})
+
+test('send-outcome counter renders per queue and outcome, sums repeats, and ignores non-positive', () => {
+  incSendOutcome('send-campaign', 'sent')
+  incSendOutcome('send-campaign', 'sent')
+  incSendOutcome('send-campaign', 'POLICY_REVIEW')
+  incSendOutcome('send-campaign', 'DAILY_CAP', 5) // bulk skip (whole-batch fast path)
+  incSendOutcome('send-campaign', 'AI_LIMIT', 0)  // no-op: nothing to record
+  const out = renderWorkerMetrics()
+  assert.match(out, /# TYPE acaos_send_outcomes_total counter/)
+  assert.match(out, /acaos_send_outcomes_total\{queue="send-campaign",outcome="sent"\} 2/)
+  assert.match(out, /acaos_send_outcomes_total\{queue="send-campaign",outcome="POLICY_REVIEW"\} 1/)
+  assert.match(out, /acaos_send_outcomes_total\{queue="send-campaign",outcome="DAILY_CAP"\} 5/)
+  assert.doesNotMatch(out, /outcome="AI_LIMIT"/)
+})
+
+test('send-outcome counter is absent until something is recorded (no empty series)', () => {
+  const out = renderWorkerMetrics()
+  assert.doesNotMatch(out, /acaos_send_outcomes_total\{/)
 })
 
 test('domain snapshot renders follow-up backlog, reputation, and warmup gauges', () => {
