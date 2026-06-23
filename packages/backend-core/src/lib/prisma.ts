@@ -22,7 +22,15 @@ function createPrismaClient() {
   if (mode === 'off') return base
   return base.$extends({
     query: {
-      async $allOperations({ model, operation, args, query }) {
+      // Params are annotated explicitly: the deterministic-offline build types the
+      // Prisma client as `{ [k: string]: any }` (no generated types), so without an
+      // annotation these bindings are implicitly `any` and fail under noImplicitAny.
+      async $allOperations({ model, operation, args, query }: {
+        model?: string
+        operation: string
+        args: unknown
+        query: (args: unknown) => Promise<unknown>
+      }) {
         const { result, reason } = classifyTenantAccess({
           model, operation, args, workspaceId: currentWorkspaceId(),
         })
