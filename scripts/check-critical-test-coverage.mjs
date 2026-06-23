@@ -45,9 +45,8 @@ const CRITICAL = [
 // Known-untested, load-bearing modules we have NOT yet covered. Listed here so
 // the gap is recorded in-repo rather than forgotten; promote them into CRITICAL
 // (above) once they have tests. Do NOT add covered modules here.
-//   - packages/backend-core/src/lib/sendDecision.ts  (canSendOutreach: the central
-//     send-eligibility gate; currently has no test AND no callers — confirm it is
-//     wired before relying on it, then test every reason branch.)
+//   (none — sendDecision.ts was removed as dead code; the canonical send-eligibility
+//    checks live inline in sendCampaignBatch / sendFollowupTask in processors.ts.)
 
 const TEST_DIRS = ['tests', 'tests-db', 'tests-redis']
 
