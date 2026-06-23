@@ -110,11 +110,53 @@ type LeadInput = {
   outreachAngle?: string | null
 }
 
-export function computeLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): number {
+export type ScoreSignals = Record<keyof ScoringWeights, number>
+
+// One signal's contribution to the final score: its raw strength (0..1), the
+// configured weight, and weight×strength (its share of the 0..1 pre-scaled total).
+export type ScoreReason = {
+  signal: keyof ScoringWeights
+  value: number
+  weight: number
+  contribution: number
+}
+
+// The score plus *why* it is what it is. Surfacing this turns an opaque "75" into
+// a defensible, auditable assessment — and, unlike the model's self-reported
+// icpScore, it is deterministic and fully testable (no LLM trust required).
+export type LeadScoreExplanation = {
+  score: number
+  tier: 'HOT' | 'WARM' | 'COLD'
+  signals: ScoreSignals
+  reasons: ScoreReason[] // every signal, sorted by contribution (desc)
+  topReasons: string[] // human-readable headline drivers, highest-impact first
+}
+
+// Constant placeholder signals carry no evidence (they are fixed defaults until a
+// richer enrichment fills them in), so they are excluded from the human-readable
+// topReasons — they would otherwise crowd out the signals that actually differ.
+const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['size', 'messageRelevance', 'timingFit'])
+
+// Maps a signal's strength to a short, human phrase. Deterministic and band-based
+// so the same inputs always produce the same rationale.
+const SIGNAL_LABELS: Record<keyof ScoringWeights, (v: number) => string> = {
+  industry: (v) => (v >= 0.9 ? 'Core ICP industry match (field service)' : v >= 0.6 ? 'Adjacent service industry' : 'Industry outside the core ICP'),
+  size: (v) => (v >= 0.6 ? 'Team size in the target range' : 'Team size likely too small or unknown'),
+  hiring: (v) => (v >= 0.9 ? 'Active hiring / expansion signal' : 'No hiring signal found'),
+  tech: (v) => (v >= 0.9 ? 'Low existing software footprint (good fit)' : 'Already runs enterprise software (saturated)'),
+  growth: (v) => (v >= 0.6 ? 'Multiple growth signals' : v > 0 ? 'Some growth signal' : 'No growth signal found'),
+  contact: (v) => (v >= 0.9 ? 'Direct contact (name + email) available' : v >= 0.5 ? 'Partial contact details' : 'No contact details'),
+  messageRelevance: () => 'Message relevance (default — needs enrichment)',
+  channelFit: (v) => (v >= 0.9 ? 'Reachable by email' : v >= 0.6 ? 'Website-only channel' : 'Weak channel fit'),
+  timingFit: () => 'Timing fit (default — needs signal data)',
+  dataFreshness: (v) => (v >= 0.8 ? 'Enriched with current research' : 'Limited research data'),
+}
+
+function computeSignals(lead: LeadInput): ScoreSignals {
   const combined = [lead.notes, lead.aiSummary, lead.outreachAngle, lead.businessName]
     .filter(Boolean).join(' ').toLowerCase()
 
-  const signals: Record<keyof ScoringWeights, number> = {
+  return {
     industry: scoreIndustry(lead.category),
     size: 0.65, // default medium — unknown without enrichment
     hiring: scoreHiring(combined),
@@ -124,13 +166,40 @@ export function computeLeadScore(lead: LeadInput, weights: ScoringWeights = DEFA
     messageRelevance: 0.50,
     channelFit: scoreChannelFit(lead.email, lead.website),
     timingFit: 0.50,
-    dataFreshness: scoreDataFreshness(lead.aiSummary)
+    dataFreshness: scoreDataFreshness(lead.aiSummary),
   }
+}
 
-  const raw = (Object.keys(weights) as (keyof ScoringWeights)[])
-    .reduce((sum, k) => sum + signals[k] * weights[k], 0)
+/**
+ * Score a lead AND explain the result: the per-signal breakdown, every signal's
+ * weighted contribution (sorted), and a few human-readable headline drivers.
+ * `computeLeadScore` delegates here, so the number is guaranteed identical to the
+ * explained score.
+ */
+export function explainLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): LeadScoreExplanation {
+  const signals = computeSignals(lead)
+  const keys = Object.keys(weights) as (keyof ScoringWeights)[]
 
-  return Math.round(Math.min(100, Math.max(0, raw * 100)))
+  const raw = keys.reduce((sum, k) => sum + signals[k] * weights[k], 0)
+  const score = Math.round(Math.min(100, Math.max(0, raw * 100)))
+
+  const reasons: ScoreReason[] = keys
+    .map((k) => ({ signal: k, value: signals[k], weight: weights[k], contribution: signals[k] * weights[k] }))
+    .sort((a, b) => b.contribution - a.contribution)
+
+  const topReasons = reasons
+    // A workspace may carry custom/legacy weights whose keys are outside the
+    // canonical signal set; those have no label and no computed signal, so skip
+    // them rather than throwing — the weighted score above is unaffected.
+    .filter((r) => r.weight > 0 && !CONSTANT_SIGNALS.has(r.signal) && typeof SIGNAL_LABELS[r.signal] === 'function')
+    .slice(0, 3)
+    .map((r) => SIGNAL_LABELS[r.signal](r.value))
+
+  return { score, tier: getScoreTier(score), signals, reasons, topReasons }
+}
+
+export function computeLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): number {
+  return explainLeadScore(lead, weights).score
 }
 
 export function getScoreTier(score: number): 'HOT' | 'WARM' | 'COLD' {

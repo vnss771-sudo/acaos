@@ -131,3 +131,55 @@ test('parseLeadResearchJson: drops an out-of-range icpScore', () => {
   const out = parseLeadResearchJson(JSON.stringify({ icpScore: 9999 }))
   assert.equal(out.icpScore, undefined)
 })
+
+// ── structured evidence / risk flags / recommended action ─────────────────────
+
+test('parseLeadResearchJson: parses structured evidence, risk flags, and recommended action', () => {
+  const out = parseLeadResearchJson(
+    JSON.stringify({
+      evidence: [
+        { signal: 'Website lists 4 service areas', type: 'confirmed', confidence: 'high', sourceUrl: 'https://acme.example/services' },
+        { signal: 'Likely dispatch complexity', type: 'inferred', confidence: 'medium' },
+      ],
+      riskFlags: ['Team size is estimated'],
+      recommendedAction: 'manual_review_then_draft',
+      confidence: 'medium',
+    }),
+  )
+  assert.equal(out.evidence?.length, 2)
+  assert.equal(out.evidence?.[0].type, 'confirmed')
+  assert.equal(out.evidence?.[0].sourceUrl, 'https://acme.example/services')
+  assert.deepEqual(out.riskFlags, ['Team size is estimated'])
+  assert.equal(out.recommendedAction, 'manual_review_then_draft')
+  assert.equal(out.confidence, 'medium')
+})
+
+test('parseLeadResearchJson: defaults an evidence item to the weakest provenance when type/confidence drift', () => {
+  // A real observation with an unknown `type` must degrade to "inferred"/"low",
+  // never silently masquerade as a confirmed fact.
+  const out = parseLeadResearchJson(
+    JSON.stringify({ evidence: [{ signal: 'Active BNI participation', type: 'rumour', confidence: 'certain' }] }),
+  )
+  assert.equal(out.evidence?.length, 1)
+  assert.equal(out.evidence?.[0].type, 'inferred')
+  assert.equal(out.evidence?.[0].confidence, 'low')
+})
+
+test('parseLeadResearchJson: drops a malformed evidence item but keeps the valid ones', () => {
+  const out = parseLeadResearchJson(
+    JSON.stringify({
+      evidence: [
+        { type: 'confirmed', confidence: 'high' }, // no `signal` — must be dropped
+        { signal: 'Has a careers page', type: 'observed', confidence: 'medium' },
+      ],
+    }),
+  )
+  assert.equal(out.evidence?.length, 1)
+  assert.equal(out.evidence?.[0].signal, 'Has a careers page')
+})
+
+test('parseLeadResearchJson: drops an invalid recommendedAction enum without throwing', () => {
+  const out = parseLeadResearchJson(JSON.stringify({ aiSummary: 'ok', recommendedAction: 'launch_nukes' }))
+  assert.equal(out.aiSummary, 'ok')
+  assert.equal(out.recommendedAction, undefined)
+})

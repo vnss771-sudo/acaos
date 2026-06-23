@@ -124,11 +124,24 @@ Your job: produce actionable sales intelligence for a cold outreach campaign sel
 Return ONLY a valid JSON object with these exact keys:
 - aiSummary (string): 2–3 sentences. Describe the business, its likely operational pain points, and why they are a strong or weak fit for the seller's solution. Be concrete: mention the type of work they do, estimated team size signals, and the single biggest problem they probably face.
 - outreachAngle (string): The single strongest personalised hook for a cold email opener — under 20 words. Must reference something specific about their business, NOT a generic benefit. Good: "Managing job dispatch across 12 crews without a shared schedule". Bad: "We help you save time".
-- qualificationSignals (string[]): 3–5 specific signals extracted from available info (e.g. "Field-based workforce, likely 10–50 field staff", "No dedicated software visible on site or in job listings", "Active hiring suggests growth phase", "Multiple office locations imply coordination complexity").
+- qualificationSignals (string[]): (optional, legacy) 3–5 short signals. Prefer the structured "evidence" array below — only include this if it adds something evidence does not.
+- evidence (array of objects): 3–6 items, each { "signal", "type", "confidence", "sourceUrl" (optional) }. This is the audit trail behind your assessment.
+    • signal: one concrete observation, e.g. "Website advertises 24/7 emergency plumbing across 4 suburbs".
+    • type: provenance, NOT how sure you feel. Use "confirmed" ONLY when it comes from a source you were actually given (and put that URL in sourceUrl); "observed" when it appears in the provided notes/text but has no canonical link; "inferred" for your own hypotheses. When in doubt, use "inferred".
+    • confidence: "low" | "medium" | "high" — how strongly the evidence supports the claim.
+    • sourceUrl: include ONLY for "confirmed" items, and ONLY a URL you were actually given. Never invent a URL.
+- riskFlags (string[]): 1–4 plain-language caveats a human should know before trusting this, e.g. "Team size is estimated, not confirmed", "Operational pain is inferred from industry, not stated".
+- recommendedAction ("auto_draft" | "manual_review_then_draft" | "skip"): "auto_draft" ONLY when the fit is strong AND the evidence is mostly confirmed/observed; "manual_review_then_draft" when the angle rests largely on inferences; "skip" when they are a poor fit.
+- confidence ("low" | "medium" | "high"): your overall confidence in this assessment as a whole.
 - icpScore (number): 0–100. How closely this prospect matches the target vertical (${vertical}): right size, right pain, low digital maturity, growing. Deduct for: too small (<10 employees), enterprise already saturated, wrong industry.
 - hiringSignals (boolean): true if any evidence suggests they are currently hiring or expanding headcount.
 - digitalMaturity ("low" | "medium" | "high"): Infer from web presence, job listings, and mentions of tools. Low = spreadsheets/paper, Medium = generic software, High = dedicated platform already in place.
-- estimatedTeamSize ("1-10" | "10-50" | "50-200" | "200-500" | "500+"): Best estimate from all available signals.`,
+- estimatedTeamSize ("1-10" | "10-50" | "50-200" | "200-500" | "500+"): Best estimate from all available signals.
+
+Evidence honesty rules:
+- NEVER label something "confirmed" without a real source you were given — a confident-sounding guess is still "inferred".
+- Prefer fewer, well-grounded signals over many speculative ones.
+- The outreachAngle and aiSummary must not assert as fact anything that is only "inferred" — phrase such things as a hypothesis ("likely", "often").`,
 
     `Analyse this prospect for B2B cold outreach:
 
@@ -199,6 +212,8 @@ Your emails achieve 15–30% reply rates because they:
 6. Name a CONCRETE outcome in the recipient's own language — never vague filler. BANNED phrases: "streamline operations", "improve efficiency", "optimise", "leverage", "solutions", "synergy", "drive growth". Instead say the real thing a tradesperson feels: e.g. "so jobs stop slipping through the cracks as you add crews", "quotes out the same day instead of after hours", "no double-booked vans", "without putting on another office admin".
 
 NEVER state a fact about the recipient you weren't given. Infer their industry from the business NAME (e.g. "Acme Plumbing" = plumbing, "Smith Electrical" = electrical) — never assume it from the seller's target market. If a detail is uncertain, frame it as a question ("how are you handling scheduling as you grow?"), not a claim. Stating something false — like calling a plumbing company a "manufacturer" — instantly destroys credibility and is worse than saying nothing.
+
+NEVER claim to know the recipient's internal problems. BANNED openers: "I noticed you're struggling with…", "I know you're dealing with…", "you're clearly overwhelmed by…". You have NOT seen inside their business. Speak in general terms about what businesses like theirs commonly hit ("a lot of growing plumbing teams reach a point where dispatch starts eating admin time") and turn it into a question — never a diagnosis of THEM specifically.
 
 Return ONLY a valid JSON object with these exact keys:
 - subject (string): Under 8 words. No "Intro:", no emoji. Feels like an internal forward, not a campaign email. Example: "scheduling for ${input.businessName || 'your team'}".

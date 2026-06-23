@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeLeadScore, getScoreTier, DEFAULT_SCORING_WEIGHTS } from '../packages/backend-core/src/lib/scoring.js'
+import { computeLeadScore, explainLeadScore, getScoreTier, DEFAULT_SCORING_WEIGHTS } from '../packages/backend-core/src/lib/scoring.js'
 
 function lead(overrides: Partial<Parameters<typeof computeLeadScore>[0]> = {}): Parameters<typeof computeLeadScore>[0] {
   return {
@@ -99,6 +99,59 @@ describe('computeLeadScore', () => {
       notes: 'hiring expanding growth funded'
     }))
     assert.ok(s <= 100)
+  })
+})
+
+describe('explainLeadScore', () => {
+  it('returns a score identical to computeLeadScore', () => {
+    const l = lead({
+      category: 'plumbing contractor',
+      email: 'ceo@bestplumbing.com',
+      contactName: 'John Doe',
+      notes: 'Now hiring plumbers — expanding into new regions',
+    })
+    assert.equal(explainLeadScore(l).score, computeLeadScore(l))
+  })
+
+  it('exposes every weighted signal in the breakdown', () => {
+    const { signals } = explainLeadScore(lead())
+    for (const k of Object.keys(DEFAULT_SCORING_WEIGHTS)) {
+      assert.equal(typeof signals[k as keyof typeof signals], 'number', `missing signal ${k}`)
+    }
+  })
+
+  it('orders reasons by weighted contribution (desc) and computes contribution = value × weight', () => {
+    const { reasons } = explainLeadScore(lead({ category: 'electrical contractor' }))
+    for (let i = 1; i < reasons.length; i++) {
+      assert.ok(reasons[i - 1].contribution >= reasons[i].contribution, 'reasons must be sorted by contribution desc')
+    }
+    const top = reasons[0]
+    assert.ok(Math.abs(top.contribution - top.value * top.weight) < 1e-9)
+  })
+
+  it('surfaces the ICP industry match as a headline reason for a core-vertical lead', () => {
+    const { topReasons } = explainLeadScore(lead({ category: 'plumbing contractor' }))
+    assert.ok(topReasons.length > 0 && topReasons.length <= 3)
+    assert.ok(topReasons.some((r) => /ICP industry match/i.test(r)), `expected an industry reason, got ${JSON.stringify(topReasons)}`)
+  })
+
+  it('excludes constant placeholder signals (size/messageRelevance/timingFit) from topReasons', () => {
+    const { topReasons } = explainLeadScore(lead({ category: 'plumbing contractor' }))
+    assert.ok(!topReasons.some((r) => /default — needs/i.test(r)), 'placeholder defaults must not appear in topReasons')
+  })
+
+  it('tier matches getScoreTier(score)', () => {
+    const e = explainLeadScore(lead({ category: 'plumbing contractor', email: 'a@b.com', contactName: 'Jane' }))
+    assert.equal(e.tier, getScoreTier(e.score))
+  })
+
+  it('does not throw on custom/legacy weight keys outside the canonical signal set', () => {
+    // A workspace can store arbitrary weight keys; topReasons must skip unknown
+    // keys (no label) instead of crashing the scoring path.
+    const legacyWeights = { hasEmail: 30, hasWebsite: 10, hasContactName: 10 } as unknown as typeof DEFAULT_SCORING_WEIGHTS
+    const e = explainLeadScore(lead({ email: 'a@b.com' }), legacyWeights)
+    assert.deepEqual(e.topReasons, [])
+    assert.ok(Array.isArray(e.reasons))
   })
 })
 

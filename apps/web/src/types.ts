@@ -187,6 +187,49 @@ export type MissionDetail = {
   learning: MissionLearning
 }
 
+export type EvidenceType = 'confirmed' | 'observed' | 'inferred'
+export type ConfidenceLevel = 'low' | 'medium' | 'high'
+export type RecommendedAction = 'auto_draft' | 'manual_review_then_draft' | 'skip'
+
+export type EvidenceItem = {
+  signal: string
+  type: EvidenceType
+  confidence: ConfidenceLevel
+  sourceUrl?: string | null
+}
+
+// A persisted LeadEvidenceSource row (the relational provenance behind a lead's
+// assessment), fetched from GET /api/leads/:id/evidence.
+export type LeadEvidenceRow = {
+  id: string
+  evidenceType: EvidenceType
+  confidence: ConfidenceLevel
+  signal: string
+  provider: string
+  sourceType: string
+  sourceUrl?: string | null
+  observedAt?: string
+}
+
+// Auditable lead-research intelligence snapshot persisted on the lead by the
+// research worker (the JSONB `aiIntelligence` column).
+export type LeadIntelligence = {
+  capturedAt?: string
+  finalScore?: number
+  computedScore?: number
+  tier?: 'HOT' | 'WARM' | 'COLD'
+  modelIcpScore?: number | null
+  topReasons?: string[]
+  signals?: Record<string, number>
+  evidence?: EvidenceItem[]
+  riskFlags?: string[]
+  recommendedAction?: RecommendedAction | null
+  confidence?: ConfidenceLevel | null
+  digitalMaturity?: string | null
+  estimatedTeamSize?: string | null
+  hiringSignals?: boolean | null
+}
+
 export type Lead = {
   id: string
   businessName: string
@@ -199,6 +242,7 @@ export type Lead = {
   notes?: string | null
   aiSummary?: string | null
   outreachAngle?: string | null
+  aiIntelligence?: LeadIntelligence | null
   score: number
   stage: LeadStage
   campaignId?: string | null

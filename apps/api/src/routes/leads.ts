@@ -492,6 +492,29 @@ leadsRouter.get(
   })
 )
 
+// Auditable research evidence rows for a lead (the relational provenance behind
+// its score/assessment). Kept off the leads list/detail payloads (which stay lean)
+// and fetched on demand by the lead detail panel.
+leadsRouter.get(
+  '/:id/evidence',
+  asyncHandler(async (req, res) => {
+    const user = req.user!
+    const leadId = req.params.id as string
+    const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true, workspaceId: true } })
+    if (!lead) throw new ApiError(404, 'Lead not found')
+
+    const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const evidence = await prisma.leadEvidenceSource.findMany({
+      where: { leadId: leadId },
+      orderBy: [{ evidenceType: 'asc' }, { createdAt: 'asc' }]
+    })
+
+    res.json({ evidence })
+  })
+)
+
 // Approval queue — all DRAFTED drafts awaiting review for a workspace
 leadsRouter.get(
   '/approvals/pending',

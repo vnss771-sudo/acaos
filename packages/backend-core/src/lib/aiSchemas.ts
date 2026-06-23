@@ -32,6 +32,46 @@ export const REPLY_URGENCIES = ['immediate', 'this_week', 'this_month', 'nurture
 export const DIGITAL_MATURITY = ['low', 'medium', 'high'] as const
 export const TEAM_SIZE_BUCKETS = ['1-10', '10-50', '50-200', '200-500', '500+'] as const
 
+// Evidence strength is about PROVENANCE, not the model's self-rated certainty:
+//   confirmed = backed by a concrete source the model was actually given (a URL)
+//   observed  = appears in the provided text/notes, but no canonical source link
+//   inferred  = the model's own hypothesis — the weakest tier
+// `inferred` is also the safe DEFAULT (see EvidenceItemSchema): a drifting `type`
+// degrades to a hypothesis rather than being trusted as fact, so an LLM guess can
+// never silently masquerade as a confirmed datum.
+export const EVIDENCE_TYPES = ['confirmed', 'observed', 'inferred'] as const
+export const CONFIDENCE_LEVELS = ['low', 'medium', 'high'] as const
+// What a human/automation should do next with this lead. `auto_draft` is only
+// appropriate when the fit is strong and the evidence is mostly confirmed/observed.
+export const RECOMMENDED_ACTIONS = ['auto_draft', 'manual_review_then_draft', 'skip'] as const
+
+// One piece of evidence behind the assessment. `signal` (the actual observation)
+// is required; `type`/`confidence` self-heal to the weakest value so a single
+// drifting field never discards the observation itself.
+export const EvidenceItemSchema = z.object({
+  signal: z.string().min(1).max(500),
+  type: z.enum(EVIDENCE_TYPES).catch('inferred'),
+  confidence: z.enum(CONFIDENCE_LEVELS).catch('low'),
+  sourceUrl: z.string().max(2000).optional().catch(undefined),
+})
+export type EvidenceItem = z.infer<typeof EvidenceItemSchema>
+
+// Parse an evidence array item-by-item so one malformed entry is dropped, not the
+// whole list — consistent with the lenient, best-effort research discipline.
+const EvidenceArrayField = z.preprocess(
+  (raw) => {
+    if (!Array.isArray(raw)) return undefined
+    const items: EvidenceItem[] = []
+    for (const entry of raw) {
+      if (items.length >= 20) break
+      const parsed = EvidenceItemSchema.safeParse(entry)
+      if (parsed.success) items.push(parsed.data)
+    }
+    return items
+  },
+  z.array(EvidenceItemSchema).optional(),
+).catch(undefined)
+
 // ── Lead research (lenient) ─────────────────────────────────────────────────────
 // Every field is optional and self-healing (.catch drops a wrong-typed value)
 // because research only enriches a lead — partial intelligence is still useful and
@@ -39,7 +79,17 @@ export const TEAM_SIZE_BUCKETS = ['1-10', '10-50', '50-200', '200-500', '500+'] 
 export const LeadResearchOutputSchema = z.object({
   aiSummary: z.string().max(4000).optional().catch(undefined),
   outreachAngle: z.string().max(1000).optional().catch(undefined),
+  // Legacy free-text signals; superseded by `evidence` but still parsed so older
+  // prompts/responses keep working.
   qualificationSignals: z.array(z.string().max(500)).max(20).optional().catch(undefined),
+  // Structured, provenance-labelled evidence behind the assessment.
+  evidence: EvidenceArrayField,
+  // Plain-language caveats a human should know before trusting the assessment
+  // (e.g. "team size is estimated, not confirmed").
+  riskFlags: z.array(z.string().max(300)).max(10).optional().catch(undefined),
+  // Suggested next step, and overall confidence in the assessment as a whole.
+  recommendedAction: z.enum(RECOMMENDED_ACTIONS).optional().catch(undefined),
+  confidence: z.enum(CONFIDENCE_LEVELS).optional().catch(undefined),
   icpScore: z.number().min(0).max(100).optional().catch(undefined),
   hiringSignals: z.boolean().optional().catch(undefined),
   digitalMaturity: z.enum(DIGITAL_MATURITY).optional().catch(undefined),

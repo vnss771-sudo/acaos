@@ -25,7 +25,8 @@
 // shared-enum-conformance style guard test that pins this list to the schema).
 export const TENANT_MODELS: ReadonlySet<string> = new Set([
   'AiPromptVersion', 'AuditEvent', 'Campaign', 'CampaignDailyStats', 'ContactEvent',
-  'DiscoveryRun', 'EvidenceSource', 'FollowupTask', 'Lead', 'Membership', 'Mission',
+  'DiscoveryRun', 'EvidenceSource', 'FollowupTask', 'Lead', 'LeadEvidenceSource',
+  'Membership', 'Mission',
   'OutreachDraft', 'OutreachIntent', 'OutreachSent', 'ProcessedEmail', 'Prospect',
   'ProspectOutcome', 'Recommendation', 'ScoringModel', 'ScoringOutcome', 'Signal',
   'Suppression', 'UnsubscribeEvent', 'UsageRecord', 'WorkspaceDraftPolicy',
