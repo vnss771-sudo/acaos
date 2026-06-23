@@ -32,7 +32,7 @@ import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { computeLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
+import { explainLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   generateRuleBasedRecommendation,
   toRawSignal,
@@ -99,7 +99,10 @@ const researchWorker = new Worker(
     }
 
     const weights = await getWorkspaceWeights(lead.workspaceId)
-    const computedScore = computeLeadScore(enrichedLead, weights)
+    // Deterministic score + its rationale (the "why 75"), so the breakdown is
+    // captured in the job result/log rather than thrown away.
+    const explanation = explainLeadScore(enrichedLead, weights)
+    const computedScore = explanation.score
     const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
       ? Math.round((parsed.icpScore + computedScore) / 2)
       : computedScore
@@ -117,8 +120,18 @@ const researchWorker = new Worker(
     })
 
     await job.updateProgress(100)
-    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore}`)
-    return { leadId, aiSummary: parsed.aiSummary, outreachAngle: parsed.outreachAngle, score: finalScore }
+    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore} why=${explanation.topReasons.join('; ') || 'n/a'}`)
+    return {
+      leadId,
+      aiSummary: parsed.aiSummary,
+      outreachAngle: parsed.outreachAngle,
+      score: finalScore,
+      scoreReasons: explanation.topReasons,
+      signals: explanation.signals,
+      evidence: parsed.evidence,
+      riskFlags: parsed.riskFlags,
+      recommendedAction: parsed.recommendedAction,
+    }
   },
   { connection, concurrency: 3 }
 )

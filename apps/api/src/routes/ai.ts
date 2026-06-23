@@ -6,6 +6,7 @@ import { aiRateLimit } from '../middleware/rateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
+import { explainLeadScore, getWorkspaceWeights } from '../lib/scoring.js'
 import { prisma } from '../lib/prisma.js'
 import { validate, workspaceIdField } from '../lib/validate.js'
 import { z } from 'zod'
@@ -85,7 +86,16 @@ aiRouter.post(
       icp
     })
 
-    res.json({ result: data })
+    // Deterministic, model-independent rationale for the ICP score — the "why",
+    // not just a number. Computed from the request inputs so it is auditable and
+    // does not depend on (or trust) the model's self-reported icpScore.
+    const weights = await getWorkspaceWeights(workspaceId)
+    const { score, tier, topReasons, signals } = explainLeadScore(
+      { businessName, category, website, notes },
+      weights,
+    )
+
+    res.json({ result: data, scoreRationale: { score, tier, topReasons, signals } })
   })
 )
 
