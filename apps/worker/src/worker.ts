@@ -7,6 +7,7 @@ import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputati
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
+import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
 import {
   parseAiJson,
   parseLeadResearchJson,
@@ -718,6 +719,7 @@ async function shutdown(signal: string, exitCode = 0) {
     discoverWorker.close(),
     retentionWorker.close(),
   ])
+  closeMailTransports() // release pooled SMTP connections
   await prisma.$disconnect()
   clearTimeout(forceExit)
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })
