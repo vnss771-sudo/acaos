@@ -9,7 +9,8 @@
 
 ## OpenAI
 - OPENAI_API_KEY
-- OPENAI_MODEL
+- OPENAI_MODEL — must be allow-listed (defaults to `gpt-4o-mini`); an unrecognized value falls back to the default rather than running up spend.
+- OPENAI_MODEL_ALLOWLIST — optional comma-separated extra models to permit for `OPENAI_MODEL` (e.g. when adopting a newer model).
 
 ## Stripe
 - STRIPE_SECRET_KEY
@@ -34,6 +35,7 @@
 
 ## Security / Step-up
 - STEP_UP_MAX_AGE_MIN — step-up re-auth freshness window (minutes) for sensitive mutations (billing, admin promotion, MFA disable). Default 15. Required: no.
+- TENANT_GUARD_MODE — `off` | `observe` | `enforce`. Default `off` (the cross-tenant query backstop is inert). Set `observe` in production to log any workspace-scoping miss with zero behavior change, then graduate to `enforce` once the observe window is clean. Strongly recommended `observe` at minimum for a multi-tenant deployment.
 
 ## Launch Controls & Feature Flags
 All read live from the environment — flipping any of these takes effect on the next request/job with **no restart or deploy**. See `packages/backend-core/src/lib/launchControls.ts`.
@@ -74,12 +76,13 @@ All read live from the environment — flipping any of these takes effect on the
 ### AI governance
 - REPLY_CLASSIFICATION_MIN_CONFIDENCE — minimum confidence (0–100) below which a `NOT_INTERESTED` reply is NOT acted on as an irreversible DEAD transition (downgraded to human review). Default 60. Set 0 to always act on the label.
 - SOFT_BOUNCE_SUPPRESS_THRESHOLD — number of repeated soft bounces before an address is suppressed (hard/unknown bounces suppress immediately). Default 3.
-- OPENAI_MAX_TOKENS_RESEARCH / OPENAI_MAX_TOKENS_OUTREACH / OPENAI_MAX_TOKENS_REPLY — per-task output-token ceilings. Defaults 1500 / 1200 / 700.
+- OPENAI_MAX_TOKENS_RESEARCH / OPENAI_MAX_TOKENS_OUTREACH / OPENAI_MAX_TOKENS_REPLY — per-task output-token ceilings. Defaults 1500 / 1200 / 700. A hard ceiling of 4000 is enforced so a fat-fingered override can't request a runaway completion.
 
 ## Observability
-- METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production.
+- METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production; when unset, `/metrics` is disabled and a startup warning is logged.
 - LOG_LEVEL — `debug` | `info` | `warn` | `error`. Default `info`.
-- SENTRY_DSN — error-reporting transport. Optional (no-op when unset).
+- SENTRY_DSN — error-reporting transport. Optional, but **set it in production**: `@sentry/node` is bundled, so a DSN turns on error capture (without it, `captureError` is a silent no-op).
+- STATS_RECONCILE_ENABLED — `true` to enable the periodic `CampaignDailyStats` ↔ `ContactEvent` reconciliation sweep that repairs projection drift. Default off; recommended `true` in production.
 - WORKER_HEALTH_PORT — port for the worker's `/live` `/ready` `/metrics` server. Default 9090 (or platform `$PORT`).
 
 ## Data Retention

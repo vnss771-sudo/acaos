@@ -50,6 +50,29 @@ test('encrypt/decrypt round-trips with the dev fallback key', () => {
   assert.equal(decryptSecret(blob), secret)
 })
 
+test('fails closed: a deployed NODE_ENV with no key throws (no silent zeroed key)', () => {
+  const prevEnv = process.env.NODE_ENV
+  const prevKey = process.env.EMAIL_ENCRYPTION_KEY
+  try {
+    delete process.env.EMAIL_ENCRYPTION_KEY
+    for (const deployed of ['staging', 'production', 'preprod']) {
+      process.env.NODE_ENV = deployed
+      assert.throws(() => encryptSecret('x'), /EMAIL_ENCRYPTION_KEY is required/)
+    }
+    // An unset NODE_ENV (suite/local default) or explicit development still permit
+    // the insecure dev fallback so local dev and the test suite keep booting.
+    delete process.env.NODE_ENV
+    assert.doesNotThrow(() => encryptSecret('x'))
+    process.env.NODE_ENV = 'development'
+    assert.doesNotThrow(() => encryptSecret('x'))
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prevEnv
+    if (prevKey === undefined) delete process.env.EMAIL_ENCRYPTION_KEY
+    else process.env.EMAIL_ENCRYPTION_KEY = prevKey
+  }
+})
+
 test('each encryption uses a fresh IV so ciphertexts differ', () => {
   const a = encryptSecret('same-input')
   const b = encryptSecret('same-input')

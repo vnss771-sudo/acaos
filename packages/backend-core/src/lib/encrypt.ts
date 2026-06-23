@@ -19,14 +19,21 @@ function parseHexKey(raw: string, label: string): Buffer {
 function getLegacyKey(): Buffer {
   const raw = process.env.EMAIL_ENCRYPTION_KEY || ''
   if (!raw) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('EMAIL_ENCRYPTION_KEY is required in production')
+    // Fail closed for any deployed environment. Production always required a key;
+    // staging (or any other EXPLICIT non-dev NODE_ENV) must too — a mis-set staging
+    // box would otherwise silently encrypt real SMTP creds / TOTP secrets under a
+    // known all-zero key, decryptable by anyone with DB read access. Only an unset
+    // NODE_ENV (local/test default) or an explicit development/test may fall back.
+    const env = (process.env.NODE_ENV || '').trim()
+    const allowsInsecureFallback = env === '' || env === 'development' || env === 'test'
+    if (!allowsInsecureFallback) {
+      throw new Error(`EMAIL_ENCRYPTION_KEY is required when NODE_ENV="${env}" (only an unset NODE_ENV or development/test may use the insecure zeroed dev key)`)
     }
     // Dev-only fallback: zeroed key so the app boots without configuration.
     // Credentials stored this way are NOT safe — always set EMAIL_ENCRYPTION_KEY.
-    // Warn once (outside tests) so a shared/staging env running without the key
-    // is never silent. Production already threw above.
-    if (!warnedZeroKey && process.env.NODE_ENV !== 'test') {
+    // Warn once (outside tests) so a shared env running without the key is never
+    // silent. Deployed environments already threw above.
+    if (!warnedZeroKey && env !== 'test') {
       warnedZeroKey = true
       console.warn('[encrypt] EMAIL_ENCRYPTION_KEY is not set — using an INSECURE zeroed dev key. Stored mail credentials are NOT safe; set EMAIL_ENCRYPTION_KEY before any shared, staging, or production use.')
     }

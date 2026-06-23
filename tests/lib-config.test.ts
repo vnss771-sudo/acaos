@@ -84,6 +84,30 @@ test('validateConfig passes in production when fully configured', () => {
   assert.doesNotThrow(() => validateConfig())
 })
 
+const PROD_BASE = {
+  NODE_ENV: 'production',
+  DATABASE_URL: 'postgresql://x',
+  JWT_SECRET: 'a-strong-production-secret-value',
+  EMAIL_ENCRYPTION_KEY: 'a-valid-encryption-key-for-testing',
+  REDIS_URL: 'redis://localhost:6379',
+  ALLOWED_ORIGINS: 'https://app.acme.com',
+}
+
+test('validateConfig fails when billing is enabled but a plan price is unmapped', () => {
+  setEnv({ ...PROD_BASE, STRIPE_SECRET_KEY: 'sk_live_x', STRIPE_PRICE_STARTER: undefined, STRIPE_PRICE_GROWTH: 'price_g' })
+  assert.throws(() => validateConfig(), /STRIPE_PRICE_STARTER is required/)
+})
+
+test('validateConfig passes when billing is enabled and both plan prices are mapped', () => {
+  setEnv({ ...PROD_BASE, STRIPE_SECRET_KEY: 'sk_live_x', STRIPE_PRICE_STARTER: 'price_s', STRIPE_PRICE_GROWTH: 'price_g' })
+  assert.doesNotThrow(() => validateConfig())
+})
+
+test('validateConfig ignores plan prices when billing is not enabled (no secret key)', () => {
+  setEnv({ ...PROD_BASE, STRIPE_SECRET_KEY: undefined, STRIPE_PRICE_STARTER: undefined, STRIPE_PRICE_GROWTH: undefined })
+  assert.doesNotThrow(() => validateConfig())
+})
+
 // --- security headers ---
 
 function runHeaders(production: boolean) {

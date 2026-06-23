@@ -73,6 +73,17 @@ export function validateConfig(): void {
     if (!process.env.METRICS_TOKEN?.trim()) {
       console.warn('[config] METRICS_TOKEN not set — /metrics is disabled in production (set it to enable authenticated scraping)')
     }
+    // Billing is active (secret key present) but a plan price is unset → checkout
+    // 503s and the subscription webhook can't map the price back to a tier,
+    // silently leaving a paying customer on the wrong plan. Fail loud at boot
+    // rather than discovering it when a customer tries to pay.
+    if (process.env.STRIPE_SECRET_KEY?.trim()) {
+      for (const key of ['STRIPE_PRICE_STARTER', 'STRIPE_PRICE_GROWTH']) {
+        if (!process.env[key]?.trim()) {
+          problems.push(`${key} is required when STRIPE_SECRET_KEY is set (billing is enabled but this plan's price is unmapped — checkout and tier-grant would silently fail)`)
+        }
+      }
+    }
     // The refresh-token cookie must never travel over non-TLS in production. A
     // forced COOKIE_SECURE=false (or SameSite=None without Secure, which browsers
     // reject anyway) is a misconfiguration we fail fast on rather than silently
