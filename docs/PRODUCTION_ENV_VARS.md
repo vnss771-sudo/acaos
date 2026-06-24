@@ -78,6 +78,7 @@ All read live from the environment — flipping any of these takes effect on the
 - SOFT_BOUNCE_SUPPRESS_THRESHOLD — number of repeated soft bounces before an address is suppressed (hard/unknown bounces suppress immediately). Default 3.
 - OPENAI_MAX_TOKENS_RESEARCH / OPENAI_MAX_TOKENS_OUTREACH / OPENAI_MAX_TOKENS_REPLY — per-task output-token ceilings. Defaults 1500 / 1200 / 700. A hard ceiling of 4000 is enforced so a fat-fingered override can't request a runaway completion.
 - WORKSPACE_AI_RATE_MAX — per-workspace AI requests allowed per hour at the HTTP edge (complements the per-IP `aiRateLimit` and the monthly plan meter; stops one workspace bursting the shared OpenAI key across rotating IPs). Default 120; set 0 to disable.
+- AI_COST_CENTS_RESEARCH / AI_COST_CENTS_OUTREACH / AI_COST_CENTS_REPLY — estimated USD cents per AI call, used only for the cost-per-lead / AI-spend reporting in billing usage (never gates anything). Defaults 0.1 / 0.08 / 0.05 (gpt-4o-mini token profiles); tune for other model tiers.
 
 ## Observability
 - METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production; when unset, `/metrics` is disabled and a startup warning is logged.

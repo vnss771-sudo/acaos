@@ -4,6 +4,7 @@ import type { BillingPlan } from '@acaos/shared'
 import { prisma } from './prisma.js'
 import { ApiError } from './errors.js'
 import { estimateDiscoveryCost, type DiscoveryCostBreakdown } from './discoveryCost.js'
+import { estimateAiCost, type AiCostBreakdown } from './aiCost.js'
 
 // Either the singleton client or an interactive-transaction client.
 type Db = PrismaClient | Prisma.TransactionClient
@@ -217,6 +218,7 @@ export async function getMonthlyUsage(workspaceId: string): Promise<{
   limit: number
   plan: Plan
   discovery: { used: number; limit: number; estimatedCostCents: number; byProvider: DiscoveryCostBreakdown['byProvider'] }
+  ai: { estimatedCostCents: number; byAction: AiCostBreakdown['byAction'] }
   leads: { used: number; limit: number }
 }> {
   const plan = await getWorkspacePlan(workspaceId)
@@ -242,6 +244,11 @@ export async function getMonthlyUsage(workspaceId: string): Promise<{
   const limit = PLAN_LIMITS[plan].aiCallsPerMonth
   const norm = (n: number) => (isFinite(n) ? n : -1) // -1 = unlimited
 
+  // Estimated AI spend this month, weighted by per-action token cost (observability
+  // only — never gates anything). Combined with discovery cost it gives a per-
+  // workspace cost-per-lead signal the platform previously had no visibility into.
+  const aiCost = estimateAiCost(totals)
+
   return {
     month, totals, total, limit: norm(limit), plan,
     discovery: {
@@ -250,6 +257,7 @@ export async function getMonthlyUsage(workspaceId: string): Promise<{
       estimatedCostCents: discoveryCost.totalCents,
       byProvider: discoveryCost.byProvider,
     },
+    ai: { estimatedCostCents: aiCost.totalCents, byAction: aiCost.byAction },
     leads: { used: leadsUsed, limit: norm(PLAN_LIMITS[plan].maxLeads) },
   }
 }
