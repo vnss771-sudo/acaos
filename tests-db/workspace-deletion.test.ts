@@ -92,7 +92,7 @@ test('a wrong confirmName is rejected (typed-confirmation guard)', async () => {
 })
 
 test('a non-owner (admin/member) cannot erase the workspace', async () => {
-  const { user: owner, workspace } = await seedUserWithWorkspace('owner3@x.test')
+  const { workspace } = await seedUserWithWorkspace('owner3@x.test')
   const { user: admin } = await seedUserWithWorkspace('admin3@x.test')
   // Add admin as an ADMIN member of the owner's workspace.
   await prisma.membership.create({ data: { userId: admin.id, workspaceId: workspace.id, role: 'admin' } })

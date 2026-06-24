@@ -1,7 +1,11 @@
-// Tests for the Sentry bootstrap. @sentry/node IS now a dependency (so production
-// actually captures errors), loaded via a dynamic import that keeps it optional at
-// build time. The "DSN set" path therefore initializes and registers a reporter;
-// the "no DSN" / blank-DSN paths remain clean no-ops (the dev/CI default).
+// Tests for the OPTIONAL Sentry bootstrap. @sentry/node is intentionally NOT a
+// vendored dependency (it drags in a heavy, recurringly-vuln OpenTelemetry tree),
+// and it isn't needed for errors to be captured — every captureError call site
+// already logs the error via the structured logger first. An operator who wants
+// Sentry *aggregation* installs @sentry/node in their deployment and sets
+// SENTRY_DSN; the dynamic import then wires it up. With the SDK absent (the repo's
+// default), the "DSN set" path degrades gracefully (warn + stay a no-op) and the
+// "no DSN" path is the clean default.
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,12 +26,12 @@ test('no SENTRY_DSN: init is a no-op, no reporter registered', async () => {
   assert.equal(hasErrorReporter(), false)
 })
 
-test('SENTRY_DSN set with SDK installed: initializes and registers a reporter', async () => {
+test('SENTRY_DSN set but SDK absent: degrades gracefully (no throw, no reporter)', async () => {
   process.env.SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0'
-  // @sentry/node is installed and the DSN is well-formed, so init succeeds and the
-  // captureError seam gets a live reporter (no network call is made here).
+  // @sentry/node is not vendored, so the dynamic import rejects and is caught —
+  // errors still reach the structured logs at each captureError call site.
   await assert.doesNotReject(() => initErrorReporting())
-  assert.equal(hasErrorReporter(), true)
+  assert.equal(hasErrorReporter(), false)
 })
 
 test('blank SENTRY_DSN is treated as unset', async () => {
