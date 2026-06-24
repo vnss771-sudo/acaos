@@ -13,7 +13,7 @@ import {
   MAX_SIGNALS_FOR_SCORING,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
-import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
+import { calibrate, diffCalibration } from '@acaos/backend-core/lib/learningLoop.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateOutreach, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -201,10 +201,26 @@ export async function calibrateScoring(
     return result.stats
   }
 
+  // Self-auditing trace: read the prior calibration so we can record what
+  // changed and whether the win rate improved — not just the new numbers.
+  const existing = await prisma.scoringModel.findUnique({
+    where: { workspaceId },
+    select: { signalWeights: true, performanceMetrics: true },
+  })
+  const priorWinRate = (existing?.performanceMetrics as { winRate?: number } | null)?.winRate ?? null
+  const priorWeights = (existing?.signalWeights as Record<string, number> | null) ?? null
+  const diff = diffCalibration({ signalWeights: priorWeights, winRate: priorWinRate }, result)
+
   const performanceMetrics = {
     totalOutcomes: result.stats.totalOutcomes,
     winRate: result.stats.baselineWinRate,
     calibratedAt: new Date().toISOString(),
+    // "Why" trace — the part the loop was missing.
+    previousWinRate: diff.previousWinRate,
+    winRateDelta: diff.winRateDelta,
+    improved: diff.improved,
+    changedCount: diff.changedCount,
+    weightChanges: diff.weightChanges,
   }
 
   await prisma.scoringModel.upsert({
