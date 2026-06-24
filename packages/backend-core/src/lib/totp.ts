@@ -78,20 +78,33 @@ export function generateTotp(secret: string, atMs: number = Date.now()): string 
 }
 
 /**
- * Verify a user-supplied code against the secret, tolerating ±`window` steps of
- * clock skew. Constant-time comparison per candidate so a near-miss can't be
- * distinguished by timing. Non-numeric / wrong-length input is rejected up front.
+ * Verify a code and return the TOTP step (time counter) it matched, or null if no
+ * candidate within ±`window` matches. Returning the step lets the caller enforce
+ * single-use (replay) protection by recording the highest step consumed per user.
+ * Constant-time comparison per candidate; non-numeric/wrong-length input rejected.
  */
-export function verifyTotp(secret: string, code: string, atMs: number = Date.now(), window = 1): boolean {
+export function verifyTotpStep(secret: string, code: string, atMs: number = Date.now(), window = 1): number | null {
   const cleaned = (code || '').replace(/\s+/g, '')
-  if (!new RegExp(`^\\d{${DIGITS}}$`).test(cleaned)) return false
+  if (!new RegExp(`^\\d{${DIGITS}}$`).test(cleaned)) return null
   const counter = Math.floor(atMs / 1000 / PERIOD_SECONDS)
   const expected = Buffer.from(cleaned)
   for (let i = -window; i <= window; i++) {
     const candidate = Buffer.from(hotp(secret, counter + i))
-    if (candidate.length === expected.length && timingSafeEqual(candidate, expected)) return true
+    if (candidate.length === expected.length && timingSafeEqual(candidate, expected)) return counter + i
   }
-  return false
+  return null
+}
+
+/**
+ * Verify a user-supplied code against the secret, tolerating ±`window` steps of
+ * clock skew. Constant-time comparison per candidate so a near-miss can't be
+ * distinguished by timing. Non-numeric / wrong-length input is rejected up front.
+ *
+ * NOTE: this alone does NOT prevent replay within the validity window — a caller
+ * enforcing single-use should use verifyTotpStep and record the consumed step.
+ */
+export function verifyTotp(secret: string, code: string, atMs: number = Date.now(), window = 1): boolean {
+  return verifyTotpStep(secret, code, atMs, window) !== null
 }
 
 /**

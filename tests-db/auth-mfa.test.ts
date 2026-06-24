@@ -85,6 +85,24 @@ test('login with MFA enabled returns a challenge, not an access token', async ()
   assert.equal((await get('/api/auth/me', verified.body.token)).status, 200)
 })
 
+test('a TOTP code cannot be replayed at login (single-use / anti-replay)', async () => {
+  await signupUser('mfa-replay@x.test')
+  const tokenForSetup = (await post('/api/auth/login', { email: 'mfa-replay@x.test', password: PASS })).body.token
+  const secret = await enrollMfa(tokenForSetup)
+  const code = generateTotp(secret)
+
+  // First login with the code succeeds and consumes its time-step.
+  const login1 = await post('/api/auth/login', { email: 'mfa-replay@x.test', password: PASS })
+  const v1 = await post('/api/auth/verify-totp', { mfaToken: login1.body.mfaToken, code })
+  assert.equal(v1.status, 200, JSON.stringify(v1.body))
+
+  // Replaying the SAME code on a fresh challenge (still within its validity window)
+  // is rejected — the step was already consumed.
+  const login2 = await post('/api/auth/login', { email: 'mfa-replay@x.test', password: PASS })
+  const v2 = await post('/api/auth/verify-totp', { mfaToken: login2.body.mfaToken, code })
+  assert.equal(v2.status, 401, 'a replayed TOTP code must be rejected')
+})
+
 test('activate rejects a wrong code and leaves MFA disabled', async () => {
   const token = await signupUser('mfa-bad@x.test')
   await post('/api/auth/mfa/setup', {}, token)
