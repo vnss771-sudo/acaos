@@ -12,7 +12,7 @@ import { isProduction } from '../lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '../lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
-import type { Assert, CreateCampaignRequest, Extends, LeadStage } from '@acaos/shared'
+import type { Assert, CreateCampaignRequest, Extends, LeadStage, SendCampaignRequest } from '@acaos/shared'
 
 export const campaignsRouter = Router()
 campaignsRouter.use(requireAuth)
@@ -56,13 +56,16 @@ const outreachQuerySchema = z.object({
   limit: z.unknown().optional().transform(v => Math.min(100, Math.max(1, Number(v) || 50))),
 })
 
-// POST /:id/send body. Both optional: leadIds restricts the send to specific
-// leads (non-string elements are still filtered in the handler), approved is the
-// approval-mode opt-in flag.
+// POST /:id/send body. leadIds restricts the send to specific leads; approved is
+// the approval-mode opt-in flag. Typed to match the shared contract exactly —
+// approved defaults to false (the SAFE gate value: omitted → not approved → no
+// send), and the _SendCampaignConforms guard fails compilation if this schema ever
+// drifts from SendCampaignRequest.
 const sendCampaignSchema = z.object({
-  leadIds: z.array(z.unknown()).optional(),
-  approved: z.unknown().optional(),
+  leadIds: z.array(z.string()).optional(),
+  approved: z.boolean().optional().default(false),
 })
+type _SendCampaignConforms = Assert<Extends<z.infer<typeof sendCampaignSchema>, SendCampaignRequest>>
 
 // List campaigns for a workspace
 campaignsRouter.get(
