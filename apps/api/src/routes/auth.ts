@@ -10,7 +10,7 @@ import {
   verifyMfaToken
 } from '../lib/jwt.js'
 import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
-import { recordAudit } from '../lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '../lib/audit.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { isLocked, lockRetryAfterSeconds, nextLockoutAfterFailure, CLEARED_LOCKOUT } from '@acaos/backend-core/lib/accountLockout.js'
@@ -210,7 +210,7 @@ authRouter.post(
       })
       // Audit the moment a lock is first applied, so repeated-failure abuse is visible.
       if (next.lockedUntil) {
-        void recordAudit({
+        await recordCriticalAudit({
           actorUserId: user.id, type: 'mfa.lockout', entityType: 'User', entityId: user.id,
           metadata: { failedAttempts: next.failedAttempts, lockedUntil: next.lockedUntil.toISOString() },
         })
@@ -267,7 +267,7 @@ authRouter.post(
           where: { userId: replayed.userId, revokedAt: null },
           data: { revokedAt: new Date() },
         })
-        void recordAudit({
+        await recordCriticalAudit({
           actorUserId: replayed.userId,
           type: 'refresh_token.reuse_detected',
           entityType: 'user',
@@ -482,7 +482,7 @@ authRouter.patch(
         where: { userId: user.id, revokedAt: null },
         data: { revokedAt: new Date() }
       })
-      void recordAudit({ actorUserId: user.id, type: 'password.change', entityType: 'User', entityId: user.id })
+      await recordCriticalAudit({ actorUserId: user.id, type: 'password.change', entityType: 'User', entityId: user.id })
     }
 
     res.json({ user: updated })
@@ -560,7 +560,7 @@ authRouter.post(
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() }
     })
-    void recordAudit({ actorUserId: user.id, type: 'mfa.disable', entityType: 'User', entityId: user.id })
+    await recordCriticalAudit({ actorUserId: user.id, type: 'mfa.disable', entityType: 'User', entityId: user.id })
     res.json({ ok: true })
   })
 )

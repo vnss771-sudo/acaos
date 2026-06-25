@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { ensureWorkspaceSlug, normalizeWorkspaceRole, assertMinimumWorkspaceRole, invalidateWorkspaceMembership } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { normalizeOptionalString } from '../../lib/validation.js'
-import { recordAudit } from '../../lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '../../lib/audit.js'
 import { validate, nonEmptyString } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
 import { z } from 'zod'
@@ -208,7 +208,8 @@ export function registerCoreRoutes(workspaceRouter: Router) {
       for (const uid of memberIds) invalidateWorkspaceMembership(uid, workspaceId)
 
       // Global audit (workspaceId: null so the record survives the erasure itself).
-      void recordAudit({
+      // Critical: an erasure with no audit trail is a SOC2 gap — await + alert on failure.
+      await recordCriticalAudit({
         workspaceId: null, actorUserId: user.id, type: 'workspace.deleted',
         entityType: 'workspace', entityId: workspaceId, metadata: { name: ws.name, memberCount: memberIds.length },
       })
