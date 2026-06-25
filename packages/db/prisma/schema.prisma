@@ -84,6 +84,11 @@ model User {
   // a verify only succeeds if its matched step is strictly greater than this, so a
   // captured code can't be replayed within its ±1-step validity window.
   totpLastUsedStep    Int?
+  // Progressive MFA lockout (see accountLockout.ts): consecutive failed TOTP
+  // verifications, and — once over the threshold — the instant the account is
+  // locked until. Both reset on the first successful verification.
+  failedMfaAttempts   Int                     @default(0)
+  mfaLockedUntil      DateTime?
   // Step-up auth: timestamp of the most recent password (or MFA) proof. Sensitive
   // mutations (billing, admin, MFA disable) require this to be recent.
   lastReauthAt        DateTime?

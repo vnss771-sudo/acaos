@@ -13,6 +13,7 @@ import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middlewa
 import { recordAudit } from '../lib/audit.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
+import { isLocked, lockRetryAfterSeconds, nextLockoutAfterFailure, CLEARED_LOCKOUT } from '@acaos/backend-core/lib/accountLockout.js'
 import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-core/lib/disposableEmail.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
@@ -191,8 +192,38 @@ authRouter.post(
     const user = await prisma.user.findUnique({ where: { id: userId } })
     if (!user?.totpEnabled || !user.totpSecret) throw new ApiError(401, 'MFA is not enabled')
 
+    // Progressive lockout: a patient attacker can keep probing a 6-digit code within
+    // the IP rate-limit window, so we also lock the account itself after repeated
+    // consecutive failures (escalating backoff, reset on success).
+    const now = new Date()
+    if (isLocked({ lockedUntil: user.mfaLockedUntil }, now)) {
+      const retryAfter = lockRetryAfterSeconds({ lockedUntil: user.mfaLockedUntil }, now)
+      res.setHeader('Retry-After', String(retryAfter))
+      throw new ApiError(429, 'Too many failed codes — this account is temporarily locked. Try again later.')
+    }
+
     if (!(await consumeTotpCode(user.id, decryptSecret(user.totpSecret), code))) {
+      const next = nextLockoutAfterFailure(user.failedMfaAttempts, now)
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { failedMfaAttempts: next.failedAttempts, mfaLockedUntil: next.lockedUntil },
+      })
+      // Audit the moment a lock is first applied, so repeated-failure abuse is visible.
+      if (next.lockedUntil) {
+        void recordAudit({
+          actorUserId: user.id, type: 'mfa.lockout', entityType: 'User', entityId: user.id,
+          metadata: { failedAttempts: next.failedAttempts, lockedUntil: next.lockedUntil.toISOString() },
+        })
+      }
       throw new ApiError(401, 'Invalid authentication code')
+    }
+
+    // Success — clear any accrued failure counter / lock.
+    if (user.failedMfaAttempts > 0 || user.mfaLockedUntil) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { failedMfaAttempts: CLEARED_LOCKOUT.failedAttempts, mfaLockedUntil: CLEARED_LOCKOUT.lockedUntil },
+      })
     }
 
     const { token, refreshToken } = issueTokens(user.id)

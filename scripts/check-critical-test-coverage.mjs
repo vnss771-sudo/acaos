@@ -35,6 +35,7 @@ const CRITICAL = [
   'apps/api/src/lib/sseTickets.ts',
   'packages/backend-core/src/lib/jwt.ts',
   'packages/backend-core/src/lib/totp.ts',
+  'packages/backend-core/src/lib/accountLockout.ts',
   'packages/backend-core/src/lib/encrypt.ts',
   'packages/backend-core/src/lib/ssrf.ts',
   // Scoring / signal trust.

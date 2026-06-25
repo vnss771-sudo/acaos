@@ -103,6 +103,47 @@ test('a TOTP code cannot be replayed at login (single-use / anti-replay)', async
   assert.equal(v2.status, 401, 'a replayed TOTP code must be rejected')
 })
 
+test('progressive lockout: repeated wrong codes lock the account; success clears it', async () => {
+  // Isolate from the IP rate limiter so we exercise the per-account lockout itself.
+  const savedRl = process.env.RATE_LIMIT_DISABLED
+  process.env.RATE_LIMIT_DISABLED = 'true'
+  try {
+    const email = 'mfa-lock@x.test'
+    await signupUser(email)
+    const tokenForSetup = (await post('/api/auth/login', { email, password: PASS })).body.token
+    const secret = await enrollMfa(tokenForSetup)
+    const userId = (await prisma.user.findFirstOrThrow({ where: { email } })).id
+
+    // Seed 4 prior failures so the next wrong code is the 5th → first lock kicks in.
+    await prisma.user.update({ where: { id: userId }, data: { failedMfaAttempts: 4 } })
+
+    const login = await post('/api/auth/login', { email, password: PASS })
+    const wrong = await post('/api/auth/verify-totp', { mfaToken: login.body.mfaToken, code: '000000' })
+    assert.equal(wrong.status, 401)
+    let row = await prisma.user.findUniqueOrThrow({ where: { id: userId } })
+    assert.equal(row.failedMfaAttempts, 5)
+    assert.ok(row.mfaLockedUntil && row.mfaLockedUntil > new Date(), 'account is now locked')
+
+    // While locked, even a CORRECT code is rejected (429) before it is consumed.
+    const login2 = await post('/api/auth/login', { email, password: PASS })
+    const locked = await post('/api/auth/verify-totp', { mfaToken: login2.body.mfaToken, code: generateTotp(secret) })
+    assert.equal(locked.status, 429)
+    assert.match(String(locked.body.error), /temporarily locked/i)
+
+    // Simulate the lock window elapsing; the correct code now succeeds and resets state.
+    await prisma.user.update({ where: { id: userId }, data: { mfaLockedUntil: new Date(Date.now() - 1000) } })
+    const login3 = await post('/api/auth/login', { email, password: PASS })
+    const ok = await post('/api/auth/verify-totp', { mfaToken: login3.body.mfaToken, code: generateTotp(secret) })
+    assert.equal(ok.status, 200, JSON.stringify(ok.body))
+    row = await prisma.user.findUniqueOrThrow({ where: { id: userId } })
+    assert.equal(row.failedMfaAttempts, 0, 'counter reset on success')
+    assert.equal(row.mfaLockedUntil, null, 'lock cleared on success')
+  } finally {
+    if (savedRl === undefined) delete process.env.RATE_LIMIT_DISABLED
+    else process.env.RATE_LIMIT_DISABLED = savedRl
+  }
+})
+
 test('activate rejects a wrong code and leaves MFA disabled', async () => {
   const token = await signupUser('mfa-bad@x.test')
   await post('/api/auth/mfa/setup', {}, token)
