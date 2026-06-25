@@ -127,13 +127,16 @@ test('operational chaos: paused/complete mission blocks send before enqueue', ()
   assert.ok(missionIdx < enqueueIdx && pausedIdx < enqueueIdx && completeIdx < enqueueIdx, 'mission gate must run before enqueue')
 })
 
-test('operational chaos: daily send cap counts delivered SENT rows only', () => {
+test('operational chaos: daily send cap counts SENT + in-flight SENDING, mirroring the worker', () => {
+  // The API forecast must reserve against the same rows the worker's
+  // reserveDailySendSlot does — SENT *and* in-flight SENDING — or it can admit a
+  // batch the worker then rejects as over-cap.
   const route = campaignsRoute.slice(campaignsRoute.indexOf("'/:id/send'"))
-  const dailyIdx = route.indexOf('dailySendLimit')
-  const statusIdx = route.indexOf("status: 'SENT'")
+  const dailyIdx = route.indexOf('effectiveDailySendLimit')
+  const statusIdx = route.indexOf("status: { in: ['SENT', 'SENDING'] }")
   const enqueueIdx = route.indexOf('enqueueSendCampaign')
-  assert.ok(dailyIdx !== -1 && statusIdx !== -1 && enqueueIdx !== -1, 'daily cap sent-only guard missing')
-  assert.ok(statusIdx < enqueueIdx, 'daily cap must filter status SENT before enqueue')
+  assert.ok(dailyIdx !== -1 && statusIdx !== -1 && enqueueIdx !== -1, 'daily cap SENT+SENDING guard missing')
+  assert.ok(statusIdx < enqueueIdx, 'daily cap must filter status before enqueue')
 })
 
 test('operational chaos: worker re-checks mission stop before SMTP dispatch', () => {
