@@ -11,6 +11,7 @@ import {
 } from '../lib/jwt.js'
 import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { recordAudit, recordCriticalAudit } from '../lib/audit.js'
+import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { isLocked, lockRetryAfterSeconds, nextLockoutAfterFailure, CLEARED_LOCKOUT } from '@acaos/backend-core/lib/accountLockout.js'
@@ -126,6 +127,7 @@ authRouter.post(
     // Refresh token goes in an HttpOnly cookie, never the response body, so it
     // cannot be read by JavaScript. The access token stays in the body (memory).
     setRefreshCookie(res, refreshToken)
+    void trackEvent({ name: 'signup', userId: result.user.id, workspaceId: result.workspace?.id })
     res.status(201).json({ token, user: result.user, workspace: result.workspace })
   })
 )

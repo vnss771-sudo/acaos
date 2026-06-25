@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
+import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import type { Assert, Extends, UpdateIcpRequest } from '@acaos/shared'
 
 // Compile-time contract for PUT /:id/icp, pinned to the shared type so the
@@ -117,6 +118,7 @@ export function registerIcpRoutes(workspaceRouter: Router) {
         update: data,
       })
 
+      void trackEvent({ name: 'icp.configured', workspaceId, userId: user.id })
       res.json({ icp })
     })
   )
