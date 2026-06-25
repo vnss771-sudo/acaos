@@ -323,6 +323,21 @@ export interface UpdateWorkspaceRequest {
 }
 /** Body for DELETE /api/workspaces/:id — confirmName must echo the workspace name. */
 export interface DeleteWorkspaceRequest { confirmName: string }
+/** Body for PATCH /api/workspaces/:id/compliance (compliance posture attestation). */
+export interface ComplianceUpdateRequest {
+  lawfulBasis?: string | null
+  targetsCanada?: boolean
+  acceptTerms?: boolean
+  acknowledgeSubprocessors?: boolean
+  acknowledgeLia?: boolean
+}
+/** Body for POST /api/workspaces/:id/consent (append a consent/basis record). */
+export interface ConsentRecordRequest {
+  email: string
+  basis: string
+  source: string
+  note?: string
+}
 export interface WorkspaceMemberInviteRequest { email: string; role: string }
 export interface EmailConfigRequest {
   smtpHost?: string | null
@@ -397,6 +412,9 @@ export interface RouteContracts {
   // Workspaces
   'PATCH /api/workspaces/:id': { params: { id: string }; body: UpdateWorkspaceRequest; response: unknown }
   'DELETE /api/workspaces/:id': { params: { id: string }; body: DeleteWorkspaceRequest; response: { deleted: boolean; workspaceId: string } }
+  'GET /api/workspaces/:id/compliance': { params: { id: string }; response: unknown }
+  'PATCH /api/workspaces/:id/compliance': { params: { id: string }; body: ComplianceUpdateRequest; response: unknown }
+  'POST /api/workspaces/:id/consent': { params: { id: string }; body: ConsentRecordRequest; response: { id: string; recordedAt: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }

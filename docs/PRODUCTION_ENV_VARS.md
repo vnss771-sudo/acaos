@@ -52,6 +52,9 @@ All read live from the environment — flipping any of these takes effect on the
 
 ### Automatic follow-ups (opt-IN — default OFF)
 - FOLLOWUPS_ENABLED — master switch for the automatic multi-step follow-up sender. Default `false`. On top of this, each campaign must set `autoFollowupsEnabled`. Both must be true before any follow-up is dispatched.
+
+### Compliance gate (opt-IN — default OFF)
+- COMPLIANCE_GATE_ENABLED — when `true`, getSendReadiness additionally requires a recorded GDPR lawful basis + accepted outreach terms (and, for Canada-targeting workspaces, a CASL consent basis) before a workspace can launch outreach. Default `false` (ships dormant) — turn on only after the legal copy (sub-processor list, T&Cs, LIA prompts) is signed off. The compliance posture is recorded via Settings → Compliance regardless of this flag.
 - FOLLOWUP_SCAN_INTERVAL_MS — how often the worker scans for due follow-up tasks. Default 60000 (1 min).
 
 ### Sender-reputation circuit breaker
