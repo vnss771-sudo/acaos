@@ -31,6 +31,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   'OutreachDraft', 'OutreachIntent', 'OutreachSent', 'ProcessedEmail', 'Prospect',
   'ProspectOutcome', 'Recommendation', 'ScoringModel', 'ScoringOutcome', 'Signal',
   'Suppression', 'UnsubscribeEvent', 'UsageRecord', 'WorkspaceDraftPolicy',
+  'WebhookEndpoint',
   'WorkspaceEmailConfig', 'WorkspaceICP', 'WorkspaceInvite',
 ])
 

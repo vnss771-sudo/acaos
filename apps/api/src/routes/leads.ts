@@ -8,6 +8,7 @@ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/works
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { computeLeadScore, getWorkspaceWeights } from '../lib/scoring.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
+import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
 import { escCsv } from '../lib/csv.js'
 import { recordAudit } from '../lib/audit.js'
@@ -368,6 +369,10 @@ leadsRouter.patch(
 
     const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
     invalidateWorkspaceStats(lead.workspaceId) // stage/score/campaign edits move funnel & top leads
+    // A new transition into BOOKED is a meeting — notify subscribed webhooks. Best-effort.
+    if (updates.stage === 'BOOKED' && lead.stage !== 'BOOKED') {
+      void emitWebhookEvent(lead.workspaceId, 'meeting.booked', { leadId, campaignId: updated.campaignId })
+    }
     void recordAudit({
       workspaceId: lead.workspaceId, actorUserId: user.id, type: 'lead.updated',
       entityType: 'lead', entityId: leadId, metadata: { fields: Object.keys(updates) },

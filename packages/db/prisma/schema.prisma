@@ -178,6 +178,29 @@ model Workspace {
   evidenceSources      EvidenceSource[]
   aiPromptVersions     AiPromptVersion[]
   draftPolicy          WorkspaceDraftPolicy?
+  webhookEndpoints     WebhookEndpoint[]
+}
+
+// Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
+// (reply.received, campaign.sent, …) so customers can wire ACAOS into their own
+// systems — the ecosystem/embeddability surface, and the foundation CRM sync builds
+// on. The secret signs every delivery (HMAC-SHA256); failureCount auto-disables a
+// chronically-failing endpoint so a dead URL can't be retried forever.
+model WebhookEndpoint {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  url            String
+  secret         String    // HMAC signing secret (shown to the operator once at creation)
+  eventTypes     String[]  // subscribed event-type keys
+  enabled        Boolean   @default(true)
+  failureCount   Int       @default(0) // consecutive delivery failures
+  lastDeliveryAt DateTime?
+  lastStatus     Int?      // last delivery HTTP status
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 model Membership {

@@ -22,6 +22,7 @@ import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type 
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
+import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
@@ -1224,6 +1225,8 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
 
   // Activation-funnel: a genuine (non-auto) reply is "first value". Best-effort.
   void trackEvent({ name: 'reply.received', workspaceId: lead.workspaceId, properties: { leadId, classification: parsed.classification } })
+  // Notify any customer webhook endpoints subscribed to reply.received. Best-effort.
+  void emitWebhookEvent(lead.workspaceId, 'reply.received', { leadId, classification: parsed.classification })
 
   // Confidence-gate the one IRREVERSIBLE consequence (NOT_INTERESTED → DEAD): a
   // low-confidence negative is downgraded to NEEDS_MORE_INFO so the lead is kept
