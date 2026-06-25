@@ -5,7 +5,7 @@
 // dependency-review gate). With no DSN this is a clean no-op.
 import { setErrorReporter } from './observability.js'
 import { logger } from './logger.js'
-import { parseSentryDsn, sendToSentry } from './sentryTransport.js'
+import { parseSentryDsn, sendToSentry, createReportGate, errorSignature } from './sentryTransport.js'
 
 let initialized = false
 
@@ -25,7 +25,15 @@ export async function initErrorReporting(): Promise<void> {
     release: process.env.npm_package_version,
     serverName: process.env.HOSTNAME,
   }
+  // Rate-limit + dedup outbound reports so an error storm can't become a fetch storm
+  // during an incident. Tunable via SENTRY_RATE_PER_MIN / SENTRY_BURST / SENTRY_DEDUP_MS.
+  const gate = createReportGate({
+    ratePerMin: Number(process.env.SENTRY_RATE_PER_MIN) || undefined,
+    burst: Number(process.env.SENTRY_BURST) || undefined,
+    dedupMs: Number(process.env.SENTRY_DEDUP_MS) || undefined,
+  })
   setErrorReporter((err: unknown, context?: Record<string, unknown>) => {
+    if (!gate.allow(errorSignature(err))) return // suppressed: duplicate or over rate
     void sendToSentry(target, err, context, opts)
   })
   initialized = true

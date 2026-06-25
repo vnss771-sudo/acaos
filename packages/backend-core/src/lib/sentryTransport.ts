@@ -59,6 +59,49 @@ export function buildSentryEvent(err: unknown, context: Record<string, unknown> 
   }
 }
 
+// A stable signature for an error, used to dedup a storm of identical errors.
+export function errorSignature(err: unknown): string {
+  if (err instanceof Error) return `${err.name || 'Error'}:${err.message || ''}`
+  return typeof err === 'string' ? err : 'non-error'
+}
+
+export type ReportGate = { allow(signature: string, now?: number): boolean }
+
+// Token-bucket + short-window dedup gate for outbound error reports. Without it, an
+// error storm (a tight failing loop, a provider outage hammering a code path) turns
+// into an equal storm of outbound Sentry POSTs — adding load during the very incident
+// it's reporting. `burst` POSTs are allowed immediately, then refilled at
+// `ratePerMin`; identical signatures within `dedupMs` collapse to one. Pure aside
+// from the injectable clock, so it is fully unit-testable.
+export function createReportGate(
+  opts: { ratePerMin?: number; burst?: number; dedupMs?: number; now?: () => number } = {},
+): ReportGate {
+  const ratePerMin = opts.ratePerMin ?? 30
+  const burst = opts.burst ?? 10
+  const dedupMs = opts.dedupMs ?? 5_000
+  const now = opts.now ?? Date.now
+  let tokens = burst
+  let last = now()
+  const recent = new Map<string, number>() // signature -> last-allowed ms
+
+  return {
+    allow(signature: string, t: number = now()): boolean {
+      // Dedup: an identical error within the window is suppressed outright.
+      const seen = recent.get(signature)
+      if (seen !== undefined && t - seen < dedupMs) return false
+      // Refill the bucket by elapsed time, capped at burst.
+      tokens = Math.min(burst, tokens + ((t - last) / 60_000) * ratePerMin)
+      last = t
+      if (tokens < 1) return false
+      tokens -= 1
+      recent.set(signature, t)
+      // Bound the dedup map so a high-cardinality error stream can't grow it forever.
+      if (recent.size > 512) for (const [k, v] of recent) if (t - v >= dedupMs) recent.delete(k)
+      return true
+    },
+  }
+}
+
 // Fire-and-forget POST to Sentry. Bounded timeout; NEVER throws — telemetry must
 // not break the action it is reporting on.
 export async function sendToSentry(target: SentryTarget, err: unknown, context?: Record<string, unknown>, opts: SentryEventOpts = {}): Promise<void> {
