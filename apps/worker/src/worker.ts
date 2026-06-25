@@ -6,6 +6,7 @@ import { incJob, observeJobDuration, type QueueDepth, type DomainSnapshot } from
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
 import { createCachedValue } from '@acaos/backend-core/lib/cachedValue.js'
+import { createRejectionTracker } from '@acaos/backend-core/lib/rejectionTracker.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
@@ -771,9 +772,20 @@ async function shutdown(signal: string, exitCode = 0) {
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT',  () => void shutdown('SIGINT'))
 
+// A single unhandledRejection stays log-only (often a benign stray promise), but a
+// storm of them means the process is wedged in inconsistent state and "ready" is a
+// lie — so after THRESHOLD within WINDOW we drain + exit non-zero for a clean restart.
+const rejectionTracker = createRejectionTracker({
+  threshold: Number(process.env.WORKER_REJECTION_THRESHOLD) || undefined,
+  windowMs: Number(process.env.WORKER_REJECTION_WINDOW_MS) || undefined,
+})
 process.on('unhandledRejection', (reason) => {
   logLifecycleEvent(SERVICE, 'crash', { source: 'worker.unhandledRejection', reason: reason instanceof Error ? reason.message : String(reason) })
   captureError(reason, { source: 'worker.unhandledRejection' })
+  if (rejectionTracker.record()) {
+    logLifecycleEvent(SERVICE, 'crash', { source: 'worker.unhandledRejection.threshold', reason: 'too many unhandled rejections — restarting for a clean process' })
+    void shutdown('worker.unhandledRejection.threshold', 1)
+  }
 })
 process.on('uncaughtException', (err) => {
   logLifecycleEvent(SERVICE, 'crash', { source: 'worker.uncaughtException', err: err.message })
