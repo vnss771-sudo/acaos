@@ -41,11 +41,34 @@ the compose placeholders:
 
 ## 2. Infrastructure
 
-- [ ] PostgreSQL provisioned, reachable from `api` + `worker`, automated backups on.
-- [ ] Redis provisioned, reachable from `api` + `worker`.
+- [ ] PostgreSQL provisioned, reachable from `api` + `worker`. **Automated snapshots + PITR
+      on; a restore drill has been run and the RTO recorded** — see [RECOVERY](./RECOVERY.md)
+      (not just a checkbox: an untested backup is not a backup).
+- [ ] Redis provisioned, reachable from `api` + `worker`. AOF recommended (see RECOVERY.md).
 - [ ] DNS for web + api; TLS certs valid.
 - [ ] Email deliverability: SPF + DKIM records published (use `GET /api/mailbox/check-domain`).
 - [ ] Container images built + Trivy-scanned by CI (`Dockerfile.api|worker|web`).
+- [ ] **Observability live, not placeholder:** `ops/monitoring/prometheus.yml` blackbox/probe
+      targets point at the real `https://api.<domain>` / `https://app.<domain>` (the committed
+      `example.com` values are templates); alert routes configured. `SENTRY_DSN` set (else
+      error capture is a silent no-op). `METRICS_TOKEN` set (else `/metrics` 404s).
+- [ ] **Operational launch controls reviewed** (all optional, safe defaults — see
+      [PRODUCTION_ENV_VARS](./PRODUCTION_ENV_VARS.md)): `TENANT_GUARD_MODE=observe`,
+      `STATS_RECONCILE_ENABLED=true`; consider `SAFE_LAUNCH_MODE=true` for the supervised pilot.
+
+## 2b. Compliance (optional — the gate ships dormant)
+
+The in-product compliance surface (lawful basis, terms, sub-processors, CASL consent) is
+built but **disabled by default**. To enforce it before/at launch:
+
+- [ ] Counsel has reviewed & approved the drafts in [`docs/legal/`](./legal/README.md)
+      (acceptable-use, DPA, LIA template) and the sub-processor wording.
+- [ ] `SUBPROCESSORS_VERSION` / `COMPLIANCE_TERMS_VERSION` match the approved copy.
+- [ ] Decide rollout (new workspaces vs all); communicate to existing customers.
+- [ ] Set `COMPLIANCE_GATE_ENABLED=true` — `getSendReadiness` then requires a recorded lawful
+      basis + accepted terms (+ CASL consent for Canada-targeting) before a workspace can send.
+
+Leaving the gate off is fine for a supervised pilot; the posture/consent data still records.
 
 ## 3. Deploy (order matters)
 
@@ -54,7 +77,7 @@ runs `prisma migrate deploy`, then the API). See [MIGRATIONS](./MIGRATIONS.md).
 
 1. [ ] Deploy/upgrade Postgres + Redis.
 2. [ ] Deploy **api** → it applies pending migrations (latest:
-       `20260621170000_outreach_reply_metadata`). Confirm it logs migrations applied.
+       `20260625030612_compliance_consent`). Confirm it logs migrations applied.
 3. [ ] Deploy **worker** (never runs migrations; consumes `analyze-reply`,
        `sync-mailbox`, `send-campaign`, etc.).
 4. [ ] Deploy **web** (nginx static, port 8080) built against the prod API URL.
