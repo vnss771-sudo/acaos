@@ -78,6 +78,9 @@ function buildSpec(overrides: Record<string, any> = {}) {
       ],
       create: async () => ({ id: 'm-new' }),
       delete: async () => ({ id: 'm-del' }),
+      // Current seat count (free plan caps at 2) — below the cap by default so the
+      // happy-path add-member tests pass; overridden per-test to hit the cap.
+      count: async () => 1,
     },
     user: {
       findUnique: async (a: any) => userLookup(a),
@@ -137,6 +140,25 @@ describe('POST /:id/members — add a member', () => {
       body: JSON.stringify({ email: 'other@test.com' }),
     })
     assert.equal(res.status, 201)
+  })
+
+  it('rejects adding a member at the plan seat cap (free = 2) with 403 + upgrade hint', async () => {
+    // Workspace already at the free-plan seat cap.
+    installPrisma(createFakePrisma(buildSpec({
+      membership: {
+        findFirst: async (a: any) => membershipFor(a),
+        findMany: async () => [],
+        create: async () => ({ id: 'm-new' }),
+        count: async () => 2, // at the free cap
+      },
+    })))
+    const res = await server.request(`/api/workspaces/${WS_ID}/members`, {
+      method: 'POST',
+      headers: ownerHeaders,
+      body: JSON.stringify({ email: 'other@test.com' }),
+    })
+    assert.equal(res.status, 403)
+    assert.match(String(res.body.error), /Seat limit reached/)
   })
 
   it('plain member cannot add — 403', async () => {

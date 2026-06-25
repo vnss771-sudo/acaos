@@ -14,9 +14,11 @@ const AI_ACTIONS: string[] = ['AI_RESEARCH', 'AI_OUTREACH', 'AI_REPLY']
 const DISCOVERY_ACTION = 'DISCOVERY'
 
 const PLAN_LIMITS = {
-  free: { aiCallsPerMonth: 15, maxLeads: 500, discoveriesPerMonth: 25 },
-  starter: { aiCallsPerMonth: 300, maxLeads: 10_000, discoveriesPerMonth: 500 },
-  growth: { aiCallsPerMonth: Infinity, maxLeads: Infinity, discoveriesPerMonth: Infinity }
+  free: { aiCallsPerMonth: 15, maxLeads: 500, discoveriesPerMonth: 25, maxSeats: 2 },
+  starter: { aiCallsPerMonth: 300, maxLeads: 10_000, discoveriesPerMonth: 500, maxSeats: 5 },
+  // Even the top self-serve tier is seat-capped (finite) — "unlimited everything"
+  // leaves team-expansion revenue on the table; larger teams move to a sales tier.
+  growth: { aiCallsPerMonth: Infinity, maxLeads: Infinity, discoveriesPerMonth: Infinity, maxSeats: 25 }
 } as const
 
 type Plan = BillingPlan
@@ -50,6 +52,32 @@ async function getWorkspacePlan(workspaceId: string, client: Db = prisma): Promi
   // Treat lapsed subscriptions as free
   if (ws?.subscriptionStatus && ws.subscriptionStatus !== 'active') return 'free'
   return resolvePlan(ws?.plan)
+}
+
+/** Seat (member) limit for a plan. Pure. */
+export function seatLimitForPlan(plan: string | null | undefined): number {
+  return PLAN_LIMITS[resolvePlan(plan)].maxSeats
+}
+
+/**
+ * Assert the workspace has a free seat before a NEW member is added (admin add or
+ * invite accept). Counts current memberships against the plan's seat cap and throws
+ * 403 with an upgrade hint if full. Not called on workspace creation — the owner's
+ * first seat always succeeds. The count + create aren't atomic, so a burst could
+ * race past the cap by one or two; seats are a soft commercial limit, not a safety
+ * invariant, so that's acceptable (unlike the advisory-locked AI/send caps).
+ */
+export async function assertSeatAvailable(workspaceId: string, client: Db = prisma): Promise<void> {
+  const plan = await getWorkspacePlan(workspaceId, client)
+  const limit: number = PLAN_LIMITS[plan].maxSeats
+  if (!isFinite(limit)) return
+  const used = await client.membership.count({ where: { workspaceId } })
+  if (used >= limit) {
+    throw new ApiError(
+      403,
+      `Seat limit reached (${limit} member${limit === 1 ? '' : 's'} on the ${plan} plan). Upgrade to add more.`,
+    )
+  }
 }
 
 export async function checkAndIncrementAiUsage(workspaceId: string, action: UsageAction): Promise<void> {

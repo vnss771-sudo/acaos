@@ -579,6 +579,7 @@ describe('C2. Ingest route workspace isolation', () => {
           if (userId === USER_B && workspaceId === WS_B) return { id: `m-${USER_B}-${WS_B}`, userId, workspaceId, role: 'owner' }
           return null
         },
+        count: async () => 1, // below the seat cap
       },
       lead: {
         findMany: async () => [],
@@ -720,6 +721,7 @@ describe('D. Membership isolation', () => {
           return []
         },
         create: async (args: any) => ({ id: 'new-membership-id', ...args?.data }),
+        count: async () => 1, // below the seat cap
       },
       workspace: {
         findUnique: async (args: any) => {
