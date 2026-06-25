@@ -153,6 +153,7 @@ test('POST /:id/members — an owner can grant the admin role', async () => {
     membership: {
       findFirst: async (a: any) => (a?.where?.userId === USER ? { role: 'owner' } : null),
       create: async (a: any) => ({ id: 'm-new', ...a.data }),
+      count: async () => 1, // below the seat cap
     },
     user: { findUnique: async (a: any) => a?.where?.email
       ? { id: 'u2', email: 'new@a.test', name: null }
@@ -189,6 +190,7 @@ test('POST /:id/members — an admin can still add a regular member', async () =
     membership: {
       findFirst: async (a: any) => (a?.where?.userId === USER ? { role: 'admin' } : null),
       create: async (a: any) => ({ id: 'm-new', ...a.data }),
+      count: async () => 1, // below the seat cap
     },
     user: { findUnique: async (a: any) => a?.where?.email
       ? { id: 'u2', email: 'new@a.test', name: null }

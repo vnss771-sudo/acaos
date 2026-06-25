@@ -12,6 +12,7 @@ import {
 import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { recordAudit, recordCriticalAudit } from '../lib/audit.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
+import { assertSeatAvailable } from '@acaos/backend-core/lib/limits.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
 import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { isLocked, lockRetryAfterSeconds, nextLockoutAfterFailure, CLEARED_LOCKOUT } from '@acaos/backend-core/lib/accountLockout.js'
@@ -719,6 +720,10 @@ authRouter.post(
     const alreadyMember = await prisma.membership.findFirst({
       where: { userId: authedUser.id, workspaceId: invite.workspaceId }
     })
+
+    // A new seat is only consumed if they aren't already a member — enforce the
+    // plan's seat cap before accepting (an existing member re-accepting is a no-op).
+    if (!alreadyMember) await assertSeatAvailable(invite.workspaceId)
 
     await prisma.$transaction([
       ...(alreadyMember ? [] : [

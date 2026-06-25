@@ -95,11 +95,14 @@ function spec() {
         const m = { id: `m-${memberships.length + 1}`, ...args.data }
         memberships.push(m); return m
       },
+      count: async () => memberships.length, // seat-cap check on invite accept
     },
     workspace: {
       findMany: async () => [
         { id: 'ws-1', name: 'Acme Inc', slug: 'acme', plan: 'free', subscriptionStatus: null, createdAt: new Date(), onboardingCompleted: false, _count: { leads: 2, campaigns: 1 } },
       ],
+      // Seat-cap check (assertSeatAvailable) resolves the plan via findUnique.
+      findUnique: async () => ({ plan: 'free', subscriptionStatus: null }),
     },
     refreshToken: {
       updateMany: async (args: any) => {

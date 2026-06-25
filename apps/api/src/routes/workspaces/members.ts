@@ -8,6 +8,7 @@ import { isMailConfigured, sendMail } from '../../services/mail.js'
 import { escapeHtml } from '../../lib/html.js'
 import { normalizeEmail, isValidEmail } from '../../lib/validation.js'
 import { recordAudit } from '../../lib/audit.js'
+import { assertSeatAvailable } from '@acaos/backend-core/lib/limits.js'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { z } from 'zod'
 
@@ -74,6 +75,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       const existing = await prisma.membership.findFirst({ where: { userId: invitee.id, workspaceId } })
       if (existing) throw new ApiError(409, 'User is already a member of this workspace')
 
+      await assertSeatAvailable(workspaceId)
       await prisma.membership.create({ data: { userId: invitee.id, workspaceId, role } })
       // The invitee may have a cached `null` role for this workspace from a prior
       // denied check — drop it so they're admitted immediately.
