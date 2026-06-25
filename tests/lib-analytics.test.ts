@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { trackEvent, computeActivationFunnel, getActivationFunnel, ACTIVATION_STAGES } from '../packages/backend-core/src/lib/analytics.ts'
+import { trackEvent, computeActivationFunnel, getActivationFunnel, getWorkspaceActivation, ACTIVATION_STAGES } from '../packages/backend-core/src/lib/analytics.ts'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
 
 afterEach(() => resetPrisma())
@@ -33,6 +33,33 @@ test('trackEvent writes an event row and is best-effort (never throws)', async (
   // A DB failure must not propagate (analytics can't break the action it instruments).
   installPrisma(createFakePrisma({ analyticsEvent: { create: async () => { throw new Error('db down') } } }))
   await assert.doesNotReject(() => trackEvent({ name: 'signup' }))
+})
+
+test('getWorkspaceActivation reports completed milestones + the next step', async () => {
+  // This workspace has signed up and configured ICP, but not sent or replied yet.
+  const completed = new Set(['signup', 'icp.configured'])
+  installPrisma(createFakePrisma({
+    analyticsEvent: {
+      findFirst: async (a: any) =>
+        completed.has(a.where.name) ? { occurredAt: new Date('2026-06-01T00:00:00Z') } : null,
+    },
+  }))
+  const act = await getWorkspaceActivation('w1')
+  assert.equal(act.completedCount, 2)
+  assert.equal(act.totalStages, ACTIVATION_STAGES.length)
+  assert.equal(act.nextStep, 'campaign.sent') // first incomplete stage
+  assert.equal(act.stages.find((s) => s.key === 'signup')?.completed, true)
+  assert.equal(act.stages.find((s) => s.key === 'campaign.sent')?.completed, false)
+  assert.ok(act.stages.find((s) => s.key === 'signup')?.completedAt)
+})
+
+test('getWorkspaceActivation: a fully-activated workspace has no next step', async () => {
+  installPrisma(createFakePrisma({
+    analyticsEvent: { findFirst: async () => ({ occurredAt: new Date('2026-06-01T00:00:00Z') }) },
+  }))
+  const act = await getWorkspaceActivation('w1')
+  assert.equal(act.completedCount, ACTIVATION_STAGES.length)
+  assert.equal(act.nextStep, null)
 })
 
 test('getActivationFunnel counts distinct workspaces per stage', async () => {

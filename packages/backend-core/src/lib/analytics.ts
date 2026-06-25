@@ -69,6 +69,35 @@ export function computeActivationFunnel(counts: Record<string, number>): FunnelS
   })
 }
 
+export type WorkspaceActivationStage = { key: string; label: string; completed: boolean; completedAt: string | null }
+export type WorkspaceActivation = {
+  stages: WorkspaceActivationStage[]
+  completedCount: number
+  totalStages: number
+  // The first not-yet-completed stage (what to nudge the workspace toward), or null
+  // once the whole activation funnel is complete.
+  nextStep: string | null
+}
+
+// One workspace's progress through the activation funnel: which milestones it has
+// hit (and when), and the next step to nudge it toward. Powers per-workspace
+// onboarding UI / activation nudges. One indexed lookup per stage on (workspaceId, name).
+export async function getWorkspaceActivation(workspaceId: string, client: Db = prisma): Promise<WorkspaceActivation> {
+  const stages: WorkspaceActivationStage[] = []
+  let nextStep: string | null = null
+  for (const s of ACTIVATION_STAGES) {
+    const first = await client.analyticsEvent.findFirst({
+      where: { workspaceId, name: s.key },
+      orderBy: { occurredAt: 'asc' },
+      select: { occurredAt: true },
+    })
+    const completed = first !== null
+    stages.push({ key: s.key, label: s.label, completed, completedAt: first ? first.occurredAt.toISOString() : null })
+    if (!completed && nextStep === null) nextStep = s.key
+  }
+  return { stages, completedCount: stages.filter((s) => s.completed).length, totalStages: stages.length, nextStep }
+}
+
 // Count the distinct workspaces that reached each activation stage, then compute the
 // funnel. One indexed query per stage (bounded by stage count); each uses the
 // (name, occurredAt) / (workspaceId, name) indexes.
