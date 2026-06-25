@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import {
   calculateOpportunityScores,
@@ -38,7 +38,7 @@ export function registerScoringRoutes(prospectsRouter: Router) {
     })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
     const rawSignals     = prospect.signals.map(toRawSignal)
@@ -67,7 +67,7 @@ export function registerScoringRoutes(prospectsRouter: Router) {
     const prospect = await prisma.prospect.findUnique({ where: { id } })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
     // Example prospects are fictional — recording outcomes against them would feed
@@ -114,7 +114,7 @@ export function registerScoringRoutes(prospectsRouter: Router) {
     })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
     const rawSignals = prospect.signals.map(toRawSignal)

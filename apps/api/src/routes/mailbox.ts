@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
 import { requireFeature } from '../middleware/featureGate.js'
 import { prisma } from '../lib/prisma.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
@@ -54,7 +54,7 @@ mailboxRouter.post(
   requireVerifiedEmail,
   mailRateLimit,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const parsed = parseBody(sendTestSchema, req)
     const workspaceId = parsed.workspaceId
     const to = (parsed.to ?? '').trim()
@@ -80,7 +80,7 @@ mailboxRouter.post(
   requireFeature('mailboxSync'),
   syncRateLimit,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseBody(syncSchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId } })

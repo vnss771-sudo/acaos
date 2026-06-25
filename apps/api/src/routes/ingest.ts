@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { generateApiKey, hashApiKey } from '../lib/apiKeys.js'
 import { prisma } from '../lib/prisma.js'
@@ -181,7 +181,7 @@ keyRouter.use(requireAuth)
 keyRouter.post(
   '/rotate',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
@@ -202,7 +202,7 @@ keyRouter.post(
 keyRouter.delete(
   '/',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(keyQuerySchema, req)
 
     const member = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
@@ -212,7 +212,7 @@ outcomesRouter.post(
       // automated FieldOps ingest path (API key) is authorized by the key itself.
       if (!parsed.workspaceId) throw new ApiError(400, 'workspaceId required')
       workspaceId = parsed.workspaceId
-      const user = req.user!
+      const user = requireUser(req)
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
     }
 
@@ -294,7 +294,7 @@ outcomesRouter.get(
       workspaceId = req.resolvedWorkspaceId!
     } else {
       workspaceId = parseQuery(modelQuerySchema, req).workspaceId
-      const user = req.user!
+      const user = requireUser(req)
       const member = await userBelongsToWorkspace(user.id, workspaceId)
       if (!member) throw new ApiError(403, 'Access denied')
     }
@@ -322,7 +322,7 @@ outcomesRouter.post(
   requireAuth,
   requireVerifiedForMutation,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseBody(resetModelSchema, req)
 
     await assertWorkspacePermission(user.id, workspaceId, 'model:reset')

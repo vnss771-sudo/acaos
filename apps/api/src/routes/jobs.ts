@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
@@ -128,7 +128,7 @@ jobsRouter.use(requireVerifiedForMutation)
 // Issue a one-time SSE ticket (authenticated via the Authorization header).
 // The browser exchanges this for the EventSource URL above.
 jobsRouter.post('/events/ticket', asyncHandler(async (req, res) => {
-  const user = req.user!
+  const user = requireUser(req)
   const ticket = await issueSseTicket(user.id)
   res.json({ ticket })
 }))
@@ -137,7 +137,7 @@ jobsRouter.post(
   '/research',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { leadId } = parseBody(leadIdBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -160,7 +160,7 @@ jobsRouter.post(
   '/outreach',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { leadId, override } = parseBody(outreachBodySchema, req)
 
     const lead = await prisma.lead.findUnique({ where: { id: leadId } })
@@ -183,7 +183,7 @@ jobsRouter.post(
   '/analyze-reply',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { replyBody, leadId, workspaceId: bodyWorkspaceId } = parseBody(analyzeReplyBodySchema, req)
 
     let workspaceId: string
@@ -211,7 +211,7 @@ jobsRouter.post(
   '/research-bulk',
   aiRateLimit,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseBody(workspaceBodySchema, req)
 
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
@@ -236,7 +236,7 @@ jobsRouter.post(
 jobsRouter.get(
   '/:queue/:jobId',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const queue = req.params.queue as string
     const jobId = req.params.jobId as string
     if (!QUEUE_NAMES.includes(queue)) throw new ApiError(400, `Unknown queue: ${queue}`)

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
@@ -42,7 +42,7 @@ type _UpdateConforms = Assert<Extends<z.infer<typeof updateMissionSchema>, Updat
 missionsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
@@ -117,7 +117,7 @@ missionsRouter.get(
 missionsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const mission = await prisma.mission.findUnique({
       where: { id: req.params.id as string },
       include: { campaign: { include: { _count: { select: { leads: true } } } } },
@@ -225,7 +225,7 @@ missionsRouter.post(
   '/',
   validate(createMissionSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId, name, goalType, targetCustomer, offer, playbookId } = req.body as z.infer<typeof createMissionSchema>
     await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
@@ -264,7 +264,7 @@ missionsRouter.patch(
   '/:id',
   validate(updateMissionSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const existing = await prisma.mission.findUnique({ where: { id: req.params.id as string } })
     if (!existing) throw new ApiError(404, 'Mission not found')
     await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
@@ -293,7 +293,7 @@ missionsRouter.patch(
 missionsRouter.post(
   '/:id/score',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const mission = await prisma.mission.findUnique({
       where: { id: req.params.id as string },
       select: { id: true, workspaceId: true },

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { requireFeature } from '../middleware/featureGate.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
@@ -64,7 +64,7 @@ aiRouter.post(
   '/research',
   validate(researchSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId, businessName, website, category, city, notes } = req.body as z.infer<typeof researchSchema>
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
@@ -105,7 +105,7 @@ aiRouter.post(
   '/outreach',
   validate(outreachSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId, businessName, category, city, contactName, aiSummary, outreachAngle, notes } =
       req.body as z.infer<typeof outreachSchema>
 
@@ -140,7 +140,7 @@ aiRouter.post(
   '/reply-analysis',
   validate(replyAnalysisSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId, replyBody } = req.body as z.infer<typeof replyAnalysisSchema>
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)

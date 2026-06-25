@@ -1,7 +1,7 @@
 import type { Router } from 'express'
 import { requireVerifiedEmail } from '../../middleware/auth.js'
 import { requireFeature } from '../../middleware/featureGate.js'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { recordAudit } from '../../lib/audit.js'
 import { checkAndIncrementDiscoveryUsage } from '../../lib/limits.js'
 import { prisma } from '../../lib/prisma.js'
@@ -40,7 +40,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     const body = req.body as z.infer<typeof discoverSchema>
     const workspaceId = body.workspaceId
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertWorkspacePermission(userId, workspaceId, 'prospects:discover')
 
     // Optionally scope the run to a mission so the mission control plane owns its
@@ -139,7 +139,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
   prospectsRouter.post('/import', requireVerifiedEmail, validate(importProspectsSchema), asyncHandler(async (req, res) => {
     const { workspaceId, rows } = req.body as z.infer<typeof importProspectsSchema>
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertWorkspacePermission(userId, workspaceId, 'prospects:import')
 
     const icp = await getICP(workspaceId)
@@ -215,7 +215,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     if (!Array.isArray(rows) || rows.length === 0) throw new ApiError(400, 'rows array required')
     if (rows.length > 500) throw new ApiError(400, 'Maximum 500 rows per import')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertWorkspacePermission(userId, workspaceId, 'prospects:import')
 
     let prospectsCreated = 0

@@ -2,8 +2,9 @@
 // middleware and is therefore present on every handler mounted behind it. Typed
 // as optional because Express's base Request has no user (unauthed routes, error
 // handlers, the middleware chain before requireAuth runs); handlers behind
-// requireAuth read it as `req.user!`. This replaces the repeated
-// `req.user!` cast that previously obscured the invariant.
+// requireAuth resolve it via `requireUser(req)` (lib/http.ts), which returns a
+// non-optional AuthUser or throws a clean 401 — replacing the old `req.user!`
+// non-null cast that turned a missing-middleware bug into a runtime NPE.
 import type { AuthUser } from './auth.js'
 
 declare global {

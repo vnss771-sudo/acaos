@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import {
   calculateOpportunityScores,
@@ -55,7 +55,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
       showExamples,
     } = parseQuery(listProspectsQuerySchema, req)
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
     const skip  = (page - 1) * limit
@@ -128,7 +128,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
   prospectsRouter.get('/discovery-runs', asyncHandler(async (req, res) => {
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
     const runs = await prisma.discoveryRun.findMany({
@@ -145,7 +145,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
 
   // GET /api/prospects/export?workspaceId=&format=csv
   prospectsRouter.get('/export', asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
 
@@ -200,7 +200,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
   prospectsRouter.get('/intents', asyncHandler(async (req, res) => {
     const workspaceId = String(req.query.workspaceId || '').trim()
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
     const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 25 })
@@ -230,7 +230,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
     const rawSignals = prospect.signals.map(toRawSignal)
@@ -262,7 +262,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     if (!workspaceId)          throw new ApiError(400, 'workspaceId required')
     if (!req.body.companyName) throw new ApiError(400, 'companyName required')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertMinimumWorkspaceRole(userId, workspaceId, 'admin')
 
     const meta = {
@@ -317,7 +317,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!existing) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, existing.workspaceId)) throw new ApiError(403, 'Access denied')
 
     const allowed = [
@@ -353,7 +353,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!existing) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertWorkspacePermission(userId, existing.workspaceId, 'prospects:delete')
 
     await prisma.prospect.delete({ where: { id: req.params.id as string } })

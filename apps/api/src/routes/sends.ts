@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { parseQuery, workspaceIdField } from '../lib/validate.js'
@@ -18,7 +18,7 @@ const summaryQuerySchema = z.object({ workspaceId: workspaceIdField })
 sendsRouter.get(
   '/summary',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(summaryQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)

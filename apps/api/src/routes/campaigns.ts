@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
 import { requireFeature } from '../middleware/featureGate.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
@@ -72,7 +72,7 @@ type _SendCampaignConforms = Assert<Extends<z.infer<typeof sendCampaignSchema>, 
 campaignsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceIdQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
@@ -93,7 +93,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/send-readiness',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceIdQuerySchema, req)
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
     res.json(await getSendReadiness(workspaceId))
@@ -108,7 +108,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/outbox-issues',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceIdQuerySchema, req)
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
 
@@ -133,7 +133,7 @@ campaignsRouter.post(
   '/',
   validate(createCampaignSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId, name, goalType, description } = req.body as z.infer<typeof createCampaignSchema>
 
     await assertWorkspacePermission(user.id, workspaceId, 'campaign:create')
@@ -155,7 +155,7 @@ campaignsRouter.post(
 campaignsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const campaign = await prisma.campaign.findUnique({
       where: { id: req.params.id as string },
       include: { _count: { select: { leads: true } } }
@@ -175,7 +175,7 @@ campaignsRouter.patch(
   '/:id',
   validate(updateCampaignSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { id: campaignId } = parseParams(campaignParamsSchema, req)
     const body = req.body as z.infer<typeof updateCampaignSchema>
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
@@ -209,7 +209,7 @@ campaignsRouter.patch(
 campaignsRouter.get(
   '/:id/stats',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const campaign = await prisma.campaign.findUnique({
       where: { id: req.params.id as string },
       include: { _count: { select: { leads: true } } }
@@ -249,7 +249,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/:id/outreach',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { id } = parseParams(campaignParamsSchema, req)
     const campaign = await prisma.campaign.findUnique({ where: { id } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')
@@ -283,7 +283,7 @@ campaignsRouter.get(
 campaignsRouter.get(
   '/:id/preflight',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { id: campaignId } = parseParams(campaignParamsSchema, req)
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
@@ -410,7 +410,7 @@ campaignsRouter.post(
   requireFeature('send'),
   validate(sendCampaignSchema),
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { id: campaignId } = parseParams(campaignParamsSchema, req)
     const body = req.body as z.infer<typeof sendCampaignSchema>
     const campaign = await prisma.campaign.findUnique({
@@ -539,7 +539,7 @@ campaignsRouter.post(
 campaignsRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const campaignId = req.params.id as string
     const existing = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!existing) throw new ApiError(404, 'Campaign not found')
@@ -563,7 +563,7 @@ campaignsRouter.delete(
 campaignsRouter.post(
   '/:id/retry-failed',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const campaignId = req.params.id as string
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } })
     if (!campaign) throw new ApiError(404, 'Campaign not found')

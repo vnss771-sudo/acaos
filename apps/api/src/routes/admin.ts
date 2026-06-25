@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
 import { recordCriticalAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
@@ -36,7 +36,7 @@ function emailMatchesBootstrapAdmin(user: AuthUser): boolean {
 // different account without leaving a trail.
 adminRouter.use(
   asyncHandler(async (req, _res, next) => {
-    const user = req.user!
+    const user = requireUser(req)
 
     if (user.isPlatformAdmin) return next()
 

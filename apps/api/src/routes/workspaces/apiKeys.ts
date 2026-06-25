@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler } from '../../lib/http.js'
+import { asyncHandler, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { generateApiKey, hashApiKey } from '../../lib/apiKeys.js'
 import { evictCachedWorkspace } from '../../lib/ingestCache.js'
@@ -10,7 +10,7 @@ export function registerApiKeyRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
     '/:id/api-key/rotate',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       await assertWorkspacePermission(user.id, workspaceId, 'api_keys:manage')
@@ -41,7 +41,7 @@ export function registerApiKeyRoutes(workspaceRouter: Router) {
   workspaceRouter.delete(
     '/:id/api-key',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       await assertWorkspacePermission(user.id, workspaceId, 'api_keys:manage')

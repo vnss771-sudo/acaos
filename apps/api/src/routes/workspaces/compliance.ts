@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { normalizeEmail, isValidEmail } from '../../lib/validation.js'
@@ -45,7 +45,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id/compliance',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'member')
 
@@ -70,7 +70,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
     '/:id/compliance',
     requireFreshAuth,
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
@@ -97,7 +97,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
     '/:id/consent',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 

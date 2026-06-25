@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { getOpportunityTier, calcWinProbability } from '../lib/signalEngine.js'
 import type { BuyingStage, OutcomeStage } from '../lib/signalEngine.js'
@@ -20,7 +20,7 @@ intelligenceRouter.use(requireVerifiedForMutation)
 // Resolve the requested workspace and confirm the caller is a member.
 async function requireWorkspace(req: import('express').Request): Promise<string> {
   const { workspaceId } = parseQuery(workspaceQuerySchema, req)
-  const user = req.user!
+  const user = requireUser(req)
   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
     throw new ApiError(403, 'Workspace access denied')
   }

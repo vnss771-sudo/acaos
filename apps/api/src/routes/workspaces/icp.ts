@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
@@ -57,7 +57,7 @@ export function registerIcpRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id/icp',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       const membership = await prisma.membership.findFirst({
@@ -74,7 +74,7 @@ export function registerIcpRoutes(workspaceRouter: Router) {
   workspaceRouter.put(
     '/:id/icp',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       await assertWorkspacePermission(user.id, workspaceId, 'icp:update')

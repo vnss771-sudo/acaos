@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, MAX_SIGNALS_FOR_SCORING } from '../lib/signalEngine.js'
@@ -29,7 +29,7 @@ const listSignalsQuerySchema = z.object({
 signalsRouter.get('/', asyncHandler(async (req, res) => {
   const { workspaceId, prospectId, type, limit } = parseQuery(listSignalsQuerySchema, req)
 
-  const user = req.user!
+  const user = requireUser(req)
   if (!(await userBelongsToWorkspace(user.id, workspaceId))) {
     throw new ApiError(403, 'Workspace access denied')
   }
@@ -91,7 +91,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   const { workspaceId, prospectId, type, strength, title, description, sourceUrl,
     sourceReliability, industryRelevance } = body
 
-  const user = req.user!
+  const user = requireUser(req)
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
   const prospect = await prisma.prospect.findUnique({ where: { id: prospectId } })
@@ -164,7 +164,7 @@ signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const signal = await prisma.signal.findUnique({ where: { id: signalId } })
   if (!signal) throw new ApiError(404, 'Signal not found')
 
-  const user = req.user!
+  const user = requireUser(req)
   await assertMinimumWorkspaceRole(user.id, signal.workspaceId, 'admin')
 
   await prisma.signal.delete({ where: { id: signalId } })
