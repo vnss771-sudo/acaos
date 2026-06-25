@@ -2,10 +2,35 @@ import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   incJob, observeJobDuration, resetWorkerMetrics, renderWorkerMetrics, incReputationBlock,
-  incSendOutcome,
+  incSendOutcome, incAiCost,
 } from '../apps/worker/src/lib/metrics.ts'
 
 beforeEach(() => resetWorkerMetrics())
+
+test('AI-cost counter accumulates estimated cents + calls per action, ignores non-positive', () => {
+  incAiCost('AI_OUTREACH', 10) // 10 * 0.08c = 0.8c
+  incAiCost('AI_OUTREACH')     // + 0.08c = 0.88c
+  incAiCost('AI_RESEARCH', 5)  // 5 * 0.1c = 0.5c
+  incAiCost('AI_REPLY', 0)     // no-op
+  const out = renderWorkerMetrics()
+  assert.match(out, /# TYPE acaos_ai_cost_cents_total counter/)
+  assert.match(out, /acaos_ai_cost_cents_total\{action="AI_OUTREACH"\} 0\.88/)
+  assert.match(out, /acaos_ai_cost_cents_total\{action="AI_RESEARCH"\} 0\.5/)
+  assert.match(out, /acaos_ai_calls_total\{action="AI_OUTREACH"\} 11/)
+  assert.doesNotMatch(out, /action="AI_REPLY"/)
+})
+
+test('AI-cost series are absent until something is recorded (no empty series)', () => {
+  const out = renderWorkerMetrics()
+  assert.doesNotMatch(out, /acaos_ai_cost_cents_total\{/)
+})
+
+test('circuit-open gauge renders one series per provider, default 0 (closed)', () => {
+  const out = renderWorkerMetrics()
+  assert.match(out, /# TYPE acaos_circuit_open gauge/)
+  assert.match(out, /acaos_circuit_open\{provider="openai"\} 0/)
+  assert.match(out, /acaos_circuit_open\{provider="stripe"\} 0/)
+})
 
 test('reputation enforce-block counter renders per queue', () => {
   incReputationBlock('send-campaign')

@@ -42,7 +42,7 @@ import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import type { ICPConfig } from '@acaos/backend-core/lib/signalEngine.js'
 import { randomBytes } from 'crypto'
 import type { LeadStage, FollowupTaskStatus } from '@acaos/shared'
-import { incReputationBlock, incSendOutcome } from './lib/metrics.js'
+import { incReputationBlock, incSendOutcome, incAiCost } from './lib/metrics.js'
 
 type Progress = (n: number) => unknown
 
@@ -679,6 +679,10 @@ export async function sendCampaignBatch(
             targetCustomer: missionCtx?.targetCustomer ?? undefined,
           } : undefined,
         })
+        // The provider call was made — record its estimated spend for the
+        // acaos_ai_cost_cents_total metric (independent of quota refunds below,
+        // which track plan usage, not real dollars already spent).
+        incAiCost('AI_OUTREACH')
         // Strict, schema-validated parse. A draft with bad JSON or a missing
         // subject/body is unusable — refund the reserved call, release the claim,
         // and skip this lead rather than failing the whole batch.
