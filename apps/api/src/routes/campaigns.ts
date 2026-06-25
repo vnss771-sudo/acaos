@@ -8,6 +8,7 @@ import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
 import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
+import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { getCampaignAttribution } from '@acaos/backend-core/lib/campaignAttribution.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
@@ -538,6 +539,7 @@ campaignsRouter.post(
       metadata: { eligible: cappedEligible, jobId: job.id },
     })
     void trackEvent({ name: 'campaign.sent', workspaceId: campaign.workspaceId, userId: user.id, properties: { campaignId: campaign.id, eligible: cappedEligible } })
+    void emitWebhookEvent(campaign.workspaceId, 'campaign.sent', { campaignId: campaign.id, eligible: cappedEligible })
 
     res.status(202).json({
       jobId: job.id,

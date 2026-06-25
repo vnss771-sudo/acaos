@@ -14,6 +14,7 @@ import { leadsRouter } from './routes/leads.js'
 import { statsRouter } from './routes/stats.js'
 import { inboxRouter } from './routes/inbox.js'
 import { sendsRouter } from './routes/sends.js'
+import { webhooksRouter } from './routes/webhooks.js'
 import { jobsRouter } from './routes/jobs.js'
 import { ingestRouter } from './routes/ingest.js'
 import { outcomesRouter } from './routes/outcomes.js'
@@ -200,6 +201,7 @@ app.use('/api/leads', leadsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/inbox', inboxRouter)
 app.use('/api/sends', sendsRouter)
+app.use('/api/webhooks', webhooksRouter)
 app.use('/api/jobs', jobsRouter)
 app.use('/api/ingest', ingestRouter)
 app.use('/api/outcomes', outcomesRouter)
