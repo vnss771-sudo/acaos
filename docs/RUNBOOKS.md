@@ -85,6 +85,28 @@ Jobs failing after exhausting retries (or >50 entering `failed` in 1h).
 3. A `QUEUE_PAYLOAD_INVALID` (UnrecoverableError) means a producer/schema drift —
    fix the producer; these never retry by design.
 
+## AiSpendSpike
+Estimated AI spend (`acaos_ai_cost_cents_total`) exceeded $20/hour.
+1. Check `sum by (action) (increase(acaos_ai_cost_cents_total[1h]))` to see which
+   action (`AI_OUTREACH`/`AI_RESEARCH`/`AI_REPLY`) is driving it, and `acaos_ai_calls_total`
+   for call volume — a spike in calls, not cost-per-call, means a loop or abuse.
+2. Correlate with `worker_jobs_total` / `acaos_send_outcomes_total` to find the
+   workspace/campaign generating the volume; a single tenant retrying or a large
+   import can drive it legitimately — confirm before throttling.
+3. If runaway or abusive: flip `FEATURE_SEND` / `FEATURE_AI` kill-switch (or the
+   per-workspace send-suppression flag) to stop the bleed, then root-cause. Rotate
+   the provider key if a leak is suspected.
+
+## ProviderCircuitOpen
+A provider circuit breaker (`acaos_circuit_open{provider}`) has been OPEN for >5m.
+1. Identify the provider from `{{ $labels.provider }}` (openai / apollo-* /
+   google-places / hunter / stripe). OPEN means ≥5 consecutive failures; calls are
+   being shed and will auto-probe (HALF_OPEN) after the reset window.
+2. Check that upstream's status page and recent worker logs for the failure mode
+   (auth, rate-limit, timeout). The breaker recovers itself once the provider does.
+3. If the provider is down for an extended period, expect elevated skip/failure
+   counts; no action restores it but the breaker prevents hammering the upstream.
+
 ## DependencyDown (Postgres / Redis)
 Symptom: `GET /api/ready` 503 while `/api/live` is 200; jobs stall.
 1. Postgres: check connectivity/credentials, disk, max-connections, failover

@@ -3,6 +3,8 @@
 // immutable build/runtime metadata.
 
 import { getBuildInfoLabels, getProcessStartTimeSeconds } from '@acaos/backend-core/lib/release.js'
+import { snapshotBreakerStates } from '@acaos/backend-core/lib/circuit.js'
+import { aiActionCostCents, type AiAction } from '@acaos/backend-core/lib/aiCost.js'
 
 type JobResult = 'completed' | 'failed'
 
@@ -41,6 +43,19 @@ export function incSendOutcome(queue: string, outcome: string, n = 1): void {
   else sendOutcomes.set(key, { queue, outcome, value: n })
 }
 
+// Estimated AI spend, accumulated per metered action. A runaway prompt loop or a
+// compromised key is otherwise invisible until the OpenAI invoice arrives; exporting
+// it as a counter lets `AiSpendSpike` alert in minutes. Keyed by action only (3
+// series) — never by workspace — so cardinality stays bounded. Cents are the rough,
+// tunable per-action estimates from aiCost.ts, not invoice figures.
+const aiCostCents = new Map<AiAction, number>()
+const aiCalls = new Map<AiAction, number>()
+export function incAiCost(action: AiAction, calls = 1): void {
+  if (calls <= 0) return
+  aiCalls.set(action, (aiCalls.get(action) ?? 0) + calls)
+  aiCostCents.set(action, (aiCostCents.get(action) ?? 0) + aiActionCostCents(action) * calls)
+}
+
 export function observeJobDuration(queue: string, seconds: number): void {
   let h = jobDurations.get(queue)
   if (!h) {
@@ -59,6 +74,8 @@ export function resetWorkerMetrics(): void {
   jobDurations.clear()
   reputationBlocks.clear()
   sendOutcomes.clear()
+  aiCostCents.clear()
+  aiCalls.clear()
 }
 
 function esc(v: string): string {
@@ -170,6 +187,24 @@ export function renderWorkerMetrics(depths: QueueDepth[] = [], domain: DomainSna
     lines.push('# HELP acaos_warmup_cap Current warmup daily cap per warming workspace.')
     lines.push('# TYPE acaos_warmup_cap gauge')
     for (const w of domain.warmup) lines.push(`acaos_warmup_cap${lbl({ workspace: w.workspaceId })} ${w.cap}`)
+  }
+
+  lines.push('# HELP acaos_ai_cost_cents_total Estimated AI spend in cents, by metered action.')
+  lines.push('# TYPE acaos_ai_cost_cents_total counter')
+  for (const [action, cents] of aiCostCents.entries()) {
+    lines.push(`acaos_ai_cost_cents_total${lbl({ action })} ${Math.round(cents * 100) / 100}`)
+  }
+  lines.push('# HELP acaos_ai_calls_total Metered AI calls, by action.')
+  lines.push('# TYPE acaos_ai_calls_total counter')
+  for (const [action, n] of aiCalls.entries()) {
+    lines.push(`acaos_ai_calls_total${lbl({ action })} ${n}`)
+  }
+
+  // Provider circuit-breaker state — 1 while OPEN (provider degraded / shedding load).
+  lines.push('# HELP acaos_circuit_open 1 if the provider circuit breaker is OPEN, else 0.')
+  lines.push('# TYPE acaos_circuit_open gauge')
+  for (const { provider, open } of snapshotBreakerStates()) {
+    lines.push(`acaos_circuit_open${lbl({ provider })} ${open ? 1 : 0}`)
   }
 
   lines.push('# HELP acaos_build_info Immutable build and release metadata.')

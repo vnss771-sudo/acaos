@@ -23,6 +23,20 @@ export function verboseErrors(): boolean {
 }
 
 /**
+ * Whether the CAN-SPAM / deliverability send-readiness gate is enforced. Previously
+ * gated on `isProduction()`, which silently let any non-`production` env (staging,
+ * preview) launch real sends with no sender-identity / postal-address check. This
+ * now fails CLOSED for every environment except explicit local `development`/`test`,
+ * with `ENFORCE_SEND_READINESS` as an explicit override either way (`false`/`0` off,
+ * anything else on) — so a misconfigured deploy can't bypass compliance.
+ */
+export function enforceSendReadiness(): boolean {
+  const flag = process.env.ENFORCE_SEND_READINESS?.trim()
+  if (flag) return flag !== 'false' && flag !== '0'
+  return process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test'
+}
+
+/**
  * Exact CORS origin allowlist. Driven by `ALLOWED_ORIGINS` (comma-separated),
  * falling back to `WEB_URL`. Provider wildcards (e.g. any *.vercel.app) are
  * intentionally NOT honored — they trust every tenant on a shared platform.

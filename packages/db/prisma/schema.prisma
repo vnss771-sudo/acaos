@@ -117,6 +117,12 @@ model Workspace {
   subprocessorsAckAt     DateTime?
   subprocessorsAckVersion String?
   targetsCanada          Boolean    @default(false) // gates the CASL consent check
+  // Operator drain switch: when true, the worker halts all sends for THIS workspace
+  // (returns SUPPRESSED) without touching the global FEATURE_SEND kill-switch — so a
+  // single abusive/compromised tenant can be stopped in isolation. Reason is for the
+  // audit trail / operator note.
+  sendSuppressed         Boolean    @default(false)
+  sendSuppressedReason   String?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   memberships          Membership[]

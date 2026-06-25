@@ -36,8 +36,17 @@ function spec() {
 
 let prisma: FakePrisma
 let server: TestServer
-beforeEach(async () => { prisma = createFakePrisma(spec()); installPrisma(prisma); server = await startTestServer('/api/campaigns', campaignsRouter) })
-afterEach(async () => { await server.close(); resetPrisma() })
+// The POST /:id/send tests below target the route's mission/approval/daily-cap
+// controls, which run AFTER the deliverability gate. With NODE_ENV unset in the unit
+// runner, enforceSendReadiness() now fails closed (the SEC fix), so disable it here
+// to isolate those inner controls — the gate has its own dedicated coverage.
+const savedEnforce = process.env.ENFORCE_SEND_READINESS
+beforeEach(async () => { process.env.ENFORCE_SEND_READINESS = 'false'; prisma = createFakePrisma(spec()); installPrisma(prisma); server = await startTestServer('/api/campaigns', campaignsRouter) })
+afterEach(async () => {
+  if (savedEnforce === undefined) delete process.env.ENFORCE_SEND_READINESS
+  else process.env.ENFORCE_SEND_READINESS = savedEnforce
+  await server.close(); resetPrisma()
+})
 
 const auth = (u = MEMBER) => ({ Authorization: bearer(u) })
 const jsonAuth = (u = MEMBER) => ({ Authorization: bearer(u), 'Content-Type': 'application/json' })

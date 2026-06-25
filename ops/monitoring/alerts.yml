@@ -109,6 +109,22 @@ groups:
           summary: "Failed-job count growing on {{ $labels.queue }}"
           description: "More than 50 jobs entered the failed state in the last hour on {{ $labels.queue }}."
 
+      - alert: AiSpendSpike
+        expr: sum(increase(acaos_ai_cost_cents_total[1h])) > 2000
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "AI spend is spiking"
+          description: "Estimated AI spend exceeded $20/hour — possible prompt loop, abusive tenant, or compromised key. Investigate before the invoice does. Runbook: docs/RUNBOOKS.md#aispendspike"
+
+      - alert: ProviderCircuitOpen
+        expr: max(acaos_circuit_open) by (provider) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Provider circuit breaker OPEN for {{ $labels.provider }}"
+          description: "The {{ $labels.provider }} circuit has been OPEN for >5m — that upstream is failing and calls are being shed. Runbook: docs/RUNBOOKS.md#providercircuitopen"
+
   # Deliverability + sender-reputation signals (worker scrape-time gauges/counters).
   - name: acaos-deliverability
     rules:
