@@ -655,11 +655,6 @@ describe('D. Campaign stats under concurrent load', () => {
         deleteMany: async () => ({ count: 0 }),
         updateMany: async () => ({ count: 0 }),
       },
-      // /:id/stats now reads send volume from the CampaignDailyStats projection
-      // (one aggregate) instead of counting the ever-growing OutreachSent table.
-      campaignDailyStats: {
-        aggregate: async () => ({ _sum: { sent, replied, interested: 0, bounced: 0, unsubscribed: 0, failed: 0 } }),
-      },
       outreachSent: {
         count: async (a: any) => (a?.where?.status === 'REPLIED' ? replied : sent),
         findMany: async () => [],

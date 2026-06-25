@@ -356,18 +356,6 @@ describe('B. Campaign isolation', () => {
           return 0
         },
       },
-      // /:id/stats reads send volume per campaign from the projection; the aggregate
-      // is workspace-isolated by the campaignId filter (the tenant-isolation property
-      // under test).
-      campaignDailyStats: {
-        aggregate: async (args: any) => {
-          const campaignId = args?.where?.campaignId
-          const zero = { interested: 0, bounced: 0, unsubscribed: 0, failed: 0 }
-          if (campaignId === 'campaign-a-1') return { _sum: { sent: outreachA.length, replied: 1, ...zero } }
-          if (campaignId === 'campaign-b-1') return { _sum: { sent: outreachB.length, replied: 2, ...zero } }
-          return { _sum: { sent: 0, replied: 0, ...zero } }
-        },
-      },
       outreachSent: {
         count: async (args: any) => {
           const campaignId = args?.where?.campaignId
@@ -1193,7 +1181,6 @@ describe('G. Multi-tenant concurrent write stress', () => {
           return count
         },
       },
-      campaignDailyStats: { aggregate: async () => ({ _sum: { sent: 0, replied: 0, interested: 0, bounced: 0, unsubscribed: 0, failed: 0 } }) },
       outreachSent: { count: async () => 0, findMany: async () => [] },
     })
     installPrisma(eligPrisma)

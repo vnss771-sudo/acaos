@@ -7,7 +7,6 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
 import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
-import { sumCampaignStats } from '@acaos/backend-core/lib/campaignStats.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
 import { enforceSendReadiness } from '../lib/config.js'
@@ -221,16 +220,15 @@ campaignsRouter.get(
     if (!member) throw new ApiError(403, 'Access denied')
 
     const TERMINAL = ['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const
-    // Send-volume stats come from the CampaignDailyStats projection (one indexed
-    // aggregate) rather than N count()s over the ever-growing OutreachSent table —
-    // the projection is transactionally maintained per send and reconciled from the
-    // ledger. Lead counts stay live (bounded by the campaign's lead set).
-    const [leadWithEmail, eligible, sendStats] = await Promise.all([
+    const [leadWithEmail, eligible, sent, replied, failed, bounced] = await Promise.all([
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null } } }),
       prisma.lead.count({ where: { campaignId: campaign.id, email: { not: null }, stage: { notIn: [...TERMINAL] } } }),
-      sumCampaignStats(campaign.id),
+      // Delivered sends only — exclude in-flight SENDING and never-sent FAILED.
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: { in: ['SENT', 'REPLIED', 'BOUNCED'] } } }),
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'REPLIED' } }),
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'FAILED' } }),
+      prisma.outreachSent.count({ where: { campaignId: campaign.id, status: 'BOUNCED' } }),
     ])
-    const { sent, replied, failed, bounced } = sendStats
 
     res.json({
       stats: {
