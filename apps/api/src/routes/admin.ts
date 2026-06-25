@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
-import { recordAudit } from '../lib/audit.js'
+import { recordCriticalAudit } from '../lib/audit.js'
 import { getQueueStats } from '../lib/queues.js'
 import { parseQuery } from '../lib/validate.js'
 import { pingDatabase, pingRedis, withTimeout, PROBE_TIMEOUT_MS } from '../lib/health.js'
@@ -48,7 +48,7 @@ adminRouter.use(
       }
       await prisma.user.update({ where: { id: user.id }, data: { isPlatformAdmin: true } })
       user.isPlatformAdmin = true
-      await recordAudit({
+      await recordCriticalAudit({
         actorUserId: user.id,
         type: 'platform_admin.bootstrap',
         entityType: 'User',
