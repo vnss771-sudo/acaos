@@ -254,6 +254,7 @@ export async function calibrateScoring(
 export type SendSkipReason =
   | 'ALREADY_SENT'
   | 'SUPPRESSED'
+  | 'WORKSPACE_SUPPRESSED'
   | 'INVALID_EMAIL'
   | 'NO_APPROVED_DRAFT'
   | 'POLICY_REVIEW'
@@ -315,7 +316,7 @@ export async function sendCampaignBatch(
   const [wsCfgRecord, icp, workspace, missionCtx, draftPolicyRecord, campaignRow] = await Promise.all([
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
     prisma.workspaceICP.findUnique({ where: { workspaceId } }),
-    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
+    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true } }),
     // Per-mission outreach overrides (offer + target customer), if this campaign
     // is the execution arm of a mission. campaignId is unique on Mission.
     prisma.mission.findUnique({ where: { campaignId }, select: { targetCustomer: true, offer: true } }),
@@ -347,12 +348,21 @@ export async function sendCampaignBatch(
   let failed = 0
   // Per-reason skip accounting so the result explains WHY leads didn't send.
   const skippedByReason: Record<SendSkipReason, number> = {
-    ALREADY_SENT: 0, SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
+    ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
     REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
+
+  // Operator drain switch: halt all sends for a suppressed workspace before any
+  // lead work, without touching the global FEATURE_SEND kill-switch. Counted as a
+  // whole-batch skip so the suppression is visible in metrics.
+  if (workspace?.sendSuppressed) {
+    console.log(`[send-campaign] Workspace ${workspaceId} is send-suppressed — skipping campaign ${campaignId}`)
+    incSendOutcome('send-campaign', 'WORKSPACE_SUPPRESSED')
+    return result()
+  }
 
   // Don't even start a batch for a paused/completed mission.
   const initialBlock = await getMissionSendBlockReason(campaignId)
@@ -894,7 +904,7 @@ export async function sendFollowupTask(
     prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, monthlySendLimit: true, warmupStartedAt: true, sendWindowStartHour: true, sendWindowEndHour: true, sendTimezone: true, sendWeekdaysOnly: true } }),
     // Sender identity for the CAN-SPAM/CASL physical-address line — every commercial
     // message needs it, follow-ups included (previously omitted here).
-    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
+    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true } }),
   ])
 
   // Guards (each leaves the task in a terminal, explainable state).

@@ -9,7 +9,7 @@ import { enqueueSendCampaign } from '../lib/queues.js'
 import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
-import { isProduction } from '../lib/config.js'
+import { enforceSendReadiness } from '../lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '../lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
@@ -294,12 +294,12 @@ campaignsRouter.get(
     const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    // Production deliverability gate (same as /send endpoint)
+    // Deliverability gate (same as /send endpoint — fail-closed off local dev/test)
     const readiness = await getSendReadiness(campaign.workspaceId)
     const blockers: { name: string; hint: string }[] = []
     let ready = true
 
-    if (isProduction() && !readiness.ready) {
+    if (enforceSendReadiness() && !readiness.ready) {
       ready = false
       blockers.push({
         name: 'deliverabilityNotConfigured',
@@ -421,11 +421,12 @@ campaignsRouter.post(
 
     await assertWorkspacePermission(user.id, campaign.workspaceId, 'campaign:send')
 
-    // Production send-readiness / compliance gate. The frontend checks SPF/DKIM
-    // and sender setup before launch, but a direct API caller must not be able to
-    // bypass it. Enforced only in production so local/dev/test stays frictionless.
-    // Same getSendReadiness() that powers the onboarding panel — one source of truth.
-    if (isProduction()) {
+    // Send-readiness / compliance gate. The frontend checks SPF/DKIM and sender
+    // setup before launch, but a direct API caller must not be able to bypass it.
+    // Fail-closed for every env except local dev/test (see enforceSendReadiness) so
+    // a staging/preview deploy can't send non-compliant mail. Same getSendReadiness()
+    // that powers the onboarding panel — one source of truth.
+    if (enforceSendReadiness()) {
       const readiness = await getSendReadiness(campaign.workspaceId)
       if (!readiness.ready) {
         return res.status(422).json({

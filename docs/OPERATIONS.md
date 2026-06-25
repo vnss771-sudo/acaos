@@ -125,6 +125,25 @@ Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
   in-process fallback. `RATE_LIMIT_DISABLED=true` is for tests/load runs only;
   never in production.
 
+## Incident controls (blast-radius)
+
+- **Global send/AI kill-switches** — `FEATURE_SEND`, `FEATURE_AI` (and the other
+  `isFeatureEnabled` flags) stop a capability platform-wide with no deploy. Use when
+  the problem is system-wide.
+- **Drain a single tenant (isolated)** — set `Workspace.sendSuppressed = true`
+  (optionally `sendSuppressedReason`) to halt **all sends for that one workspace**
+  without affecting any other tenant. The worker checks it at the top of every send
+  batch and returns immediately (counted as `acaos_send_outcomes_total{outcome="WORKSPACE_SUPPRESSED"}`).
+  Reverse by setting it back to `false`. Use for an abusive/compromised/over-spending
+  tenant when the global kill-switch would be too broad.
+  ```sql
+  UPDATE "Workspace" SET "sendSuppressed" = true, "sendSuppressedReason" = 'abuse review' WHERE id = '<workspaceId>';
+  ```
+- **Send-readiness enforcement** — `ENFORCE_SEND_READINESS` (default: on for every
+  env except local `development`/`test`) gates sends on SMTP + CAN-SPAM sender
+  identity. Leave on; it fails closed so a misconfigured staging deploy can't send
+  non-compliant mail.
+
 ## Quick reference
 
 | Concern | Where |

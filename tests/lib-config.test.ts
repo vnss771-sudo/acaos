@@ -3,7 +3,7 @@
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { isProduction, verboseErrors, getAllowedOrigins, isOriginAllowed, validateConfig } from '../packages/backend-core/src/lib/config.ts'
+import { isProduction, verboseErrors, enforceSendReadiness, getAllowedOrigins, isOriginAllowed, validateConfig } from '../packages/backend-core/src/lib/config.ts'
 import { securityHeaders } from '../apps/api/src/middleware/securityHeaders.ts'
 import type { Request, Response } from 'express'
 
@@ -34,6 +34,27 @@ test('isProduction / verboseErrors are exact-match (staging is treated as non-de
 
   setEnv({ NODE_ENV: 'development' })
   assert.equal(verboseErrors(), true)
+})
+
+test('enforceSendReadiness fails closed everywhere except local dev/test, flag overrides both ways', () => {
+  // Default: enforced in production AND staging/preview (the SEC fix — staging used
+  // to bypass the CAN-SPAM gate); skipped only in explicit local dev/test.
+  setEnv({ ENFORCE_SEND_READINESS: undefined, NODE_ENV: 'production' })
+  assert.equal(enforceSendReadiness(), true)
+  setEnv({ NODE_ENV: 'staging' })
+  assert.equal(enforceSendReadiness(), true)
+  setEnv({ NODE_ENV: 'development' })
+  assert.equal(enforceSendReadiness(), false)
+  setEnv({ NODE_ENV: 'test' })
+  assert.equal(enforceSendReadiness(), false)
+
+  // Explicit override wins either way.
+  setEnv({ NODE_ENV: 'development', ENFORCE_SEND_READINESS: 'true' })
+  assert.equal(enforceSendReadiness(), true)
+  setEnv({ NODE_ENV: 'production', ENFORCE_SEND_READINESS: 'false' })
+  assert.equal(enforceSendReadiness(), false)
+  setEnv({ NODE_ENV: 'production', ENFORCE_SEND_READINESS: '0' })
+  assert.equal(enforceSendReadiness(), false)
 })
 
 test('origin allowlist is exact and ignores provider wildcards', () => {

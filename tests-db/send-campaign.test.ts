@@ -78,6 +78,24 @@ test('skips suppressed addresses — never dispatches, never records a send', as
   assert.equal(goodLead!.stage, 'OUTREACH_SENT')
 })
 
+test('operator drain: a send-suppressed workspace dispatches nothing (isolated kill-switch)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+  await seedSendableLead(workspace.id, campaign.id, 'reach2@buyer.test')
+  // Operator flips the per-workspace drain switch.
+  await prisma.workspace.update({ where: { id: workspace.id }, data: { sendSuppressed: true, sendSuppressedReason: 'abuse review' } })
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  // Nothing dispatched, nothing recorded — the whole batch is halted before any lead work.
+  assert.equal(result.sent, 0)
+  assert.equal(mailer.sent.length, 0)
+  assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id } }), 0)
+})
+
 test('pagination: sends across multiple pages and enforces the cap across pages', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)
