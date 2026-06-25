@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
 import { recordCriticalAudit } from '../lib/audit.js'
+import { getActivationFunnel } from '@acaos/backend-core/lib/analytics.js'
 import { getQueueStats } from '../lib/queues.js'
 import { parseQuery } from '../lib/validate.js'
 import { pingDatabase, pingRedis, withTimeout, PROBE_TIMEOUT_MS } from '../lib/health.js'
@@ -60,6 +61,17 @@ adminRouter.use(
     }
 
     throw new ApiError(403, 'Admin access required')
+  })
+)
+
+// Activation funnel (cross-tenant, platform-admin only): how many workspaces reach
+// each milestone signup → ICP configured → first send → first reply, with per-stage
+// conversion. Powers the growth/activation view.
+adminRouter.get(
+  '/activation-funnel',
+  asyncHandler(async (_req, res) => {
+    const funnel = await getActivationFunnel()
+    res.json({ funnel })
   })
 )
 

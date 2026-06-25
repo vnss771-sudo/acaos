@@ -33,6 +33,26 @@ model AuditEvent {
   @@index([createdAt])
 }
 
+// First-party product-analytics event stream (activation funnel, feature adoption,
+// time-to-first-value). Deliberately first-party (no PostHog/Segment dependency or
+// egress) so funnels are queryable in-product and nothing leaves the boundary. Like
+// AuditEvent it is FK-free and append-only; workspaceId/userId are nullable because
+// some events (signup) precede a workspace, and the funnel is computed by distinct
+// workspace per stage.
+model AnalyticsEvent {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  userId      String?
+  name        String   // funnel/feature event key, e.g. 'signup', 'icp.configured'
+  properties  Json?
+  occurredAt  DateTime @default(now())
+
+  @@index([name, occurredAt])
+  @@index([workspaceId, name])
+  // Standalone time index for the global retention purge (occurredAt < cutoff).
+  @@index([occurredAt])
+}
+
 // Audit log for prospect-discovery runs so users can tell "no prospects" apart
 // from "the provider failed / quota exceeded / not configured", and see what was
 // searched, returned, imported, and skipped per run.

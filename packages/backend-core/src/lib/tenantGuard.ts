@@ -24,7 +24,7 @@
 // Models carrying a workspaceId column (generated from schema.prisma; see the
 // shared-enum-conformance style guard test that pins this list to the schema).
 export const TENANT_MODELS: ReadonlySet<string> = new Set([
-  'AiPromptVersion', 'AuditEvent', 'Campaign', 'CampaignDailyStats', 'ConsentRecord',
+  'AiPromptVersion', 'AnalyticsEvent', 'AuditEvent', 'Campaign', 'CampaignDailyStats', 'ConsentRecord',
   'ContactEvent',
   'DiscoveryRun', 'EvidenceSource', 'FollowupTask', 'Lead', 'LeadEvidenceSource',
   'Membership', 'Mission',

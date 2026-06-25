@@ -21,6 +21,7 @@ import { effectiveReplyClassification } from '@acaos/backend-core/lib/replyGatin
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
+import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
@@ -1220,6 +1221,9 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // Auto-replies (OOO/bounce-like) carry no buying intent — record them on the send
   // (above) but never advance the lead or feed the scoring model.
   if (parsed.isAutoReply) return
+
+  // Activation-funnel: a genuine (non-auto) reply is "first value". Best-effort.
+  void trackEvent({ name: 'reply.received', workspaceId: lead.workspaceId, properties: { leadId, classification: parsed.classification } })
 
   // Confidence-gate the one IRREVERSIBLE consequence (NOT_INTERESTED → DEAD): a
   // low-confidence negative is downgraded to NEEDS_MORE_INFO so the lead is kept
