@@ -5,6 +5,7 @@ import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth, type DomainSnapshot } from './lib/metrics.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
+import { createCachedValue } from '@acaos/backend-core/lib/cachedValue.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
@@ -661,6 +662,16 @@ async function collectDomainMetrics(): Promise<DomainSnapshot> {
   return snapshot
 }
 
+// The domain snapshot is DB-heavy (up to REPUTATION_SCRAPE_LIMIT reputation
+// evaluations). Cache it on a short TTL so the cost is bounded by time, not by how
+// often Prometheus scrapes — and coalesce racing scrapes onto one computation.
+// METRICS_DOMAIN_CACHE_MS tunes the window (default 30s); the gauges it feeds
+// (followup backlog, reputation, warmup) tolerate that much staleness.
+const domainMetricsCache = createCachedValue(
+  collectDomainMetrics,
+  Number(process.env.METRICS_DOMAIN_CACHE_MS || 30_000),
+)
+
 // ── Repeatable IMAP auto-sync (every 10 min) ──────────────────────────────────
 // upsertJobScheduler is idempotent — safe to call on every worker restart.
 {
@@ -716,7 +727,7 @@ const healthServer = startHealthServer(
   Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
   {
     collectQueueDepths,
-    collectDomainMetrics,
+    collectDomainMetrics: () => domainMetricsCache.get(),
     isReady: () => !shuttingDown && connection.status === 'ready',
   },
 )
