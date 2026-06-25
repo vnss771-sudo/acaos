@@ -130,6 +130,30 @@ test('GET /send-readiness reports ready when SMTP + sender identity are set', as
   assert.ok(res.body.checks.every((c: any) => c.ok))
 })
 
+test('GET /:id/stats serves send-volume from the CampaignDailyStats read-model, not OutreachSent counts', async () => {
+  const s = spec()
+  s.campaign = { ...s.campaign, findUnique: async (a: any) =>
+    a?.where?.id === 'c1' ? { id: 'c1', workspaceId: OWNED, name: 'C', goalType: 'BOOK_CALL', _count: { leads: 9 } } : null } as any
+  s.lead = { count: async () => 4 } as any
+  // Single indexed aggregate over the projection replaces 4 growing OutreachSent counts.
+  let aggregateCalls = 0
+  let outreachSentCounts = 0
+  s.campaignDailyStats = { aggregate: async () => { aggregateCalls++; return { _sum: { sent: 20, replied: 5, interested: 2, bounced: 1, unsubscribed: 0, failed: 3 } } } } as any
+  s.outreachSent = { count: async () => { outreachSentCounts++; return 0 } } as any
+  const fake = createFakePrisma(s)
+  installPrisma(fake)
+
+  const res = await server.request('/api/campaigns/c1/stats', { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.stats.sent, 20)
+  assert.equal(res.body.stats.replied, 5)
+  assert.equal(res.body.stats.failed, 3)
+  assert.equal(res.body.stats.bounced, 1)
+  assert.equal(res.body.stats.replyRate, 0.25) // 5/20
+  assert.equal(aggregateCalls, 1)
+  assert.equal(outreachSentCounts, 0) // no count() over the ever-growing send table
+})
+
 // ── Send safety gates (mission stop, approval truthfulness, daily cap) ─────────
 const verifiedUser = { findUnique: async () => ({ id: MEMBER, email: 'u1@a.test', name: null, emailVerified: true }) }
 

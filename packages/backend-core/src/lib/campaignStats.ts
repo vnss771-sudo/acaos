@@ -47,6 +47,32 @@ export async function incrementCampaignDailyStats(
   await client.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs(input))
 }
 
+export type CampaignStatTotals = {
+  sent: number; replied: number; interested: number; bounced: number; unsubscribed: number; failed: number
+}
+
+/**
+ * Sum a campaign's lifetime stats from the CampaignDailyStats projection in a single
+ * indexed aggregate, instead of N growing count()s over the ever-expanding
+ * OutreachSent table. The projection is transactionally maintained with each send and
+ * reconciled from the ledger, so it is the right source for dashboards at scale.
+ */
+export async function sumCampaignStats(campaignId: string, client: Db = prisma): Promise<CampaignStatTotals> {
+  const agg = await client.campaignDailyStats.aggregate({
+    where: { campaignId },
+    _sum: { sent: true, replied: true, interested: true, bounced: true, unsubscribed: true, failed: true },
+  })
+  const s = agg._sum
+  return {
+    sent: s.sent ?? 0,
+    replied: s.replied ?? 0,
+    interested: s.interested ?? 0,
+    bounced: s.bounced ?? 0,
+    unsubscribed: s.unsubscribed ?? 0,
+    failed: s.failed ?? 0,
+  }
+}
+
 // Map a ContactEvent.type to the stats field it increments (for live + rebuild).
 export const EVENT_FIELD: Record<string, CampaignStatField | undefined> = {
   SENT: 'sent',
