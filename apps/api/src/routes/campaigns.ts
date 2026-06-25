@@ -8,6 +8,7 @@ import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
 import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
+import { getCampaignAttribution } from '@acaos/backend-core/lib/campaignAttribution.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
 import { enforceSendReadiness } from '../lib/config.js'
@@ -243,6 +244,21 @@ campaignsRouter.get(
         replyRate: sent > 0 ? Math.round((replied / sent) * 100) / 100 : 0,
       }
     })
+  })
+)
+
+// Campaign ROI attribution: the sent → replied → meeting → won funnel attributed
+// back to this campaign's outreach, with per-stage conversion. The renewal/expansion
+// story — provable pipeline per campaign. Member-scoped, read-only.
+campaignsRouter.get(
+  '/:id/attribution',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id as string } })
+    if (!campaign) throw new ApiError(404, 'Campaign not found')
+    const member = await userBelongsToWorkspace(user.id, campaign.workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    res.json({ attribution: await getCampaignAttribution(campaign.id) })
   })
 )
 

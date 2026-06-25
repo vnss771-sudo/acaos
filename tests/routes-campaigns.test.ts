@@ -98,6 +98,22 @@ test('PATCH denies another workspace', async () => {
   assert.equal(res.status, 403)
 })
 
+test('GET /:id/attribution denies another workspace, returns the funnel for a member', async () => {
+  assert.equal((await server.request('/api/campaigns/c-other/attribution', { headers: auth() })).status, 403)
+
+  const s = spec()
+  s.contactEvent = { findMany: async (a: any) => (a.where.type === 'SENT' ? [{ leadId: 'l1' }, { leadId: 'l2' }] : [{ leadId: 'l1' }]) } as any
+  s.lead = { count: async (a: any) => (a.where.stage.in.includes('BOOKED') ? 1 : 0) } as any
+  installPrisma(createFakePrisma(s))
+  const res = await server.request('/api/campaigns/c1/attribution', { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.attribution.sent, 2)
+  assert.equal(res.body.attribution.replied, 1)
+  assert.equal(res.body.attribution.booked, 1)
+  assert.equal(res.body.attribution.won, 0)
+  assert.equal(res.body.attribution.replyRate, 0.5)
+})
+
 test('DELETE removes a member campaign but denies another workspace', async () => {
   assert.equal((await server.request('/api/campaigns/c-other', { method: 'DELETE', headers: auth() })).status, 403)
   assert.equal(prisma.callsTo('campaign', 'delete').length, 0)
