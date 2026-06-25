@@ -139,7 +139,7 @@ test('POST /:id/send blocks a paused linked mission before enqueue (409)', async
   assert.match(String(res.body.error), /paused/)
 })
 
-test('POST /:id/send daily cap counts delivered SENT rows only (429)', async () => {
+test('POST /:id/send daily cap counts SENT + in-flight SENDING rows (429), mirroring the worker', async () => {
   const s = spec()
   s.user = verifiedUser as any
   s.lead = { count: async () => 1 } as any
@@ -153,8 +153,10 @@ test('POST /:id/send daily cap counts delivered SENT rows only (429)', async () 
     method: 'POST', headers: jsonAuth(), body: JSON.stringify({ approved: true }),
   })
   assert.equal(res.status, 429)
+  // The cap forecast must count both SENT and in-flight SENDING rows so it can't
+  // admit a batch the worker's reserveDailySendSlot then rejects as over-cap.
   const countArg = fake.callsTo('outreachSent', 'count')[0].args[0] as any
-  assert.equal(countArg.where.status, 'SENT')
+  assert.deepEqual(countArg.where.status, { in: ['SENT', 'SENDING'] })
 })
 
 test('POST /:id/send in approval mode still requires the { approved: true } flag (403)', async () => {

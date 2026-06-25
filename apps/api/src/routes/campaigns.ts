@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '../lib/queues.js'
+import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import { validate, parseQuery, parseParams, workspaceIdField, nonEmptyString, idField } from '../lib/validate.js'
 import { z } from 'zod'
 import { isProduction } from '../lib/config.js'
@@ -328,11 +329,15 @@ campaignsRouter.get(
     }
     const totalEligible = await prisma.lead.count({ where })
 
-    // Approval mode check
+    // Approval mode check. Use the EFFECTIVE mode so the forecast matches what the
+    // worker enforces: SAFE_LAUNCH_MODE forces approval even when the workspace's own
+    // approvalMode is off (otherwise the API would report "ready" for a launch the
+    // worker then holds for approval).
     const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: campaign.workspaceId } })
+    const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
     let approvedEligible = totalEligible
 
-    if (icp?.approvalMode) {
+    if (approvalRequired) {
       approvedEligible = await prisma.lead.count({
         where: { ...where, outreachDrafts: { some: { status: 'APPROVED' } } }
       })
@@ -345,23 +350,27 @@ campaignsRouter.get(
       }
     }
 
-    // Daily cap check
+    // Daily cap check. Mirror the worker's reservation exactly: the EFFECTIVE limit
+    // (safe-launch clamps it) and count SENT *and* SENDING (in-flight) rows, so the
+    // forecast can't overstate "eligible" against what the worker will actually let
+    // through.
     let cappedEligible = approvedEligible
     let cappedByDaily = false
 
-    if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
+    const effectiveLimit = effectiveDailySendLimit(icp?.dailySendLimit)
+    if (effectiveLimit && effectiveLimit > 0) {
       const startOfToday = new Date()
       startOfToday.setHours(0, 0, 0, 0)
       const sentToday = await prisma.outreachSent.count({
-        where: { workspaceId: campaign.workspaceId, status: 'SENT', sentAt: { gte: startOfToday } }
+        where: { workspaceId: campaign.workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } }
       })
-      const remaining = Math.max(0, icp.dailySendLimit - sentToday)
+      const remaining = Math.max(0, effectiveLimit - sentToday)
 
       if (remaining === 0) {
         ready = false
         blockers.push({
           name: 'dailyCapReached',
-          hint: `Daily send limit of ${icp.dailySendLimit} reached for today — ${approvedEligible} eligible leads will send tomorrow`
+          hint: `Daily send limit of ${effectiveLimit} reached for today — ${approvedEligible} eligible leads will send tomorrow`
         })
       } else if (remaining < approvedEligible) {
         cappedEligible = remaining
@@ -380,13 +389,13 @@ campaignsRouter.get(
       approvedEligible: approvedEligible,
       cappedEligible: cappedEligible,
       cappedByDaily,
-      requiresApproval: icp?.approvalMode ?? false,
-      dailySendLimit: icp?.dailySendLimit || null,
+      requiresApproval: approvalRequired,
+      dailySendLimit: effectiveLimit ?? null,
       estimatedDailyBatches,
       ready,
       blockers,
       message: ready
-        ? `${cappedEligible} lead${cappedEligible !== 1 ? 's' : ''} ready to send${cappedByDaily ? ` (capped by daily limit of ${icp?.dailySendLimit})` : ''}`
+        ? `${cappedEligible} lead${cappedEligible !== 1 ? 's' : ''} ready to send${cappedByDaily ? ` (capped by daily limit of ${effectiveLimit})` : ''}`
         : `Send blocked: ${blockers.map(b => b.name).join(', ')}`
     })
   })
@@ -455,7 +464,10 @@ campaignsRouter.post(
       throw new ApiError(409, `Mission is ${mission.status.toLowerCase()} — resume or create a new mission before sending`)
     }
 
-    if (icp?.approvalMode) {
+    // Use the EFFECTIVE approval mode — SAFE_LAUNCH_MODE forces approval even when
+    // the workspace's own approvalMode is off, exactly as the worker enforces it.
+    const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
+    if (approvalRequired) {
       // Approval mode: require explicit opt-in flag in the request body.
       // The frontend sends { approved: true } after the user confirms the modal.
       if (!body.approved) {
@@ -474,18 +486,20 @@ campaignsRouter.post(
       eligible = approvedEligible
     }
 
+    // Use the EFFECTIVE daily limit (safe-launch clamps it) and count SENT *and*
+    // SENDING rows, mirroring the worker's reserveDailySendSlot exactly — otherwise
+    // the API would admit a batch the worker then rejects as over-cap.
     let cappedEligible = eligible
-    if (icp?.dailySendLimit && icp.dailySendLimit > 0) {
+    const effectiveLimit = effectiveDailySendLimit(icp?.dailySendLimit)
+    if (effectiveLimit && effectiveLimit > 0) {
       const startOfToday = new Date()
       startOfToday.setHours(0, 0, 0, 0)
       const sentToday = await prisma.outreachSent.count({
-        // Count delivered sends only — in-flight (SENDING) / FAILED outbox claims
-        // are fail-closed safety rows and must not consume the daily send cap.
-        where: { workspaceId: campaign.workspaceId, status: 'SENT', sentAt: { gte: startOfToday } }
+        where: { workspaceId: campaign.workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday } }
       })
-      const remaining = Math.max(0, icp.dailySendLimit - sentToday)
+      const remaining = Math.max(0, effectiveLimit - sentToday)
       if (remaining === 0) {
-        throw new ApiError(429, `Daily send limit of ${icp.dailySendLimit} reached for today`)
+        throw new ApiError(429, `Daily send limit of ${effectiveLimit} reached for today`)
       }
       cappedEligible = Math.min(eligible, remaining)
     }
