@@ -16,6 +16,7 @@ window (e.g. lifecycle-bound data) are noted in the Enforcement column.
 | AI research / enrichment results | `Lead.aiSummary`, `Signal`, `EvidenceSource` | Life of the prospect/lead | With tenant deletion |
 | Provider discovery runs | `DiscoveryRun` | 12 months | Automated (daily purge job) |
 | Audit events | `AuditEvent` | 24 months (append-only, FK-free by design) | Automated (daily purge job) |
+| Product-analytics events | `AnalyticsEvent` | 12 months (`RETENTION_ANALYTICS_EVENT_DAYS`; append-only, FK-free) | Automated (daily purge job) |
 | Refresh tokens | `RefreshToken` | Expire per `REFRESH_TOKEN_DAYS`; revoked rows purged after 30 days | Expiry + automated (daily purge job) |
 | Email-verification / password-reset tokens | `EmailVerificationToken`, `PasswordResetToken` | Until used or expired; purge after 30 days | Expiry + automated (daily purge job) |
 | Stripe event dedupe keys | `ProcessedStripeEvent` | 12 months | Automated (daily purge job) |

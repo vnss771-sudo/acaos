@@ -30,6 +30,10 @@ test('purges rows past their window and keeps rows inside it', async () => {
   await prisma.discoveryRun.create({ data: { workspaceId: ws, source: 'apollo', status: 'SUCCEEDED', startedAt: ago(400) } })
   await prisma.discoveryRun.create({ data: { workspaceId: ws, source: 'apollo', status: 'SUCCEEDED', startedAt: ago(100) } })
 
+  // AnalyticsEvent — 12-month (365-day) window.
+  await prisma.analyticsEvent.create({ data: { workspaceId: ws, name: 'signup', occurredAt: ago(400) } })
+  await prisma.analyticsEvent.create({ data: { workspaceId: ws, name: 'signup', occurredAt: ago(30) } })
+
   // ProcessedStripeEvent — 12-month window (platform-wide).
   await prisma.processedStripeEvent.create({ data: { id: 'evt_old', type: 'invoice.paid', processedAt: ago(400) } })
   await prisma.processedStripeEvent.create({ data: { id: 'evt_new', type: 'invoice.paid', processedAt: ago(5) } })
@@ -39,11 +43,13 @@ test('purges rows past their window and keeps rows inside it', async () => {
   assert.equal(deleted.processedEmail, 1)
   assert.equal(deleted.auditEvent, 1)
   assert.equal(deleted.discoveryRun, 1)
+  assert.equal(deleted.analyticsEvent, 1)
   assert.equal(deleted.processedStripeEvent, 1)
 
   assert.equal(await prisma.processedEmail.count(), 1)
   assert.equal(await prisma.auditEvent.count(), 1)
   assert.equal(await prisma.discoveryRun.count(), 1)
+  assert.equal(await prisma.analyticsEvent.count(), 1)
   assert.equal(await prisma.processedStripeEvent.count(), 1)
 })
 

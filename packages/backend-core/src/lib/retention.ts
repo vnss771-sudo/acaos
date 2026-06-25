@@ -28,6 +28,7 @@ export type RetentionWindows = {
   outreachSentDays: number
   discoveryRunDays: number
   auditEventDays: number
+  analyticsEventDays: number
   stripeEventDays: number
   /** Expired/used/revoked auth tokens are purged this long after creation. */
   authTokenDays: number
@@ -40,6 +41,7 @@ export function retentionWindows(): RetentionWindows {
     outreachSentDays: days('RETENTION_OUTREACH_SENT_DAYS', 548), // 18 months
     discoveryRunDays: days('RETENTION_DISCOVERY_RUN_DAYS', 365), // 12 months
     auditEventDays: days('RETENTION_AUDIT_EVENT_DAYS', 730),     // 24 months
+    analyticsEventDays: days('RETENTION_ANALYTICS_EVENT_DAYS', 365), // 12 months (cohort analysis)
     stripeEventDays: days('RETENTION_STRIPE_EVENT_DAYS', 365),   // 12 months
     authTokenDays: days('RETENTION_AUTH_TOKEN_DAYS', 30),
   }
@@ -50,6 +52,7 @@ export type PurgeCounts = {
   outreachSent: number
   discoveryRun: number
   auditEvent: number
+  analyticsEvent: number
   processedStripeEvent: number
   refreshToken: number
   emailVerificationToken: number
@@ -78,6 +81,7 @@ export async function purgeExpiredData(
     outreachSent,
     discoveryRun,
     auditEvent,
+    analyticsEvent,
     processedStripeEvent,
     refreshToken,
     emailVerificationToken,
@@ -87,6 +91,7 @@ export async function purgeExpiredData(
     prisma.outreachSent.deleteMany({ where: { sentAt: { lt: before(windows.outreachSentDays) } } }),
     prisma.discoveryRun.deleteMany({ where: { startedAt: { lt: before(windows.discoveryRunDays) } } }),
     prisma.auditEvent.deleteMany({ where: { createdAt: { lt: before(windows.auditEventDays) } } }),
+    prisma.analyticsEvent.deleteMany({ where: { occurredAt: { lt: before(windows.analyticsEventDays) } } }),
     prisma.processedStripeEvent.deleteMany({ where: { processedAt: { lt: before(windows.stripeEventDays) } } }),
     prisma.refreshToken.deleteMany({
       where: { createdAt: { lt: authCutoff }, OR: [{ expiresAt: { lt: now } }, { revokedAt: { not: null } }] },
@@ -104,6 +109,7 @@ export async function purgeExpiredData(
     outreachSent: outreachSent.count,
     discoveryRun: discoveryRun.count,
     auditEvent: auditEvent.count,
+    analyticsEvent: analyticsEvent.count,
     processedStripeEvent: processedStripeEvent.count,
     refreshToken: refreshToken.count,
     emailVerificationToken: emailVerificationToken.count,
