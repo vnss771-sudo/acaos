@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { ensureWorkspaceSlug, normalizeWorkspaceRole, assertMinimumWorkspaceRole, invalidateWorkspaceMembership } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
@@ -40,7 +40,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const rows = await prisma.workspace.findMany({
         where: { memberships: { some: { userId: user.id } } },
         select: {
@@ -63,7 +63,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
     '/',
     validate(createWorkspaceSchema),
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const name = normalizeOptionalString(req.body?.name)
       const requestedSlug = normalizeOptionalString(req.body?.slug)
 
@@ -87,7 +87,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
       const workspace = await prisma.workspace.findUnique({
         where: { id: workspaceId },
@@ -114,7 +114,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
     '/:id',
     validate(updateWorkspaceSchema),
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
       const existing = await prisma.workspace.findUnique({ where: { id: workspaceId } })
       if (!existing) throw new ApiError(404, 'Workspace not found')
@@ -165,7 +165,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
     requireFreshAuth,
     validate(deleteWorkspaceSchema),
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       const ws = await prisma.workspace.findUnique({
@@ -221,7 +221,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
     '/:id/billing-portal',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       await assertWorkspacePermission(user.id, req.params.id as string, 'billing:manage')
 
       const workspace = await prisma.workspace.findUnique({
@@ -242,7 +242,7 @@ export function registerCoreRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
     '/:id/seed',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       await assertWorkspacePermission(user.id, workspaceId, 'workspace:seed')

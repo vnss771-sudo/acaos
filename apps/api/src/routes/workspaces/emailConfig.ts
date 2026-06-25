@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler } from '../../lib/http.js'
+import { asyncHandler, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { encryptSecret } from '../../lib/encrypt.js'
 import { assertPublicMailHost } from '../../lib/ssrf.js'
@@ -60,7 +60,7 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id/email-config',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       await assertWorkspacePermission(user.id, workspaceId, 'email_config:manage')
@@ -88,7 +88,7 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
   workspaceRouter.put(
     '/:id/email-config',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       await assertWorkspacePermission(user.id, workspaceId, 'email_config:manage')

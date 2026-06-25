@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { getMonthlyUsage } from '../lib/limits.js'
@@ -24,7 +24,7 @@ const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOS
 statsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
@@ -41,7 +41,7 @@ statsRouter.get(
 statsRouter.get(
   '/reputation',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
@@ -58,7 +58,7 @@ statsRouter.get(
 statsRouter.get(
   '/ai-prompts',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
@@ -166,7 +166,7 @@ async function buildStats(workspaceId: string): Promise<Record<string, unknown>>
 statsRouter.get(
   '/campaigns',
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)

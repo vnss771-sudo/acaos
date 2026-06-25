@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { prisma } from '../lib/prisma.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { suppress } from '../lib/suppressions.js'
 import { recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { normalizeEmail } from '@acaos/backend-core/lib/normalize.js'
@@ -108,7 +108,7 @@ unsubscribeRouter.get(
   asyncHandler(async (req, res) => {
     const { workspaceId } = parseQuery(suppressionsQuerySchema, req)
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
     const suppressions = await prisma.suppression.findMany({

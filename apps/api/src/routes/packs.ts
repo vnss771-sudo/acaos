@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '../lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { listPacks, getPack } from '../lib/packs/index.js'
@@ -30,7 +30,7 @@ packsRouter.get('/:id', asyncHandler(async (req, res) => {
 // Apply a pack's ICP preset to a workspace (onboarding shortcut). The operator
 // can still edit their ICP afterwards; this just seeds it from the vertical.
 packsRouter.post('/:id/apply', validate(applyPackSchema), asyncHandler(async (req, res) => {
-  const user = req.user!
+  const user = requireUser(req)
   const { workspaceId } = req.body as z.infer<typeof applyPackSchema>
   const { id } = parseParams(packParamsSchema, req)
   await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')

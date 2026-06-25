@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import {
   calculateOpportunityScores,
@@ -22,7 +22,7 @@ export function registerEnrichmentRoutes(prospectsRouter: Router) {
     const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
 
     if (prospect.isExample) throw new ApiError(400, 'Example prospects cannot be enriched — add real prospects first')

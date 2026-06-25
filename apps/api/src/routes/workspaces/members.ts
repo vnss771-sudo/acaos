@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { invalidateWorkspaceMembership } from '../../lib/workspaces.js'
 import { assertWorkspacePermission, roleCan } from '../../lib/permissions.js'
@@ -29,7 +29,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id/members',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const membersWorkspaceId = req.params.id as string
       const membership = await prisma.membership.findFirst({
         where: { userId: user.id, workspaceId: membersWorkspaceId },
@@ -50,7 +50,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
     '/:id/members',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       const callerRole = await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
@@ -96,7 +96,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.post(
     '/:id/invites',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
 
       const callerRole = await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
@@ -177,7 +177,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id/invites',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
@@ -195,7 +195,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.delete(
     '/:id/invites/:inviteId',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
 
       await assertWorkspacePermission(user.id, workspaceId, 'members:manage')
@@ -217,7 +217,7 @@ export function registerMemberRoutes(workspaceRouter: Router) {
   workspaceRouter.delete(
     '/:id/members/:userId',
     asyncHandler(async (req, res) => {
-      const user = req.user!
+      const user = requireUser(req)
       const workspaceId = req.params.id as string
       const targetUserId = req.params.userId as string
 

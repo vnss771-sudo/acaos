@@ -4,11 +4,23 @@ import { logger } from './logger.js'
 import { CircuitOpenError } from './circuit.js'
 import { captureError } from './observability.js'
 import { ApiError } from '@acaos/backend-core/lib/errors.js'
+import type { AuthUser } from '../types/auth.js'
 
 // ApiError is defined framework-agnostically in backend-core so shared services
 // can throw it; re-exported here so the rest of the API keeps importing it from
 // '../lib/http.js'.
 export { ApiError }
+
+// Resolve the authenticated user, or throw a clean 401. Replaces the repeated
+// `req.user!` non-null assertion: that assertion is only safe because requireAuth
+// runs first, so a route accidentally mounted WITHOUT requireAuth would dereference
+// undefined at runtime with no compile-time signal. requireUser turns that latent
+// NPE into an explicit, typed 401 and returns a non-optional AuthUser.
+export function requireUser(req: Request): AuthUser {
+  const user = req.user
+  if (!user) throw new ApiError(401, 'Authentication required')
+  return user
+}
 
 export function asyncHandler(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>

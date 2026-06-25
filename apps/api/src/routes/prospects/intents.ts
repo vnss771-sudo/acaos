@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { asyncHandler, ApiError } from '../../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { recordAudit } from '../../lib/audit.js'
 import { prisma } from '../../lib/prisma.js'
 import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
@@ -28,7 +28,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
     })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
     const intents = await prisma.outreachIntent.findMany({
@@ -47,7 +47,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
     })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     await assertMinimumWorkspaceRole(userId, prospect.workspaceId, 'admin')
 
     const intent = await prisma.outreachIntent.findUnique({ where: { id: req.params.intentId as string } })
@@ -94,7 +94,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
   // Stage 4: approve/reject an intent's drafted outreach. Approval locks the
   // evidence + text already captured on the intent (the auditable snapshot).
   prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, res) => {
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     const { id, intentId } = parseParams(intentParamsSchema, req)
     const { leadId: rawLeadId } = parseBody(approveIntentSchema, { body: req.body ?? {} })
     const intent = await loadIntentForWrite(id, intentId, userId)
@@ -121,7 +121,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
   }))
 
   prospectsRouter.post('/:id/intents/:intentId/reject', asyncHandler(async (req, res) => {
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
     if (['SENT', 'WON', 'LOST'].includes(intent.status)) {
       throw new ApiError(409, `Cannot reject a ${intent.status.toLowerCase()} intent`)
@@ -139,7 +139,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
   // APPROVED draft in a campaign, linked back to the intent. After this, launch
   // the campaign via the normal send path (which stamps provenance + flips SENT).
   prospectsRouter.post('/:id/intents/:intentId/materialize', asyncHandler(async (req, res) => {
-    const userId = req.user!.id
+    const userId = requireUser(req).id
     const { id, intentId } = parseParams(intentParamsSchema, req)
     const { campaignId: rawCampaignId } = parseBody(materializeIntentSchema, { body: req.body ?? {} })
     const intent = await loadIntentForWrite(id, intentId, userId)

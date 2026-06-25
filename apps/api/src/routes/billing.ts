@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireFreshAuth, requireVerifiedForMutation } from '../middleware/auth.js'
-import { asyncHandler, ApiError } from '../lib/http.js'
+import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
@@ -29,7 +29,7 @@ billingRouter.post(
   requireVerifiedForMutation,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId, plan } = parseBody(checkoutSchema, req)
 
     await assertWorkspacePermission(user.id, workspaceId, 'billing:manage')
@@ -66,7 +66,7 @@ billingRouter.get(
   '/status',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
 
     await assertWorkspacePermission(user.id, workspaceId, 'billing:manage')
@@ -93,7 +93,7 @@ billingRouter.post(
   requireVerifiedForMutation,
   requireFreshAuth,
   asyncHandler(async (req, res) => {
-    const user = req.user!
+    const user = requireUser(req)
     const { workspaceId } = parseBody(workspaceBodySchema, req)
 
     await assertWorkspacePermission(user.id, workspaceId, 'billing:manage')
