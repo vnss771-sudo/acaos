@@ -8,6 +8,7 @@ import { getScoreTier } from '../lib/scoring.js'
 import { statsCache } from '../lib/statsCache.js'
 import { parseQuery, workspaceIdField } from '../lib/validate.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
+import { getWorkspaceActivation } from '@acaos/backend-core/lib/analytics.js'
 import { reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { promptVersionQuality } from '@acaos/backend-core/lib/promptQuality.js'
 import { z } from 'zod'
@@ -32,6 +33,20 @@ statsRouter.get(
 
     const payload = await statsCache.get(workspaceId, () => buildStats(workspaceId))
     res.json(payload)
+  })
+)
+
+// This workspace's activation progress: which onboarding milestones it has reached
+// (signup → ICP configured → first send → first reply) and the next step to nudge.
+// Read-only, member-scoped — powers the in-product onboarding/activation surface.
+statsRouter.get(
+  '/activation',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+    res.json(await getWorkspaceActivation(workspaceId))
   })
 )
 

@@ -104,6 +104,21 @@ test('GET / coalesces a concurrent burst into one aggregation, then serves the T
   assert.equal(stageGroupBys, 1, 'follow-up within TTL served from cache')
 })
 
+test('GET /activation denies a non-member workspace', async () => {
+  assert.equal((await server.request(`/api/stats/activation?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
+})
+test('GET /activation returns the workspace activation progress + next step', async () => {
+  const s = spec()
+  // Signed up + ICP configured; not yet sent or replied.
+  const done = new Set(['signup', 'icp.configured'])
+  s.analyticsEvent = { findFirst: async (a: any) => (done.has(a.where.name) ? { occurredAt: new Date('2026-06-01T00:00:00Z') } : null) } as any
+  installPrisma(createFakePrisma(s))
+  const res = await server.request(`/api/stats/activation?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.completedCount, 2)
+  assert.equal(res.body.nextStep, 'campaign.sent')
+})
+
 test('GET /campaigns denies a non-member workspace', async () => {
   assert.equal((await server.request(`/api/stats/campaigns?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
 })
