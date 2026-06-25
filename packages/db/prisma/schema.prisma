@@ -107,6 +107,16 @@ model Workspace {
   onboardingCompleted  Boolean              @default(false)
   senderBusinessName   String?
   senderPostalAddress  String?
+  // Compliance posture (operator-attested). Null = not yet completed. Surfaced via
+  // the compliance API + Settings panel; enforced by getSendReadiness only when
+  // COMPLIANCE_GATE_ENABLED is on (ships dormant).
+  lawfulBasis            String?    // 'legitimate_interest' | 'consent' | 'contract'
+  liaAcknowledgedAt      DateTime?  // operator confirmed an LIA is on file
+  termsAcceptedAt        DateTime?
+  termsVersion           String?
+  subprocessorsAckAt     DateTime?
+  subprocessorsAckVersion String?
+  targetsCanada          Boolean    @default(false) // gates the CASL consent check
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   memberships          Membership[]
@@ -128,6 +138,7 @@ model Workspace {
   suppressions         Suppression[]
   contactEvents        ContactEvent[]
   unsubscribeEvents    UnsubscribeEvent[]
+  consentRecords       ConsentRecord[]
   campaignDailyStats   CampaignDailyStats[]
   followupTasks        FollowupTask[]
   processedEmails      ProcessedEmail[]
@@ -787,6 +798,23 @@ model UnsubscribeEvent {
 
   @@index([workspaceId, occurredAt])
   @@index([workspaceId, emailKey])
+}
+
+// Append-only consent / lawful-basis ledger. Lets an operator record the basis per
+// recipient (or segment) when they have one, and gives an auditable trail for SARs.
+// Cascade-deleted with the workspace (covered by the GDPR-erasure endpoint).
+model ConsentRecord {
+  id          String    @id @default(cuid())
+  workspaceId String
+  emailKey    String    // normalized recipient (matches Suppression.emailKey)
+  basis       String    // 'express_consent' | 'implied_consent' | 'legitimate_interest'
+  source      String    // 'import' | 'manual' | 'form' | 'crm_sync'
+  note        String?
+  recordedAt  DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, emailKey])
+  @@index([workspaceId, recordedAt])
 }
 
 model Prospect {

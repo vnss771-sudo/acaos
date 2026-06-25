@@ -4,6 +4,7 @@ import type { User, Workspace, WorkspaceMember } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { MfaSettings } from '../components/MfaSettings.js'
+import { CompliancePanel } from '../components/CompliancePanel.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -780,6 +781,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             </button>
           </div>
         </div>
+      )}
+
+      {/* Compliance attestation (lawful basis, terms, sub-processors) */}
+      {workspace && canManage && (
+        <CompliancePanel api={api} workspace={workspace} toast={toast} canManage={canManage} />
       )}
 
       {/* Compliance & Deliverability */}

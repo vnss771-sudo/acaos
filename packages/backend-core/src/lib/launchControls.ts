@@ -65,6 +65,17 @@ export function areFollowupsEnabled(): boolean {
   return parseBool(process.env.FOLLOWUPS_ENABLED, false)
 }
 
+/**
+ * Opt-IN gate (DEFAULT OFF) for the in-product compliance checks in
+ * getSendReadiness (lawful basis recorded, outreach terms accepted, CASL consent
+ * for Canada-targeting workspaces). Ships dormant so the schema/API/UI can land
+ * without changing send behaviour; flip to true only once the legal copy
+ * (sub-processor list, T&Cs, LIA prompts) is signed off.
+ */
+export function isComplianceGateEnabled(): boolean {
+  return parseBool(process.env.COMPLIANCE_GATE_ENABLED, false)
+}
+
 export type ReputationGuardMode = 'off' | 'observe' | 'enforce'
 
 /**

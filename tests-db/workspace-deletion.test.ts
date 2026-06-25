@@ -38,13 +38,14 @@ async function seedTenantData(workspaceId: string) {
   await prisma.usageRecord.create({ data: { workspaceId, action: 'AI_RESEARCH', month: '2026-06', count: 5 } })
   await prisma.suppression.create({ data: { workspaceId, email: 'x@y.test', emailKey: 'x@y.test' } })
   await prisma.auditEvent.create({ data: { workspaceId, type: 'lead.created', entityId: lead.id } })
+  await prisma.consentRecord.create({ data: { workspaceId, emailKey: 'p@y.test', basis: 'express_consent', source: 'manual' } })
   const model = await prisma.scoringModel.create({ data: { workspaceId, weights: {}, performanceMetrics: {} } })
   await prisma.scoringOutcome.create({ data: { workspaceId, scoringModelId: model.id, score: 50, replied: false } })
   return { leadId: lead.id, campaignId: campaign.id }
 }
 
 async function tenantRowCounts(workspaceId: string) {
-  const [leads, campaigns, drafts, usage, suppressions, audits, models, outcomes, memberships, workspace] = await Promise.all([
+  const [leads, campaigns, drafts, usage, suppressions, audits, models, outcomes, consent, memberships, workspace] = await Promise.all([
     prisma.lead.count({ where: { workspaceId } }),
     prisma.campaign.count({ where: { workspaceId } }),
     prisma.outreachDraft.count({ where: { workspaceId } }),
@@ -53,10 +54,11 @@ async function tenantRowCounts(workspaceId: string) {
     prisma.auditEvent.count({ where: { workspaceId } }),
     prisma.scoringModel.count({ where: { workspaceId } }),
     prisma.scoringOutcome.count({ where: { workspaceId } }),
+    prisma.consentRecord.count({ where: { workspaceId } }),
     prisma.membership.count({ where: { workspaceId } }),
     prisma.workspace.findUnique({ where: { id: workspaceId } }),
   ])
-  return { leads, campaigns, drafts, usage, suppressions, audits, models, outcomes, memberships, workspace }
+  return { leads, campaigns, drafts, usage, suppressions, audits, models, outcomes, consent, memberships, workspace }
 }
 
 test('owner erases the workspace: every tenant table is emptied, the user survives', async () => {
