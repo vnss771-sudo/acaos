@@ -10,6 +10,7 @@
     "start:dev": "NODE_OPTIONS=--conditions=acaos-src tsx src/server.ts"
   },
   "dependencies": {
+    "@acaos/backend-core": "*",
     "@acaos/shared": "*",
     "@prisma/client": "^5.18.0",
     "bcryptjs": "^2.4.3",
@@ -25,8 +26,7 @@
     "openai": "^6.0.0",
     "prisma": "^5.18.0",
     "stripe": "^16.8.0",
-    "zod": "^4.4.3",
-    "@acaos/backend-core": "*"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

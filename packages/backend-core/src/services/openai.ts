@@ -15,8 +15,36 @@ function getOpenAiClient() {
   })
 }
 
-function model() {
-  return process.env.OPENAI_MODEL || 'gpt-4o-mini'
+const DEFAULT_MODEL = 'gpt-4o-mini'
+// Cost guardrail: only allow-listed models are used. Operators can extend the list
+// via OPENAI_MODEL_ALLOWLIST (comma-separated), but a typo or an accidentally
+// expensive OPENAI_MODEL value falls back to the cheap default rather than silently
+// running up spend on every AI call.
+const ALLOWED_MODELS = new Set<string>([
+  'gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o4-mini',
+  ...(process.env.OPENAI_MODEL_ALLOWLIST || '').split(',').map((s) => s.trim()).filter(Boolean),
+])
+let warnedModel = false
+export function model() {
+  const configured = (process.env.OPENAI_MODEL || '').trim()
+  if (!configured) return DEFAULT_MODEL
+  if (ALLOWED_MODELS.has(configured)) return configured
+  if (!warnedModel) {
+    warnedModel = true
+    console.warn(`[openai] OPENAI_MODEL="${configured}" is not allow-listed; using ${DEFAULT_MODEL}. Add it to OPENAI_MODEL_ALLOWLIST to enable.`)
+  }
+  return DEFAULT_MODEL
+}
+
+// Cap free-text notes before they enter a prompt: notes are operator-entered and
+// can contain arbitrary PII (emails, phone numbers, personal detail). An unbounded
+// value both leaks more PII to the model and inflates token cost; 500 chars is
+// ample for a genuine "how the sender knows them" note.
+const NOTES_MAX = 500
+export function clampNotes(notes: string | undefined | null): string | undefined {
+  const t = notes?.trim()
+  if (!t) return undefined
+  return t.length > NOTES_MAX ? `${t.slice(0, NOTES_MAX)}…` : t
 }
 
 // Sampling temperature for all generations. A constant (not inlined) so the value
@@ -50,10 +78,19 @@ export function outreachGenerationMeta(): {
 // expected output (a normal JSON response is a few hundred tokens) so a valid
 // response is never truncated — a truncated body fails the strict aiSchemas parse
 // and burns a retry. An env override allows tuning without a code change.
+// Hard ceiling so an env override (or a fat-fingered value like 1000000) can never
+// request an unbounded completion. Each task's expected output is a few hundred
+// tokens; 4000 leaves generous headroom while capping worst-case spend per call.
+const HARD_MAX_TOKENS = 4000
+export function clampTokens(envValue: string | undefined, dflt: number): number {
+  const n = Number(envValue)
+  const v = Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt
+  return Math.min(v, HARD_MAX_TOKENS)
+}
 const MAX_TOKENS = {
-  research: Number(process.env.OPENAI_MAX_TOKENS_RESEARCH || 1500),
-  outreach: Number(process.env.OPENAI_MAX_TOKENS_OUTREACH || 1200),
-  reply: Number(process.env.OPENAI_MAX_TOKENS_REPLY || 700),
+  research: clampTokens(process.env.OPENAI_MAX_TOKENS_RESEARCH, 1500),
+  outreach: clampTokens(process.env.OPENAI_MAX_TOKENS_OUTREACH, 1200),
+  reply: clampTokens(process.env.OPENAI_MAX_TOKENS_REPLY, 700),
 } as const
 
 async function chat(system: string, user: string, maxTokens: number): Promise<string> {
@@ -89,6 +126,22 @@ export type IcpContext = {
   // that mission rather than the generic seller profile.
   offer?: string
   targetCustomer?: string
+}
+
+// Map a stored WorkspaceICP record to the prompt IcpContext so research/outreach
+// generation is framed for the workspace's actual vertical instead of the hardcoded
+// field-service default. Structural input (no Prisma type) to keep backend-core
+// decoupled. Mission-level offer/targetCustomer are layered on separately by the
+// campaign sender; this carries the workspace-wide fields.
+export function toIcpContext(
+  wsIcp: { targetIndustries?: string[]; businessType?: string | null; outreachTone?: string | null } | null | undefined,
+): IcpContext | undefined {
+  if (!wsIcp) return undefined
+  return {
+    targetIndustries: wsIcp.targetIndustries,
+    businessType: wsIcp.businessType ?? undefined,
+    outreachTone: wsIcp.outreachTone ?? undefined,
+  }
 }
 
 export function buildVerticalDesc(icp: IcpContext | undefined): string {
@@ -149,7 +202,7 @@ Business name: ${input.businessName}
 Industry / category: ${input.category || 'Not specified'}
 City / region: ${input.city || 'Not specified'}
 Website: ${input.website || 'Not provided'}
-Additional notes: ${input.notes || 'None'}
+Additional notes: ${clampNotes(input.notes) || 'None'}
 
 Key question to answer: Are they large enough to have real coordination problems but small enough that they haven't already solved them with enterprise software?`,
     MAX_TOKENS.research
@@ -173,7 +226,7 @@ export type OutreachInput = {
 // industry once produced "Acme Plumbing … scaling in the manufacturing sector".
 export function buildOutreachUserPrompt(input: OutreachInput): string {
   const firstName = input.contactName?.split(' ')[0] ?? null
-  const notes = input.notes?.trim()
+  const notes = clampNotes(input.notes)
   const offer = input.icp?.offer?.trim()
   return `Write a cold outreach email for this prospect:
 ${offer ? `\nThis campaign's specific offer / value proposition: ${offer}. Anchor the email's value on this — phrase it as a concrete outcome for the recipient, never as a salesy pitch.\n` : ''}

@@ -29,6 +29,8 @@ import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/s
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
+import { assertOutreachTone, OutreachToneError } from '@acaos/backend-core/lib/outreachTone.js'
+import { buildOutreachEmail } from '@acaos/backend-core/lib/emailFooter.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
@@ -704,9 +706,24 @@ export async function sendCampaignBatch(
         // auto-send. Grounding = the lead facts the copy was generated from.
         const grounding = [lead.businessName, lead.category, lead.city, lead.aiSummary, lead.outreachAngle, lead.notes]
           .filter(Boolean).join(' ')
+        // Block-severity tone violations ("creepy"/presumptuous copy that asserts
+        // private knowledge of the recipient's problems) must never auto-send. The
+        // generate-outreach queue path lets assertOutreachTone throw so BullMQ
+        // regenerates; in the batch we instead fold the block-violations into the
+        // POLICY_REVIEW path below, so one bad draft routes to review rather than
+        // failing the whole batch. (Warn-level buzzwords are non-blocking.)
+        const toneViolations: { code: string; message: string }[] = []
+        try {
+          assertOutreachTone({ subject, email: body, followup })
+        } catch (e) {
+          if (e instanceof OutreachToneError) {
+            toneViolations.push(...e.violations.map((v) => ({ code: `TONE_${v.kind.toUpperCase()}`, message: v.match })))
+          } else { throw e }
+        }
         const violations = [
           ...checkDraftPolicy({ subject, emailBody: body }, draftPolicy),
           ...checkClaimGrounding(body, { grounding, hasPriorConnection: Boolean(lead.notes?.trim()) }),
+          ...toneViolations,
         ]
         if (violations.length > 0) {
           await prisma.outreachDraft.create({
@@ -737,19 +754,13 @@ export async function sendCampaignBatch(
     // Guard defensively so a logic slip fails this one lead, not the whole batch.
     if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue }
 
-    const escHtml = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    const safeAppUrl = escHtml(appUrl)
-    const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe/${unsubscribeToken}`
-    // CAN-SPAM / GDPR: include sender identity and physical address when configured
-    const senderLine = workspace?.senderBusinessName
-      ? `<br>${escHtml(workspace.senderBusinessName)}${workspace.senderPostalAddress ? `, ${escHtml(workspace.senderPostalAddress)}` : ''}`
-      : ''
-    const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderLine}</p>`
-    const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
-    // Plaintext alternative built from the SOURCE draft (not regex-stripped HTML),
-    // so the multipart email carries a clean text/plain part for deliverability.
-    const textBody = `${body}\n\nYou received this email because you matched our outreach criteria. To stop receiving emails, unsubscribe: ${unsubscribeUrl}`
+    // Shared renderer: CAN-SPAM/CASL sender identity + physical address, unsubscribe
+    // link, and a clean text/plain alternative — identical to the follow-up path.
+    const { htmlBody, textBody, unsubscribeUrl } = buildOutreachEmail({
+      body, appUrl, unsubscribeToken,
+      senderBusinessName: workspace?.senderBusinessName,
+      senderPostalAddress: workspace?.senderPostalAddress,
+    })
 
     try {
       // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
@@ -871,12 +882,15 @@ export async function sendFollowupTask(
     return { taskId, status: result, reason }
   }
 
-  const [campaign, lead, step, wsCfg, icp] = await Promise.all([
+  const [campaign, lead, step, wsCfg, icp, workspace] = await Promise.all([
     prisma.campaign.findUnique({ where: { id: campaignId }, select: { autoFollowupsEnabled: true } }),
     prisma.lead.findUnique({ where: { id: leadId }, select: { email: true, stage: true } }),
     prisma.outreachSequenceStep.findUnique({ where: { campaignId_stepNumber: { campaignId, stepNumber } }, select: { subject: true, body: true, isActive: true } }),
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
     prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, monthlySendLimit: true, warmupStartedAt: true, sendWindowStartHour: true, sendWindowEndHour: true, sendTimezone: true, sendWeekdaysOnly: true } }),
+    // Sender identity for the CAN-SPAM/CASL physical-address line — every commercial
+    // message needs it, follow-ups included (previously omitted here).
+    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true } }),
   ])
 
   // Guards (each leaves the task in a terminal, explainable state).
@@ -903,16 +917,18 @@ export async function sendFollowupTask(
   const decision = await canContactRecipient({ workspaceId, email: lead.email, leadId })
   if (!decision.allowed) return finish('BLOCKED', 'BLOCKED', { cancelledReason: decision.reason })
 
-  // Build the follow-up email from the sequence step.
+  // Build the follow-up email from the sequence step, via the SAME renderer the
+  // initial campaign send uses — so the sender identity + physical address (and
+  // unsubscribe) are present and the two paths can't drift again.
   const subject = (step.subject && step.subject.trim()) || 'Following up'
   const body = step.body
-  const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   const unsubscribeToken = randomBytes(24).toString('hex')
   const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
-  const unsubscribeUrl = `${escHtml(appUrl)}/api/unsubscribe/${unsubscribeToken}`
-  const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">You received this email because you matched our outreach criteria. To stop receiving emails, <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.</p>`
-  const htmlBody = `<p>${escHtml(body).replace(/\n/g, '<br>')}</p>${footer}`
-  const textBody = `${body}\n\nYou received this email because you matched our outreach criteria. To stop receiving emails, unsubscribe: ${unsubscribeUrl}`
+  const { htmlBody, textBody, unsubscribeUrl } = buildOutreachEmail({
+    body, appUrl, unsubscribeToken,
+    senderBusinessName: workspace?.senderBusinessName,
+    senderPostalAddress: workspace?.senderPostalAddress,
+  })
 
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
   const wsDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null

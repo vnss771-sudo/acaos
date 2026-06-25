@@ -33,6 +33,10 @@ type UsageStats = {
     estimatedCostCents?: number
     byProvider?: Record<string, { runs: number; costCents: number }>
   }
+  ai?: {
+    estimatedCostCents?: number
+    byAction?: Record<string, { calls: number; costCents: number }>
+  }
   leads?: { used: number; limit: number }
 }
 
@@ -236,6 +240,46 @@ export function Billing({ api, workspace, toast }: Props) {
                 </span>
               </div>
             )}
+
+            {billingStatus.usage.ai?.estimatedCostCents != null && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ color: colors.textMuted, fontSize: 13 }}>
+                  Estimated AI cost this month
+                  {(() => {
+                    const by = billingStatus.usage.ai.byAction
+                    const label: Record<string, string> = { AI_RESEARCH: 'research', AI_OUTREACH: 'outreach', AI_REPLY: 'reply' }
+                    const parts = by
+                      ? Object.entries(by)
+                          .filter(([, v]) => v.costCents > 0)
+                          .map(([name, v]) => `${label[name] ?? name} $${(v.costCents / 100).toFixed(2)}`)
+                      : []
+                    return parts.length > 0
+                      ? <span style={{ color: colors.textMuted, fontSize: 11, marginLeft: 6 }}>({parts.join(', ')})</span>
+                      : null
+                  })()}
+                </span>
+                <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>
+                  ${(billingStatus.usage.ai.estimatedCostCents / 100).toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {/* Cost per lead: total estimated AI + discovery spend ÷ leads this month.
+                The unit-economics signal the platform previously had no visibility into. */}
+            {(() => {
+              const u = billingStatus.usage
+              const totalCents = (u.ai?.estimatedCostCents ?? 0) + (u.discovery?.estimatedCostCents ?? 0)
+              const leads = u.leads?.used ?? 0
+              if (totalCents <= 0 || leads <= 0) return null
+              return (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingTop: 6, borderTop: `1px solid ${colors.border}` }}>
+                  <span style={{ color: colors.textMuted, fontSize: 13 }}>Estimated cost per lead</span>
+                  <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>
+                    ${(totalCents / 100 / leads).toFixed(3)}
+                  </span>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>

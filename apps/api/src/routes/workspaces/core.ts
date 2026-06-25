@@ -1,14 +1,21 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
-import { ensureWorkspaceSlug, normalizeWorkspaceRole } from '../../lib/workspaces.js'
+import { ensureWorkspaceSlug, normalizeWorkspaceRole, assertMinimumWorkspaceRole, invalidateWorkspaceMembership } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { normalizeOptionalString } from '../../lib/validation.js'
 import { recordAudit } from '../../lib/audit.js'
 import { validate, nonEmptyString } from '../../lib/validate.js'
+import { requireFreshAuth } from '../../middleware/auth.js'
 import { z } from 'zod'
+import type { Assert, Extends, DeleteWorkspaceRequest } from '@acaos/shared'
 import { createBillingPortalSession } from '../../services/stripe.js'
 import { seededScore, SEED_COMPANIES, EXAMPLE_SIGNALS } from './helpers.js'
+
+// DELETE /:id body — the caller must echo the exact workspace name (GitHub-style
+// typed confirmation), so an irreversible erase can't fire from a stray request.
+const deleteWorkspaceSchema = z.object({ confirmName: nonEmptyString })
+type _DeleteWorkspaceConforms = Assert<Extends<z.infer<typeof deleteWorkspaceSchema>, DeleteWorkspaceRequest>>
 
 // POST / body. name/slug stay optional strings here; the handler keeps its
 // normalizeOptionalString() handling and the `if (!name) 400` required check, so
@@ -145,6 +152,68 @@ export function registerCoreRoutes(workspaceRouter: Router) {
       })
 
       res.json({ workspace })
+    })
+  )
+
+  // Irreversible tenant erasure (GDPR Art. 17). Owner-only + step-up auth +
+  // typed-name confirmation. Transactional: two decoupled tables (AuditEvent,
+  // ScoringOutcome) are deleted explicitly; the other ~27 workspace-scoped tables
+  // cascade from the Workspace row (onDelete: Cascade). Refuses while a live Stripe
+  // subscription exists so billing can't be orphaned.
+  workspaceRouter.delete(
+    '/:id',
+    requireFreshAuth,
+    validate(deleteWorkspaceSchema),
+    asyncHandler(async (req, res) => {
+      const user = req.user!
+      const workspaceId = req.params.id as string
+
+      const ws = await prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { id: true, name: true, subscriptionStatus: true, stripeSubscriptionId: true },
+      })
+      if (!ws) throw new ApiError(404, 'Workspace not found')
+
+      // Only an OWNER may erase a workspace.
+      await assertMinimumWorkspaceRole(user.id, workspaceId, 'owner')
+
+      // Typed confirmation: the body must echo the exact workspace name.
+      if ((req.body as DeleteWorkspaceRequest).confirmName.trim() !== ws.name) {
+        throw new ApiError(400, 'confirmName does not match the workspace name')
+      }
+
+      // Refuse while a live subscription exists — deleting now would orphan billing
+      // (the customer keeps being charged). They must cancel via the portal first.
+      const LIVE = new Set(['active', 'trialing', 'past_due', 'unpaid'])
+      if (ws.stripeSubscriptionId && LIVE.has(ws.subscriptionStatus ?? '')) {
+        throw new ApiError(409, 'Cancel the active subscription before deleting this workspace')
+      }
+
+      // Member ids captured BEFORE deletion so we can invalidate their cached roles.
+      const members = await prisma.membership.findMany({ where: { workspaceId }, select: { userId: true } })
+      const memberIds = members.map((m: { userId: string }) => m.userId)
+
+      // Just three statements: the workspace delete triggers the DB-side ON DELETE
+      // CASCADE for the ~27 FK-linked tables in one operation, so this stays well
+      // within the default transaction timeout regardless of tenant size.
+      await prisma.$transaction(async (tx) => {
+        // Decoupled (no FK cascade) — erase explicitly.
+        await tx.auditEvent.deleteMany({ where: { workspaceId } })
+        await tx.scoringOutcome.deleteMany({ where: { workspaceId } })
+        // Everything else cascades from the Workspace row.
+        await tx.workspace.delete({ where: { id: workspaceId } })
+      })
+
+      // Now-removed members must re-check membership cleanly on their next request.
+      for (const uid of memberIds) invalidateWorkspaceMembership(uid, workspaceId)
+
+      // Global audit (workspaceId: null so the record survives the erasure itself).
+      void recordAudit({
+        workspaceId: null, actorUserId: user.id, type: 'workspace.deleted',
+        entityType: 'workspace', entityId: workspaceId, metadata: { name: ws.name, memberCount: memberIds.length },
+      })
+
+      res.json({ deleted: true, workspaceId })
     })
   )
 

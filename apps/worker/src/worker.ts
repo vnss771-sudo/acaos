@@ -5,8 +5,10 @@ import { startHealthServer } from './health.js'
 import { incJob, observeJobDuration, type QueueDepth, type DomainSnapshot } from './lib/metrics.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
-import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
+import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
+import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
 import {
   parseAiJson,
   parseLeadResearchJson,
@@ -77,12 +79,21 @@ const researchWorker = new Worker(
 
     await job.updateProgress(10)
 
+    // Frame the research prompt for the workspace's actual vertical, not the
+    // hardcoded field-service default — otherwise a SaaS/other-vertical workspace
+    // gets analysis framed around plumbing/HVAC/etc.
+    const wsIcp = await prisma.workspaceICP.findUnique({
+      where: { workspaceId },
+      select: { targetIndustries: true, businessType: true, outreachTone: true },
+    })
+
     const raw = await generateLeadResearch({
       businessName: lead.businessName,
       website: lead.website ?? undefined,
       category: lead.category ?? undefined,
       city: lead.city ?? undefined,
-      notes: lead.notes ?? undefined
+      notes: lead.notes ?? undefined,
+      icp: toIcpContext(wsIcp),
     })
 
     await job.updateProgress(60)
@@ -113,6 +124,17 @@ const researchWorker = new Worker(
 
     await job.updateProgress(80)
 
+    // Thin-research guard: lenient parsing can yield an empty result; never let that
+    // flow through as auto_draft (it would produce generic, ungrounded outreach).
+    const evidenceCount = parsed.evidence?.length ?? 0
+    const noResearchSubstance = !(Boolean(parsed.aiSummary?.trim()) || evidenceCount > 0)
+    const thinResearch = noResearchSubstance && parsed.recommendedAction !== 'skip'
+    const safeRecommendedAction = resolveResearchAction({
+      recommendedAction: parsed.recommendedAction,
+      aiSummary: parsed.aiSummary,
+      evidenceCount,
+    })
+
     // Auditable intelligence snapshot persisted on the lead: the deterministic
     // score rationale plus the model's provenance-labelled evidence. JSON-only
     // values (no undefined) so it round-trips cleanly through the JSONB column.
@@ -125,8 +147,10 @@ const researchWorker = new Worker(
       topReasons: explanation.topReasons,
       signals: explanation.signals,
       evidence: parsed.evidence ?? [],
-      riskFlags: parsed.riskFlags ?? [],
-      recommendedAction: parsed.recommendedAction ?? null,
+      riskFlags: thinResearch
+        ? [...(parsed.riskFlags ?? []), 'Research returned no summary or evidence — held for manual review rather than auto-draft.']
+        : (parsed.riskFlags ?? []),
+      recommendedAction: safeRecommendedAction,
       confidence: parsed.confidence ?? null,
       digitalMaturity: parsed.digitalMaturity ?? null,
       estimatedTeamSize: parsed.estimatedTeamSize ?? null,
@@ -199,13 +223,21 @@ const outreachWorker = new Worker(
 
     await job.updateProgress(10)
 
+    // Frame outreach for the workspace's vertical/tone (not the field-service
+    // default), mirroring the campaign send path.
+    const wsIcp = await prisma.workspaceICP.findUnique({
+      where: { workspaceId },
+      select: { targetIndustries: true, businessType: true, outreachTone: true },
+    })
+
     const raw = await generateOutreach({
       businessName: lead.businessName,
       category: lead.category ?? undefined,
       city: lead.city ?? undefined,
       contactName: lead.contactName ?? undefined,
       aiSummary: lead.aiSummary ?? undefined,
-      outreachAngle: lead.outreachAngle ?? undefined
+      outreachAngle: lead.outreachAngle ?? undefined,
+      icp: toIcpContext(wsIcp),
     })
 
     await job.updateProgress(80)
@@ -548,6 +580,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['calibrate-scoring',       calibrateWorker],
   ['send-campaign',           sendCampaignWorker],
   ['send-followup',           sendFollowupWorker],
+  ['discover-prospects',      discoverWorker],
   ['retention-purge',         retentionWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
@@ -717,6 +750,7 @@ async function shutdown(signal: string, exitCode = 0) {
     discoverWorker.close(),
     retentionWorker.close(),
   ])
+  closeMailTransports() // release pooled SMTP connections
   await prisma.$disconnect()
   clearTimeout(forceExit)
   logLifecycleEvent(SERVICE, 'shutdown', { signal, phase: 'complete' })

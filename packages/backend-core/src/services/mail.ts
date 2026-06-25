@@ -246,6 +246,15 @@ function maybeDecrypt(s: string | null | undefined): string | undefined {
   return isEncrypted(s) ? decryptSecret(s) : s
 }
 
+// Pooled transporter for the trusted SYSTEM relay only. The system relay (no
+// workspace-supplied host and no workspace auth) is identical on every send, so a
+// single pooled transporter reuses TCP/TLS connections instead of dialling a fresh
+// one per email — which at campaign volume hammers an ESP's connection-rate limits
+// and adds a TLS handshake per send. Workspace-specific configs are deliberately
+// NOT pooled: custom hosts must re-resolve each send for SSRF/DNS-rebind safety,
+// and per-workspace credentials must not share a connection pool.
+let systemTransport: ReturnType<typeof nodemailer.createTransport> | null = null
+
 export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
   // `pin` (set for workspace-supplied hosts) carries the SSRF-validated IP to
   // dial plus the original hostname for TLS SNI/cert verification, so nodemailer
@@ -255,14 +264,29 @@ export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
   const secure = cfg?.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465)
   const user = cfg?.smtpUser || process.env.SMTP_USER
   const pass = maybeDecrypt(cfg?.smtpPass) || process.env.SMTP_PASS
-  return nodemailer.createTransport({
+
+  const isSystemRelay = !pin && !cfg?.smtpHost && !cfg?.smtpUser && !cfg?.smtpPass
+  if (isSystemRelay && systemTransport) return systemTransport
+
+  const transporter = nodemailer.createTransport({
     host, port, secure,
     auth: user ? { user, pass } : undefined,
     ...(pin?.servername ? { tls: { servername: pin.servername } } : {}),
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
+    ...(isSystemRelay ? { pool: true, maxConnections: 5, maxMessages: 100 } : {}),
   })
+  if (isSystemRelay) systemTransport = transporter
+  return transporter
+}
+
+/** Close the pooled system transporter (call on graceful shutdown). */
+export function closeMailTransports(): void {
+  if (systemTransport) {
+    try { systemTransport.close() } catch { /* already closed */ }
+    systemTransport = null
+  }
 }
 
 // Optional extras: a caller-provided plaintext alternative (built from the SOURCE

@@ -80,6 +80,10 @@ model User {
   // half-finished setup never forces a second factor at login.
   totpSecret          String?
   totpEnabled         Boolean                 @default(false)
+  // Highest TOTP time-step already consumed, for single-use (replay) protection:
+  // a verify only succeeds if its matched step is strictly greater than this, so a
+  // captured code can't be replayed within its ±1-step validity window.
+  totpLastUsedStep    Int?
   // Step-up auth: timestamp of the most recent password (or MFA) proof. Sensitive
   // mutations (billing, admin, MFA disable) require this to be recent.
   lastReauthAt        DateTime?

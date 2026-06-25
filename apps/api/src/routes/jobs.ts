@@ -4,6 +4,7 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { parseBody, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
+import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
@@ -145,6 +146,7 @@ jobsRouter.post(
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
+    await enforceWorkspaceAiRate(lead.workspaceId)
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_RESEARCH')
 
     const job = await enqueueResearchLead({ leadId, workspaceId: lead.workspaceId, initiatedByUserId: user.id, requestId: req.id })
@@ -167,6 +169,7 @@ jobsRouter.post(
     const member = await userBelongsToWorkspace(user.id, lead.workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
+    await enforceWorkspaceAiRate(lead.workspaceId)
     // Meter up front; the worker refunds AI_OUTREACH if a poor-fit gate suppresses
     // generation (no model call is made in that case).
     await checkAndIncrementAiUsage(lead.workspaceId, 'AI_OUTREACH')
@@ -196,6 +199,7 @@ jobsRouter.post(
       workspaceId = bodyWorkspaceId as string
     }
 
+    await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
     const job = await enqueueAnalyzeReply({ replyBody, workspaceId, leadId, initiatedByUserId: user.id, requestId: req.id })

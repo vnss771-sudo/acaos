@@ -321,6 +321,8 @@ export interface UpdateWorkspaceRequest {
   senderBusinessName?: string | null
   senderPostalAddress?: string | null
 }
+/** Body for DELETE /api/workspaces/:id — confirmName must echo the workspace name. */
+export interface DeleteWorkspaceRequest { confirmName: string }
 export interface WorkspaceMemberInviteRequest { email: string; role: string }
 export interface EmailConfigRequest {
   smtpHost?: string | null
@@ -394,6 +396,7 @@ export interface RouteContracts {
 
   // Workspaces
   'PATCH /api/workspaces/:id': { params: { id: string }; body: UpdateWorkspaceRequest; response: unknown }
+  'DELETE /api/workspaces/:id': { params: { id: string }; body: DeleteWorkspaceRequest; response: { deleted: boolean; workspaceId: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }

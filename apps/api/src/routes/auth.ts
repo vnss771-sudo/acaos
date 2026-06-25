@@ -12,7 +12,7 @@ import {
 import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { recordAudit } from '../lib/audit.js'
 import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
-import { generateTotpSecret, verifyTotp, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
+import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-core/lib/disposableEmail.js'
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
@@ -51,6 +51,21 @@ async function persistRefreshToken(userId: string, refreshToken: string) {
 // has just proven a credential (signup, login, MFA verify, explicit re-auth).
 async function markReauth(userId: string) {
   await prisma.user.update({ where: { id: userId }, data: { lastReauthAt: new Date() } })
+}
+
+// Verify a TOTP code AND atomically consume its time-step so it cannot be replayed
+// within its ±1-step (≈90s) validity window. Returns true only when the code matches
+// and its step is strictly newer than the last step this user consumed — the
+// conditional updateMany makes the check-and-consume race-safe across concurrent
+// requests (NIST SP 800-63B §5.1.4.2 / RFC 6238 §5.2 single-use requirement).
+async function consumeTotpCode(userId: string, secret: string, code: string): Promise<boolean> {
+  const step = verifyTotpStep(secret, code)
+  if (step === null) return false
+  const res = await prisma.user.updateMany({
+    where: { id: userId, OR: [{ totpLastUsedStep: null }, { totpLastUsedStep: { lt: step } }] },
+    data: { totpLastUsedStep: step },
+  })
+  return res.count === 1
 }
 
 const signupSchema = z.object({
@@ -176,7 +191,7 @@ authRouter.post(
     const user = await prisma.user.findUnique({ where: { id: userId } })
     if (!user?.totpEnabled || !user.totpSecret) throw new ApiError(401, 'MFA is not enabled')
 
-    if (!verifyTotp(decryptSecret(user.totpSecret), code)) {
+    if (!(await consumeTotpCode(user.id, decryptSecret(user.totpSecret), code))) {
       throw new ApiError(401, 'Invalid authentication code')
     }
 
@@ -482,7 +497,10 @@ authRouter.post(
     const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { totpSecret: true, totpEnabled: true } })
     if (dbUser?.totpEnabled) throw new ApiError(409, 'MFA is already enabled')
     if (!dbUser?.totpSecret) throw new ApiError(400, 'Start MFA setup first')
-    if (!verifyTotp(decryptSecret(dbUser.totpSecret), code)) throw new ApiError(400, 'Invalid authentication code')
+    // Activation runs inside an already step-up-authenticated session (it proves the
+    // user provisioned the secret), so verify WITHOUT consuming the step — consuming
+    // here would make the very first login with the same-window code fail as a replay.
+    if (verifyTotpStep(decryptSecret(dbUser.totpSecret), code) === null) throw new ApiError(400, 'Invalid authentication code')
 
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: true } })
     // A credential factor changed — revoke all refresh tokens so any other
@@ -540,7 +558,7 @@ authRouter.post(
       throw new ApiError(401, 'Incorrect password')
     }
     if (user.totpEnabled) {
-      if (!code || !user.totpSecret || !verifyTotp(decryptSecret(user.totpSecret), code)) {
+      if (!code || !user.totpSecret || !(await consumeTotpCode(user.id, decryptSecret(user.totpSecret), code))) {
         throw new ApiError(401, 'Invalid authentication code')
       }
     }

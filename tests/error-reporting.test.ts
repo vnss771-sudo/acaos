@@ -1,6 +1,11 @@
-// Tests for the optional Sentry bootstrap. @sentry/node is intentionally NOT a
-// dependency, so the "DSN set" path exercises the graceful-degradation branch
-// (SDK absent -> warn + stay no-op), and the "no DSN" path is the dev/CI default.
+// Tests for the OPTIONAL Sentry bootstrap. @sentry/node is intentionally NOT a
+// vendored dependency (it drags in a heavy, recurringly-vuln OpenTelemetry tree),
+// and it isn't needed for errors to be captured — every captureError call site
+// already logs the error via the structured logger first. An operator who wants
+// Sentry *aggregation* installs @sentry/node in their deployment and sets
+// SENTRY_DSN; the dynamic import then wires it up. With the SDK absent (the repo's
+// default), the "DSN set" path degrades gracefully (warn + stay a no-op) and the
+// "no DSN" path is the clean default.
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -23,7 +28,8 @@ test('no SENTRY_DSN: init is a no-op, no reporter registered', async () => {
 
 test('SENTRY_DSN set but SDK absent: degrades gracefully (no throw, no reporter)', async () => {
   process.env.SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0'
-  // @sentry/node is not installed, so the dynamic import rejects and is caught.
+  // @sentry/node is not vendored, so the dynamic import rejects and is caught —
+  // errors still reach the structured logs at each captureError call site.
   await assert.doesNotReject(() => initErrorReporting())
   assert.equal(hasErrorReporter(), false)
 })

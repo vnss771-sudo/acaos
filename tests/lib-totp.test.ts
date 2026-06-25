@@ -10,6 +10,7 @@ import {
   generateTotpSecret,
   generateTotp,
   verifyTotp,
+  verifyTotpStep,
   buildOtpauthUri,
 } from '../packages/backend-core/src/lib/totp.ts'
 
@@ -42,6 +43,17 @@ test('verifyTotp accepts the current code and rejects a wrong one', () => {
   const now = 1111111111 * 1000
   assert.equal(verifyTotp(RFC_SECRET, '050471', now), true)
   assert.equal(verifyTotp(RFC_SECRET, '000000', now), false)
+})
+
+test('verifyTotpStep returns the matched step (for single-use enforcement)', () => {
+  const now = 1111111111 * 1000
+  const step = Math.floor(1111111111 / 30)
+  assert.equal(verifyTotpStep(RFC_SECRET, '050471', now), step)        // current step
+  assert.equal(verifyTotpStep(RFC_SECRET, '000000', now), null)        // wrong code
+  // The ±1-skew matches report the neighbouring step, so a caller can tell that a
+  // replay of the previous code maps to a strictly-lower step and reject it.
+  const prev = generateTotp(RFC_SECRET, now - 30_000)
+  assert.equal(verifyTotpStep(RFC_SECRET, prev, now), step - 1)
 })
 
 test('verifyTotp tolerates ±1 step of clock skew but not more', () => {

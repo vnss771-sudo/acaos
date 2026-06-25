@@ -3,6 +3,7 @@ import { requireAuth, requireVerifiedEmail } from '../middleware/auth.js'
 import { requireFeature } from '../middleware/featureGate.js'
 import { asyncHandler, ApiError } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
+import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
@@ -68,6 +69,7 @@ aiRouter.post(
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+    await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
 
     let icp: IcpContext | undefined
@@ -109,6 +111,7 @@ aiRouter.post(
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+    await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
 
     let icp: IcpContext | undefined
@@ -142,6 +145,7 @@ aiRouter.post(
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+    await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
     const data = await analyzeReply(replyBody)
