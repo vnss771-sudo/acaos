@@ -35,7 +35,9 @@
 
 ## Security / Step-up
 - STEP_UP_MAX_AGE_MIN — step-up re-auth freshness window (minutes) for sensitive mutations (billing, admin promotion, MFA disable). Default 15. Required: no.
-- TENANT_GUARD_MODE — `off` | `observe` | `enforce`. Default `off` (the cross-tenant query backstop is inert). Set `observe` in production to log any workspace-scoping miss with zero behavior change, then graduate to `enforce` once the observe window is clean. Strongly recommended `observe` at minimum for a multi-tenant deployment.
+- TENANT_GUARD_MODE — `off` | `observe` | `enforce`. Default `off` (the cross-tenant query backstop is inert). Set `observe` in production to log any workspace-scoping miss with zero behavior change, then graduate to `enforce` once the observe window is clean. Strongly recommended `observe` at minimum for a multi-tenant deployment — and **required `enforce` before broad public self-serve signup** (untrusted strangers sharing infrastructure).
+  - **Coverage:** worker jobs run inside the tenant context already; the API now establishes it too (via the `tenantContext` middleware) for every request carrying a `workspaceId` (query or body) — i.e. the bulk of workspace-scoped routes. Resource-id-only routes (e.g. `/campaigns/:id`, where the workspace is derived from the loaded resource) carry no request `workspaceId` and remain covered by the existing fetch-then-authorize control; wrapping those handlers explicitly is the next coverage step before flipping `enforce`.
+  - **Graduation:** run `observe` in production, watch for `[tenant-guard]` warnings, fix any genuine scoping miss (false positives are legitimate FK-scoped queries — extend `TENANT_FOREIGN_KEYS` if needed), then set `enforce`. Consider Postgres RLS as the hard DB-level backstop for the public tier.
 
 ## Launch Controls & Feature Flags
 All read live from the environment — flipping any of these takes effect on the next request/job with **no restart or deploy**. See `packages/backend-core/src/lib/launchControls.ts`.

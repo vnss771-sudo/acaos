@@ -28,6 +28,7 @@ import { legalRouter } from './routes/legal.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
+import { tenantContext } from './middleware/tenantContext.js'
 import { metricsMiddleware } from './middleware/metrics.js'
 import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
@@ -87,6 +88,9 @@ app.use(cors({
 
 app.use('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }))
 app.use(express.json({ limit: '1mb' }))
+// Establish the tenant context (after body parsing, so POST workspaceId is visible)
+// so the tenant guard covers the API. No-op unless TENANT_GUARD_MODE is on.
+app.use(tenantContext)
 
 app.get('/metrics', (req, res) => {
   const token = process.env.METRICS_TOKEN?.trim()
