@@ -370,8 +370,20 @@ leadsRouter.patch(
     const updated = await prisma.lead.update({ where: { id: leadId }, data: updates })
     invalidateWorkspaceStats(lead.workspaceId) // stage/score/campaign edits move funnel & top leads
     // A new transition into BOOKED is a meeting — notify subscribed webhooks. Best-effort.
+    // Full lead fields are included so downstream systems (e.g. FieldOps) can provision
+    // without a separate API call back into ACAOS.
     if (updates.stage === 'BOOKED' && lead.stage !== 'BOOKED') {
-      void emitWebhookEvent(lead.workspaceId, 'meeting.booked', { leadId, campaignId: updated.campaignId })
+      void emitWebhookEvent(lead.workspaceId, 'meeting.booked', {
+        leadId,
+        campaignId: updated.campaignId,
+        businessName: updated.businessName,
+        contactName: updated.contactName ?? null,
+        email: updated.email ?? null,
+        city: updated.city ?? null,
+        category: updated.category ?? null,
+        score: updated.score,
+        website: updated.website ?? null,
+      })
     }
     void recordAudit({
       workspaceId: lead.workspaceId, actorUserId: user.id, type: 'lead.updated',
