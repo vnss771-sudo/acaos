@@ -56,4 +56,28 @@ describe('Sidebar', () => {
     await userEvent.click(screen.getByText('Sign out'))
     expect(onLogout).toHaveBeenCalledOnce()
   })
+
+  describe('hub nav mode', () => {
+    test('renders the five hubs instead of the flat grouped nav', () => {
+      renderSidebar({ hubNav: true })
+      for (const label of ['Home', 'Prospects', 'Outreach', 'Inbox', 'Settings']) {
+        expect(screen.getByText(label)).toBeInTheDocument()
+      }
+      // Merged-away surfaces are no longer top-level items.
+      expect(screen.queryByText('Campaigns')).not.toBeInTheDocument()
+      expect(screen.queryByText('Analytics')).not.toBeInTheDocument()
+      expect(screen.queryByText('Discover & analyze')).not.toBeInTheDocument()
+    })
+
+    test('selecting a hub opens its first tab', async () => {
+      const { setView } = renderSidebar({ hubNav: true })
+      await userEvent.click(screen.getByText('Outreach'))
+      expect(setView).toHaveBeenCalledWith('campaigns')
+    })
+
+    test('highlights the hub that owns the current view', () => {
+      renderSidebar({ hubNav: true, view: 'leads' })
+      expect(screen.getByText('Prospects').closest('button')).toHaveAttribute('aria-current', 'page')
+    })
+  })
 })

@@ -10,7 +10,9 @@ import { AuthScreen } from './components/AuthScreen.js'
 import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { CommandPalette } from './components/CommandPalette.js'
+import { HubTabs } from './components/HubTabs.js'
 import { SkipLink } from './components/SkipLink.js'
+import { isHubNavEnabled, hubForView } from './lib/hubs.js'
 import { isInvestorDemoRequested, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
 import { makeDemoApi, DEMO_USER, DEMO_WORKSPACES } from './lib/demoApi.js'
 import { Spinner } from './components/Spinner.js'
@@ -97,6 +99,8 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
   const [view, setView] = useState<View>('dashboard')
+  // Resolved once per session — the hub-nav flag is static (env / localStorage).
+  const [hubNav] = useState(isHubNavEnabled)
   const [booting, setBooting] = useState(true)
   // At tablet/mobile widths the sidebar collapses into a hamburger-triggered
   // drawer; `navOpen` controls it. Desktop renders the sidebar inline.
@@ -293,6 +297,7 @@ export function App() {
             workspace={activeWorkspace}
             onLogout={logout}
             isAdmin={isAdmin}
+            hubNav={hubNav}
           />
         </Drawer>
       ) : (
@@ -303,6 +308,7 @@ export function App() {
           workspace={activeWorkspace}
           onLogout={logout}
           isAdmin={isAdmin}
+          hubNav={hubNav}
         />
       )}
 
@@ -349,7 +355,7 @@ export function App() {
               </button>
             )}
             <h1 style={{ color: colors.textMuted, fontSize: 12, letterSpacing: '0.1em', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-              {VIEW_TITLE[view]}
+              {hubNav ? hubForView(view).label : VIEW_TITLE[view]}
             </h1>
           </div>
 
@@ -410,6 +416,9 @@ export function App() {
 
         {/* Main content */}
         <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
+          {/* Hub sub-tabs: switch between the pages within the active hub. Renders
+              nothing for single-page hubs or when the hub nav is off. */}
+          {hubNav && <HubTabs view={view} setView={setView} isAdmin={isAdmin} />}
           <ErrorBoundary>
             <Suspense fallback={<ViewFallback />}>
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
