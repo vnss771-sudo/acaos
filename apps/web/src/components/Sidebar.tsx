@@ -2,6 +2,7 @@ import React from 'react'
 import type { View, Workspace } from '../types.js'
 import { PLAN_LABELS } from '../types.js'
 import { colors } from '../styles.js'
+import { HUBS, hubForView, defaultViewForHub } from '../lib/hubs.js'
 
 type NavItem = { id: View; label: string; icon: string }
 type NavGroup = { heading?: string; items: NavItem[] }
@@ -47,9 +48,12 @@ type SidebarProps = {
   workspace: Workspace | null
   onLogout: () => void
   isAdmin?: boolean
+  // When true, render the consolidated 5-hub nav (Phase 1, behind VITE_HUB_NAV);
+  // otherwise the flat grouped nav. Defaults to the grouped nav.
+  hubNav?: boolean
 }
 
-export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: SidebarProps) {
+export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hubNav }: SidebarProps) {
   const plan = workspace?.plan ?? 'free'
   const isPro = plan !== 'free'
 
@@ -75,6 +79,35 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: 
 
       {/* Nav */}
       <nav style={{ flex: 1 }}>
+        {hubNav ? (
+          // Consolidated hub nav: five hubs, the active one derived from which hub
+          // owns the current view. Selecting a hub opens its first tab. Admin is a
+          // tab inside Settings here, so there's no separate Admin button.
+          HUBS.map(hub => {
+            const active = hubForView(view).id === hub.id
+            return (
+              <button
+                key={hub.id}
+                onClick={() => setView(defaultViewForHub(hub, Boolean(isAdmin)))}
+                aria-current={active ? 'page' : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '9px 20px', width: '100%',
+                  background: active ? '#1e293b' : 'transparent',
+                  border: 'none', cursor: 'pointer',
+                  color: active ? '#f1f5f9' : colors.textFaint,
+                  fontSize: 14, fontWeight: active ? 600 : 400,
+                  borderLeft: `2px solid ${active ? colors.blue : 'transparent'}`,
+                  textAlign: 'left', transition: 'all 0.1s'
+                }}
+              >
+                <span aria-hidden="true" style={{ fontSize: 13, opacity: active ? 1 : 0.7 }}>{hub.icon}</span>
+                {hub.label}
+              </button>
+            )
+          })
+        ) : (
+          <>
         {NAV_GROUPS.map((group, gi) => (
           <div key={group.heading ?? 'primary'} style={{ marginTop: gi === 0 ? 0 : 14 }}>
             {group.heading && (
@@ -129,6 +162,8 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin }: 
             <span aria-hidden="true" style={{ fontSize: 13 }}>⚙</span>
             Admin
           </button>
+        )}
+          </>
         )}
       </nav>
 
