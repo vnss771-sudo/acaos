@@ -258,12 +258,12 @@ export function App() {
   const isAdmin = Boolean(user.isPlatformAdmin)
 
   const VIEW_TITLE: Record<View, string> = {
-    dashboard: 'Acquisition Radar',
-    intelligence: 'Acquisition Intelligence',
+    dashboard: 'Home',
+    intelligence: 'Analytics',
     prospects: 'Prospects',
     missions: 'Missions',
     campaigns: 'Campaigns',
-    approvals: 'Review Queue',
+    approvals: 'To Review',
     inbox: 'Inbox',
     leads: 'Leads',
     ai: 'AI Tools',

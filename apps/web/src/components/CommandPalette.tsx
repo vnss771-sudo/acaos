@@ -15,13 +15,13 @@ type Command = {
 }
 
 const COMMANDS: Command[] = [
-  { id: 'dashboard', label: 'Acquisition Radar', description: 'Daily command center: next action, hot accounts, signals', icon: '⬡' },
+  { id: 'dashboard', label: 'Home', description: 'Daily command center: next action, hot accounts, signals', icon: '⬡' },
   { id: 'missions', label: 'Missions', description: 'Build and run the end-to-end acquisition workflow', icon: '◇' },
   { id: 'prospects', label: 'Prospects', description: 'Account database, scoring, filters, and signals', icon: '◎' },
-  { id: 'approvals', label: 'Review Queue', description: 'Approve AI outreach before it sends', icon: '✓' },
+  { id: 'approvals', label: 'To Review', description: 'Approve AI outreach before it sends', icon: '✓' },
   { id: 'campaigns', label: 'Campaigns', description: 'Campaign configuration and sending', icon: '▣' },
   { id: 'inbox', label: 'Inbox', description: 'Replies to your outreach, classified by intent', icon: '✉' },
-  { id: 'intelligence', label: 'Intelligence', description: 'Scoring model, opportunity tiers, forecasts', icon: '◈' },
+  { id: 'intelligence', label: 'Analytics', description: 'Scoring model, opportunity tiers, forecasts', icon: '◈' },
   { id: 'leads', label: 'Leads', description: 'Lead list and outreach records', icon: '▤' },
   { id: 'ai', label: 'AI Tools', description: 'Research, write, and analyze replies manually', icon: '✦' },
   { id: 'billing', label: 'Billing', description: 'Plan, usage, and subscription status', icon: '◆' },

@@ -24,9 +24,15 @@ describe('Sidebar', () => {
     renderSidebar()
     expect(screen.getByText('Northwind Trades')).toBeInTheDocument()
     expect(screen.getByText('sarah@northwind.test')).toBeInTheDocument()
-    for (const label of ['Radar', 'Intelligence', 'Prospects', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
+    for (const label of ['Home', 'Analytics', 'Prospects', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
+  })
+
+  test('groups the advanced surfaces under headings so the daily loop reads as the primary set', () => {
+    renderSidebar()
+    expect(screen.getByText('Discover & analyze')).toBeInTheDocument()
+    expect(screen.getByText('Account')).toBeInTheDocument()
   })
 
   test('clicking a nav item calls setView with its id', async () => {
