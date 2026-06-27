@@ -68,75 +68,112 @@ function ScorePill({ score }: { score: number }) {
   )
 }
 
-const EVIDENCE_TYPE_COLOR: Record<string, string> = {
-  confirmed: colors.green,
-  observed: colors.blue,
-  inferred: colors.amber,
-}
 const CONFIDENCE_COLOR: Record<string, string> = {
   high: colors.green,
   medium: colors.amber,
   low: colors.textFaint,
 }
-const ACTION_LABEL: Record<string, string> = {
-  auto_draft: 'Auto-draft OK',
-  manual_review_then_draft: 'Manual review first',
-  skip: 'Skip',
+// Plain-language "what to do next" phrasing for the lead brief, instead of
+// surfacing the raw enum (auto_draft / manual_review_then_draft / skip) to the user.
+const ACTION_NEXT_STEP: Record<string, string> = {
+  auto_draft: 'Ready to draft and reach out — the fit is strong and the evidence holds up.',
+  manual_review_then_draft: 'Review, then draft — the signals are promising but unconfirmed, so a person should eyeball it before sending.',
+  skip: 'Skip for now — not a strong enough fit to spend outreach on.',
 }
 
-// Evidence-backed intelligence: the deterministic "why this score", the
-// provenance-labelled evidence behind the assessment, and the caveats a human
-// should weigh before trusting it. Prefers the persisted LeadEvidenceSource rows
-// (the queryable provenance) and falls back to the JSON snapshot's evidence.
-function IntelligencePanel({ intel, rows }: { intel: LeadIntelligence; rows?: LeadEvidenceRow[] }) {
-  const topReasons = intel.topReasons ?? []
+// One section of the lead brief: a sentence-case heading over its content. Kept
+// deliberately plain (no ALL-CAPS labels, no enum badges) so the whole card reads
+// like a short written briefing rather than a dump of structured fields.
+function BriefSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, marginBottom: 5 }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+const briefList: React.CSSProperties = { margin: 0, paddingLeft: 18, color: '#cbd5e1', fontSize: 13, lineHeight: 1.7 }
+
+// The lead brief: the AI research presented as a clean, plain-language briefing
+// — fit, who they are, why they fit, the way in, the caveats, and the next step —
+// instead of exposing the raw scoring fields, provenance enums, and action codes.
+// It still draws from the same data (the persisted evidence rows preferred over the
+// JSON snapshot, the deterministic score rationale, the risk flags), just rendered
+// for a person to read. Renders nothing when there's no research yet.
+function LeadBrief({ lead, intel, rows }: { lead: Lead; intel: LeadIntelligence; rows?: LeadEvidenceRow[] }) {
   const evidence = rows && rows.length > 0
-    ? rows.map((r) => ({ signal: r.signal, type: r.evidenceType, confidence: r.confidence, sourceUrl: r.sourceUrl }))
-    : (intel.evidence ?? [])
+    ? rows.map((r) => ({ text: r.signal, sourceUrl: r.sourceUrl }))
+    : (intel.evidence ?? []).map((e) => ({ text: e.signal, sourceUrl: e.sourceUrl }))
+  // Prefer the deterministic score rationale; fall back to the evidence signals.
+  const reasons = (intel.topReasons && intel.topReasons.length > 0)
+    ? intel.topReasons.map((t) => ({ text: t, sourceUrl: undefined as string | null | undefined }))
+    : evidence
   const riskFlags = intel.riskFlags ?? []
-  if (topReasons.length === 0 && evidence.length === 0 && riskFlags.length === 0 && !intel.recommendedAction) return null
+  const score = lead.score > 0 ? lead.score : (intel.finalScore ?? 0)
+
+  // Notable, positive facts only — surface them as a short prose line, not labelled
+  // fields. (A "not hiring" or "low maturity" non-signal would just add noise.)
+  const facts: string[] = []
+  if (intel.estimatedTeamSize) facts.push(`likely ${intel.estimatedTeamSize} people`)
+  if (intel.digitalMaturity) facts.push(`${intel.digitalMaturity} digital maturity`)
+  if (intel.hiringSignals) facts.push('actively hiring')
+
+  const hasContent = lead.aiSummary || reasons.length > 0 || lead.outreachAngle ||
+    riskFlags.length > 0 || intel.recommendedAction || facts.length > 0
+  if (!hasContent) return null
+
   return (
     <div style={{ ...s.cardInner, marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Lead Intelligence</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ color: colors.text, fontSize: 14, fontWeight: 700 }}>Lead brief</span>
+        {score > 0 && <span style={{ color: colors.amber, fontSize: 13, fontWeight: 700 }}>ICP fit {score}/100</span>}
         {intel.confidence && <span style={s.badge(CONFIDENCE_COLOR[intel.confidence] ?? colors.textFaint)}>{intel.confidence} confidence</span>}
-        {intel.recommendedAction && <span style={{ ...s.badge(colors.blue), marginLeft: 'auto' }}>{ACTION_LABEL[intel.recommendedAction] ?? intel.recommendedAction}</span>}
       </div>
 
-      {topReasons.length > 0 && (
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>WHY THIS SCORE</div>
-          <ul style={{ margin: 0, paddingLeft: 18, color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
-            {topReasons.map((r, i) => <li key={i}>{r}</li>)}
-          </ul>
+      {(lead.aiSummary || facts.length > 0) && (
+        <div style={{ marginBottom: 14 }}>
+          {lead.aiSummary && <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.7 }}>{lead.aiSummary}</div>}
+          {facts.length > 0 && (
+            <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 6 }}>
+              {facts.join(' · ').replace(/^./, (c) => c.toUpperCase())}.
+            </div>
+          )}
         </div>
       )}
 
-      {evidence.length > 0 && (
-        <div style={{ marginBottom: riskFlags.length > 0 ? 10 : 0 }}>
-          <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>EVIDENCE</div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {evidence.map((ev, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <span style={s.badge(EVIDENCE_TYPE_COLOR[ev.type] ?? colors.textFaint)}>{ev.type}</span>
-                <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.5, flex: 1 }}>
-                  {ev.sourceUrl
-                    ? <a href={ev.sourceUrl} target="_blank" rel="noreferrer" style={{ color: colors.blueLight }}>{ev.signal}</a>
-                    : ev.signal}
-                </span>
-                <span style={{ color: CONFIDENCE_COLOR[ev.confidence] ?? colors.textFaint, fontSize: 11, fontWeight: 600 }}>{ev.confidence}</span>
-              </div>
+      {reasons.length > 0 && (
+        <BriefSection title="Why they fit">
+          <ul style={briefList}>
+            {reasons.map((r, i) => (
+              <li key={i}>
+                {r.sourceUrl
+                  ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" style={{ color: colors.blueLight }}>{r.text}</a>
+                  : r.text}
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </BriefSection>
+      )}
+
+      {lead.outreachAngle && (
+        <BriefSection title="Best way in">
+          <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.7 }}>{lead.outreachAngle}</div>
+        </BriefSection>
       )}
 
       {riskFlags.length > 0 && (
-        <div>
-          <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>RISK FLAGS</div>
-          <ul style={{ margin: 0, paddingLeft: 18, color: colors.amber, fontSize: 12, lineHeight: 1.6 }}>
+        <BriefSection title="Worth knowing before you reach out">
+          <ul style={{ ...briefList, color: colors.amber }}>
             {riskFlags.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
+        </BriefSection>
+      )}
+
+      {intel.recommendedAction && (
+        <div style={{ color: colors.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+          <span style={{ color: colors.textFaint }}>Suggested next step — </span>
+          {ACTION_NEXT_STEP[intel.recommendedAction] ?? intel.recommendedAction}
         </div>
       )}
     </div>
@@ -350,27 +387,10 @@ function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
         </div>
       )}
 
-      {/* AI fields */}
-      {(lead.aiSummary || lead.outreachAngle) && (
-        <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
-          {lead.aiSummary && (
-            <div style={s.cardInner}>
-              <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>AI Summary</div>
-              <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>{lead.aiSummary}</div>
-            </div>
-          )}
-          {lead.outreachAngle && (
-            <div style={s.cardInner}>
-              <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Outreach Angle</div>
-              <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>{lead.outreachAngle}</div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Evidence-backed intelligence (score rationale, evidence, risk flags) */}
-      {(lead.aiIntelligence || evidenceRows.length > 0) && (
-        <IntelligencePanel intel={lead.aiIntelligence ?? {}} rows={evidenceRows} />
+      {/* Lead brief: the AI research as one clean, plain-language briefing
+          (summary, why they fit, the way in, caveats, next step). */}
+      {(lead.aiSummary || lead.outreachAngle || lead.aiIntelligence || evidenceRows.length > 0) && (
+        <LeadBrief lead={lead} intel={lead.aiIntelligence ?? {}} rows={evidenceRows} />
       )}
 
       {/* Outreach drafts */}
