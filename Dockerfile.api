@@ -5,7 +5,7 @@
 # tag is kept as a comment for readability. Dependabot (docker ecosystem) bumps
 # the digest+tag. Re-resolve with:
 #   docker buildx imagetools inspect node:26-alpine --format '{{json .Manifest.Digest}}'
-FROM node:26-alpine@sha256:a2dc166a387cc6ca1e62d0c8e265e49ca985d6e60abc9fe6e6c3d6ce8e63f606 AS builder
+FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS builder
 WORKDIR /app
 ARG ACAOS_RELEASE_VERSION=0.0.0-dev
 ARG ACAOS_RELEASE_SHA=unknown
@@ -47,7 +47,7 @@ RUN npm run build -w @acaos/api
 # Production-only image: prod dependencies, compiled output, and the generated
 # Prisma client — no TypeScript compiler, no @types/*, no test tooling. This
 # shrinks the image and removes that dev-only surface from what we ship.
-FROM node:26-alpine@sha256:a2dc166a387cc6ca1e62d0c8e265e49ca985d6e60abc9fe6e6c3d6ce8e63f606 AS runtime
+FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS runtime
 WORKDIR /app
 ARG ACAOS_RELEASE_VERSION=0.0.0-dev
 ARG ACAOS_RELEASE_SHA=unknown

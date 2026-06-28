@@ -2,7 +2,7 @@
 # tag is kept as a comment for readability. Dependabot (docker ecosystem) bumps
 # the digest+tag. Re-resolve with:
 #   docker buildx imagetools inspect node:26-alpine --format '{{json .Manifest.Digest}}'
-FROM node:26-alpine@sha256:a2dc166a387cc6ca1e62d0c8e265e49ca985d6e60abc9fe6e6c3d6ce8e63f606 AS builder
+FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -30,7 +30,7 @@ RUN npm --workspace @acaos/web run build
 # digest (covers amd64 + arm64); tag kept as a comment. Dependabot (docker
 # ecosystem) bumps the digest+tag. Re-resolve with:
 #   docker buildx imagetools inspect nginxinc/nginx-unprivileged:alpine --format '{{json .Manifest.Digest}}'
-FROM nginxinc/nginx-unprivileged:alpine@sha256:26b5d4920434bc4d8c17a68201488cf4b3d2391f0d25305cdfe66ccdc6d18aa4
+FROM nginxinc/nginx-unprivileged:alpine@sha256:054e14f543eb688809d59ec2ad1644d1a61678e247c87a318ad605977eb37eaf
 # COPY runs as root (build daemon) regardless of the base image's USER 101, so
 # the SPA assets and our hardened server block land readable by the nginx user.
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
