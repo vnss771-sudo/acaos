@@ -4,6 +4,7 @@ import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { Card } from '../components/ui/Card.js'
 import { Badge } from '../components/ui/Badge.js'
+import { AiQuickAction } from '../components/AiQuickAction.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -67,9 +68,13 @@ export function InboxView({ api, workspace, toast }: Props) {
 
   return (
     <div style={s.stack}>
-      <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 4px' }}>
-        Replies to your outreach, classified by intent. ACAOS suggests the next move for each.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <p style={{ color: colors.textMuted, fontSize: 13, margin: 0, flex: 1, minWidth: 220 }}>
+          Replies to your outreach, classified by intent. ACAOS suggests the next move for each.
+        </p>
+        {/* Contextual AI: analyze an ad-hoc reply (paste-in) right where replies live. */}
+        <AiQuickAction kind="reply" api={api} workspace={workspace} toast={toast} />
+      </div>
 
       {/* Filter chips */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
