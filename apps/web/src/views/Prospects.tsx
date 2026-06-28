@@ -9,6 +9,7 @@ import {
 import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { AiQuickAction } from '../components/AiQuickAction.js'
 import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -566,6 +567,11 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
 
   return (
     <div style={s.stack}>
+      {/* Contextual AI: qualify any business with AI, before it's a saved lead. */}
+      <div>
+        <AiQuickAction kind="research" api={api} workspace={workspace} toast={toast} />
+      </div>
+
       {/* Header */}
       <div style={s.flexBetween}>
         <div style={{ display: 'flex', gap: 8 }}>
