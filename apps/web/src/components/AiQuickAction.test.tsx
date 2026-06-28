@@ -5,11 +5,13 @@ import { AiQuickAction } from './AiQuickAction.js'
 import type { Workspace } from '../types.js'
 
 const workspace: Workspace = { id: 'ws1', name: 'Northwind', slug: 'northwind', plan: 'free' }
-const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() } as never
+// Keep the mock concretely typed so `toast.error` resolves in assertions; the
+// ToastHook shape is satisfied at the prop boundary via a cast.
+const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 
 function setup(kind: 'research' | 'outreach' | 'reply', apiImpl: (path: string, init?: unknown) => Promise<unknown>) {
   const api = vi.fn(apiImpl) as never
-  render(<AiQuickAction kind={kind} api={api} workspace={workspace} toast={toast} />)
+  render(<AiQuickAction kind={kind} api={api} workspace={workspace} toast={toast as never} />)
   return api as unknown as ReturnType<typeof vi.fn>
 }
 
