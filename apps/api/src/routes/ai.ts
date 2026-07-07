@@ -5,7 +5,7 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { checkAndIncrementAiUsage } from '../lib/limits.js'
+import { checkAndIncrementAiUsage, refundAiUsage, type UsageAction } from '../lib/limits.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
 import { explainLeadScore, getWorkspaceWeights } from '../lib/scoring.js'
 import { prisma } from '../lib/prisma.js'
@@ -54,6 +54,23 @@ const replyAnalysisSchema = z.object({
   replyBody: z.string().trim().min(1, 'replyBody is required').max(MAX_REPLY),
 })
 
+// Charge one AI unit, run the model call, and REFUND on failure so a provider
+// error / open circuit never silently eats a customer's monthly quota. Mirrors the
+// worker's refund-on-throw (processors.ts); the interactive routes previously
+// incremented usage but never refunded, so an OpenAI outage burned a paid unit with
+// no result returned. Post-success work (e.g. the deterministic score rationale)
+// stays OUTSIDE this wrapper — once the model call returns, the unit is legitimately
+// spent and must not be refunded if a later step fails.
+async function withAiUsage<T>(workspaceId: string, action: UsageAction, run: () => Promise<T>): Promise<T> {
+  await checkAndIncrementAiUsage(workspaceId, action)
+  try {
+    return await run()
+  } catch (err) {
+    await refundAiUsage(workspaceId, action).catch(() => {})
+    throw err
+  }
+}
+
 export const aiRouter = Router()
 aiRouter.use(requireAuth)
 aiRouter.use(requireVerifiedEmail)
@@ -70,22 +87,23 @@ aiRouter.post(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
     await enforceWorkspaceAiRate(workspaceId)
-    await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
 
-    let icp: IcpContext | undefined
-    const icpRow = await prisma.workspaceICP.findUnique({
-      where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true }
-    })
-    if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+    const data = await withAiUsage(workspaceId, 'AI_RESEARCH', async () => {
+      let icp: IcpContext | undefined
+      const icpRow = await prisma.workspaceICP.findUnique({
+        where: { workspaceId },
+        select: { targetIndustries: true, businessType: true, outreachTone: true }
+      })
+      if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
-    const data = await generateLeadResearch({
-      businessName,
-      website,
-      category,
-      city,
-      notes,
-      icp
+      return generateLeadResearch({
+        businessName,
+        website,
+        category,
+        city,
+        notes,
+        icp
+      })
     })
 
     // Deterministic, model-independent rationale for the ICP score — the "why",
@@ -112,24 +130,25 @@ aiRouter.post(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
     await enforceWorkspaceAiRate(workspaceId)
-    await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
 
-    let icp: IcpContext | undefined
-    const icpRow = await prisma.workspaceICP.findUnique({
-      where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true }
-    })
-    if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+    const data = await withAiUsage(workspaceId, 'AI_OUTREACH', async () => {
+      let icp: IcpContext | undefined
+      const icpRow = await prisma.workspaceICP.findUnique({
+        where: { workspaceId },
+        select: { targetIndustries: true, businessType: true, outreachTone: true }
+      })
+      if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
-    const data = await generateOutreach({
-      businessName,
-      category,
-      city,
-      contactName,
-      aiSummary,
-      outreachAngle,
-      notes,
-      icp
+      return generateOutreach({
+        businessName,
+        category,
+        city,
+        contactName,
+        aiSummary,
+        outreachAngle,
+        notes,
+        icp
+      })
     })
 
     res.json({ result: data })
@@ -146,9 +165,8 @@ aiRouter.post(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
     await enforceWorkspaceAiRate(workspaceId)
-    await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
-    const data = await analyzeReply(replyBody)
+    const data = await withAiUsage(workspaceId, 'AI_REPLY', () => analyzeReply(replyBody))
     res.json({ result: data })
   })
 )

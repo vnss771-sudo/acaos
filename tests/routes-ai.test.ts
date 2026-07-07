@@ -19,7 +19,7 @@ function spec() {
     user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => member(a?.where?.userId, a?.where?.workspaceId) },
     workspace: { findUnique: async () => ({ plan: 'free', subscriptionStatus: null }) },
-    usageRecord: { findMany: async () => [], upsert: async () => ({ id: 'u' }) },
+    usageRecord: { findMany: async () => [], upsert: async () => ({ id: 'u' }), updateMany: async () => ({ count: 1 }) },
     workspaceICP: { findUnique: async () => null },
   }
 }
@@ -55,6 +55,18 @@ test('research increments AI usage then hits the OpenAI guard (503) for a member
   const res = await post('/api/ai/research', { workspaceId: OWNED, businessName: 'Acme' })
   assert.equal(res.status, 503) // no OPENAI_API_KEY
   assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1) // usage counted
+})
+test('research REFUNDS the AI unit when the model call fails, so an outage never eats quota', async () => {
+  const res = await post('/api/ai/research', { workspaceId: OWNED, businessName: 'Acme' })
+  assert.equal(res.status, 503)
+  assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1)      // charged up-front
+  assert.equal(prisma.callsTo('usageRecord', 'updateMany').length, 1)  // then refunded on failure
+})
+test('reply-analysis refunds the AI unit on a model failure', async () => {
+  const res = await post('/api/ai/reply-analysis', { workspaceId: OWNED, replyBody: 'Interested!' })
+  assert.equal(res.status, 503)
+  assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1)
+  assert.equal(prisma.callsTo('usageRecord', 'updateMany').length, 1)
 })
 test('research without a workspaceId returns 400', async () => {
   const res = await post('/api/ai/research', { businessName: 'Acme' })
