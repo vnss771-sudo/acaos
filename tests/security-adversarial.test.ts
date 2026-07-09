@@ -504,6 +504,7 @@ describe('E. Input validation adversarial — leads and campaigns', () => {
         create: async (args: any) => ({ id: 'campaign-new', ...args.data, createdAt: new Date(), updatedAt: new Date() }),
         update: async (args: any) => ({ id: args?.where?.id, ...args.data }),
       },
+      workspaceICP: { findUnique: async () => null },
       scoringModel: { findUnique: async () => null },
       workspace: { findUnique: async () => ({ id: WS_A, plan: 'free', subscriptionStatus: null }) },
       usageRecord: { findMany: async () => [] },
@@ -580,6 +581,7 @@ describe('E. Input validation adversarial — leads and campaigns', () => {
         }),
         update: async (args: any) => ({ id: 'lead-exists', ...args.data }),
       },
+      workspaceICP: { findUnique: async () => null },
       scoringModel: { findUnique: async () => null },
     })
     installPrisma(existingLeadPrisma)

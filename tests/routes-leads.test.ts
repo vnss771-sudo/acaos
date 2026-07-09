@@ -19,6 +19,7 @@ function spec() {
     user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => member(a?.where?.userId, a?.where?.workspaceId) },
     workspace: { findUnique: async () => ({ plan: 'free', subscriptionStatus: null }) }, // checkLeadLimit
+    workspaceICP: { findUnique: async () => null },
     scoringModel: { findUnique: async () => null }, // → DEFAULT_SCORING_WEIGHTS
     campaign: { findFirst: async (a: any) => (a?.where?.id === 'camp-own' ? { id: 'camp-own' } : null) },
     lead: {

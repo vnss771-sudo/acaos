@@ -174,3 +174,37 @@ describe('getScoreTier', () => {
     assert.equal(getScoreTier(1), 'COLD')
   })
 })
+
+describe('ICP-aware industry scoring (P0-6)', () => {
+  it('defaults to the built-in field-service ICP when no targets are configured', () => {
+    // Unchanged behavior: a field-service category beats a generic one with no ICP.
+    const plumbing = computeLeadScore(lead({ category: 'plumbing contractor' }))
+    const retail = computeLeadScore(lead({ category: 'retail' }))
+    assert.ok(plumbing > retail, `field-service ${plumbing} should beat generic ${retail} by default`)
+  })
+
+  it('scores against the workspace ICP targets when provided', () => {
+    const targets = ['software', 'saas']
+    // A software company is now in-ICP (high); a plumber is out-of-ICP (low) —
+    // the opposite of the default field-service ranking.
+    const software = computeLeadScore(lead({ category: 'B2B Software' }), DEFAULT_SCORING_WEIGHTS, targets)
+    const plumber = computeLeadScore(lead({ category: 'plumbing contractor' }), DEFAULT_SCORING_WEIGHTS, targets)
+    assert.ok(software > plumber, `in-ICP software ${software} should beat out-of-ICP plumber ${plumber}`)
+  })
+
+  it('a field-service lead is NOT auto-HOT for a non-field-service workspace', () => {
+    // Same plumbing lead: strong by default, weak once the workspace targets software.
+    const l = lead({ category: 'plumbing', email: 'owner@acme.com' })
+    const industryOf = (targets?: string[]) => explainLeadScore(l, DEFAULT_SCORING_WEIGHTS, targets).signals.industry
+    assert.equal(industryOf(), 1.00)                 // default field-service ICP → full match
+    assert.equal(industryOf(['software']), 0.25)     // software-targeting workspace → out of ICP
+  })
+
+  it('matches case-insensitively and on substrings in either direction', () => {
+    const industryOf = (category: string, targets: string[]) =>
+      explainLeadScore(lead({ category }), DEFAULT_SCORING_WEIGHTS, targets).signals.industry
+    assert.equal(industryOf('Commercial Real Estate', ['real estate']), 1.00) // target ⊂ category
+    assert.equal(industryOf('Fintech', ['Financial Technology and Fintech']), 1.00) // category ⊂ target
+    assert.equal(industryOf('Healthcare', ['software']), 0.25) // no overlap
+  })
+})

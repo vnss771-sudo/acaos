@@ -40,7 +40,7 @@ import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { explainLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
+import { explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@acaos/backend-core/lib/scoring.js'
 import {
   generateRuleBasedRecommendation,
   toRawSignal,
@@ -115,10 +115,14 @@ const researchWorker = new Worker(
       outreachAngle: parsed.outreachAngle ?? null
     }
 
-    const weights = await getWorkspaceWeights(lead.workspaceId)
+    const [weights, icpTargets] = await Promise.all([
+      getWorkspaceWeights(lead.workspaceId),
+      getWorkspaceIcpTargets(lead.workspaceId),
+    ])
     // Deterministic score + its rationale (the "why 75"), so the breakdown is
-    // captured in the job result/log rather than thrown away.
-    const explanation = explainLeadScore(enrichedLead, weights)
+    // captured in the job result/log rather than thrown away. Industry sub-score is
+    // calibrated to the workspace's ICP (falls back to the default vertical if unset).
+    const explanation = explainLeadScore(enrichedLead, weights, icpTargets)
     const computedScore = explanation.score
     const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
       ? Math.round((parsed.icpScore + computedScore) / 2)
