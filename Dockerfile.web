@@ -31,6 +31,13 @@ RUN npm --workspace @acaos/web run build
 # ecosystem) bumps the digest+tag. Re-resolve with:
 #   docker buildx imagetools inspect nginxinc/nginx-unprivileged:alpine --format '{{json .Manifest.Digest}}'
 FROM nginxinc/nginx-unprivileged:alpine@sha256:26b5d4920434bc4d8c17a68201488cf4b3d2391f0d25305cdfe66ccdc6d18aa4
+# Patch base-image OS packages that carry published security fixes post-dating the
+# pinned digest — e.g. libexpat CVE-2026-56131/56407/56408 (fixed in 2.8.2-r0),
+# which the Trivy HIGH/CRITICAL gate flags. apk needs root; drop back to the
+# unprivileged nginx user (101) so the container still runs non-root at runtime.
+USER root
+RUN apk upgrade --no-cache libexpat
+USER 101
 # COPY runs as root (build daemon) regardless of the base image's USER 101, so
 # the SPA assets and our hardened server block land readable by the nginx user.
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
