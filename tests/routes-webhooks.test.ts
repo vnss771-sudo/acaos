@@ -47,7 +47,7 @@ const json = (uid: string) => ({ Authorization: bearer(uid), 'Content-Type': 'ap
 test('POST creates an endpoint and returns the full secret exactly once (admin)', async () => {
   const res = await server.request('/api/webhooks', {
     method: 'POST', headers: json(ADMIN),
-    body: JSON.stringify({ workspaceId: OWNED, url: 'https://hook.test/x', eventTypes: ['reply.received', 'reply.received'] }),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'https://93.184.216.34/x', eventTypes: ['reply.received', 'reply.received'] }),
   })
   assert.equal(res.status, 201)
   assert.match(res.body.secret, /^whsec_[0-9a-f]+$/, 'full secret returned on create')
@@ -55,10 +55,26 @@ test('POST creates an endpoint and returns the full secret exactly once (admin)'
   assert.match(res.body.endpoint.secretMasked, /…$/, 'endpoint object only carries a masked secret')
 })
 
+test('POST rejects a webhook URL that targets a private/metadata host (SSRF, 400)', async () => {
+  const res = await server.request('/api/webhooks', {
+    method: 'POST', headers: json(ADMIN),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'https://169.254.169.254/hook', eventTypes: ['reply.received'] }),
+  })
+  assert.equal(res.status, 400)
+})
+
+test('POST rejects a non-https webhook URL (400)', async () => {
+  const res = await server.request('/api/webhooks', {
+    method: 'POST', headers: json(ADMIN),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'http://93.184.216.34/x', eventTypes: ['reply.received'] }),
+  })
+  assert.equal(res.status, 400)
+})
+
 test('POST rejects an unsupported event type (400)', async () => {
   const res = await server.request('/api/webhooks', {
     method: 'POST', headers: json(ADMIN),
-    body: JSON.stringify({ workspaceId: OWNED, url: 'https://hook.test/x', eventTypes: ['nope.bad'] }),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'https://93.184.216.34/x', eventTypes: ['nope.bad'] }),
   })
   assert.equal(res.status, 400)
 })
@@ -66,7 +82,7 @@ test('POST rejects an unsupported event type (400)', async () => {
 test('POST denies a plain member (workspace:update required)', async () => {
   const res = await server.request('/api/webhooks', {
     method: 'POST', headers: json(MEMBER),
-    body: JSON.stringify({ workspaceId: OWNED, url: 'https://hook.test/x', eventTypes: ['reply.received'] }),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'https://93.184.216.34/x', eventTypes: ['reply.received'] }),
   })
   assert.equal(res.status, 403)
 })

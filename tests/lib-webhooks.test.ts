@@ -3,11 +3,24 @@ import assert from 'node:assert/strict'
 import {
   buildWebhookEnvelope, generateWebhookSecret, signWebhookBody, webhookSignatureHeader,
   verifyWebhookSignature, nextRetryDelaySeconds, deliverWebhook, recordDeliveryOutcome,
-  emitWebhookEvent, isWebhookEventType, WEBHOOK_FAILURE_DISABLE_THRESHOLD,
+  emitWebhookEvent, isWebhookEventType, WEBHOOK_FAILURE_DISABLE_THRESHOLD, assertSafeWebhookUrl,
 } from '../packages/backend-core/src/lib/webhooks.ts'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
 
 afterEach(() => resetPrisma())
+
+test('assertSafeWebhookUrl blocks SSRF targets and non-https, allows a public URL', async () => {
+  // Private / loopback / link-local + cloud-metadata (169.254.169.254) IP literals.
+  for (const bad of ['https://127.0.0.1/h', 'https://10.0.0.5/h', 'https://169.254.169.254/latest/meta-data', 'https://[::1]/h', 'https://192.168.1.1/h']) {
+    await assert.rejects(assertSafeWebhookUrl(bad), /private or reserved|could not be resolved/, `should block ${bad}`)
+  }
+  // localhost by name, and a non-https scheme.
+  await assert.rejects(assertSafeWebhookUrl('https://localhost/h'), /localhost/)
+  await assert.rejects(assertSafeWebhookUrl('http://93.184.216.34/h'), /https/)
+  await assert.rejects(assertSafeWebhookUrl('not a url'), /valid URL/)
+  // A public IP literal passes (no DNS needed).
+  await assert.doesNotReject(assertSafeWebhookUrl('https://93.184.216.34/hook'))
+})
 
 test('signWebhookBody is deterministic and binds the timestamp + body', () => {
   const sig = signWebhookBody('whsec_x', 1000, '{"a":1}')

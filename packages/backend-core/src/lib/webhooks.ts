@@ -10,6 +10,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { prisma } from './prisma.js'
 import { logger } from './logger.js'
+import { assertPublicMailHost } from './ssrf.js'
+import { ApiError } from './errors.js'
 import type { PrismaClient, Prisma } from '@prisma/client'
 
 type Db = PrismaClient | Prisma.TransactionClient
@@ -21,6 +23,37 @@ export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number]
 
 export function isWebhookEventType(v: unknown): v is WebhookEventType {
   return typeof v === 'string' && (WEBHOOK_EVENT_TYPES as readonly string[]).includes(v)
+}
+
+// SSRF guard for a customer-registered webhook URL, enforced at REGISTRATION.
+// Without it a verified workspace admin could point an endpoint at
+// http://169.254.169.254/… or an internal host and have the API/worker POST a
+// signed request there — and read back the HTTP status via GET /api/webhooks —
+// i.e. a blind internal SSRF / cloud-metadata probe from our egress. Requires
+// https and rejects any host that is, or resolves to, a private/loopback/
+// link-local/metadata address (same DNS-resolving guard the SMTP/IMAP paths use).
+export async function assertSafeWebhookUrl(rawUrl: string): Promise<void> {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    throw new ApiError(400, 'url: must be a valid URL')
+  }
+  if (parsed.protocol !== 'https:') throw new ApiError(400, 'url: must use https')
+  await assertPublicMailHost(parsed.hostname, 'url')
+}
+
+// Delivery-time re-check: even a URL that was public at registration can later
+// resolve to a private address (DNS rebinding). Returns true if the URL's host is
+// still safe to dial. Does NOT require https here, so any endpoint registered
+// before that rule is grandfathered for delivery — the SSRF check still applies.
+async function webhookHostIsSafe(rawUrl: string): Promise<boolean> {
+  try {
+    await assertPublicMailHost(new URL(rawUrl).hostname, 'url')
+    return true
+  } catch {
+    return false
+  }
 }
 
 export type WebhookEnvelope = {
@@ -87,6 +120,14 @@ export async function deliverWebhook(
   const doFetch = deps.fetch ?? fetch
   const nowSec = Math.floor((deps.now ? deps.now() : Date.now()) / 1000)
   const body = JSON.stringify(envelope)
+  // SSRF re-check right before dialing the REAL network: block a URL whose host now
+  // points at a private/reserved address (DNS rebinding since registration). Skipped
+  // when the caller injects a transport (deps.fetch) — a controlled transport owns
+  // its own egress safety, and this keeps the pure delivery logic unit-testable.
+  if (!deps.fetch && !(await webhookHostIsSafe(endpoint.url))) {
+    logger.warn('webhook delivery blocked: url resolves to a private or reserved host', { url: endpoint.url })
+    return { ok: false, status: null }
+  }
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 5000)

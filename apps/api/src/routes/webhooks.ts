@@ -6,7 +6,7 @@ import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, workspaceIdField } from '../lib/validate.js'
-import { generateWebhookSecret, WEBHOOK_EVENT_TYPES, isWebhookEventType } from '@acaos/backend-core/lib/webhooks.js'
+import { generateWebhookSecret, WEBHOOK_EVENT_TYPES, isWebhookEventType, assertSafeWebhookUrl } from '@acaos/backend-core/lib/webhooks.js'
 import { recordAudit } from '../lib/audit.js'
 
 // Outbound-webhook endpoint management. Customers register a URL + the events they
@@ -58,6 +58,10 @@ webhooksRouter.post(
     const user = requireUser(req)
     const { workspaceId, url, eventTypes } = parseBody(createSchema, req)
     await assertWorkspacePermission(user.id, workspaceId, 'workspace:update')
+
+    // SSRF guard: reject non-https or private/internal/metadata targets before we
+    // ever store an endpoint we'd POST signed requests to.
+    await assertSafeWebhookUrl(url)
 
     const invalid = eventTypes.filter((t) => !isWebhookEventType(t))
     if (invalid.length) throw new ApiError(400, `Unsupported event type(s): ${invalid.join(', ')}`)
