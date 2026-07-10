@@ -41,7 +41,23 @@ export async function getWorkspaceWeights(workspaceId: string): Promise<ScoringW
   return (model?.weights as ScoringWeights | null) ?? DEFAULT_SCORING_WEIGHTS
 }
 
-// Target ICP: field-service companies (civil, electrical, plumbing, landscaping, etc.)
+/**
+ * A workspace's configured target industries, driving the industry sub-score. Empty
+ * when the workspace hasn't set an ICP — in which case the scorer falls back to the
+ * built-in field-service default. Pass the result as the 3rd arg to
+ * explainLeadScore / computeLeadScore so scores are calibrated to the workspace's
+ * actual ICP rather than the default vertical.
+ */
+export async function getWorkspaceIcpTargets(workspaceId: string): Promise<string[]> {
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { targetIndustries: true } })
+  return icp?.targetIndustries ?? []
+}
+
+// Built-in DEFAULT ICP: field-service companies (civil, electrical, plumbing,
+// landscaping, etc.). Used only when a workspace has NOT configured its own
+// `WorkspaceICP.targetIndustries` — see scoreIndustry. This is the product's
+// default vertical, not a hard limit: a workspace targeting any other industry
+// scores against its own configured targets instead.
 const ICP_PRIMARY = ['civil', 'electrical', 'plumbing', 'landscaping', 'facilities', 'hvac',
   'roofing', 'painting', 'flooring', 'mechanical', 'structural', 'construction',
   'environmental', 'infrastructure', 'utility', 'utilities', 'contractor', 'contracting']
@@ -49,9 +65,21 @@ const ICP_PRIMARY = ['civil', 'electrical', 'plumbing', 'landscaping', 'faciliti
 const ICP_ADJACENT = ['maintenance', 'repair', 'service', 'installation', 'inspection',
   'cleaning', 'pest', 'security', 'fire', 'elevator', 'telecom']
 
-function scoreIndustry(category: string | null | undefined): number {
+// Score how well a lead's industry matches the workspace's ICP.
+//   • If the workspace configured `targetIndustries`, match against those (a hit is
+//     a strong fit, anything else is out-of-ICP) — so scores are meaningful for ANY
+//     vertical, not just field service.
+//   • Otherwise fall back to the built-in field-service taxonomy (with its primary
+//     / adjacent tiers), preserving the default behavior for field-service workspaces.
+function scoreIndustry(category: string | null | undefined, icpTargets?: string[]): number {
   if (!category) return 0.30
   const lower = category.toLowerCase()
+
+  const targets = (icpTargets ?? []).map(t => t.toLowerCase().trim()).filter(Boolean)
+  if (targets.length > 0) {
+    return targets.some(t => lower.includes(t) || t.includes(lower)) ? 1.00 : 0.25
+  }
+
   if (ICP_PRIMARY.some(k => lower.includes(k))) return 1.00
   if (ICP_ADJACENT.some(k => lower.includes(k))) return 0.70
   return 0.25
@@ -140,7 +168,7 @@ const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['size', 'messageRelevanc
 // Maps a signal's strength to a short, human phrase. Deterministic and band-based
 // so the same inputs always produce the same rationale.
 const SIGNAL_LABELS: Record<keyof ScoringWeights, (v: number) => string> = {
-  industry: (v) => (v >= 0.9 ? 'Core ICP industry match (field service)' : v >= 0.6 ? 'Adjacent service industry' : 'Industry outside the core ICP'),
+  industry: (v) => (v >= 0.9 ? 'Core ICP industry match' : v >= 0.6 ? 'Adjacent service industry' : 'Industry outside the core ICP'),
   size: (v) => (v >= 0.6 ? 'Team size in the target range' : 'Team size likely too small or unknown'),
   hiring: (v) => (v >= 0.9 ? 'Active hiring / expansion signal' : 'No hiring signal found'),
   tech: (v) => (v >= 0.9 ? 'Low existing software footprint (good fit)' : 'Already runs enterprise software (saturated)'),
@@ -152,12 +180,12 @@ const SIGNAL_LABELS: Record<keyof ScoringWeights, (v: number) => string> = {
   dataFreshness: (v) => (v >= 0.8 ? 'Enriched with current research' : 'Limited research data'),
 }
 
-function computeSignals(lead: LeadInput): ScoreSignals {
+function computeSignals(lead: LeadInput, icpTargets?: string[]): ScoreSignals {
   const combined = [lead.notes, lead.aiSummary, lead.outreachAngle, lead.businessName]
     .filter(Boolean).join(' ').toLowerCase()
 
   return {
-    industry: scoreIndustry(lead.category),
+    industry: scoreIndustry(lead.category, icpTargets),
     size: 0.65, // default medium — unknown without enrichment
     hiring: scoreHiring(combined),
     tech: scoreTech(combined),
@@ -176,8 +204,8 @@ function computeSignals(lead: LeadInput): ScoreSignals {
  * `computeLeadScore` delegates here, so the number is guaranteed identical to the
  * explained score.
  */
-export function explainLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): LeadScoreExplanation {
-  const signals = computeSignals(lead)
+export function explainLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS, icpTargets?: string[]): LeadScoreExplanation {
+  const signals = computeSignals(lead, icpTargets)
   const keys = Object.keys(weights) as (keyof ScoringWeights)[]
 
   const raw = keys.reduce((sum, k) => sum + signals[k] * weights[k], 0)
@@ -198,8 +226,8 @@ export function explainLeadScore(lead: LeadInput, weights: ScoringWeights = DEFA
   return { score, tier: getScoreTier(score), signals, reasons, topReasons }
 }
 
-export function computeLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): number {
-  return explainLeadScore(lead, weights).score
+export function computeLeadScore(lead: LeadInput, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS, icpTargets?: string[]): number {
+  return explainLeadScore(lead, weights, icpTargets).score
 }
 
 export function getScoreTier(score: number): 'HOT' | 'WARM' | 'COLD' {

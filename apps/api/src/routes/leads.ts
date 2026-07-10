@@ -6,7 +6,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '../lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
-import { computeLeadScore, getWorkspaceWeights } from '../lib/scoring.js'
+import { computeLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '../lib/scoring.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { checkLeadLimit, reserveLeadCapacity } from '../lib/limits.js'
@@ -172,8 +172,8 @@ leadsRouter.post(
 
     await assertCampaignInWorkspace(leadData.campaignId, workspaceId)
 
-    const weights = await getWorkspaceWeights(workspaceId)
-    const score = computeLeadScore(leadData, weights)
+    const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(workspaceId), getWorkspaceIcpTargets(workspaceId)])
+    const score = computeLeadScore(leadData, weights, icpTargets)
 
     const lead = await prisma.lead.create({ data: { ...leadData, score } })
     invalidateWorkspaceStats(workspaceId) // new lead changes totals/funnel/recent
@@ -194,7 +194,7 @@ leadsRouter.post(
 
     await assertWorkspacePermission(user.id, workspaceId, 'leads:import')
 
-    const weights = await getWorkspaceWeights(workspaceId)
+    const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(workspaceId), getWorkspaceIcpTargets(workspaceId)])
 
     const rows = leads
       .filter((l) => typeof l?.businessName === 'string' && l.businessName.trim())
@@ -212,7 +212,7 @@ leadsRouter.post(
           notes: typeof l.notes === 'string' ? l.notes.trim() || null : null,
           sourceTag: typeof l.sourceTag === 'string' ? l.sourceTag.trim() || null : null
         }
-        return { ...row, score: computeLeadScore(row, weights) }
+        return { ...row, score: computeLeadScore(row, weights, icpTargets) }
       })
 
     const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
@@ -360,8 +360,8 @@ leadsRouter.patch(
     const shouldRescore = scoringFields.some(f => f in updates)
     if (shouldRescore) {
       const merged = { ...lead, ...updates }
-      const weights = await getWorkspaceWeights(lead.workspaceId)
-      updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights)
+      const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(lead.workspaceId), getWorkspaceIcpTargets(lead.workspaceId)])
+      updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights, icpTargets)
     } else if (typeof body.score === 'number') {
       // Allow manual override only if no auto-rescore
       updates.score = body.score
