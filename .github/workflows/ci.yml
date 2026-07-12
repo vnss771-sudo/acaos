@@ -73,7 +73,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -147,7 +147,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -198,7 +198,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -244,7 +244,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -288,7 +288,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -421,7 +421,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -505,7 +505,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -571,7 +571,7 @@ jobs:
       # re-download them on every run (removes a fragile network dependency; a
       # cache miss just falls back to the normal download).
       - name: Cache Prisma engines
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/prisma-nodejs
@@ -587,7 +587,7 @@ jobs:
         run: npm run prisma:generate
 
       - name: Cache Playwright browsers
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
