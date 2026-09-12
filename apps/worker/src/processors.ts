@@ -35,7 +35,7 @@ import { assertOutreachTone, OutreachToneError } from '@acaos/backend-core/lib/o
 import { buildOutreachEmail } from '@acaos/backend-core/lib/emailFooter.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
-import { campaignDailyStatsUpsertArgs } from '@acaos/backend-core/lib/campaignStats.js'
+import { campaignDailyStatsUpsertArgs, utcDayStart } from '@acaos/backend-core/lib/campaignStats.js'
 import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
 import { canContactRecipient } from '@acaos/backend-core/services/contactPolicy.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
@@ -391,8 +391,12 @@ export async function sendCampaignBatch(
   // Effective cap = safe-launch clamp, then the opt-in warmup ramp (the more
   // restrictive of the two). Warmup is a no-op unless warmupStartedAt is set.
   const dailySendLimit = applyWarmupCap(effectiveDailySendLimit(workspaceDailyLimit), icp?.warmupStartedAt ?? null)
-  const startOfToday = new Date()
-  startOfToday.setHours(0, 0, 0, 0)
+  // UTC day boundary — matches utcMonthStart() below and campaignStats.ts's own
+  // day bucketing. A local-time setHours(0,0,0,0) would drift the daily window
+  // relative to the monthly one (and relative to whatever the container's TZ
+  // happens to be), letting a workspace's daily and monthly caps disagree on
+  // where "today" starts.
+  const startOfToday = utcDayStart(new Date())
 
   // Total eligible via one COUNT (not a full load) — drives progress and the
   // skipped tally without holding every lead in memory.
@@ -946,7 +950,10 @@ export async function sendFollowupTask(
     senderPostalAddress: workspace?.senderPostalAddress,
   })
 
-  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+  // UTC day boundary — see the matching comment in sendCampaignBatch; must stay
+  // in lockstep with the monthly cap's UTC window and the daily cap on the main
+  // send path, or a followup and a fresh send could disagree on "today".
+  const startOfToday = utcDayStart(new Date())
   const wsDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
   const dailySendLimit = applyWarmupCap(effectiveDailySendLimit(wsDailyLimit), icp?.warmupStartedAt ?? null)
 
