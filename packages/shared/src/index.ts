@@ -67,6 +67,15 @@ export type OutreachIntentStatus =
   | 'LOST'
   | 'REJECTED'
 
+// Ops module (field crew / shift / job-site management).
+export type OpsJobStatus = 'ACTIVE' | 'ARCHIVED'
+export type OpsRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH'
+export type OpsShiftType = 'REGULAR' | 'OVERTIME' | 'CALLOUT' | 'ON_CALL'
+export type OpsRosterStatus = 'DRAFT' | 'PUBLISHED'
+export type OpsAlertType = 'MISSING_HEAT_CHECK' | 'FATIGUE_THRESHOLD' | 'MISSING_ALLOWANCE'
+export type OpsAlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+export type OpsAlertStatus = 'OPEN' | 'REVIEWED'
+
 // ── Auth handshake (POST /api/auth/*) ─────────────────────────────────────────
 // These run in AuthScreen via raw fetch — by design: there is no bearer token
 // yet, the flow must control credentials/CSRF, and a 401 means bad credentials,

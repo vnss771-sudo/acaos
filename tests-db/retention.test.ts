@@ -38,6 +38,16 @@ test('purges rows past their window and keeps rows inside it', async () => {
   await prisma.processedStripeEvent.create({ data: { id: 'evt_old', type: 'invoice.paid', processedAt: ago(400) } })
   await prisma.processedStripeEvent.create({ data: { id: 'evt_new', type: 'invoice.paid', processedAt: ago(5) } })
 
+  // OpsShiftRecord — 24-month (730-day) window, keyed on shiftDate.
+  const crew = await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'E1', fullName: 'Jane Doe', role: 'TECH' } })
+  const site = await prisma.opsJobSite.create({ data: { workspaceId: ws, jobCode: 'J1', siteName: 'Site 1' } })
+  await prisma.opsShiftRecord.create({ data: { workspaceId: ws, crewMemberId: crew.id, jobSiteId: site.id, shiftDate: ago(800), startTime: ago(800), endTime: ago(800) } })
+  await prisma.opsShiftRecord.create({ data: { workspaceId: ws, crewMemberId: crew.id, jobSiteId: site.id, shiftDate: ago(10), startTime: ago(10), endTime: ago(10) } })
+
+  // OpsAlert — 12-month (365-day) window.
+  await prisma.opsAlert.create({ data: { workspaceId: ws, alertType: 'MISSING_HEAT_CHECK', title: 'old', createdAt: ago(400) } })
+  await prisma.opsAlert.create({ data: { workspaceId: ws, alertType: 'MISSING_HEAT_CHECK', title: 'new', createdAt: ago(10) } })
+
   const deleted = await purgeExpiredData()
 
   assert.equal(deleted.processedEmail, 1)
@@ -45,12 +55,16 @@ test('purges rows past their window and keeps rows inside it', async () => {
   assert.equal(deleted.discoveryRun, 1)
   assert.equal(deleted.analyticsEvent, 1)
   assert.equal(deleted.processedStripeEvent, 1)
+  assert.equal(deleted.opsShiftRecord, 1)
+  assert.equal(deleted.opsAlert, 1)
 
   assert.equal(await prisma.processedEmail.count(), 1)
   assert.equal(await prisma.auditEvent.count(), 1)
   assert.equal(await prisma.discoveryRun.count(), 1)
   assert.equal(await prisma.analyticsEvent.count(), 1)
   assert.equal(await prisma.processedStripeEvent.count(), 1)
+  assert.equal(await prisma.opsShiftRecord.count(), 1)
+  assert.equal(await prisma.opsAlert.count(), 1)
 })
 
 test('refresh tokens: purges spent+old, keeps live tokens and recently-revoked ones', async () => {
