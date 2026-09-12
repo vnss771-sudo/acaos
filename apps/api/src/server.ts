@@ -33,7 +33,7 @@ import { metricsMiddleware } from './middleware/metrics.js'
 import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from './lib/prisma.js'
-import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
+import { isProduction, isOriginAllowed, corsAllowsAnyOrigin, validateConfig, getReadinessReport } from './lib/config.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
 import { parseTrustProxy } from './lib/trustProxy.js'
 import { captureError } from './lib/observability.js'
@@ -78,9 +78,13 @@ app.use(requestContext)
 app.use(metricsMiddleware)
 
 app.use(cors({
-  origin: isProduction()
-    ? (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin))
-    : true,
+  // Reflecting any origin with credentials:true is only safe in the two explicit
+  // local envs — gating this on isProduction() instead would leave staging,
+  // preview, and an unset/typo'd NODE_ENV wide open to credentialed cross-origin
+  // requests from any site.
+  origin: corsAllowsAnyOrigin()
+    ? true
+    : (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin)),
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Protection']
