@@ -25,6 +25,7 @@ const ADMIN_CAPS: Permission[] = [
   'prospects:discover',
   'prospects:import',
   'prospects:delete',
+  'ops:manage',
 ]
 const OWNER_ONLY_CAPS: Permission[] = ['members:grant_admin', 'members:remove', 'model:reset']
 const ALL_CAPS: Permission[] = [...ADMIN_CAPS, ...OWNER_ONLY_CAPS]

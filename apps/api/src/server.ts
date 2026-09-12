@@ -25,6 +25,7 @@ import { intelligenceRouter } from './routes/intelligence.js'
 import { adminRouter } from './routes/admin.js'
 import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { legalRouter } from './routes/legal.js'
+import { opsRouter } from './routes/ops/index.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
@@ -220,6 +221,7 @@ app.use('/api/intelligence', intelligenceRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/unsubscribe', unsubscribeRouter)
 app.use('/api/legal', legalRouter)
+app.use('/api/ops', opsRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)
