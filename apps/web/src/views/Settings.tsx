@@ -5,6 +5,7 @@ import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { MfaSettings } from '../components/MfaSettings.js'
 import { CompliancePanel } from '../components/CompliancePanel.js'
+import { Modal } from '../components/ui/Modal.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -65,6 +66,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [memberForm, setMemberForm] = useState({ email: '', role: 'member' })
   const [addingMember, setAddingMember] = useState(false)
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null)
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<WorkspaceMember | null>(null)
+  const [revokeKeyConfirmOpen, setRevokeKeyConfirmOpen] = useState(false)
   const [pendingInvites, setPendingInvites] = useState<{ id: string; email: string; role: string; expiresAt: string }[]>([])
   const [sendingInvite, setSendingInvite] = useState(false)
   const [inviteForm, setInviteForm] = useState({ email: '', role: 'member' })
@@ -246,14 +249,14 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   }
 
   async function removeMember(userId: string) {
-    if (!workspace || !confirm('Remove this member?')) return
+    if (!workspace) return
     setRemovingMemberId(userId)
     try {
       await route('DELETE /api/workspaces/:id/members/:userId', { params: { id: workspace.id, userId } })
       setMembers(prev => prev.filter(m => m.user.id !== userId))
       toast.success('Member removed')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to remove member') }
-    finally { setRemovingMemberId(null) }
+    finally { setRemovingMemberId(null); setRemoveMemberTarget(null) }
   }
 
   async function sendInvite() {
@@ -340,14 +343,14 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   }
 
   async function revokeApiKey() {
-    if (!workspace || !confirm('Revoke this API key? All integrations using it will stop working.')) return
+    if (!workspace) return
     setKeyWorking(true)
     try {
       await route('DELETE /api/workspaces/:id/api-key', { params: { id: workspace.id } })
       setHasKey(false)
       toast.success('API key revoked')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to revoke key') }
-    finally { setKeyWorking(false) }
+    finally { setKeyWorking(false); setRevokeKeyConfirmOpen(false) }
   }
 
   function copyKey(key: string) {
@@ -527,7 +530,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
                         <button
                           style={s.btnDanger}
                           disabled={removingMemberId === m.user.id}
-                          onClick={() => removeMember(m.user.id)}
+                          onClick={() => setRemoveMemberTarget(m)}
                         >
                           {removingMemberId === m.user.id ? <Spinner size={12} /> : '✕'}
                         </button>
@@ -904,7 +907,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
               {keyWorking ? <><Spinner size={14} color="#fff" /> Working…</> : 'Generate New Key'}
             </button>
             {hasKey && (
-              <button style={{ ...s.btnGhost, color: colors.red }} disabled={keyWorking} onClick={revokeApiKey}>
+              <button style={{ ...s.btnGhost, color: colors.red }} disabled={keyWorking} onClick={() => setRevokeKeyConfirmOpen(true)}>
                 Revoke Key
               </button>
             )}
@@ -931,6 +934,34 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           </div>
         </div>
       )}
+
+      <Modal
+        open={!!removeMemberTarget}
+        onClose={() => setRemoveMemberTarget(null)}
+        title="Remove member?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setRemoveMemberTarget(null)}>Cancel</button>
+          <button style={s.btnDanger} onClick={() => removeMemberTarget && removeMember(removeMemberTarget.user.id)}>Remove</button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          Remove {removeMemberTarget?.user.name || removeMemberTarget?.user.email} from this workspace?
+        </div>
+      </Modal>
+
+      <Modal
+        open={revokeKeyConfirmOpen}
+        onClose={() => setRevokeKeyConfirmOpen(false)}
+        title="Revoke API key?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setRevokeKeyConfirmOpen(false)}>Cancel</button>
+          <button style={s.btnDanger} disabled={keyWorking} onClick={revokeApiKey}>{keyWorking ? 'Revoking…' : 'Revoke'}</button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          All integrations using this key will stop working immediately.
+        </div>
+      </Modal>
     </div>
   )
 }

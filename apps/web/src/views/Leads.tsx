@@ -4,6 +4,7 @@ import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence, LeadEv
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Modal } from '../components/ui/Modal.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -480,6 +481,8 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkWorking, setBulkWorking] = useState<string | null>(null)
   const [showBulkMenu, setShowBulkMenu] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null)
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const LIMIT = 25
@@ -530,7 +533,6 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   }
 
   async function deleteLead(leadId: string) {
-    if (!confirm('Delete this lead?')) return
     try {
       await route('DELETE /api/leads/:id', { params: { id: leadId } })
       setLeads(prev => prev.filter(l => l.id !== leadId))
@@ -538,6 +540,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
       if (selected?.id === leadId) setSelected(null)
       toast.success('Lead deleted')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Delete failed') }
+    finally { setDeleteTarget(null) }
   }
 
   async function importCsv(e: React.ChangeEvent<HTMLInputElement>) {
@@ -591,7 +594,6 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
 
   async function bulkDelete() {
     if (!workspace || selectedIds.size === 0) return
-    if (!confirm(`Delete ${selectedIds.size} leads? This cannot be undone.`)) return
     setBulkWorking('delete')
     try {
       const d = await route('POST /api/leads/bulk-delete', { body: { workspaceId: workspace.id, ids: [...selectedIds] } })
@@ -601,7 +603,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
       fetchLeads()
       if (selected && selectedIds.has(selected.id)) setSelected(null)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Bulk delete failed') }
-    finally { setBulkWorking(null) }
+    finally { setBulkWorking(null); setBulkDeleteConfirmOpen(false) }
   }
 
   async function bulkStage(stage: string) {
@@ -684,7 +686,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
                     </button>
                   ))}
                   <div style={{ borderTop: `1px solid ${colors.borderLight}`, margin: '4px 0' }} />
-                  <button style={{ ...s.btnSm, textAlign: 'left', color: colors.red }} onClick={bulkDelete}>
+                  <button style={{ ...s.btnSm, textAlign: 'left', color: colors.red }} onClick={() => setBulkDeleteConfirmOpen(true)}>
                     ✕ Delete selected
                   </button>
                 </div>
@@ -793,7 +795,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
                     <ScorePill score={lead.score} />
                   </td>
                   <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
-                    {canManage && <button style={s.btnDanger} aria-label={`Delete lead ${lead.businessName}`} onClick={() => deleteLead(lead.id)}>✕</button>}
+                    {canManage && <button style={s.btnDanger} aria-label={`Delete lead ${lead.businessName}`} onClick={() => setDeleteTarget(lead)}>✕</button>}
                   </td>
                 </tr>
               ))}
@@ -824,6 +826,36 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
           onClose={() => setSelected(null)}
         />
       )}
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete lead?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setDeleteTarget(null)}>Cancel</button>
+          <button style={s.btnDanger} onClick={() => deleteTarget && deleteLead(deleteTarget.id)}>Delete</button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          Delete {deleteTarget?.businessName}? This cannot be undone.
+        </div>
+      </Modal>
+
+      <Modal
+        open={bulkDeleteConfirmOpen}
+        onClose={() => setBulkDeleteConfirmOpen(false)}
+        title="Delete selected leads?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setBulkDeleteConfirmOpen(false)}>Cancel</button>
+          <button style={s.btnDanger} disabled={bulkWorking === 'delete'} onClick={bulkDelete}>
+            {bulkWorking === 'delete' ? 'Deleting…' : 'Delete'}
+          </button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          Delete {selectedIds.size} lead{selectedIds.size === 1 ? '' : 's'}? This cannot be undone.
+        </div>
+      </Modal>
     </div>
   )
 }

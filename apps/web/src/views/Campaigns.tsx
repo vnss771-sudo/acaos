@@ -6,6 +6,7 @@ import { s, colors } from '../styles.js'
 import { Spinner, EmptyState } from '../components/Spinner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { LaunchApprovalModal } from '../components/LaunchApprovalModal.js'
+import { Modal } from '../components/ui/Modal.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -58,6 +59,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
   const [approvalPending, setApprovalPending] = useState<{ id: string; name: string; eligible: number } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Campaign | null>(null)
   const [showMissionBuilder, setShowMissionBuilder] = useState(false)
 
   const loadStats = useCallback(async (id: string) => {
@@ -115,12 +117,12 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   }
 
   async function deleteCampaign(id: string) {
-    if (!confirm('Delete this campaign and unlink its leads?')) return
     try {
       await route('DELETE /api/campaigns/:id', { params: { id } })
       setCampaigns(prev => prev.filter(c => c.id !== id))
       toast.success('Campaign deleted')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
+    finally { setDeleteTarget(null) }
   }
 
   function requestLaunch(id: string, name: string, eligible: number) {
@@ -205,6 +207,20 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
         />
       )}
 
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete campaign?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setDeleteTarget(null)}>Cancel</button>
+          <button style={s.btnDanger} onClick={() => deleteTarget && deleteCampaign(deleteTarget.id)}>Delete</button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          Delete {deleteTarget?.name} and unlink its leads? This cannot be undone.
+        </div>
+      </Modal>
+
       {/* Header */}
       <div style={{ ...s.flexBetween }}>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -264,7 +280,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                   <div style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{c.name}</div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {canManage && <button style={s.btnSm} onClick={() => startEdit(c)}>Edit</button>}
-                    {canManage && <button style={s.btnDanger} aria-label={`Delete campaign ${c.name}`} onClick={() => deleteCampaign(c.id)}>✕</button>}
+                    {canManage && <button style={s.btnDanger} aria-label={`Delete campaign ${c.name}`} onClick={() => setDeleteTarget(c)}>✕</button>}
                   </div>
                 </div>
 

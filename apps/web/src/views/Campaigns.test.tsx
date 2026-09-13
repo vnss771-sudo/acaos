@@ -82,8 +82,7 @@ describe('Campaigns', () => {
     expect(JSON.parse((sendCall![1] as { body: string }).body)).toMatchObject({ approved: true })
   })
 
-  test('deleting a campaign (confirmed) removes it from the list', async () => {
-    vi.stubGlobal('confirm', () => true)
+  test('deleting a campaign asks for confirmation via a dialog, then removes it from the list', async () => {
     const api = vi.fn((path: string, init?: { method?: string }) => {
       if (init?.method === 'DELETE') return Promise.resolve({})
       return Promise.resolve({ campaigns: [campaign] })
@@ -93,7 +92,28 @@ describe('Campaigns', () => {
     await screen.findByText('Q3 Brisbane Outreach')
     await userEvent.click(screen.getByRole('button', { name: /Delete campaign/i }))
 
+    // Nothing sent yet — the confirmation dialog gates the actual delete.
+    expect(screen.getByRole('dialog', { name: /Delete campaign\?/i })).toBeInTheDocument()
+    expect(api).not.toHaveBeenCalledWith('/api/campaigns/c1', expect.anything())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
     expect(api).toHaveBeenCalledWith('/api/campaigns/c1', expect.objectContaining({ method: 'DELETE' }))
     await waitFor(() => expect(screen.queryByText('Q3 Brisbane Outreach')).not.toBeInTheDocument())
+  })
+
+  test('cancelling the delete confirmation leaves the campaign untouched', async () => {
+    const api = vi.fn((path: string, init?: { method?: string }) => {
+      if (init?.method === 'DELETE') return Promise.resolve({})
+      return Promise.resolve({ campaigns: [campaign] })
+    })
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    await screen.findByText('Q3 Brisbane Outreach')
+    await userEvent.click(screen.getByRole('button', { name: /Delete campaign/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog', { name: /Delete campaign\?/i })).not.toBeInTheDocument()
+    expect(api).not.toHaveBeenCalledWith('/api/campaigns/c1', expect.anything())
+    expect(screen.getByText('Q3 Brisbane Outreach')).toBeInTheDocument()
   })
 })
