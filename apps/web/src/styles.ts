@@ -9,7 +9,13 @@ export const colors = {
   borderLight: '#1f2937',
   text: '#e2e8f0',
   textMuted: '#94a3b8',
-  textFaint: '#475569',
+  // Lifted from #475569 (~2.3-2.7:1 against every card/surface background in this
+  // palette — fails WCAG AA's 4.5:1 for normal text) to #7188a3, which clears
+  // 4.5:1 against all of them (lowest margin ~4.9:1 on bgElevated) while staying
+  // visually distinct from textMuted. This token is used almost exclusively for
+  // text (section headers, KPI labels, table headers) rather than borders, so
+  // raising it has no separate "keep it dark for borders" tradeoff to preserve.
+  textFaint: '#7188a3',
   textDisabled: '#374151',
   blue: '#2563eb',
   blueDark: '#1d4ed8',
