@@ -35,6 +35,13 @@ const Intelligence = lazy(() => import('./views/Intelligence.js').then(m => ({ d
 const ProspectsView = lazy(() => import('./views/Prospects.js').then(m => ({ default: m.ProspectsView })))
 const AdminView = lazy(() => import('./views/Admin.js').then(m => ({ default: m.AdminView })))
 const InboxView = lazy(() => import('./views/Inbox.js').then(m => ({ default: m.InboxView })))
+const OpsDashboard = lazy(() => import('./views/ops/OpsDashboard.js').then(m => ({ default: m.OpsDashboard })))
+const OpsCrew = lazy(() => import('./views/ops/OpsCrew.js').then(m => ({ default: m.OpsCrew })))
+const OpsJobs = lazy(() => import('./views/ops/OpsJobs.js').then(m => ({ default: m.OpsJobs })))
+const OpsShifts = lazy(() => import('./views/ops/OpsShifts.js').then(m => ({ default: m.OpsShifts })))
+const OpsRoster = lazy(() => import('./views/ops/OpsRoster.js').then(m => ({ default: m.OpsRoster })))
+const OpsFatigue = lazy(() => import('./views/ops/OpsFatigue.js').then(m => ({ default: m.OpsFatigue })))
+const OpsAlerts = lazy(() => import('./views/ops/OpsAlerts.js').then(m => ({ default: m.OpsAlerts })))
 
 function ViewFallback() {
   return (
@@ -273,7 +280,14 @@ export function App() {
     ai: 'AI Tools',
     billing: 'Billing',
     settings: 'Settings',
-    admin: 'Admin Panel'
+    admin: 'Admin Panel',
+    'ops-dashboard': 'Field Ops',
+    'ops-crew': 'Field Ops — Crew',
+    'ops-jobs': 'Field Ops — Job Sites',
+    'ops-shifts': 'Field Ops — Shifts',
+    'ops-roster': 'Field Ops — Roster',
+    'ops-fatigue': 'Field Ops — Fatigue',
+    'ops-alerts': 'Field Ops — Alerts',
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
@@ -441,6 +455,13 @@ export function App() {
               />
             )}
             {view === 'admin' && isAdmin && <AdminView api={api} toast={toast} />}
+            {view === 'ops-dashboard' && <OpsDashboard {...commonProps} setView={setView} />}
+            {view === 'ops-crew' && <OpsCrew {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-jobs' && <OpsJobs {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-shifts' && <OpsShifts {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-roster' && <OpsRoster {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-fatigue' && <OpsFatigue {...commonProps} setView={setView} />}
+            {view === 'ops-alerts' && <OpsAlerts {...commonProps} canManage={canManage} setView={setView} />}
             </Suspense>
           </ErrorBoundary>
         </main>

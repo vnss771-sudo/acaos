@@ -114,6 +114,10 @@ clockRouter.get(
 
     const shift = await prisma.opsShiftRecord.findFirst({
       where: { workspaceId: q.workspaceId, crewMemberId: q.crewMemberId, endTime: null },
+      include: {
+        crewMember: { select: { id: true, fullName: true, employeeCode: true } },
+        jobSite: { select: { id: true, siteName: true, jobCode: true } },
+      },
     })
     res.json({ clockedIn: Boolean(shift), shift: shift ?? null })
   })

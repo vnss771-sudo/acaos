@@ -368,6 +368,130 @@ export interface ProfileUpdateRequest {
 }
 export interface ApplyPackRequest { workspaceId: string }
 
+// ── Ops module (field crew / shift / job-site management) ──────────────────────
+
+export interface OpsCreateCrewRequest {
+  workspaceId: string
+  employeeCode: string
+  fullName: string
+  role: string
+  crewName?: string
+  baseRate?: number
+  allowanceProfile?: string
+  licenceNotes?: string
+}
+export interface OpsUpdateCrewRequest {
+  workspaceId: string
+  fullName?: string
+  role?: string
+  crewName?: string
+  baseRate?: number
+  allowanceProfile?: string
+  licenceNotes?: string
+  isActive?: boolean
+}
+export interface OpsCreateJobSiteRequest {
+  workspaceId: string
+  jobCode: string
+  siteName: string
+  location?: string
+  supervisor?: string
+  shiftType?: string
+  riskLevel?: OpsRiskLevel
+  lat?: number
+  lng?: number
+  radiusMeters?: number
+  notes?: string
+}
+export interface OpsUpdateJobSiteRequest {
+  workspaceId: string
+  siteName?: string
+  location?: string
+  supervisor?: string
+  shiftType?: string
+  riskLevel?: OpsRiskLevel
+  lat?: number
+  lng?: number
+  radiusMeters?: number
+  notes?: string
+}
+export interface OpsCreateShiftRequest {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  shiftDate: string
+  startTime: string
+  endTime?: string
+  breakMinutes?: number
+  allowanceTag?: string
+  outdoorHighRisk?: boolean
+  notes?: string
+}
+export interface OpsUpdateShiftRequest {
+  workspaceId: string
+  jobSiteId?: string
+  endTime?: string
+  breakMinutes?: number
+  allowanceTag?: string
+  outdoorHighRisk?: boolean
+  heatCheckCompleted?: boolean
+  fatigueConcern?: boolean
+  corRelated?: boolean
+  reviewed?: boolean
+  notes?: string
+}
+export interface OpsClockInRequest {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  lat?: number
+  lng?: number
+}
+export interface OpsClockOutRequest {
+  workspaceId: string
+  crewMemberId: string
+  lat?: number
+  lng?: number
+}
+export interface OpsCreateRosterEntryRequest {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  rosterDate: string
+  startTime: string
+  endTime: string
+  shiftType?: OpsShiftType
+  notes?: string
+}
+export interface OpsBulkRosterEntryInput {
+  crewMemberId: string
+  jobSiteId: string
+  rosterDate: string
+  startTime: string
+  endTime: string
+  shiftType?: OpsShiftType
+  notes?: string
+}
+export interface OpsBulkCreateRosterRequest {
+  workspaceId: string
+  entries: OpsBulkRosterEntryInput[]
+}
+export interface OpsUpdateRosterEntryRequest {
+  workspaceId: string
+  jobSiteId?: string
+  rosterDate?: string
+  startTime?: string
+  endTime?: string
+  shiftType?: OpsShiftType
+  notes?: string
+}
+export interface OpsPublishRosterRequest {
+  workspaceId: string
+  from: string
+  to: string
+}
+export interface OpsReviewAlertRequest { workspaceId: string }
+
 export interface RouteContracts {
   // Campaigns
   'POST /api/campaigns': { body: CreateCampaignRequest; response: { campaign: CampaignDTO } }
@@ -442,6 +566,22 @@ export interface RouteContracts {
   'PATCH /api/auth/profile': { body: ProfileUpdateRequest; response: unknown }
   'POST /api/auth/resend-verification': { response: unknown }
   'POST /api/packs/fieldops/apply': { body: ApplyPackRequest; response: unknown }
+
+  // Ops module. DELETE endpoints take workspaceId as a query param (no body) and
+  // are called via the raw api() hook, not this typed client — see routeApi.ts.
+  'POST /api/ops/crew': { body: OpsCreateCrewRequest; response: unknown }
+  'PUT /api/ops/crew/:id': { params: { id: string }; body: OpsUpdateCrewRequest; response: unknown }
+  'POST /api/ops/jobs': { body: OpsCreateJobSiteRequest; response: unknown }
+  'PUT /api/ops/jobs/:id': { params: { id: string }; body: OpsUpdateJobSiteRequest; response: unknown }
+  'POST /api/ops/shifts': { body: OpsCreateShiftRequest; response: unknown }
+  'PUT /api/ops/shifts/:id': { params: { id: string }; body: OpsUpdateShiftRequest; response: unknown }
+  'POST /api/ops/clock/in': { body: OpsClockInRequest; response: unknown }
+  'POST /api/ops/clock/out': { body: OpsClockOutRequest; response: unknown }
+  'POST /api/ops/roster': { body: OpsCreateRosterEntryRequest; response: unknown }
+  'POST /api/ops/roster/bulk': { body: OpsBulkCreateRosterRequest; response: { created: number; requested: number } }
+  'PUT /api/ops/roster/:id': { params: { id: string }; body: OpsUpdateRosterEntryRequest; response: unknown }
+  'POST /api/ops/roster/publish': { body: OpsPublishRosterRequest; response: { published: number } }
+  'POST /api/ops/alerts/:id/review': { params: { id: string }; body: OpsReviewAlertRequest; response: unknown }
 }
 
 export type RouteKey = keyof RouteContracts

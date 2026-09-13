@@ -24,6 +24,7 @@ const COMMANDS: Command[] = [
   { id: 'intelligence', label: 'Analytics', description: 'Scoring model, opportunity tiers, forecasts', icon: '◈' },
   { id: 'leads', label: 'Leads', description: 'Lead list and outreach records', icon: '▤' },
   { id: 'ai', label: 'AI Tools', description: 'Research, write, and analyze replies manually', icon: '✦' },
+  { id: 'ops-dashboard', label: 'Field Ops', description: 'Crew, job sites, shifts, roster, and fatigue/compliance alerts', icon: '⚡' },
   { id: 'billing', label: 'Billing', description: 'Plan, usage, and subscription status', icon: '◆' },
   { id: 'settings', label: 'Settings', description: 'Workspace, sender identity, SMTP, and team', icon: '◌' },
   { id: 'admin', label: 'Admin Panel', description: 'Platform administration', icon: '⚙', adminOnly: true },

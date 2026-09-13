@@ -45,7 +45,13 @@ shiftsRouter.get(
     }
 
     const [shifts, total] = await Promise.all([
-      prisma.opsShiftRecord.findMany({ where, orderBy: [{ shiftDate: 'desc' }, { startTime: 'desc' }], skip, take: limit }),
+      prisma.opsShiftRecord.findMany({
+        where, orderBy: [{ shiftDate: 'desc' }, { startTime: 'desc' }], skip, take: limit,
+        include: {
+          crewMember: { select: { id: true, fullName: true, employeeCode: true } },
+          jobSite: { select: { id: true, siteName: true, jobCode: true } },
+        },
+      }),
       prisma.opsShiftRecord.count({ where }),
     ])
 

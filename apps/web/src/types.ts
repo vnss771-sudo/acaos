@@ -10,6 +10,13 @@ import type {
   SendStatus,
   SignalType,
   WorkspaceRole,
+  OpsJobStatus,
+  OpsRiskLevel,
+  OpsShiftType,
+  OpsRosterStatus,
+  OpsAlertType,
+  OpsAlertSeverity,
+  OpsAlertStatus,
 } from '@acaos/shared'
 
 export type {
@@ -24,6 +31,13 @@ export type {
   SendStatus,
   SignalType,
   WorkspaceRole,
+  OpsJobStatus,
+  OpsRiskLevel,
+  OpsShiftType,
+  OpsRosterStatus,
+  OpsAlertType,
+  OpsAlertSeverity,
+  OpsAlertStatus,
 } from '@acaos/shared'
 
 export type User = {
@@ -308,6 +322,120 @@ export type StatsData = {
 }
 
 export type View = 'dashboard' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'approvals' | 'inbox' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
+  | 'ops-dashboard' | 'ops-crew' | 'ops-jobs' | 'ops-shifts' | 'ops-roster' | 'ops-fatigue' | 'ops-alerts'
+
+// ── Ops module (field crew / shift / job-site management) ──────────────────────
+
+export type OpsCrewMember = {
+  id: string
+  employeeCode: string
+  fullName: string
+  role: string
+  crewName?: string | null
+  baseRate?: number | null
+  allowanceProfile?: string | null
+  licenceNotes?: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type OpsJobSite = {
+  id: string
+  jobCode: string
+  siteName: string
+  location?: string | null
+  supervisor?: string | null
+  status: OpsJobStatus
+  shiftType?: string | null
+  riskLevel: OpsRiskLevel
+  lat?: number | null
+  lng?: number | null
+  radiusMeters: number
+  notes?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type OpsShiftRecord = {
+  id: string
+  crewMemberId: string
+  jobSiteId: string
+  shiftDate: string
+  startTime: string
+  endTime?: string | null
+  breakMinutes: number
+  totalHours: number
+  allowanceTag: string
+  outdoorHighRisk: boolean
+  heatCheckCompleted: boolean
+  fatigueConcern: boolean
+  corRelated: boolean
+  reviewed: boolean
+  notes?: string | null
+  clockInLat?: number | null
+  clockInLng?: number | null
+  clockOutLat?: number | null
+  clockOutLng?: number | null
+  crewMember?: { id: string; fullName: string; employeeCode: string }
+  jobSite?: { id: string; siteName: string; jobCode: string }
+}
+
+export type OpsAlert = {
+  id: string
+  shiftRecordId?: string | null
+  alertType: OpsAlertType
+  title: string
+  message?: string | null
+  severity: OpsAlertSeverity
+  status: OpsAlertStatus
+  reviewedBy?: string | null
+  reviewedAt?: string | null
+  createdAt: string
+}
+
+export type OpsRosterEntry = {
+  id: string
+  crewMemberId: string
+  jobSiteId: string
+  rosterDate: string
+  startTime: string
+  endTime: string
+  shiftType: OpsShiftType
+  status: OpsRosterStatus
+  notes?: string | null
+  publishedBy?: string | null
+  publishedAt?: string | null
+  crewMember?: { id: string; fullName: string; employeeCode: string }
+  jobSite?: { id: string; siteName: string; jobCode: string }
+}
+
+export type OpsFatigueRisk = {
+  crewMemberId: string
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  riskScore: number
+  factors: string[]
+  totalHours7d: number
+  avgHoursPerDay: number
+  consecutiveDays: number
+  lastShiftDate: string | null
+  recommendation: string
+}
+
+export type OpsOverview = {
+  activeCrewCount: number
+  jobSiteCount: number
+  openAlertCount: number
+  reviewedAlertCount: number
+  thisWeekShiftHours: number
+  flaggedShiftsCount: number
+  missingHeatChecksCount: number
+  fatigueAlertsCount: number
+  clockedInCrew: (OpsShiftRecord & { crewMember: { id: string; fullName: string; employeeCode: string }; jobSite: { id: string; siteName: string; jobCode: string } })[]
+  recentShifts: OpsShiftRecord[]
+  openAlerts: OpsAlert[]
+  upcomingRoster: OpsRosterEntry[]
+}
 
 export const STAGES = ['NEW', 'RESEARCHED', 'OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'] as const satisfies readonly LeadStage[]
 export type Stage = LeadStage
