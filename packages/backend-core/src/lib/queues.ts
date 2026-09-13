@@ -30,6 +30,19 @@ const getConnection = getRedisConnection
 
 const _queues = new Map<string, Queue>()
 
+// Test-only: close every cached Queue (BullMQ opens its own duplicated
+// connections per Queue — closing the Queue is what tears those down, a raw
+// disconnect() on the shared connection leaves them retrying with no
+// listener) and drop the shared connection so the next getRedisConnection()
+// call builds a fresh instance. Without this, a `node --test` runner that
+// ever exercised a queue against an unreachable Redis never exits.
+export async function resetRedisConnectionForTests(): Promise<void> {
+  await Promise.all([..._queues.values()].map(q => q.close().catch(() => {})))
+  _queues.clear()
+  _connection?.disconnect()
+  _connection = null
+}
+
 export function getQueue(name: string): Queue {
   if (!_queues.has(name)) {
     _queues.set(name, new Queue(name, { connection: getConnection() }))
