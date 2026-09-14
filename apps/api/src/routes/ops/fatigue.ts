@@ -27,6 +27,10 @@ export type FatigueRisk = {
   totalHours7d: number
   avgHoursPerDay: number
   consecutiveDays: number
+  // True when the streak fills the entire lookback window (CONSECUTIVE_LOOKBACK_DAYS)
+  // — the real streak may be longer than `consecutiveDays` reports. Callers should
+  // render e.g. "30+ consecutive days" rather than an exact count in this case.
+  consecutiveDaysCapped: boolean
   lastShiftDate: string | null
   recommendation: string
 }
@@ -48,6 +52,16 @@ const MAX_OVERTIME_POINTS = 50
 const CONSECUTIVE_DAYS_THRESHOLD = 4
 const POINTS_PER_CONSECUTIVE_DAY = 8
 const MAX_CONSECUTIVE_POINTS = 40
+
+// Consecutive-day counting looks back further than the 7-day hours/overtime
+// window — a 7-day streak and a 30-day streak must not report identically. This
+// is still a cheap, single-query per-crew-member date-range scan (same shape as
+// the 7-day query, just a wider `since`), so widening it costs nothing extra in
+// query complexity. It's still a bound, not infinity: a streak that fills the
+// entire lookback is reported as "N+" (see FatigueRisk.consecutiveDaysCapped)
+// rather than implying the streak is known to stop exactly there.
+const CONSECUTIVE_LOOKBACK_DAYS = 30
+const CONSECUTIVE_LOOKBACK_MS = CONSECUTIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100
@@ -90,22 +104,32 @@ function recommendationFor(level: FatigueRisk['riskLevel'], hasShifts: boolean):
   }
 }
 
-// Pure: takes the crew member's shifts already narrowed to the window, so the
-// per-crew-member endpoint and the workspace summary compute identical numbers
-// from one implementation (the summary loads every crew member's shifts in a
-// single query and buckets them here, rather than querying per person).
+// Pure: takes the crew member's shifts already narrowed to the (wider,
+// CONSECUTIVE_LOOKBACK_DAYS) window, so the per-crew-member endpoint and the
+// workspace summary compute identical numbers from one implementation (the
+// summary loads every crew member's shifts in a single query and buckets them
+// here, rather than querying per person). The 7-day hours/overtime figures are
+// derived from a narrower slice of the same list, not a second query.
 function computeFatigue(crewMemberId: string, shifts: { shiftDate: Date; startTime: Date; totalHours: number }[]): FatigueRisk {
   if (shifts.length === 0) {
     return {
       crewMemberId, riskLevel: 'LOW', riskScore: 0, factors: [],
-      totalHours7d: 0, avgHoursPerDay: 0, consecutiveDays: 0, lastShiftDate: null,
+      totalHours7d: 0, avgHoursPerDay: 0, consecutiveDays: 0, consecutiveDaysCapped: false, lastShiftDate: null,
       recommendation: recommendationFor('LOW', false),
     }
   }
 
-  const totalHours7d = round2(shifts.reduce((sum, s) => sum + s.totalHours, 0))
+  const hoursSince = new Date(Date.now() - WINDOW_MS)
+  const shifts7d = shifts.filter((s) => s.startTime >= hoursSince)
+  const totalHours7d = round2(shifts7d.reduce((sum, s) => sum + s.totalHours, 0))
   const avgHoursPerDay = round2(totalHours7d / WINDOW_DAYS)
   const consecutiveDays = trailingConsecutiveDays(shifts)
+  // -1 day of slack: the query's `since` cutoff is computed a few milliseconds
+  // AFTER the oldest shift in a genuinely full-window streak was seeded/recorded,
+  // so a streak that exactly fills the window can lose its oldest day to that
+  // skew and come back one short. Treating N-1 as "capped" avoids reporting a
+  // false, overly-precise count right at the boundary.
+  const consecutiveDaysCapped = consecutiveDays >= CONSECUTIVE_LOOKBACK_DAYS - 1
   // Shifts arrive ordered by startTime ascending, so the last one is the most recent.
   const lastShift = shifts[shifts.length - 1]!
 
@@ -120,14 +144,14 @@ function computeFatigue(crewMemberId: string, shifts: { shiftDate: Date; startTi
   if (consecutiveDays >= CONSECUTIVE_DAYS_THRESHOLD) {
     const scoringDays = consecutiveDays - (CONSECUTIVE_DAYS_THRESHOLD - 1)
     riskScore += Math.min(MAX_CONSECUTIVE_POINTS, scoringDays * POINTS_PER_CONSECUTIVE_DAY)
-    factors.push(`${consecutiveDays} consecutive days worked`)
+    factors.push(`${consecutiveDays}${consecutiveDaysCapped ? '+' : ''} consecutive days worked`)
   }
 
   riskScore = Math.min(100, Math.max(0, Math.round(riskScore)))
   const riskLevel = levelFor(riskScore)
 
   return {
-    crewMemberId, riskLevel, riskScore, factors, totalHours7d, avgHoursPerDay, consecutiveDays,
+    crewMemberId, riskLevel, riskScore, factors, totalHours7d, avgHoursPerDay, consecutiveDays, consecutiveDaysCapped,
     lastShiftDate: lastShift.shiftDate.toISOString(),
     recommendation: recommendationFor(riskLevel, true),
   }
@@ -148,7 +172,7 @@ fatigueRouter.get(
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
 
-    const since = new Date(Date.now() - WINDOW_MS)
+    const since = new Date(Date.now() - CONSECUTIVE_LOOKBACK_MS)
     const crew = await prisma.opsCrewMember.findMany({ where: { workspaceId, isActive: true }, select: { id: true } })
     const crewIds = crew.map((c) => c.id)
 
@@ -200,7 +224,7 @@ fatigueRouter.get(
     const crewMember = await prisma.opsCrewMember.findFirst({ where: { id: crewMemberId, workspaceId }, select: { id: true } })
     if (!crewMember) throw new ApiError(404, 'Crew member not found')
 
-    const since = new Date(Date.now() - WINDOW_MS)
+    const since = new Date(Date.now() - CONSECUTIVE_LOOKBACK_MS)
     const shifts = await prisma.opsShiftRecord.findMany({
       where: { workspaceId, crewMemberId, startTime: { gte: since } },
       orderBy: { startTime: 'asc' },

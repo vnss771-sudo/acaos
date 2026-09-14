@@ -94,6 +94,38 @@ test('GET / workspace summary buckets every ACTIVE crew member by risk level, so
   assert.equal(total, 2)
 })
 
+test('consecutive-day counting looks back further than the 7-day hours window: a 7-day streak and a 30-day streak report differently', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('a@x.test')
+  const { crew: sevenDay, site } = await seedCrewAndSite(workspace.id, 'SEVEN')
+  for (let d = 7; d >= 1; d -= 1) await seedShift(workspace.id, sevenDay.id, site.id, ago(d), 4)
+
+  const { user: user2, workspace: workspace2 } = await seedUserWithWorkspace('b@x.test')
+  const { crew: twentyDay, site: site2 } = await seedCrewAndSite(workspace2.id, 'TWENTY')
+  for (let d = 20; d >= 1; d -= 1) await seedShift(workspace2.id, twentyDay.id, site2.id, ago(d), 4)
+
+  const res7 = await server.request(`/api/ops/fatigue/${sevenDay.id}?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
+  const res20 = await server.request(`/api/ops/fatigue/${twentyDay.id}?workspaceId=${workspace2.id}`, { headers: { Authorization: bearer(user2.id) } })
+
+  assert.equal(res7.body.fatigue.consecutiveDays, 7)
+  assert.equal(res20.body.fatigue.consecutiveDays, 20, 'a 30-day lookback must distinguish a 20-day streak from a 7-day one')
+  assert.notEqual(res7.body.fatigue.consecutiveDays, res20.body.fatigue.consecutiveDays)
+  assert.equal(res7.body.fatigue.consecutiveDaysCapped, false)
+  assert.equal(res20.body.fatigue.consecutiveDaysCapped, false)
+})
+
+test('a streak that fills the entire lookback window is reported as capped ("N+")', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const { crew, site } = await seedCrewAndSite(workspace.id)
+  // 35 consecutive days — longer than the 30-day lookback, so the true streak
+  // length is unknowable from this window and must be reported as capped.
+  for (let d = 35; d >= 1; d -= 1) await seedShift(workspace.id, crew.id, site.id, ago(d), 4)
+
+  const res = await server.request(`/api/ops/fatigue/${crew.id}?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.fatigue.consecutiveDaysCapped, true)
+  assert.ok(res.body.fatigue.factors.some((f: string) => f.includes('+')), 'capped factor text should say "N+"')
+})
+
 test('fatigue routes require workspace membership', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const outsider = await seedUserWithWorkspace('outsider@x.test')
