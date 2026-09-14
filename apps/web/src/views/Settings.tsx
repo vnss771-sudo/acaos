@@ -5,6 +5,7 @@ import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { MfaSettings } from '../components/MfaSettings.js'
 import { CompliancePanel } from '../components/CompliancePanel.js'
+import { ErrorBoundary } from '../components/ErrorBoundary.js'
 import { Modal } from '../components/ui/Modal.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -788,7 +789,13 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
 
       {/* Compliance attestation (lawful basis, terms, sub-processors) */}
       {workspace && canManage && (
-        <CompliancePanel api={api} workspace={workspace} toast={toast} canManage={canManage} />
+        <ErrorBoundary fallback={() => (
+          <div style={{ ...s.card, color: colors.textMuted, fontSize: 13 }}>
+            Compliance panel unavailable right now — the rest of Settings is unaffected.
+          </div>
+        )}>
+          <CompliancePanel api={api} workspace={workspace} toast={toast} canManage={canManage} />
+        </ErrorBoundary>
       )}
 
       {/* Compliance & Deliverability */}

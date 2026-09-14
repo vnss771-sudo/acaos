@@ -72,9 +72,78 @@ const DEMO_DRAFTS = [
 ]
 
 const DEMO_MISSIONS = [
-  { id: 'dm1', name: 'Texas HVAC Q3 Push', status: 'ACTIVE' },
-  { id: 'dm2', name: 'Roofing Multi-Location Expansion', status: 'ACTIVE' },
+  {
+    id: 'dm1', name: 'Texas HVAC Q3 Push', status: 'ACTIVE', goalType: 'BOOK_CALL',
+    targetCustomer: 'HVAC contractors, 10-50 employees, Central Texas',
+    offer: 'Free scheduling audit for the first 20 bookings',
+    campaign: { id: 'dc1', _count: { leads: 62 } },
+    stats: { sent: 58, replied: 13, failed: 2, bounced: 1, pendingDrafts: 3 },
+  },
+  {
+    id: 'dm2', name: 'Roofing Multi-Location Expansion', status: 'ACTIVE', goalType: 'BOOK_DEMO',
+    targetCustomer: 'Multi-branch roofing companies',
+    offer: null,
+    campaign: { id: 'dc2', _count: { leads: 41 } },
+    stats: { sent: 34, replied: 9, failed: 0, bounced: 0, pendingDrafts: 1 },
+  },
 ]
+
+const DEMO_LEADS = [
+  { id: 'dl1', businessName: 'Meridian Roofing', contactName: 'Dana Reyes', email: 'hello@meridianroofing.example', category: 'Roofing', stage: 'REPLIED', score: 84 },
+  { id: 'dl2', businessName: 'Apex Plumbing', contactName: 'Marcus Cole', email: 'contact@apexplumbing.example', category: 'Plumbing', stage: 'OUTREACH_SENT', score: 79 },
+  { id: 'dl3', businessName: 'Lone Star HVAC', contactName: 'Priya Shah', email: 'ops@lonestarhvac.example', category: 'HVAC', stage: 'BOOKED', score: 88 },
+  { id: 'dl4', businessName: 'Bluebonnet Electric', contactName: 'Tom Alvarez', email: 'info@bluebonnet.example', category: 'Electrical', stage: 'REPLIED', score: 61 },
+  { id: 'dl5', businessName: 'Hill Country Landscaping', contactName: null, email: 'jobs@hillcountryls.example', category: 'Landscaping', stage: 'RESEARCHED', score: 55 },
+  { id: 'dl6', businessName: 'Capitol Pest Solutions', contactName: 'Anne Kim', email: null, category: 'Pest Control', stage: 'NEW', score: 41 },
+]
+
+// Same shape a real /api/intelligence/forecast response returns — see
+// apps/web/src/types.ts's ForecastData.
+const DEMO_FORECAST = {
+  summary: {
+    totalProspects: 4, totalPipelineValue: 186_000, weightedForecast: 71_400,
+    wonRevenue: 24_000, wonCount: 2, avgDealValue: 46_500, avgWinRate: 0.34,
+  },
+  stageBreakdown: {
+    AWARE: { count: 2, forecast: 18_000 },
+    EVALUATING: { count: 1, forecast: 22_400 },
+    PURCHASING: { count: 1, forecast: 31_000 },
+  },
+  pipeline: [],
+}
+
+// Same shape a real /api/billing/status and /api/billing/plans response returns.
+const DEMO_BILLING_STATUS = {
+  plan: 'growth', status: 'active', hasSubscription: true,
+  usage: {
+    month: '2026-06', totals: { AI_RESEARCH: 142, AI_OUTREACH: 96, AI_REPLY: 38 },
+    total: 276, limit: -1, plan: 'growth',
+    discovery: { used: 18, limit: -1, estimatedCostCents: 940 },
+    ai: { estimatedCostCents: 2180 },
+    leads: { used: 248, limit: -1 },
+  },
+}
+const DEMO_BILLING_PLANS = {
+  free: { maxLeads: 500, aiCallsPerMonth: 15, discoveriesPerMonth: 25 },
+  starter: { maxLeads: 10_000, aiCallsPerMonth: 300, discoveriesPerMonth: 500 },
+  growth: { maxLeads: null, aiCallsPerMonth: null, discoveriesPerMonth: null },
+}
+
+// Same shape a real /api/workspaces/:id/compliance response returns — matches
+// the fixture used in Settings.test.tsx for the same reason (CompliancePanel
+// destructures data.posture with no guard, so an unseeded/shapeless response
+// crashes the whole Settings page, not just the compliance section).
+const DEMO_COMPLIANCE = {
+  posture: {
+    lawfulBasis: 'legitimate_interest', liaAcknowledgedAt: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    termsAcceptedAt: new Date(Date.now() - 30 * 86_400_000).toISOString(), termsVersion: 'v1',
+    subprocessorsAckAt: new Date(Date.now() - 30 * 86_400_000).toISOString(), subprocessorsAckVersion: 'v1',
+    targetsCanada: false,
+  },
+  consentCount: 0,
+  currentTermsVersion: 'v1',
+  subprocessors: { version: 'v1', subprocessors: [] },
+}
 
 const DEMO_INBOX = {
   replies: [
@@ -102,13 +171,18 @@ export function makeDemoApi(): ApiHook {
 
     if (path.startsWith('/api/stats')) return DEMO_STATS as T
     if (path.includes('/intelligence/opportunities')) return { hot: DEMO_HOT, warm: [], cold: [] } as T
+    if (path.includes('/intelligence/forecast')) return DEMO_FORECAST as T
     if (path.includes('/api/signals')) return { signals: DEMO_SIGNALS } as T
     if (path.includes('/approvals/pending')) return { drafts: DEMO_DRAFTS } as T
     if (path.includes('/api/prospects?')) return { prospects: DEMO_PROSPECTS, total: DEMO_PROSPECTS.length } as T
     if (path.includes('/api/missions')) return { missions: DEMO_MISSIONS } as T
+    if (path.includes('/api/leads?')) return { leads: DEMO_LEADS, total: DEMO_STATS.totalLeads } as T
     if (path.includes('/api/inbox')) return DEMO_INBOX as T
     if (path.includes('/api/sends/summary')) return { total: 103, delivered: 103, sent: 78, replied: 22, bounced: 3, failed: 0, sending: 0, last24hSent: 12, replyRate: 21.4 } as T
     if (path.includes('/send-readiness')) return { ready: true, checks: [] } as T
+    if (path.includes('/billing/plans')) return { plans: DEMO_BILLING_PLANS } as T
+    if (path.includes('/billing/status')) return DEMO_BILLING_STATUS as T
+    if (path.includes('/compliance')) return DEMO_COMPLIANCE as T
 
     return PERMISSIVE_EMPTY as T
   }) as ApiHook

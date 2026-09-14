@@ -567,7 +567,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   return (
     <div style={s.stack}>
       {/* Header */}
-      <div style={s.flexBetween}>
+      <div style={{ ...s.flexBetween, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text" placeholder="Search prospects…" value={search}
@@ -575,7 +575,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
             style={{ ...s.input, width: 240 }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {canManage && (<>
           <button style={s.btnSm} onClick={() => {
             const url = `${API_BASE}/api/prospects/export?workspaceId=${workspace.id}`

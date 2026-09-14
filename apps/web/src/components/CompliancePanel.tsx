@@ -63,7 +63,10 @@ export function CompliancePanel({ api, workspace, toast, canManage = true }: Pro
   }
 
   if (loading && !data) return <div style={s.card}><Spinner size={16} /> Loading compliance…</div>
-  if (!data) return null
+  // Guards against a malformed/partial response taking down the whole panel —
+  // and, transitively, all of Settings, since this renders inline with no
+  // error boundary of its own.
+  if (!data || !data.posture) return null
   const p = data.posture
   const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString() : null
 

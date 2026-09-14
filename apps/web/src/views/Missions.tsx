@@ -107,7 +107,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
                     <span style={{ color: colors.text, fontWeight: 700, fontSize: 15 }}>{m.name}</span>
                     <StatusBadge status={m.status} />
                   </div>
-                  <span style={{ color: colors.textMuted, fontSize: 12 }}>{m.goalType.replace(/_/g, ' ')}</span>
+                  <span style={{ color: colors.textMuted, fontSize: 12 }}>{(m.goalType ?? '').replace(/_/g, ' ')}</span>
                 </div>
                 {m.targetCustomer && (
                   <div style={{ color: colors.textMuted, fontSize: 13 }}>

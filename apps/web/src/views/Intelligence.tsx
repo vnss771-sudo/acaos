@@ -392,7 +392,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
         <div style={s.card}>
           <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Weighted Forecast</div>
           <div style={{ color: colors.green, fontSize: 22, fontWeight: 800 }}>
-            {loading ? '…' : forecast ? `$${forecast.summary.weightedForecast.toLocaleString()}` : '$0'}
+            {loading ? '…' : `$${(forecast?.summary?.weightedForecast ?? 0).toLocaleString()}`}
           </div>
         </div>
       </Grid>

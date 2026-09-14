@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import type { User, Workspace, View } from './types.js'
 import { canManageWorkspace } from './types.js'
 import { useApi } from './hooks/useApi.js'
@@ -12,6 +12,7 @@ import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { CommandPalette } from './components/CommandPalette.js'
 import { HubTabs } from './components/HubTabs.js'
 import { SkipLink } from './components/SkipLink.js'
+import { ErrorBoundary } from './components/ErrorBoundary.js'
 import { isHubNavEnabled, hubForView } from './lib/hubs.js'
 import { useViewRouter } from './lib/router.js'
 import { isInvestorDemoRequested, enableInvestorDemo, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
@@ -53,31 +54,6 @@ function ViewFallback() {
 }
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
-
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error?: Error }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props)
-    this.state = { hasError: false }
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error }
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: '40px', textAlign: 'center', color: '#ef4444' }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>⚠</div>
-          <div style={{ fontSize: 18, marginBottom: 8 }}>Something went wrong</div>
-          <div style={{ fontSize: 13, color: '#64748b', marginBottom: 24 }}>{this.state.error?.message}</div>
-          <button onClick={() => window.location.reload()} style={{ padding: '8px 20px', borderRadius: 6, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer' }}>
-            Reload
-          </button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
 
 // Security: reset/verify/invite tokens are delivered in the URL fragment (after
 // '#'), not the query string. Fragments are never sent to the server (no Referer
@@ -452,7 +428,14 @@ export function App() {
         )}
 
         {/* Main content */}
-        <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
+        {/* boxSizing: 'border-box' is required here: under the browser's default
+            content-box sizing, maxWidth caps the CONTENT box only, so the 24/28px
+            padding renders on top of it — a 1256px total footprint that overflows
+            this element's own flex parent (and clips content off the right edge)
+            at any viewport in roughly the 1024-1480px range, since nothing in this
+            app sets box-sizing: border-box globally. border-box makes maxWidth
+            cap the full rendered width, padding included. */}
+        <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%', boxSizing: 'border-box' }}>
           {/* Hub sub-tabs: switch between the pages within the active hub. Renders
               nothing for single-page hubs or when the hub nav is off. */}
           {hubNav && <HubTabs view={view} setView={setView} isAdmin={isAdmin} />}

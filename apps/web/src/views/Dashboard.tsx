@@ -151,10 +151,10 @@ function TierDistribution({ dist }: { dist: { HOT: number; WARM: number; COLD: n
   if (total === 0) return null
 
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
+    <Grid cols={3} gap={8}>
       {(['HOT', 'WARM', 'COLD'] as const).map(tier => (
         <div key={tier} style={{
-          flex: 1, background: TIER_COLOR[tier] + '22',
+          background: TIER_COLOR[tier] + '22',
           border: `1px solid ${TIER_COLOR[tier]}44`,
           borderRadius: 8, padding: '10px 14px', textAlign: 'center'
         }}>
@@ -163,7 +163,7 @@ function TierDistribution({ dist }: { dist: { HOT: number; WARM: number; COLD: n
           <div style={{ color: colors.textFaint, fontSize: 11 }}>{total > 0 ? Math.round((dist[tier] / total) * 100) : 0}%</div>
         </div>
       ))}
-    </div>
+    </Grid>
   )
 }
 
@@ -333,10 +333,14 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
       {/* Hot accounts + signal feed — only shown when data exists */}
       {!loading && (hotProspects.length > 0 || recentSignals.length > 0) && (
-        <div style={{ display: 'grid', gridTemplateColumns: recentSignals.length > 0 ? '1.4fr 1fr' : '1fr', gap: 16 }}>
+        recentSignals.length > 0 ? (
+          <Grid cols={2}>
+            <HotAccountsSection hotProspects={hotProspects} setView={setView} />
+            <SignalFeedSection signals={recentSignals} />
+          </Grid>
+        ) : (
           <HotAccountsSection hotProspects={hotProspects} setView={setView} />
-          {recentSignals.length > 0 && <SignalFeedSection signals={recentSignals} />}
-        </div>
+        )
       )}
 
       {/* KPI row */}
