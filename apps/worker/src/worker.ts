@@ -7,20 +7,13 @@ import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputati
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
 import { createCachedValue } from '@acaos/backend-core/lib/cachedValue.js'
 import { createRejectionTracker } from '@acaos/backend-core/lib/rejectionTracker.js'
-import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
-import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
+import { analyzeReply } from '@acaos/backend-core/services/openai.js'
 import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
-import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
 import {
   parseAiJson,
-  parseLeadResearchJson,
-  OutreachDraftOutputSchema,
   ReplyAnalysisOutputSchema,
 } from '@acaos/backend-core/lib/aiSchemas.js'
-import { assertOutreachTone } from '@acaos/backend-core/lib/outreachTone.js'
-import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
-import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
-import { refundAiUsage, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
+import { assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
@@ -40,12 +33,11 @@ import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { explainLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft } from './processors.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
@@ -74,128 +66,9 @@ const researchWorker = new Worker(
     const { leadId, workspaceId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
     if (!isFeatureEnabled('ai')) { log('research-lead', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('research-lead', `Processing leadId=${leadId}`)
-
-    // Tenant-scoped fetch: never act on a lead outside the job's workspace.
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
-    if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
-
-    await job.updateProgress(10)
-
-    // Frame the research prompt for the workspace's actual vertical, not the
-    // hardcoded field-service default — otherwise a SaaS/other-vertical workspace
-    // gets analysis framed around plumbing/HVAC/etc.
-    const wsIcp = await prisma.workspaceICP.findUnique({
-      where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true },
-    })
-
-    // Defense-in-depth re-check right before the model call: the enqueue-time
-    // caller (jobs.ts, ingest.ts) already metered this call, but a job that
-    // reached the queue any other way (a direct enqueue, a leaked producer
-    // credential) must not get a free model call just because it skipped that
-    // check. Read-only — the increment already happened at enqueue time.
-    await assertAiUsageAllowed(workspaceId)
-
-    const raw = await generateLeadResearch({
-      businessName: lead.businessName,
-      website: lead.website ?? undefined,
-      category: lead.category ?? undefined,
-      city: lead.city ?? undefined,
-      notes: lead.notes ?? undefined,
-      icp: toIcpContext(wsIcp),
-    })
-
-    await job.updateProgress(60)
-
-    // Lenient: research is best-effort enrichment, so a malformed field is
-    // dropped (not fatal) and the scorer falls back to its computed score.
-    const parsed = parseLeadResearchJson(raw)
-
-    const enrichedLead = {
-      businessName: lead.businessName,
-      category: lead.category,
-      contactName: lead.contactName,
-      email: lead.email,
-      website: lead.website,
-      notes: lead.notes,
-      aiSummary: parsed.aiSummary ?? null,
-      outreachAngle: parsed.outreachAngle ?? null,
-      estimatedTeamSize: parsed.estimatedTeamSize ?? null
-    }
-
-    const weights = await getWorkspaceWeights(lead.workspaceId)
-    // Deterministic score + its rationale (the "why 75"), so the breakdown is
-    // captured in the job result/log rather than thrown away.
-    const explanation = explainLeadScore(enrichedLead, weights)
-    const computedScore = explanation.score
-    const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
-      ? Math.round((parsed.icpScore + computedScore) / 2)
-      : computedScore
-
-    await job.updateProgress(80)
-
-    // Thin-research guard: lenient parsing can yield an empty result; never let that
-    // flow through as auto_draft (it would produce generic, ungrounded outreach).
-    const evidenceCount = parsed.evidence?.length ?? 0
-    const noResearchSubstance = !(Boolean(parsed.aiSummary?.trim()) || evidenceCount > 0)
-    const thinResearch = noResearchSubstance && parsed.recommendedAction !== 'skip'
-    const safeRecommendedAction = resolveResearchAction({
-      recommendedAction: parsed.recommendedAction,
-      aiSummary: parsed.aiSummary,
-      evidenceCount,
-    })
-
-    // Auditable intelligence snapshot persisted on the lead: the deterministic
-    // score rationale plus the model's provenance-labelled evidence. JSON-only
-    // values (no undefined) so it round-trips cleanly through the JSONB column.
-    const aiIntelligence = {
-      capturedAt: new Date().toISOString(),
-      finalScore,
-      computedScore,
-      tier: explanation.tier,
-      modelIcpScore: typeof parsed.icpScore === 'number' ? parsed.icpScore : null,
-      topReasons: explanation.topReasons,
-      signals: explanation.signals,
-      evidence: parsed.evidence ?? [],
-      riskFlags: thinResearch
-        ? [...(parsed.riskFlags ?? []), 'Research returned no summary or evidence — held for manual review rather than auto-draft.']
-        : (parsed.riskFlags ?? []),
-      recommendedAction: safeRecommendedAction,
-      confidence: parsed.confidence ?? null,
-      digitalMaturity: parsed.digitalMaturity ?? null,
-      estimatedTeamSize: parsed.estimatedTeamSize ?? null,
-      hiringSignals: parsed.hiringSignals ?? null,
-    }
-
-    // Atomic: persist the lead's intelligence snapshot AND replace its normalized
-    // evidence rows together, so a re-research can't leave stale evidence behind.
-    await prisma.$transaction(async (tx) => {
-      await tx.lead.update({
-        where: { id: leadId },
-        data: {
-          aiSummary: parsed.aiSummary ?? null,
-          outreachAngle: parsed.outreachAngle ?? null,
-          aiIntelligence,
-          score: finalScore,
-          stage: 'RESEARCHED'
-        }
-      })
-      await replaceLeadEvidence(tx, { workspaceId: lead.workspaceId, leadId, evidence: parsed.evidence, website: lead.website })
-    })
-
-    await job.updateProgress(100)
-    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore} why=${explanation.topReasons.join('; ') || 'n/a'}`)
-    return {
-      leadId,
-      aiSummary: parsed.aiSummary,
-      outreachAngle: parsed.outreachAngle,
-      score: finalScore,
-      scoreReasons: explanation.topReasons,
-      signals: explanation.signals,
-      evidence: parsed.evidence,
-      riskFlags: parsed.riskFlags,
-      recommendedAction: parsed.recommendedAction,
-    }
+    const result = await runInWorkspaceContext(workspaceId, () => researchLead(leadId, workspaceId, (n) => job.updateProgress(n)))
+    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${result.score} why=${result.scoreReasons.join('; ') || 'n/a'}`)
+    return result
   },
   { connection, concurrency: 3 }
 )
@@ -207,99 +80,16 @@ const outreachWorker = new Worker(
     const { leadId, workspaceId, override } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
     if (!isFeatureEnabled('ai')) { log('generate-outreach', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('generate-outreach', `Processing leadId=${leadId}`)
-
-    // Tenant-scoped fetch: never act on a lead outside the job's workspace.
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
-    if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
-
-    // Outreach gate: honour the research recommendedAction. A poor-fit ("skip")
-    // lead is suppressed (no model call) and marked for the review queue; a human
-    // can override, which generates a draft into POLICY_REVIEW. manual_review and
-    // override both force POLICY_REVIEW. auto_draft / none → normal DRAFTED flow.
-    const intel = (lead.aiIntelligence ?? null) as { recommendedAction?: string } | null
-    const gate = resolveOutreachGate({ recommendedAction: intel?.recommendedAction, override })
-
-    if (!gate.generate) {
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { outreachSkippedAt: new Date(), outreachSkipReason: gate.skipReason },
-      })
-      // No model call was made — free the AI_OUTREACH credit the API metered up front.
-      await refundAiUsage(lead.workspaceId, 'AI_OUTREACH')
-      await job.updateProgress(100)
-      log('generate-outreach', `suppressed leadId=${leadId}: ${gate.skipReason}`)
-      return { leadId, skipped: true, reason: gate.skipReason }
-    }
-
-    await job.updateProgress(10)
-
-    // Frame outreach for the workspace's vertical/tone (not the field-service
-    // default), mirroring the campaign send path.
-    const wsIcp = await prisma.workspaceICP.findUnique({
-      where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true },
-    })
-
-    // Defense-in-depth re-check right before the model call — see the same
-    // comment in the research-lead worker above.
-    await assertAiUsageAllowed(lead.workspaceId)
-
-    const raw = await generateOutreach({
-      businessName: lead.businessName,
-      category: lead.category ?? undefined,
-      city: lead.city ?? undefined,
-      contactName: lead.contactName ?? undefined,
-      aiSummary: lead.aiSummary ?? undefined,
-      outreachAngle: lead.outreachAngle ?? undefined,
-      icp: toIcpContext(wsIcp),
-    })
-
-    await job.updateProgress(80)
-
-    // Strict: a draft missing subject/email is unusable. Fail closed — throwing
-    // here marks the job failed so BullMQ retries rather than persisting garbage.
-    const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
-
-    // Tone guardrail: reject "creepy", presumptuous copy that asserts private
-    // knowledge of the recipient's problems as fact (fail closed → BullMQ
-    // regenerates). Buzzword warnings are surfaced but do not block.
-    const toneWarnings = assertOutreachTone(parsed)
-    if (toneWarnings.length > 0) {
-      log('generate-outreach', `tone warnings leadId=${leadId}: ${toneWarnings.map((w) => w.match).join(', ')}`)
-    }
-
-    // Record generation provenance (model + prompt version) so the draft is
-    // auditable/reproducible. Best-effort — never blocks draft creation.
-    const promptVersionId = await resolvePromptVersionId({ workspaceId: lead.workspaceId, ...outreachGenerationMeta() })
-
-    await prisma.outreachDraft.create({
-      data: {
-        leadId: lead.id,
-        workspaceId: lead.workspaceId,
-        subject: parsed.subject,
-        emailBody: parsed.email,
-        followup: parsed.followup ?? null,
-        // Gated status: POLICY_REVIEW when research asked for manual review or a
-        // human overrode a skip (held for a human); otherwise the normal DRAFTED.
-        status: gate.draftStatus,
-        promptVersionId,
+    const result = await runInWorkspaceContext(workspaceId, () => generateOutreachDraft(leadId, workspaceId, override, (n) => job.updateProgress(n)))
+    if (result.skipped) {
+      log('generate-outreach', `suppressed leadId=${leadId}: ${result.reason}`)
+    } else {
+      if (result.toneWarnings && result.toneWarnings.length > 0) {
+        log('generate-outreach', `tone warnings leadId=${leadId}: ${result.toneWarnings.join(', ')}`)
       }
-    })
-
-    // A successful (over)ride generation clears any prior poor-fit suppression.
-    if (lead.outreachSkippedAt) {
-      await prisma.lead.update({ where: { id: lead.id }, data: { outreachSkippedAt: null, outreachSkipReason: null } })
+      log('generate-outreach', `Done leadId=${leadId}`)
     }
-
-    // Generating a draft is NOT a send. Do not advance the lead to
-    // OUTREACH_SENT here — sendCampaignBatch excludes that stage from the send
-    // selection, so marking it now would prevent the campaign from ever
-    // sending the draft. sendCampaignBatch sets OUTREACH_SENT only after SMTP
-    // delivery is recorded in OutreachSent.
-
-    await job.updateProgress(100)
-    log('generate-outreach', `Done leadId=${leadId}`)
-    return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
+    return result
   },
   { connection, concurrency: 3 }
 )
