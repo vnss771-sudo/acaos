@@ -266,15 +266,16 @@ async function warnIfAdminEmailStillSetPostBootstrap(): Promise<void> {
 }
 void warnIfAdminEmailStillSetPostBootstrap()
 
-// An unbounded Postgres connection pool (no `connection_limit` on DATABASE_URL)
-// is a real production risk under load — every replica opens Prisma's default
-// pool size with no shared ceiling, and Postgres has a hard max_connections.
+// Prisma itself now pins a bounded connection_limit when DATABASE_URL doesn't
+// set one (packages/backend-core/src/lib/prisma.ts, via databaseUrl.ts) — this
+// warning stays as a nudge to size it deliberately per replica/topology
+// instead of relying on the built-in default.
 // Sync/cheap, so it runs directly rather than as a fire-and-forget async check.
 function warnIfDatabaseUrlMissingConnectionLimit(): void {
   if (!isProduction()) return
   const url = process.env.DATABASE_URL
   if (url && !/[?&]connection_limit=/.test(url)) {
-    logger.warn('DATABASE_URL has no connection_limit set in production; an unbounded connection pool is a scale risk', { service: SERVICE })
+    logger.warn('DATABASE_URL has no connection_limit set in production; falling back to a built-in default pool size (DB_POOL_SIZE) — size it deliberately per docs/OPERATIONS.md', { service: SERVICE })
   }
 }
 warnIfDatabaseUrlMissingConnectionLimit()

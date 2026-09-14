@@ -123,10 +123,44 @@ Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
 ## Performance knobs
 
 - **DB connection pool** — append `?connection_limit=N&pool_timeout=20` to
-  `DATABASE_URL`. Default is `num_cpus*2+1` per process; size it so
+  `DATABASE_URL`, or set `DB_POOL_SIZE` to size it without touching the
+  connection string (see `.env.example`). Prisma's own default is
+  `num_cpus*2+1` per process, which is unbounded across replicas; if the
+  operator sets neither, the app pins `connection_limit` itself (`DB_POOL_SIZE`
+  or a built-in default of 10 — `packages/backend-core/src/lib/databaseUrl.ts`)
+  instead of opening an unbounded pool. Size it so
   `pods × connection_limit` stays under Postgres `max_connections` (and the
   pgbouncer limit if used). Under high concurrency this is the usual cause of
   tail latency; raise it (and `max_connections`) together.
+
+  **Sizing formula** — every replica of every DB-touching process counts
+  against one shared `max_connections` ceiling:
+
+  ```
+  total_connections = (api_replicas × api_connection_limit)
+                     + (worker_replicas × worker_connection_limit)
+                     + migration/admin headroom (2-3)
+  ```
+
+  `worker_connection_limit` should cover the worker's actual concurrent DB
+  callers, not just "1 per replica": `apps/worker/src/worker.ts` runs several
+  BullMQ processors per process, each with its own `concurrency`, and they all
+  share the worker's single Prisma pool — sum the per-queue `concurrency`
+  values (currently ~24 across all queues) to get the worker's realistic
+  ceiling, though most jobs are I/O-bound elsewhere (AI/provider calls) and
+  don't hold a DB connection the whole time, so `connection_limit` can safely
+  sit well under that sum.
+
+  With PgBouncer in front (`?pgbouncer=true` on `DATABASE_URL`, transaction
+  mode), Postgres itself only needs one PgBouncer connection per pooler
+  backend, not one per app connection — set PgBouncer's `default_pool_size` to
+  the same `total_connections` figure above (that's what actually talks to
+  Postgres), and `max_client_conn` generously above it (every app-side
+  `connection_limit` connection is a *client* to PgBouncer, cheap to accept and
+  queued rather than rejected when the pool is busy). Example for 3 API
+  replicas at `connection_limit=10`, 2 worker replicas at `connection_limit=15`,
+  and `max_connections=100`: `total_connections = 3×10 + 2×15 + 3 = 63` — leaves
+  headroom under 100; set PgBouncer `default_pool_size=63`.
 - **`DIRECT_URL`** — set when `DATABASE_URL` points at PgBouncer, so migrations
   bypass the pooler.
 - **Indexing** — list endpoints are indexed for their default ordering
