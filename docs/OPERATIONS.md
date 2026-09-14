@@ -149,6 +149,22 @@ Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
   identity. Leave on; it fails closed so a misconfigured staging deploy can't send
   non-compliant mail.
 
+## Ops module: geofenced clock-in/out
+
+`POST /api/ops/clock/in` and `/out` check the caller's coordinates against the
+job site's `radiusMeters` geofence (`ops/utils.ts`'s `geofenceViolationMeters`).
+This is **enforced, not merely logged**, whenever both sides have the data to
+check it: a clock-in/out outside the radius is rejected with **400** and never
+reaches the database.
+
+It is **advisory-only (a silent no-op) when either side lacks GPS data** — the
+job site has no `lat`/`lng`/`radiusMeters` configured, or the request carries no
+`lat`/`lng`. This is deliberate, not a gap to close: many job sites will never
+have GPS configured, and a crew member on a device/browser that can't or won't
+share location must still be able to clock in. Do not read "clock-in succeeded
+with no coordinates" as the geofence failing to work — it means one side had
+nothing to check against.
+
 ## Quick reference
 
 | Concern | Where |
