@@ -256,6 +256,19 @@ async function warnIfAdminEmailStillSetPostBootstrap(): Promise<void> {
 }
 void warnIfAdminEmailStillSetPostBootstrap()
 
+// An unbounded Postgres connection pool (no `connection_limit` on DATABASE_URL)
+// is a real production risk under load — every replica opens Prisma's default
+// pool size with no shared ceiling, and Postgres has a hard max_connections.
+// Sync/cheap, so it runs directly rather than as a fire-and-forget async check.
+function warnIfDatabaseUrlMissingConnectionLimit(): void {
+  if (!isProduction()) return
+  const url = process.env.DATABASE_URL
+  if (url && !/[?&]connection_limit=/.test(url)) {
+    logger.warn('DATABASE_URL has no connection_limit set in production; an unbounded connection pool is a scale risk', { service: SERVICE })
+  }
+}
+warnIfDatabaseUrlMissingConnectionLimit()
+
 // Route provider-call outcomes from backend-core (providerClient) into the API's
 // prometheus counter. backend-core stays metrics-agnostic via this seam.
 setProviderCallObserver(incProviderCall)
