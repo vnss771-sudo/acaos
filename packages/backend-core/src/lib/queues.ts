@@ -196,7 +196,7 @@ export async function enqueueRetentionPurge() {
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
-  'discover-prospects', 'retention-purge', 'send-followup'
+  'discover-prospects', 'retention-purge', 'send-followup', 'dlq-auto-retry'
 ]
 
 export async function getQueueStats() {
