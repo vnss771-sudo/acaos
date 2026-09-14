@@ -106,19 +106,55 @@ calling `setErrorReporter()` directly instead of `initErrorReporting()`.
 
 ## Load testing
 
-A dependency-free harness boots the real API against live Postgres + Redis and
-drives the hot endpoints, reporting RPS + p50/p95/p99 + error rate:
+A dependency-free harness boots the real API **and the real worker** against
+live Postgres + Redis, seeds several tenants, and drives two phases:
+
+1. **HTTP route mix** (stats/leads/prospects/ingest) at increasing
+   concurrency, each request picking a random tenant from the pool — so
+   per-workspace rate limits and quota checks are exercised under genuine
+   concurrent multi-tenant traffic, not one workspace hammered serially.
+   Reports RPS + p50/p95/p99 latency + error rate per endpoint/concurrency.
+2. **Worker/queue path**: enqueues a batch of `research-lead` jobs spread
+   round-robin across every tenant via the real `POST /api/jobs/research`
+   route, then polls each job's real `GET /api/jobs/research-lead/:jobId`
+   status endpoint until it leaves queued/active. This measures true
+   **enqueue → completion** latency through the real BullMQ queue and worker
+   process, not just the synchronous 202 response time of the enqueue call.
 
 ```bash
 JWT_SECRET=<32+ chars> DATABASE_URL=... REDIS_URL=... npm run loadtest
 ```
 
-Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
-(4000), `LOADTEST_PORT` (4100), `LOADTEST_REQUEST_TIMEOUT_MS` (10000).
+Infrastructure required: a running Postgres and Redis the API/worker can
+reach (`DATABASE_URL`/`REDIS_URL`); the script itself spawns the API and
+worker processes. Set `OPENAI_API_KEY` for realistic queue-phase latency —
+without it, `research-lead` jobs still exercise the full enqueue → worker
+pickup → job-state pipeline, they just resolve `failed` in a few ms at the
+provider-call boundary (still a real, if not production-realistic, proof the
+plumbing works end to end).
 
-> Numbers are **relative** (find slow endpoints / error cliffs / lock contention),
-> not deployment-accurate SLOs — a single host is not production hardware. Run it
-> against production-sized infra for capacity numbers.
+Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
+(4000), `LOADTEST_PORT` (4100), `LOADTEST_REQUEST_TIMEOUT_MS` (10000),
+`LOADTEST_TENANTS` (5 — number of independent workspaces seeded and rotated
+through), `LOADTEST_QUEUE_JOBS` (20 — total research-lead jobs enqueued across
+all tenants), `LOADTEST_QUEUE_CONCURRENCY` (10 — jobs in flight at once),
+`LOADTEST_QUEUE_POLL_MS` (250), `LOADTEST_QUEUE_TIMEOUT_MS` (30000 — per-job
+deadline before a job counts as `timeout`), `LOADTEST_WORKER_HEALTH_PORT`
+(4190).
+
+**Reading the output:** the HTTP phase's table is unchanged from before. The
+queue phase prints an outcome breakdown (`completed`/`failed`/`timeout`/
+`enqueue-error` counts) and p50/p95/max enqueue→completion latency. Treat a
+non-trivial `enqueue-error` or `timeout` count, or a queue backlog that grows
+with concurrency, as the signal to investigate (worker concurrency, Redis
+connection limits, or the AI provider's own rate limits) — there is no fixed
+pass/fail threshold baked in, since acceptable latency depends on the AI
+provider call itself once `OPENAI_API_KEY` is set.
+
+> Numbers are **relative** (find slow endpoints / error cliffs / lock
+> contention / queue backlog), not deployment-accurate SLOs — a single host is
+> not production hardware. Run it against production-sized infra for capacity
+> numbers.
 
 ## Performance knobs
 
