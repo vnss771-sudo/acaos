@@ -62,14 +62,18 @@ Wire your platform's probes to:
 | Endpoint | Purpose | Probe |
 |---|---|---|
 | `GET /api/live` | process is up (no I/O) | liveness |
-| `GET /api/ready` | config valid + Postgres reachable (Redis reported, non-fatal) → 200/503 | readiness / LB gate |
-| `GET /api/ready/strict` | config valid + Postgres **and** Redis reachable → 200/503 | LB gate for Redis/BullMQ-dependent deployments |
+| `GET /api/ready` | config valid + Postgres reachable; Redis reported and **non-fatal only outside production** → 200/503 | readiness / LB gate |
+| `GET /api/ready/strict` | config valid + Postgres **and** Redis reachable, in every environment → 200/503 | LB gate for Redis/BullMQ-dependent deployments |
 | `GET /api/health` | DB + Redis status | dashboards |
 
-Use `/api/ready` when the service can tolerate a transient Redis outage (rate
-limiting degrades gracefully); use `/api/ready/strict` when critical flows are
-Redis/BullMQ-backed and serving traffic without Redis is worse than briefly
-shedding it.
+`/api/ready`'s Redis leniency only applies outside production: in
+`development`/`test` a Redis outage doesn't fail the probe (the rate limiter's
+in-process fallback is judged good enough), but **in production Redis DOES gate
+`/api/ready`** — the queue-backed flows (outreach, campaign send, mailbox sync)
+can't run without it, so a production Redis outage fails the probe (503) and
+pulls the pod out of rotation, same as `/api/ready/strict`. Use
+`/api/ready/strict` when you want that Redis-required behavior in every
+environment, not just production.
 
 Build/version metadata (commit SHA, build time, version) is exposed on `/metrics`
 and baked into the images via the `ACAOS_RELEASE_*` build args.
