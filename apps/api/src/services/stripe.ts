@@ -2,6 +2,7 @@ import Stripe from 'stripe'
 import { ApiError } from '../lib/http.js'
 import { hasEnv } from '../lib/env.js'
 import { stripeBreaker } from '../lib/circuit.js'
+import { logger } from '@acaos/backend-core/lib/logger.js'
 import type { BillingPlan } from '@acaos/shared'
 
 function getStripe() {
@@ -66,6 +67,47 @@ export async function createBillingPortalSession(customerId: string) {
     customer: customerId,
     return_url: `${webBase}/billing`
   }))
+}
+
+// Boot-time check: confirm each configured STRIPE_PRICE_* id actually resolves
+// against the connected Stripe account/mode. validateConfig() only checks the
+// env var is non-empty (presence-only) — it can't catch a transposed id or a
+// test-mode price id paired with a live-mode secret key, which would silently
+// grant a paying customer the wrong tier (or fail checkout) the first time a
+// real customer hits it. This calls the API instead.
+//
+// Non-fatal: Stripe being entirely unconfigured (no STRIPE_SECRET_KEY) is a
+// legitimate deploy state — e.g. local dev — so that case returns quietly,
+// same as the other optional-integration checks in server.ts (redis's initial
+// connect is a fire-and-forget `.catch(logger.warn)`, not a boot crash). A
+// CONFIGURED-but-broken price is loud (logger.error), since silently granting
+// the wrong plan tier is a real product/billing bug, not a "feature disabled"
+// state.
+export async function assertStripePricesConfigured(): Promise<void> {
+  if (!hasEnv(['STRIPE_SECRET_KEY'])) return
+
+  const stripe = getStripe()
+  const checks: Array<{ envVar: string; plan: CheckoutPlan }> = [
+    { envVar: 'STRIPE_PRICE_STARTER', plan: 'starter' },
+    { envVar: 'STRIPE_PRICE_GROWTH', plan: 'growth' },
+  ]
+
+  for (const { envVar, plan } of checks) {
+    const id = process.env[envVar]?.trim()
+    // An unset price with Stripe otherwise configured is already flagged by
+    // validateConfig() in production; nothing further to check here.
+    if (!id) continue
+    try {
+      await stripe.prices.retrieve(id)
+    } catch (err) {
+      logger.error(
+        `Stripe price check failed: ${envVar} ("${id}", the ${plan} plan) does not resolve against the ` +
+          'configured STRIPE_SECRET_KEY — a transposed id or a test/live-mode mismatch would silently grant ' +
+          'the wrong tier (or fail checkout) for a real customer.',
+        { envVar, plan, err: err instanceof Error ? err.message : String(err) },
+      )
+    }
+  }
 }
 
 export function constructWebhookEvent(payload: Buffer, sig: string) {
