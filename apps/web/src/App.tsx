@@ -13,7 +13,8 @@ import { CommandPalette } from './components/CommandPalette.js'
 import { HubTabs } from './components/HubTabs.js'
 import { SkipLink } from './components/SkipLink.js'
 import { isHubNavEnabled, hubForView } from './lib/hubs.js'
-import { isInvestorDemoRequested, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
+import { useViewRouter } from './lib/router.js'
+import { isInvestorDemoRequested, enableInvestorDemo, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
 import { makeDemoApi, DEMO_USER, DEMO_WORKSPACES } from './lib/demoApi.js'
 import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
@@ -105,7 +106,7 @@ export function App() {
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
-  const [view, setView] = useState<View>('dashboard')
+  const [view, setView, replaceView] = useViewRouter('dashboard')
   // Resolved once per session — the hub-nav flag is static (env / localStorage).
   const [hubNav] = useState(isHubNavEnabled)
   const [booting, setBooting] = useState(true)
@@ -168,6 +169,11 @@ export function App() {
   // Demo mode: seed a session from fixtures and skip all auth round-trips.
   useEffect(() => {
     if (!demo) return
+    // Persist the flag to localStorage: navigating between views pushes a real
+    // URL for that view (see useViewRouter) which drops the ?demo=investor
+    // query string, so without this a reload after the very first click would
+    // land back on the sign-in screen instead of staying in the demo.
+    enableInvestorDemo()
     setUser(DEMO_USER)
     setWorkspaces(DEMO_WORKSPACES)
     setActiveWsId(DEMO_WORKSPACES[0].id)
@@ -204,6 +210,14 @@ export function App() {
   }, [token])
 
   const activeWorkspace = workspaces.find(w => w.id === activeWsId) ?? null
+
+  // A deep link (or a stale bookmark) to /admin for a non-admin lands here once
+  // /api/auth/me resolves — redirect rather than rendering the admin chrome
+  // over a blank panel. A replace, not a push: the user didn't ask for this
+  // navigation, so it shouldn't leave a Back stop.
+  useEffect(() => {
+    if (view === 'admin' && user && !user.isPlatformAdmin) replaceView('dashboard')
+  }, [view, user, replaceView])
 
   function handleWorkspaceUpdate(updated: Workspace) {
     setWorkspaces(prev => prev.map(w => w.id === updated.id ? { ...w, ...updated } : w))
@@ -251,7 +265,10 @@ export function App() {
     )
   }
 
-  if (!token || !user) {
+  // Demo mode never sets a real access token (there's no backend to issue
+  // one) — gating on it here would show the auth screen forever once `user`
+  // is seeded, even though the demo has nothing left to authenticate.
+  if (!demo && (!token || !user)) {
     return (
       <>
         <AuthScreen
@@ -262,6 +279,12 @@ export function App() {
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     )
+  }
+
+  if (!user) {
+    // Demo mode seeds `user` in the same effect that clears `booting`, so this
+    // is unreachable in practice — it only narrows the type below for TS.
+    return null
   }
 
   // Gate the admin UI on the backend's authoritative claim (from /api/auth/me),
