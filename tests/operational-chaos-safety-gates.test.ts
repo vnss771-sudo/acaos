@@ -95,17 +95,17 @@ test('operational chaos: worker must skip unapproved leads before any AI generat
   // Regression guard for the approval-mode bypass: the send loop fetches APPROVED
   // drafts only, so a lead with no included draft must be SKIPPED — never sent
   // with freshly generated copy. The skip guard must therefore sit in the
-  // draft-generation branch and run BEFORE generateOutreach, or the entire
-  // approval gate is bypassed at send time.
+  // draft-source resolution (resolveDraftSource) and run BEFORE generateOutreach
+  // is ever called, or the entire approval gate is bypassed at send time.
   const draftCheckIdx = processors.indexOf('if (lead.outreachDrafts[0])')
   // The guard reads `approvalRequired` (the workspace's approvalMode OR forced on
   // by SAFE_LAUNCH_MODE) and records a NO_APPROVED_DRAFT skip — same invariant.
-  const skipGuardIdx = processors.indexOf("if (approvalRequired) { skip('NO_APPROVED_DRAFT'); continue }")
+  const skipGuardIdx = processors.indexOf("if (opts.approvalRequired) return { action: 'skip', reason: 'NO_APPROVED_DRAFT' }")
   // The call is dispatched via the injectable `generateOutreachFn` seam (tests stub
   // it); match that form rather than the bare generator name.
   const generateIdx = processors.indexOf('generateOutreachFn(')
   assert.notEqual(draftCheckIdx, -1, 'Could not locate the draft-presence check')
-  assert.notEqual(skipGuardIdx, -1, 'Missing approval-mode skip guard in the draft-generation branch')
+  assert.notEqual(skipGuardIdx, -1, 'Missing approval-mode skip guard in resolveDraftSource')
   assert.notEqual(generateIdx, -1, 'Could not locate generateOutreach call')
   assert.ok(draftCheckIdx < skipGuardIdx, 'Skip guard must be inside the no-approved-draft branch')
   assert.ok(skipGuardIdx < generateIdx, 'Unapproved leads must be skipped before AI generation runs')
@@ -183,7 +183,9 @@ test('worker: send stamps a linked approved intent and advances it to SENT', () 
   assert.ok(/status:\s*'APPROVED'/.test(processors), 'looks up the approved intent for the lead')
   assert.ok(processors.includes('linkedIntentByLeadId.get(lead.id)'), 'resolves the per-lead approved intent from the batch map')
   assert.ok(processors.includes('outreachIntentId: linkedIntent.id'), 'stamps intent provenance on the send')
-  const flipIdx = processors.indexOf("prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' }")
+  // The SENT flip now runs inside dispatchOutreachEmail, addressed via its `p`
+  // params object rather than the bare closed-over variable.
+  const flipIdx = processors.indexOf("prisma.outreachIntent.update({ where: { id: p.linkedIntent.id }, data: { status: 'SENT' }")
   // The claim now runs as `tx.outreachSent.create` inside the advisory-locked
   // transaction; match the receiver-agnostic form.
   const createIdx = processors.indexOf('.outreachSent.create')
