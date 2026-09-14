@@ -88,7 +88,7 @@ All read live from the environment — flipping any of these takes effect on the
 ## Observability
 - METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production; when unset, `/metrics` is disabled and a startup warning is logged.
 - LOG_LEVEL — `debug` | `info` | `warn` | `error`. Default `info`.
-- SENTRY_DSN — error-reporting transport. Optional, but **set it in production**: `@sentry/node` is bundled, so a DSN turns on error capture (without it, `captureError` is a silent no-op).
+- SENTRY_DSN — error-reporting transport. Optional, but **set it in production**: a DSN turns on error capture via a minimal built-in HTTP transport (`lib/sentryTransport.ts`) that posts directly to Sentry's ingest API — the `@sentry/node` SDK is deliberately not a dependency (its OpenTelemetry tree would otherwise drag a heavy, recurringly-vulnerable subtree through dependency review). Without a DSN, `captureError` is a no-op, though every error is still logged via the structured logger regardless.
 - STATS_RECONCILE_ENABLED — `true` to enable the periodic `CampaignDailyStats` ↔ `ContactEvent` reconciliation sweep that repairs projection drift. Default off; recommended `true` in production.
 - WORKER_HEALTH_PORT — port for the worker's `/live` `/ready` `/metrics` server. Default 9090 (or platform `$PORT`).
 

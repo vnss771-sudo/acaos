@@ -13,13 +13,13 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-echo "[1/3] Verify repo"
+echo "[1/5] Verify repo"
 npm run verify
 
-echo "[2/4] Build tracked-files source archive"
+echo "[2/5] Build tracked-files source archive"
 npm run pack
 
-echo "[3/4] Preview immutable release metadata"
+echo "[3/5] Preview immutable release metadata"
 npm run release:metadata
 
 echo "[4/5] Release guidance"

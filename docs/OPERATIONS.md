@@ -80,17 +80,22 @@ job failures, target down), and a scrape config wired to these exact series — 
 
 Unhandled errors flow through a single `captureError` seam, wired in both the API
 (Express error handler + `unhandledRejection`/`uncaughtException`) and the worker
-(failed-after-retries + `error` + process handlers).
+(failed-after-retries + `error` + process handlers). Every error is logged via the
+structured logger regardless of Sentry — this section is about *aggregation*, not
+whether errors are visible at all.
 
-To deliver them to Sentry:
+To deliver them to Sentry, just **set `SENTRY_DSN`**. `initErrorReporting()`
+(`lib/errorReporting.ts`) posts directly to Sentry's HTTP ingest API via a minimal
+built-in transport (`lib/sentryTransport.ts`, rate-limited + deduped so an error
+storm can't become a fetch storm) — there is no `@sentry/node` SDK to install. It
+was deliberately built this way instead of depending on the real SDK: `@sentry/node`
+pulls in a heavy, recurringly-vulnerable OpenTelemetry dependency tree that would
+otherwise sit in `dependency-review` on every PR for a capability most deployments
+only turn on in production.
 
-1. `npm i @sentry/node` in `apps/api` (it's an **optional** dependency — the build
-   never requires it).
-2. Set `SENTRY_DSN`.
-
-With no DSN (or the SDK absent) error reporting is a **no-op** and the app behaves
-exactly as in dev/CI — telemetry never crashes startup. Any transport can be
-substituted by calling `setErrorReporter()` instead of `initErrorReporting()`.
+With no DSN, error reporting is a **no-op** and the app behaves exactly as in
+dev/CI — telemetry never crashes startup. Any transport can be substituted by
+calling `setErrorReporter()` directly instead of `initErrorReporting()`.
 
 ## Load testing
 
@@ -152,7 +157,7 @@ Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
 | Metrics (API) | `GET /metrics` (+ `METRICS_TOKEN`) |
 | Metrics (worker) | `GET :WORKER_HEALTH_PORT/metrics` |
 | Security policy | [`SECURITY.md`](../SECURITY.md) |
-| Error transport | `SENTRY_DSN` + `npm i @sentry/node` |
+| Error transport | `SENTRY_DSN` (built-in HTTP transport, no SDK install) |
 | Load test | `npm run loadtest` |
 | Pool sizing | `DATABASE_URL?connection_limit=…` |
 | Deploy steps | [`LAUNCH_RUNBOOK.md`](./LAUNCH_RUNBOOK.md) |
