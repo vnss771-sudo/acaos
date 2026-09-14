@@ -175,6 +175,18 @@ export function makeDemoApi(): ApiHook {
     if (path.includes('/api/signals')) return { signals: DEMO_SIGNALS } as T
     if (path.includes('/approvals/pending')) return { drafts: DEMO_DRAFTS } as T
     if (path.includes('/api/prospects?')) return { prospects: DEMO_PROSPECTS, total: DEMO_PROSPECTS.length } as T
+    // Single-prospect detail fetch (e.g. `/api/prospects/dp1`) — matched AFTER the
+    // list/query routes above so it doesn't shadow them. Without this, the detail
+    // panel's own fetch falls through to PERMISSIVE_EMPTY (a list-shaped object)
+    // and overwrites the perfectly good row data it was opened with, rendering a
+    // blank detail view.
+    {
+      const prospectDetailMatch = /\/api\/prospects\/([^/?]+)$/.exec(path)
+      if (prospectDetailMatch) {
+        const found = DEMO_PROSPECTS.find(p => p.id === prospectDetailMatch[1])
+        if (found) return { ...found, signals: [], recommendations: [], outcomes: [] } as T
+      }
+    }
     if (path.includes('/api/missions')) return { missions: DEMO_MISSIONS } as T
     if (path.includes('/api/leads?')) return { leads: DEMO_LEADS, total: DEMO_STATS.totalLeads } as T
     if (path.includes('/api/inbox')) return DEMO_INBOX as T

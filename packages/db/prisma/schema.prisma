@@ -351,6 +351,11 @@ model Lead {
   outreachSent   OutreachSent[]
   followupTasks  FollowupTask[]
   evidenceSources LeadEvidenceSource[]
+  // Inverse side of Prospect.convertedLeadId — the Prospect this Lead was
+  // created from, when it came from a "Convert to Lead" action rather than
+  // manual entry/import. At most one Prospect converts to a given Lead
+  // (enforced by the @unique on Prospect.convertedLeadId).
+  convertedFromProspect Prospect?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -913,6 +918,15 @@ model Prospect {
   aiSummary        String?
   sourceTag        String?
   isExample        Boolean      @default(false)
+  // Set once this Prospect has been converted into a workspace Lead (the
+  // "Convert to Lead" action — see POST /api/prospects/:id/convert-to-lead).
+  // @unique makes the relation strictly 1:1: a Prospect converts to at most
+  // one Lead, and a Lead has at most one source Prospect. onDelete: SetNull
+  // so deleting the created Lead doesn't cascade into deleting the Prospect
+  // it came from — it just un-marks the conversion.
+  convertedLeadId  String?      @unique
+  convertedAt      DateTime?
+  convertedLead    Lead?        @relation(fields: [convertedLeadId], references: [id], onDelete: SetNull)
   // The mission this prospect was discovered for (if any). Lets the mission
   // control plane own its prospects, and carries through to recommendations.
   missionId        String?

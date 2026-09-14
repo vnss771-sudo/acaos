@@ -20,6 +20,10 @@ import { normalizeDomain, withDollars, getICP } from './helpers.js'
 import { recordAudit } from '../../lib/audit.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
+import { computeLeadScore, getWorkspaceWeights } from '../../lib/scoring.js'
+import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
+import { checkLeadLimit } from '../../lib/limits.js'
+import { invalidateWorkspaceStats } from '../../lib/statsCache.js'
 
 // GET / query. Mirrors the prior raw parsing exactly:
 //  - workspaceId required (else 400)
@@ -346,6 +350,61 @@ export function registerCrudRoutes(prospectsRouter: Router) {
       entityType: 'prospect', entityId: existing.id, metadata: { fields: Object.keys(data) },
     })
     res.json(withDollars({ ...updated, tier: getOpportunityTier(updated.opportunityScore) }))
+  }))
+
+  // POST /api/prospects/:id/convert-to-lead — Prospects and Leads are two
+  // distinct entities (a Prospect is a discovered opportunity being scored and
+  // qualified; a Lead is a workspace's outreach-ready contact, campaign-eligible
+  // once created) with no path between them until now. This creates a Lead from
+  // the Prospect's company/contact fields and links the two records so the
+  // relationship is visible from either side. A Prospect converts at most
+  // once — a second attempt 409s rather than creating a duplicate Lead.
+  prospectsRouter.post('/:id/convert-to-lead', asyncHandler(async (req, res) => {
+    const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
+    if (!prospect) throw new ApiError(404, 'Prospect not found')
+
+    const userId = requireUser(req).id
+    if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
+    if (prospect.convertedLeadId) throw new ApiError(409, 'This prospect has already been converted to a lead')
+
+    await checkLeadLimit(prospect.workspaceId)
+
+    const leadData = {
+      workspaceId:  prospect.workspaceId,
+      businessName: prospect.companyName,
+      contactName:  prospect.contactName,
+      email:        prospect.contactEmail?.trim().toLowerCase() || null,
+      emailKey:     prospect.contactEmail ? normalizeEmailKey(prospect.contactEmail) : null,
+      phone:        prospect.contactPhone,
+      website:      prospect.domain,
+      city:         prospect.location,
+      category:     prospect.industry,
+      notes:        prospect.notes,
+      aiSummary:    prospect.aiSummary,
+      // Preserve provenance: a lead created this way came from a scored
+      // opportunity, not a manual entry or a cold import.
+      sourceTag:    prospect.sourceTag ?? 'prospect_conversion',
+    }
+
+    const weights = await getWorkspaceWeights(prospect.workspaceId)
+    const score = computeLeadScore(leadData, weights)
+
+    const { lead, updatedProspect } = await prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.create({ data: { ...leadData, score } })
+      const updatedProspect = await tx.prospect.update({
+        where: { id: prospect.id },
+        data: { convertedLeadId: lead.id, convertedAt: new Date() },
+      })
+      return { lead, updatedProspect }
+    })
+
+    invalidateWorkspaceStats(prospect.workspaceId)
+    void recordAudit({
+      workspaceId: prospect.workspaceId, actorUserId: userId, type: 'prospect.converted_to_lead',
+      entityType: 'prospect', entityId: prospect.id, metadata: { leadId: lead.id },
+    })
+
+    res.status(201).json({ lead, prospect: withDollars({ ...updatedProspect, tier: getOpportunityTier(updatedProspect.opportunityScore) }) })
   }))
 
   // DELETE /api/prospects/:id

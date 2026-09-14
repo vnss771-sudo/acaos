@@ -634,6 +634,10 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
 
   return (
     <div style={s.stack}>
+      <div style={{ color: colors.textFaint, fontSize: 12 }}>
+        Leads are outreach-ready contacts — score, research, draft, and send campaigns here.
+        Looking for new opportunities to qualify first? That's the <strong style={{ color: colors.textMuted }}>Prospects</strong> page.
+      </div>
       {/* Controls bar */}
       <div style={{ ...s.card, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <select style={{ ...s.input, width: 160 }} value={stageFilter} onChange={e => { setStageFilter(e.target.value); setPage(1) }}>

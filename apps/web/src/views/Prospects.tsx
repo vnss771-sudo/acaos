@@ -127,10 +127,18 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
 
   const handleRescore = async () => {
     try {
-      const updated = await route('POST /api/prospects/:id/rescore', { params: { id: prospect.id } }) as Prospect
-      setDetail(updated)
+      const updated = await route('POST /api/prospects/:id/rescore', { params: { id: prospect.id } }) as Partial<Prospect>
+      // A real backend always returns the full updated prospect; a mutation in
+      // demo mode resolves as a no-op `{}` (there's no backend to actually
+      // rescore against) — only replace the rendered detail when the response
+      // looks like a real prospect, so demo mode doesn't blank the panel.
+      if (typeof updated.opportunityScore === 'number') {
+        setDetail(updated as Prospect)
+        toast.success(`Rescored: ${updated.opportunityScore}`)
+      } else {
+        toast.success('Rescored')
+      }
       onRefresh()
-      toast.success(`Rescored: ${updated.opportunityScore}`)
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
@@ -153,6 +161,18 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
         ? `Apollo enriched — ${result.signalsCreated} new signal${result.signalsCreated !== 1 ? 's' : ''} added`
         : 'Apollo enriched — no new signals found')
     } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
+  const [converting, setConverting] = useState(false)
+  const handleConvert = async () => {
+    setConverting(true)
+    try {
+      const result = await route('POST /api/prospects/:id/convert-to-lead', { params: { id: prospect.id } }) as { lead?: { id: string; businessName: string }; prospect?: Prospect }
+      if (result.prospect) setDetail(result.prospect)
+      onRefresh()
+      toast.success(result.lead ? `Converted to lead: ${result.lead.businessName} — find it on the Leads page` : 'Converted to lead')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setConverting(false) }
   }
 
   const p = detail ?? prospect
@@ -283,12 +303,28 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
               {canManage && (
                 <button style={{ ...s.btnSm, background: '#1d4ed8', color: '#fff' }} onClick={handleEnrich} title="Pull signals from Apollo.io">
                   ⚡ Enrich with Apollo
                 </button>
+              )}
+              {canManage && (
+                p.convertedLeadId ? (
+                  <span style={{ color: colors.green, fontSize: 12, fontWeight: 600 }} title="A Lead was created from this prospect — find it on the Leads page">
+                    ✓ Converted to Lead
+                  </span>
+                ) : (
+                  <button
+                    style={{ ...s.btnSm, background: colors.green, color: '#fff' }}
+                    onClick={handleConvert}
+                    disabled={converting}
+                    title="Create an outreach-ready Lead from this prospect's company and contact info"
+                  >
+                    {converting ? 'Converting…' : '→ Convert to Lead'}
+                  </button>
+                )
               )}
               <button style={s.btnGhost} onClick={onClose}>Close</button>
             </div>
@@ -566,6 +602,11 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
 
   return (
     <div style={s.stack}>
+      <div style={{ color: colors.textFaint, fontSize: 12 }}>
+        Prospects are opportunities you're still qualifying — scored on fit, intent, and timing.
+        Ready to reach out? Open a prospect and use <strong style={{ color: colors.textMuted }}>Convert to Lead</strong> to
+        move it to the <strong style={{ color: colors.textMuted }}>Leads</strong> page for outreach.
+      </div>
       {/* Header */}
       <div style={{ ...s.flexBetween, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>

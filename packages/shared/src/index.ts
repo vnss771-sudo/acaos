@@ -538,6 +538,9 @@ export interface RouteContracts {
   'POST /api/prospects/:id/enrich': { params: { id: string }; response: { signalsCreated: number } }
   'POST /api/prospects/:id/outcome': { params: { id: string }; body: RecordProspectOutcomeRequest; response: unknown }
   'POST /api/prospects/:prospectId/intents/:intentId/:action': { params: { prospectId: string; intentId: string; action: string }; response: unknown }
+  // Creates a Lead from this Prospect's contact/company fields and links the two
+  // (Prospect.convertedLeadId) — see the Lead-vs-Prospect distinction fix.
+  'POST /api/prospects/:id/convert-to-lead': { params: { id: string }; response: unknown }
 
   // Signals
   'POST /api/signals': { body: CreateSignalRequest; response: unknown }

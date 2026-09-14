@@ -533,6 +533,8 @@ export type Prospect = {
   topRecommendation?: Recommendation | null
   signals?: Signal[]
   recommendations?: Recommendation[]
+  convertedLeadId?: string | null
+  convertedAt?: string | null
   createdAt: string
 }
 
