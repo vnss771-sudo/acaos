@@ -359,7 +359,11 @@ leadsRouter.patch(
     const scoringFields = ['businessName', 'category', 'contactName', 'email', 'website', 'notes', 'aiSummary', 'outreachAngle']
     const shouldRescore = scoringFields.some(f => f in updates)
     if (shouldRescore) {
-      const merged = { ...lead, ...updates }
+      // aiIntelligence.estimatedTeamSize (if research has run) isn't a top-level
+      // Lead column, so it's not already on `lead` in scorable form — surface it
+      // explicitly so an edit-triggered rescore still benefits from it.
+      const estimatedTeamSize = (lead.aiIntelligence as { estimatedTeamSize?: string | null } | null)?.estimatedTeamSize ?? null
+      const merged = { ...lead, estimatedTeamSize, ...updates }
       const weights = await getWorkspaceWeights(lead.workspaceId)
       updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights)
     } else if (typeof body.score === 'number') {

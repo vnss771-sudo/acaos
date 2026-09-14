@@ -119,7 +119,8 @@ const researchWorker = new Worker(
       website: lead.website,
       notes: lead.notes,
       aiSummary: parsed.aiSummary ?? null,
-      outreachAngle: parsed.outreachAngle ?? null
+      outreachAngle: parsed.outreachAngle ?? null,
+      estimatedTeamSize: parsed.estimatedTeamSize ?? null
     }
 
     const weights = await getWorkspaceWeights(lead.workspaceId)

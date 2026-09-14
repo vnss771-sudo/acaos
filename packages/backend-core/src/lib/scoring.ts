@@ -82,6 +82,26 @@ function scoreTech(combined: string): number {
   return isHighTech ? 0.25 : 1.00
 }
 
+// Bucketed company-size fit, normalized 0..1. FieldOps's ICP targets roughly
+// 5-200 employees (see packs/fieldops.ts), so the 10-50 sweet spot scores
+// highest, 50-200 is still solid, and both very small and enterprise-scale
+// buckets score lower. Falls back to the prior neutral placeholder (0.65) when
+// no estimate is available — a lead should never be penalized just for lacking
+// this enrichment.
+const TEAM_SIZE_FIT: Record<string, number> = {
+  '1-10': 0.55,
+  '10-50': 1.00,
+  '50-200': 0.85,
+  '200-500': 0.35,
+  '500+': 0.15,
+}
+const DEFAULT_SIZE_FIT = 0.65
+
+function scoreSize(estimatedTeamSize: string | null | undefined): number {
+  if (!estimatedTeamSize) return DEFAULT_SIZE_FIT
+  return TEAM_SIZE_FIT[estimatedTeamSize] ?? DEFAULT_SIZE_FIT
+}
+
 function scoreContact(email: string | null | undefined, contactName: string | null | undefined): number {
   let score = 0
   if (email) score += 0.65
@@ -108,6 +128,7 @@ type LeadInput = {
   notes?: string | null
   aiSummary?: string | null
   outreachAngle?: string | null
+  estimatedTeamSize?: string | null
 }
 
 export type ScoreSignals = Record<keyof ScoringWeights, number>
@@ -158,7 +179,7 @@ function computeSignals(lead: LeadInput): ScoreSignals {
 
   return {
     industry: scoreIndustry(lead.category),
-    size: 0.65, // default medium — unknown without enrichment
+    size: scoreSize(lead.estimatedTeamSize),
     hiring: scoreHiring(combined),
     tech: scoreTech(combined),
     growth: scoreGrowth(combined),
