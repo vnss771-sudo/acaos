@@ -259,7 +259,9 @@ rosterRouter.post(
       where: { workspaceId, status: 'DRAFT', rosterDate: { gte: new Date(from), lte: new Date(to) } },
       data: { status: 'PUBLISHED', publishedBy: user.id, publishedAt: new Date() },
     })
-    auditOps({ workspaceId, actorUserId: user.id, type: 'ops.roster.published', entityType: 'OpsRosterEntry', entityId: workspaceId, metadata: { from, to, count: result.count } })
+    // Compliance-sensitive (who published a roster, over what date range) —
+    // durable audit, not fire-and-forget. See S5.
+    await auditOps({ workspaceId, actorUserId: user.id, type: 'ops.roster.published', entityType: 'OpsRosterEntry', entityId: workspaceId, metadata: { from, to, count: result.count }, critical: true })
 
     res.json({ published: result.count })
   })
