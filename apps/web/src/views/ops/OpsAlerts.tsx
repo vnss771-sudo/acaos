@@ -120,9 +120,9 @@ export function OpsAlerts({ api, workspace, toast, canManage = false, setView }:
           </Grid>
         ) : counts && (
           <Grid cols={3}>
-            <KpiCard label="Open Alerts" value={counts.open} />
-            <KpiCard label="Reviewed" value={counts.reviewed} />
-            <KpiCard label="Urgent (High/Critical)" value={counts.openHigh} color={counts.openHigh > 0 ? colors.red : colors.text} />
+            <KpiCard label="Open Alerts" value={counts.open ?? 0} />
+            <KpiCard label="Reviewed" value={counts.reviewed ?? 0} />
+            <KpiCard label="Urgent (High/Critical)" value={counts.openHigh ?? 0} color={(counts.openHigh ?? 0) > 0 ? colors.red : colors.text} />
           </Grid>
         )}
 

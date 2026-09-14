@@ -330,9 +330,9 @@ export function OpsRoster({ api, workspace, toast, canManage = false, setView }:
 
       {summary ? (
         <Grid cols={3}>
-          <KpiCard label="Draft Entries" value={summary.draftCount} />
-          <KpiCard label="Published This Week" value={summary.publishedThisWeekCount} color={colors.green} />
-          <KpiCard label="Active Job Sites" value={summary.activeJobSiteCount} />
+          <KpiCard label="Draft Entries" value={summary.draftCount ?? 0} />
+          <KpiCard label="Published This Week" value={summary.publishedThisWeekCount ?? 0} color={colors.green} />
+          <KpiCard label="Active Job Sites" value={summary.activeJobSiteCount ?? 0} />
         </Grid>
       ) : (
         <Grid cols={3}>
