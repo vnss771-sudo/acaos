@@ -20,7 +20,7 @@ import {
 import { assertOutreachTone } from '@acaos/backend-core/lib/outreachTone.js'
 import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
 import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
-import { refundAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { refundAiUsage, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
@@ -88,6 +88,13 @@ const researchWorker = new Worker(
       where: { workspaceId },
       select: { targetIndustries: true, businessType: true, outreachTone: true },
     })
+
+    // Defense-in-depth re-check right before the model call: the enqueue-time
+    // caller (jobs.ts, ingest.ts) already metered this call, but a job that
+    // reached the queue any other way (a direct enqueue, a leaked producer
+    // credential) must not get a free model call just because it skipped that
+    // check. Read-only — the increment already happened at enqueue time.
+    await assertAiUsageAllowed(workspaceId)
 
     const raw = await generateLeadResearch({
       businessName: lead.businessName,
@@ -232,6 +239,10 @@ const outreachWorker = new Worker(
       select: { targetIndustries: true, businessType: true, outreachTone: true },
     })
 
+    // Defense-in-depth re-check right before the model call — see the same
+    // comment in the research-lead worker above.
+    await assertAiUsageAllowed(lead.workspaceId)
+
     const raw = await generateOutreach({
       businessName: lead.businessName,
       category: lead.category ?? undefined,
@@ -296,11 +307,16 @@ const outreachWorker = new Worker(
 const replyWorker = new Worker(
   'analyze-reply',
   async (job) => {
-    const { replyBody, leadId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
+    const { replyBody, leadId, workspaceId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
     if (!isFeatureEnabled('ai')) { log('analyze-reply', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('analyze-reply', `Processing${leadId ? ` leadId=${leadId}` : ''}`)
 
     await job.updateProgress(10)
+    // Defense-in-depth re-check right before the model call — see the same
+    // comment in the research-lead worker above. workspaceId is the one payload
+    // field every enqueue site sets even though the schema allows it to be
+    // absent; without it there's no tenant to check quota against.
+    if (workspaceId) await assertAiUsageAllowed(workspaceId)
     const raw = await analyzeReply(replyBody)
     await job.updateProgress(70)
 
