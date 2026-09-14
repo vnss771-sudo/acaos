@@ -148,7 +148,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                 Reject selected
               </button>
               <button
-                style={{ ...s.btn, background: '#16a34a', opacity: selected.size === 0 || batchRunning ? 0.5 : 1 }}
+                style={{ ...s.btnSuccess, opacity: selected.size === 0 || batchRunning ? 0.5 : 1 }}
                 disabled={selected.size === 0 || batchRunning}
                 onClick={() => batchDecide('approve')}
               >
@@ -218,7 +218,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                       <button style={s.btnSecondary} disabled={isBusy} onClick={() => save(d)}>Save edits</button>
                     )}
                     <button style={{ ...s.btnSm, background: '#7f1d1d' }} disabled={isBusy} onClick={() => decide(d, 'reject')}>Reject</button>
-                    <button style={{ ...s.btn, background: '#16a34a' }} disabled={isBusy} onClick={() => decide(d, 'approve')}>
+                    <button style={s.btnSuccess} disabled={isBusy} onClick={() => decide(d, 'approve')}>
                       {edited(d) ? 'Save & Approve' : 'Approve'}
                     </button>
                   </div>
