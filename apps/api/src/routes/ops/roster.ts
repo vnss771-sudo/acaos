@@ -7,6 +7,14 @@ import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../../lib/validate.js'
 import { assertOwnership, clampPagination, utcWeekRange, auditOps } from './utils.js'
+import type {
+  Assert,
+  Extends,
+  OpsCreateRosterEntryRequest,
+  OpsBulkCreateRosterRequest,
+  OpsUpdateRosterEntryRequest,
+  OpsPublishRosterRequest,
+} from '@acaos/shared'
 
 // Roster entries: planned (not-yet-worked) shift assignments, distinct from
 // OpsShiftRecord (the actual worked record clock.ts produces). Reading is
@@ -67,6 +75,7 @@ const createSchema = z.object({
   shiftType: shiftTypeEnum.optional(),
   notes: z.string().trim().max(2000).optional(),
 })
+type _CreateRosterConforms = Assert<Extends<z.infer<typeof createSchema>, OpsCreateRosterEntryRequest>>
 
 rosterRouter.post(
   '/',
@@ -110,6 +119,7 @@ const bulkSchema = z.object({
   workspaceId: workspaceIdField,
   entries: z.array(bulkEntrySchema).min(1).max(200),
 })
+type _BulkRosterConforms = Assert<Extends<z.infer<typeof bulkSchema>, OpsBulkCreateRosterRequest>>
 
 // POST /bulk — build a week's roster at once. Validates every referenced
 // crewMemberId/jobSiteId belongs to the workspace with two batched existence
@@ -171,6 +181,7 @@ const updateSchema = z.object({
   shiftType: shiftTypeEnum.optional(),
   notes: z.string().trim().max(2000).optional(),
 })
+type _UpdateRosterConforms = Assert<Extends<z.infer<typeof updateSchema>, OpsUpdateRosterEntryRequest>>
 
 rosterRouter.put(
   '/:id',
@@ -233,6 +244,7 @@ rosterRouter.delete(
 // ── publish ──────────────────────────────────────────────────────────────────
 
 const publishSchema = z.object({ workspaceId: workspaceIdField, from: z.string().datetime(), to: z.string().datetime() })
+type _PublishRosterConforms = Assert<Extends<z.infer<typeof publishSchema>, OpsPublishRosterRequest>>
 
 // POST /publish — bulk-commits every DRAFT entry in [from, to] to PUBLISHED in
 // one updateMany round trip (not a per-row loop).

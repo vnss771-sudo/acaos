@@ -6,6 +6,7 @@
 import { ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { recordAudit } from '../../lib/audit.js'
+import { assertWorkspacePermission } from '../../lib/permissions.js'
 import type { Prisma } from '@prisma/client'
 
 // ── Pagination ───────────────────────────────────────────────────────────────
@@ -69,6 +70,55 @@ export async function assertOwnership(
     )
   }
   await Promise.all(checks)
+}
+
+// Clock in/out is deliberately membership-level (see clock.ts), so "any
+// workspace member" is not enough on its own — this closes the gap: a caller
+// may only clock in/out a crewMemberId linked (OpsCrewMember.userId) to their
+// OWN account. A crew member with no login (userId null) has no self-service
+// identity to match, so their clock actions always require the supervisor
+// override below. Returns true when the call was authorized via that
+// override (not as the crew member themselves) — callers use this to record
+// a distinguishable, honestly-labeled audit event type. Throws 403 if
+// neither the identity match nor the override applies.
+export async function assertCanActAsCrewMember(
+  workspaceId: string,
+  crewMemberId: string,
+  actorUserId: string,
+): Promise<boolean> {
+  const crewMember = await prisma.opsCrewMember.findFirst({ where: { id: crewMemberId, workspaceId }, select: { userId: true } })
+  if (crewMember?.userId && crewMember.userId === actorUserId) return false
+  await assertWorkspacePermission(actorUserId, workspaceId, 'ops:manage')
+  return true
+}
+
+// ── Geofencing ───────────────────────────────────────────────────────────────
+// Great-circle distance in meters (haversine) — accurate enough at the scale
+// of a job site radius; no need for an ellipsoidal model here.
+function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+// Returns how many meters over the job site's geofence a clock-in/out
+// location is, or null if the clock-in is within radius (or either side
+// lacks the data to check — a site with no lat/lng/radiusMeters configured,
+// or a caller that didn't send coordinates, is advisory-only by design: many
+// sites won't have GPS configured, and this must not block them).
+export function geofenceViolationMeters(
+  jobSite: { lat: number | null; lng: number | null; radiusMeters: number | null } | null | undefined,
+  lat: number | undefined,
+  lng: number | undefined,
+): number | null {
+  if (!jobSite || jobSite.lat == null || jobSite.lng == null || jobSite.radiusMeters == null) return null
+  if (lat == null || lng == null) return null
+  const dist = distanceMeters(lat, lng, jobSite.lat, jobSite.lng)
+  if (dist <= jobSite.radiusMeters) return null
+  return Math.round(dist - jobSite.radiusMeters)
 }
 
 // ── Alert reconciliation ─────────────────────────────────────────────────────

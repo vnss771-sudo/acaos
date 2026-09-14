@@ -379,6 +379,10 @@ export interface OpsCreateCrewRequest {
   baseRate?: number
   allowanceProfile?: string
   licenceNotes?: string
+  // Links this crew member to the app account they ARE, so they can clock
+  // themselves in/out (see OpsClockInRequest). Omit for crew with no login —
+  // their clock actions then require an 'ops:manage' supervisor override.
+  userId?: string | null
 }
 export interface OpsUpdateCrewRequest {
   workspaceId: string
@@ -389,6 +393,7 @@ export interface OpsUpdateCrewRequest {
   allowanceProfile?: string
   licenceNotes?: string
   isActive?: boolean
+  userId?: string | null
 }
 export interface OpsCreateJobSiteRequest {
   workspaceId: string

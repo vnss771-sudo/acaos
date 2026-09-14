@@ -7,6 +7,7 @@ import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../../lib/validate.js'
 import { assertOwnership, clampPagination, reconcileShiftAlerts, auditOps, totalHoursFor } from './utils.js'
+import type { Assert, Extends, OpsCreateShiftRequest, OpsUpdateShiftRequest } from '@acaos/shared'
 
 // Shift records: clock in/out produces these (see clock.ts); this router covers
 // listing history and admin-entered manual corrections/backfills. Reading is
@@ -71,6 +72,7 @@ const createSchema = z.object({
   outdoorHighRisk: z.boolean().optional(),
   notes: z.string().trim().max(2000).optional(),
 })
+type _CreateShiftConforms = Assert<Extends<z.infer<typeof createSchema>, OpsCreateShiftRequest>>
 
 // POST /api/ops/shifts — manual entry (backfill/correction). Live clock in/out
 // goes through clock.ts, which enforces the one-open-shift-per-crew-member
@@ -119,6 +121,7 @@ const updateSchema = z.object({
   reviewed: z.boolean().optional(),
   notes: z.string().trim().max(2000).optional(),
 })
+type _UpdateShiftConforms = Assert<Extends<z.infer<typeof updateSchema>, OpsUpdateShiftRequest>>
 
 // PUT /api/ops/shifts/:id — correction/annotation. Deliberately does NOT default
 // endTime to now() when it's simply absent from the body: an earlier version of

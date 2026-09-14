@@ -5,13 +5,18 @@ import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
 import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { parseQuery, parseBody, workspaceIdField, idField } from '../../lib/validate.js'
-import { assertOwnership, reconcileShiftAlerts, totalHoursFor, utcDayStart, auditOps } from './utils.js'
+import { assertOwnership, reconcileShiftAlerts, totalHoursFor, utcDayStart, auditOps, geofenceViolationMeters, assertCanActAsCrewMember } from './utils.js'
+import type { Assert, Extends, OpsClockInRequest, OpsClockOutRequest } from '@acaos/shared'
 
 // Crew self-service clock in/out. Deliberately membership-level, not
-// 'ops:manage': a crew member clocking themselves in is not an admin action.
-// Ownership of crewMemberId/jobSiteId (that they belong to the caller's
-// workspace) is still enforced on every request — membership alone doesn't
-// prove the IDs in the body are real, workspace-owned resources.
+// 'ops:manage': a crew member clocking themselves in is not an admin action —
+// but "themselves" is enforced by assertCanActAsCrewMember, not just assumed:
+// a caller can only clock in/out a crewMemberId linked (OpsCrewMember.userId)
+// to their own account, unless they hold 'ops:manage' (a supervisor entering
+// it on someone's behalf, which is then itself audited as such). Ownership of
+// crewMemberId/jobSiteId (that they belong to the caller's workspace) is still
+// enforced on every request — membership alone doesn't prove the IDs in the
+// body are real, workspace-owned resources.
 export const clockRouter = Router()
 clockRouter.use(requireAuth)
 clockRouter.use(requireVerifiedForMutation)
@@ -26,6 +31,7 @@ const clockInSchema = z.object({
   lat: geoField,
   lng: lngField,
 })
+type _ClockInConforms = Assert<Extends<z.infer<typeof clockInSchema>, OpsClockInRequest>>
 
 // POST /api/ops/clock/in — opens a new shift. The one-open-shift-per-crew-member
 // invariant is enforced by a partial unique index in the database (see the
@@ -40,6 +46,16 @@ clockRouter.post(
     const data = parseBody(clockInSchema, req)
     if (!(await userBelongsToWorkspace(user.id, data.workspaceId))) throw new ApiError(403, 'Access denied')
     await assertOwnership(data.workspaceId, { crewMemberId: data.crewMemberId, jobSiteId: data.jobSiteId })
+    const supervisorOverride = await assertCanActAsCrewMember(data.workspaceId, data.crewMemberId, user.id)
+
+    const jobSite = await prisma.opsJobSite.findFirst({
+      where: { id: data.jobSiteId, workspaceId: data.workspaceId },
+      select: { lat: true, lng: true, radiusMeters: true },
+    })
+    const overMeters = geofenceViolationMeters(jobSite, data.lat, data.lng)
+    if (overMeters !== null) {
+      throw new ApiError(400, `Clock-in location is ${overMeters}m outside the job site's geofence`)
+    }
 
     const now = new Date()
     try {
@@ -50,7 +66,10 @@ clockRouter.post(
           clockInLat: data.lat, clockInLng: data.lng,
         },
       })
-      auditOps({ workspaceId: data.workspaceId, actorUserId: user.id, type: 'ops.clock.in', entityType: 'OpsShiftRecord', entityId: shift.id })
+      auditOps({
+        workspaceId: data.workspaceId, actorUserId: user.id, type: supervisorOverride ? 'ops.clock.in.supervisor' : 'ops.clock.in',
+        entityType: 'OpsShiftRecord', entityId: shift.id,
+      })
       res.status(201).json({ shift })
     } catch (err) {
       if ((err as { code?: string }).code === 'P2002') {
@@ -67,6 +86,7 @@ const clockOutSchema = z.object({
   lat: geoField,
   lng: lngField,
 })
+type _ClockOutConforms = Assert<Extends<z.infer<typeof clockOutSchema>, OpsClockOutRequest>>
 
 // POST /api/ops/clock/out — closes the crew member's open shift, if any. Scoped
 // by the EXACT crewMemberId given (never "any open shift in the workspace") —
@@ -79,11 +99,17 @@ clockRouter.post(
     const data = parseBody(clockOutSchema, req)
     if (!(await userBelongsToWorkspace(user.id, data.workspaceId))) throw new ApiError(403, 'Access denied')
     await assertOwnership(data.workspaceId, { crewMemberId: data.crewMemberId })
+    const supervisorOverride = await assertCanActAsCrewMember(data.workspaceId, data.crewMemberId, user.id)
 
     const open = await prisma.opsShiftRecord.findFirst({
       where: { workspaceId: data.workspaceId, crewMemberId: data.crewMemberId, endTime: null },
+      include: { jobSite: { select: { lat: true, lng: true, radiusMeters: true } } },
     })
     if (!open) throw new ApiError(404, 'No open shift for this crew member')
+    const overMeters = geofenceViolationMeters(open.jobSite, data.lat, data.lng)
+    if (overMeters !== null) {
+      throw new ApiError(400, `Clock-out location is ${overMeters}m outside the job site's geofence`)
+    }
 
     const endTime = new Date()
     const updated = await prisma.opsShiftRecord.update({
@@ -93,7 +119,10 @@ clockRouter.post(
         totalHours: totalHoursFor(open.startTime, endTime, open.breakMinutes),
       },
     })
-    auditOps({ workspaceId: data.workspaceId, actorUserId: user.id, type: 'ops.clock.out', entityType: 'OpsShiftRecord', entityId: open.id })
+    auditOps({
+      workspaceId: data.workspaceId, actorUserId: user.id, type: supervisorOverride ? 'ops.clock.out.supervisor' : 'ops.clock.out',
+      entityType: 'OpsShiftRecord', entityId: open.id,
+    })
     await reconcileShiftAlerts(data.workspaceId, open.id, updated)
 
     res.json({ shift: updated })

@@ -197,3 +197,67 @@ test('a plain member cannot create, update, or deactivate a crew member (ops:man
   assert.equal(list.status, 200)
   assert.equal(list.body.total, 1)
 })
+
+// ── userId self-service linking ──────────────────────────────────────────────
+
+test('POST /crew links a crew member to a workspace member via userId', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const member = await seedUserWithWorkspace(undefined, 'member')
+  await prisma.membership.create({ data: { userId: member.user.id, workspaceId: workspace.id, role: 'member' } })
+
+  const created = await createCrew(user.id, workspace.id, { employeeCode: 'E1', fullName: 'Jane Doe', role: 'TECH', userId: member.user.id })
+  assert.equal(created.status, 201)
+  assert.equal(created.body.crew.userId, member.user.id)
+})
+
+test('POST /crew rejects a userId that does not belong to the workspace', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const outsider = await seedUserWithWorkspace('outsider@x.test')
+
+  const res = await createCrew(user.id, workspace.id, { employeeCode: 'E1', fullName: 'Jane Doe', role: 'TECH', userId: outsider.user.id })
+  assert.equal(res.status, 400)
+  assert.equal(await prisma.opsCrewMember.count({ where: { workspaceId: workspace.id } }), 0)
+})
+
+test('POST /crew rejects linking a userId already linked to another crew member in the same workspace', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const member = await seedUserWithWorkspace(undefined, 'member')
+  await prisma.membership.create({ data: { userId: member.user.id, workspaceId: workspace.id, role: 'member' } })
+  const first = await createCrew(user.id, workspace.id, { employeeCode: 'E1', fullName: 'Jane Doe', role: 'TECH', userId: member.user.id })
+  assert.equal(first.status, 201)
+
+  const second = await createCrew(user.id, workspace.id, { employeeCode: 'E2', fullName: 'Someone Else', role: 'LABOURER', userId: member.user.id })
+  assert.equal(second.status, 409)
+  assert.match(second.body.error ?? '', /already linked/i)
+})
+
+test('PUT /crew/:id can set, change, and clear the userId link', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const memberA = await seedUserWithWorkspace(undefined, 'member')
+  const memberB = await seedUserWithWorkspace(undefined, 'member')
+  await prisma.membership.create({ data: { userId: memberA.user.id, workspaceId: workspace.id, role: 'member' } })
+  await prisma.membership.create({ data: { userId: memberB.user.id, workspaceId: workspace.id, role: 'member' } })
+  const created = await createCrew(user.id, workspace.id, { employeeCode: 'E1', fullName: 'Jane Doe', role: 'TECH' })
+  const id = created.body.crew.id
+
+  const linked = await server.request(`/api/ops/crew/${id}`, {
+    method: 'PUT', headers: jsonAuth(user.id),
+    body: JSON.stringify({ workspaceId: workspace.id, userId: memberA.user.id }),
+  })
+  assert.equal(linked.status, 200)
+  assert.equal(linked.body.crew.userId, memberA.user.id)
+
+  const relinked = await server.request(`/api/ops/crew/${id}`, {
+    method: 'PUT', headers: jsonAuth(user.id),
+    body: JSON.stringify({ workspaceId: workspace.id, userId: memberB.user.id }),
+  })
+  assert.equal(relinked.status, 200)
+  assert.equal(relinked.body.crew.userId, memberB.user.id)
+
+  const cleared = await server.request(`/api/ops/crew/${id}`, {
+    method: 'PUT', headers: jsonAuth(user.id),
+    body: JSON.stringify({ workspaceId: workspace.id, userId: null }),
+  })
+  assert.equal(cleared.status, 200)
+  assert.equal(cleared.body.crew.userId, null)
+})

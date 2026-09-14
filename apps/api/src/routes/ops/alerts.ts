@@ -7,6 +7,7 @@ import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../../lib/validate.js'
 import { clampPagination, auditOps } from './utils.js'
+import type { Assert, Extends, OpsReviewAlertRequest } from '@acaos/shared'
 
 // Compliance alerts: the OPEN/REVIEWED worklist a supervisor actions. The rows
 // themselves are never authored here — reconcileShiftAlerts() in utils.ts owns
@@ -79,6 +80,7 @@ alertsRouter.get(
 const idParamsSchema = z.object({ id: idField })
 
 const reviewSchema = z.object({ workspaceId: workspaceIdField })
+type _ReviewAlertConforms = Assert<Extends<z.infer<typeof reviewSchema>, OpsReviewAlertRequest>>
 
 // POST /api/ops/alerts/:id/review — mark an alert reviewed. reviewedBy stores the
 // reviewer's USER ID, never their display name: a name is mutable and isn't a

@@ -118,6 +118,7 @@ model User {
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   emailVerifications  EmailVerificationToken[]
+  opsCrewLinks        OpsCrewMember[]
 }
 
 model Workspace {
@@ -1220,12 +1221,21 @@ model OpsCrewMember {
   allowanceProfile String?
   licenceNotes     String?
   isActive         Boolean   @default(true)
+  // Optional link to the app account this crew member IS, so clock-in/out can
+  // verify the caller is the person being clocked, not just any workspace
+  // member. Nullable: a crew member with no app login (common — many never
+  // sign in) has no self-service identity to bind to, so their clock actions
+  // require 'ops:manage' instead — see clock.ts. onDelete: SetNull rather than
+  // Cascade/Restrict: deleting the User account must not touch shift history.
+  userId           String?
+  user             User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   shifts           OpsShiftRecord[]
   rosterEntries    OpsRosterEntry[]
 
   @@unique([workspaceId, employeeCode])
+  @@unique([workspaceId, userId])
   @@index([workspaceId, isActive])
 }
 

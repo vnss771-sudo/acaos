@@ -7,6 +7,7 @@ import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField, nonEmptyString } from '../../lib/validate.js'
 import { clampPagination, auditOps } from './utils.js'
+import type { Assert, Extends, OpsCreateJobSiteRequest, OpsUpdateJobSiteRequest } from '@acaos/shared'
 
 // Job sites: the physical construction/field sites shifts and rosters are worked
 // against (OpsShiftRecord.jobSiteId / OpsRosterEntry.jobSiteId). Unrelated to the
@@ -68,6 +69,7 @@ const createSchema = z.object({
   radiusMeters: z.number().int().min(10).max(100_000).optional(),
   notes: z.string().trim().max(2000).optional(),
 })
+type _CreateJobSiteConforms = Assert<Extends<z.infer<typeof createSchema>, OpsCreateJobSiteRequest>>
 
 // POST /api/ops/jobs — register a site. status is NOT accepted from the body: a
 // site is always born ACTIVE and only ever reaches ARCHIVED through the archive
@@ -119,6 +121,7 @@ const updateSchema = z.object({
   radiusMeters: z.number().int().min(10).max(100_000).optional(),
   notes: z.string().trim().max(2000).optional(),
 })
+type _UpdateJobSiteConforms = Assert<Extends<z.infer<typeof updateSchema>, OpsUpdateJobSiteRequest>>
 
 // PUT /api/ops/jobs/:id — edit site details.
 opsJobsRouter.put(

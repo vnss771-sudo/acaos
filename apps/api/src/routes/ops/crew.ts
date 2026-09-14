@@ -7,6 +7,7 @@ import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField, nonEmptyString } from '../../lib/validate.js'
 import { clampPagination, auditOps } from './utils.js'
+import type { Assert, Extends, OpsCreateCrewRequest, OpsUpdateCrewRequest } from '@acaos/shared'
 
 // Crew members: the people a workspace rosters, clocks in, and pays. This is the
 // root record the rest of the Ops module points at (shifts.ts, clock.ts and the
@@ -67,18 +68,29 @@ const createSchema = z.object({
   baseRate: z.number().min(0).optional(),
   allowanceProfile: z.string().trim().max(64).optional(),
   licenceNotes: z.string().trim().max(2000).optional(),
+  userId: idField.nullable().optional(),
 })
+
+// Compile-time guard: the validated request must satisfy the shared contract the
+// frontend is typed against. If the zod schema drifts from the contract, this fails.
+type _CreateCrewConforms = Assert<Extends<z.infer<typeof createSchema>, OpsCreateCrewRequest>>
 
 // POST /api/ops/crew — add a crew member. employeeCode is unique per workspace
 // ((workspaceId, employeeCode) in the schema), so a duplicate is a caller error
 // (409), not a 500: catch the constraint violation rather than racing a
-// check-then-create, which two concurrent imports could both pass.
+// check-then-create, which two concurrent imports could both pass. Linking a
+// userId re-validates that user actually belongs to this workspace — without
+// that check, an admin could bind a crew record (and its clock-in identity) to
+// a user from an unrelated workspace.
 crewRouter.post(
   '/',
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const data = parseBody(createSchema, req)
     await assertWorkspacePermission(user.id, data.workspaceId, 'ops:manage')
+    if (data.userId && !(await userBelongsToWorkspace(data.userId, data.workspaceId))) {
+      throw new ApiError(400, 'userId does not belong to this workspace')
+    }
 
     let crew
     try {
@@ -86,10 +98,15 @@ crewRouter.post(
         data: {
           workspaceId: data.workspaceId, employeeCode: data.employeeCode, fullName: data.fullName, role: data.role,
           crewName: data.crewName, baseRate: data.baseRate, allowanceProfile: data.allowanceProfile, licenceNotes: data.licenceNotes,
+          userId: data.userId,
         },
       })
     } catch (err) {
-      if ((err as { code?: string }).code === 'P2002') throw new ApiError(409, 'A crew member with this employee code already exists')
+      const prismaErr = err as { code?: string; meta?: { target?: string[] } }
+      if (prismaErr.code === 'P2002') {
+        if (prismaErr.meta?.target?.includes('userId')) throw new ApiError(409, 'That user is already linked to another crew member')
+        throw new ApiError(409, 'A crew member with this employee code already exists')
+      }
       throw err
     }
     auditOps({ workspaceId: data.workspaceId, actorUserId: user.id, type: 'ops.crew.created', entityType: 'OpsCrewMember', entityId: crew.id })
@@ -112,7 +129,9 @@ const updateSchema = z.object({
   allowanceProfile: z.string().trim().max(64).optional(),
   licenceNotes: z.string().trim().max(2000).optional(),
   isActive: z.boolean().optional(),
+  userId: idField.nullable().optional(),
 })
+type _UpdateCrewConforms = Assert<Extends<z.infer<typeof updateSchema>, OpsUpdateCrewRequest>>
 
 // PUT /api/ops/crew/:id — edit a crew member. The update object is built field
 // by field from the parsed body (never a spread of req.body), so an unexpected
@@ -127,19 +146,32 @@ crewRouter.put(
 
     const existing = await prisma.opsCrewMember.findFirst({ where: { id, workspaceId: data.workspaceId } })
     if (!existing) throw new ApiError(404, 'Crew member not found')
+    if (data.userId && !(await userBelongsToWorkspace(data.userId, data.workspaceId))) {
+      throw new ApiError(400, 'userId does not belong to this workspace')
+    }
 
-    const updated = await prisma.opsCrewMember.update({
-      where: { id },
-      data: {
-        ...(data.fullName !== undefined ? { fullName: data.fullName } : {}),
-        ...(data.role !== undefined ? { role: data.role } : {}),
-        ...(data.crewName !== undefined ? { crewName: data.crewName } : {}),
-        ...(data.baseRate !== undefined ? { baseRate: data.baseRate } : {}),
-        ...(data.allowanceProfile !== undefined ? { allowanceProfile: data.allowanceProfile } : {}),
-        ...(data.licenceNotes !== undefined ? { licenceNotes: data.licenceNotes } : {}),
-        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
-      },
-    })
+    let updated
+    try {
+      updated = await prisma.opsCrewMember.update({
+        where: { id },
+        data: {
+          ...(data.fullName !== undefined ? { fullName: data.fullName } : {}),
+          ...(data.role !== undefined ? { role: data.role } : {}),
+          ...(data.crewName !== undefined ? { crewName: data.crewName } : {}),
+          ...(data.baseRate !== undefined ? { baseRate: data.baseRate } : {}),
+          ...(data.allowanceProfile !== undefined ? { allowanceProfile: data.allowanceProfile } : {}),
+          ...(data.licenceNotes !== undefined ? { licenceNotes: data.licenceNotes } : {}),
+          ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+          ...(data.userId !== undefined ? { userId: data.userId } : {}),
+        },
+      })
+    } catch (err) {
+      const prismaErr = err as { code?: string; meta?: { target?: string[] } }
+      if (prismaErr.code === 'P2002' && prismaErr.meta?.target?.includes('userId')) {
+        throw new ApiError(409, 'That user is already linked to another crew member')
+      }
+      throw err
+    }
     auditOps({ workspaceId: data.workspaceId, actorUserId: user.id, type: 'ops.crew.updated', entityType: 'OpsCrewMember', entityId: id })
 
     res.json({ crew: updated })
