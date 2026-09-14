@@ -6,18 +6,25 @@ testing, and the performance knobs. Pairs with [`LAUNCH_RUNBOOK.md`](./LAUNCH_RU
 
 ## Health & readiness probes (API)
 
-Three endpoints, by purpose:
+Four endpoints, by purpose:
 
 | Endpoint | Checks | Use for |
 |---|---|---|
 | `GET /api/live` | process is up (no I/O) | liveness probe / frequent polling |
-| `GET /api/ready` | required config **+ DB**; reports Redis | deployment gate (readinessProbe, LB) |
+| `GET /api/ready` | required config **+ DB**; Redis gates in production | deployment gate (readinessProbe, LB) |
+| `GET /api/ready/strict` | required config **+ DB + Redis**, in every environment | LB gate for deployments where serving traffic with Redis down is worse than briefly shedding it |
 | `GET /api/health` | DB reachable; reports Redis | general health/status page |
 
 `/api/ready` returns `{ ok, db, redis, config }` and **200/503**. **Redis is
-reported but non-fatal**: the rate limiter degrades to an in-process fallback, so
-a Redis blip must not pull a serving pod out of rotation — only config + DB gate
-readiness. All probes time out at 3s so a hung dependency can't stall the probe.
+non-fatal outside production only** — in `development`/`test` the rate limiter's
+in-process fallback is judged good enough and a Redis blip doesn't affect
+readiness. **In production, Redis DOES gate `/api/ready`**: the queue-backed
+flows (outreach, campaign send, mailbox sync) can't run without it, so a Redis
+outage there fails the probe (503) and pulls the pod out of rotation — the same
+config+DB-only leniency does not apply (`server.ts`'s `/api/ready` handler). Use
+`/api/ready/strict` (below) when you want that same Redis-required behavior
+outside production too. All probes time out at 3s so a hung dependency can't
+stall the probe.
 
 **Worker** exposes its own liveness server on `WORKER_HEALTH_PORT` (default 9090).
 
@@ -148,6 +155,22 @@ Tunables: `LOADTEST_CONCURRENCY` (default `10,50,100`), `LOADTEST_DURATION_MS`
   env except local `development`/`test`) gates sends on SMTP + CAN-SPAM sender
   identity. Leave on; it fails closed so a misconfigured staging deploy can't send
   non-compliant mail.
+
+## Ops module: geofenced clock-in/out
+
+`POST /api/ops/clock/in` and `/out` check the caller's coordinates against the
+job site's `radiusMeters` geofence (`ops/utils.ts`'s `geofenceViolationMeters`).
+This is **enforced, not merely logged**, whenever both sides have the data to
+check it: a clock-in/out outside the radius is rejected with **400** and never
+reaches the database.
+
+It is **advisory-only (a silent no-op) when either side lacks GPS data** — the
+job site has no `lat`/`lng`/`radiusMeters` configured, or the request carries no
+`lat`/`lng`. This is deliberate, not a gap to close: many job sites will never
+have GPS configured, and a crew member on a device/browser that can't or won't
+share location must still be able to clock in. Do not read "clock-in succeeded
+with no coordinates" as the geofence failing to work — it means one side had
+nothing to check against.
 
 ## Quick reference
 

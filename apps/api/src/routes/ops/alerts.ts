@@ -110,7 +110,9 @@ alertsRouter.post(
       where: { id },
       data: { status: 'REVIEWED', reviewedBy: user.id, reviewedAt: new Date() },
     })
-    auditOps({ workspaceId, actorUserId: user.id, type: 'ops.alert.reviewed', entityType: 'OpsAlert', entityId: id })
+    // Compliance-sensitive (who reviewed a safety alert) — durable audit, not
+    // fire-and-forget. See S5.
+    await auditOps({ workspaceId, actorUserId: user.id, type: 'ops.alert.reviewed', entityType: 'OpsAlert', entityId: id, critical: true })
 
     res.json({ alert })
   })

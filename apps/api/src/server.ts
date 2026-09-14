@@ -232,6 +232,43 @@ getRedis().connect().catch((err: Error) => {
 
 void initErrorReporting()
 
+// ADMIN_EMAIL is a one-time bootstrap escalation vector (see routes/admin.ts):
+// once a matching user has been promoted, the DB flag (`isPlatformAdmin`) is the
+// sole source of truth and the env var does nothing except sit there as a
+// latent "whoever controls this env var can re-target admin to a new account"
+// risk (routes/admin.ts's bootstrap check would need someone to also gain
+// step-up auth as that address, but leaving the var set is still unnecessary
+// exposure). Warn once at startup, after bootstrap has actually happened, so
+// operators get a nudge to unset it — this never fails startup.
+async function warnIfAdminEmailStillSetPostBootstrap(): Promise<void> {
+  const adminEmail = process.env.ADMIN_EMAIL?.trim()
+  if (!adminEmail) return
+  try {
+    const bootstrapped = await prisma.user.findFirst({ where: { isPlatformAdmin: true }, select: { id: true } })
+    if (bootstrapped) {
+      logger.warn('ADMIN_EMAIL is still set in the environment after bootstrap completed; consider unsetting it', { service: SERVICE })
+    }
+  } catch (err) {
+    // Best-effort: a DB hiccup at startup shouldn't be logged as if the check
+    // itself found something wrong, and must never block/crash startup.
+    logger.warn('admin bootstrap check failed', { service: SERVICE, err: (err as Error).message })
+  }
+}
+void warnIfAdminEmailStillSetPostBootstrap()
+
+// An unbounded Postgres connection pool (no `connection_limit` on DATABASE_URL)
+// is a real production risk under load — every replica opens Prisma's default
+// pool size with no shared ceiling, and Postgres has a hard max_connections.
+// Sync/cheap, so it runs directly rather than as a fire-and-forget async check.
+function warnIfDatabaseUrlMissingConnectionLimit(): void {
+  if (!isProduction()) return
+  const url = process.env.DATABASE_URL
+  if (url && !/[?&]connection_limit=/.test(url)) {
+    logger.warn('DATABASE_URL has no connection_limit set in production; an unbounded connection pool is a scale risk', { service: SERVICE })
+  }
+}
+warnIfDatabaseUrlMissingConnectionLimit()
+
 // Route provider-call outcomes from backend-core (providerClient) into the API's
 // prometheus counter. backend-core stays metrics-agnostic via this seam.
 setProviderCallObserver(incProviderCall)

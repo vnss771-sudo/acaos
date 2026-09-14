@@ -5,7 +5,7 @@
 
 import { ApiError } from '../../lib/http.js'
 import { prisma } from '../../lib/prisma.js'
-import { recordAudit } from '../../lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '../../lib/audit.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import type { Prisma } from '@prisma/client'
 
@@ -181,11 +181,25 @@ export async function reconcileShiftAlerts(
   ])
 }
 
+type AuditOpsInput = { workspaceId: string; actorUserId: string; type: string; entityType: string; entityId: string; metadata?: Record<string, unknown> }
+
 // Fire-and-forget audit helper mirroring every other route's `void recordAudit(...)`
 // call — kept here only so ops/*.ts files share one import instead of each
 // reaching into lib/audit.ts with slightly different argument shapes.
-export function auditOps(input: { workspaceId: string; actorUserId: string; type: string; entityType: string; entityId: string; metadata?: Record<string, unknown> }): void {
-  void recordAudit(input)
+//
+// `critical: true` routes the same event through `recordCriticalAudit` instead
+// (durable: awaited, and any write failure is escalated to the error reporter
+// rather than silently dropped) — for compliance-sensitive events like a
+// roster publish or a safety-alert review, where a lost audit row is not an
+// acceptable trade for a slightly faster response. The overloads make this
+// visible at the call site: passing `critical: true` returns a Promise the
+// caller must await, while the default (fire-and-forget) shape is unchanged.
+export function auditOps(input: AuditOpsInput & { critical: true }): Promise<void>
+export function auditOps(input: AuditOpsInput & { critical?: false }): void
+export function auditOps(input: AuditOpsInput & { critical?: boolean }): void | Promise<void> {
+  const { critical, ...event } = input
+  if (critical) return recordCriticalAudit(event)
+  void recordAudit(event)
 }
 
 export type Db = typeof prisma
