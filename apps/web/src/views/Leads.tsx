@@ -1,470 +1,27 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/shared'
-import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence, LeadEvidenceRow } from '../types.js'
-import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
+import type { Lead, Workspace, Campaign } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner } from '../components/Spinner.js'
-import { EmptyState } from '../components/ui/EmptyState.js'
 import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Modal } from '../components/ui/Modal.js'
-import { Table, type Column, type SortState } from '../components/ui/Table.js'
+import type { SortState } from '../components/ui/Table.js'
 import { makeRouteApi } from '../lib/routeApi.js'
+import { parseCsv } from '../lib/csv.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
+import { LeadDetailPanel } from '../components/leads/LeadDetailPanel.js'
+import { LeadsToolbar } from '../components/leads/LeadsToolbar.js'
+import { AddLeadForm, type NewLeadForm } from '../components/leads/AddLeadForm.js'
+import { LeadsTable } from '../components/leads/LeadsTable.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
-const BLANK_FORM = {
+const BLANK_FORM: NewLeadForm = {
   businessName: '', contactName: '', email: '', phone: '',
   website: '', city: '', category: '', notes: '', score: ''
 }
 
-// RFC-4180 compliant CSV parser. Handles quoted fields containing commas,
-// newlines, and escaped double-quotes ("").
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = []
-  let i = 0
-  while (i <= line.length) {
-    if (line[i] === '"') {
-      let field = ''
-      i++ // skip opening quote
-      while (i < line.length) {
-        if (line[i] === '"' && line[i + 1] === '"') {
-          field += '"'; i += 2
-        } else if (line[i] === '"') {
-          i++; break
-        } else {
-          field += line[i++]
-        }
-      }
-      fields.push(field)
-      if (line[i] === ',') i++
-    } else {
-      const end = line.indexOf(',', i)
-      if (end === -1) { fields.push(line.slice(i).trim()); break }
-      fields.push(line.slice(i, end).trim())
-      i = end + 1
-    }
-  }
-  return fields
-}
-
-function parseCsv(text: string): Record<string, string>[] {
-  const lines = text.trim().split(/\r?\n/)
-  if (lines.length < 2) return []
-  const headers = parseCsvLine(lines[0])
-  return lines.slice(1).filter(l => l.trim()).map(line => {
-    const vals = parseCsvLine(line)
-    const row: Record<string, string> = {}
-    headers.forEach((h, i) => { row[h] = vals[i] ?? '' })
-    return row
-  })
-}
-
-function ScorePill({ score }: { score: number }) {
-  if (score <= 0) return <span style={{ color: colors.textFaint, fontSize: 13 }}>–</span>
-  const tier = getScoreTier(score)
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <span style={s.badge(TIER_COLOR[tier])}>{tier}</span>
-      <span style={{ color: colors.amber, fontSize: 13, fontWeight: 700 }}>{score}</span>
-    </span>
-  )
-}
-
-const CONFIDENCE_COLOR: Record<string, string> = {
-  high: colors.green,
-  medium: colors.amber,
-  low: colors.textFaint,
-}
-// Plain-language "what to do next" phrasing for the lead brief, instead of
-// surfacing the raw enum (auto_draft / manual_review_then_draft / skip) to the user.
-const ACTION_NEXT_STEP: Record<string, string> = {
-  auto_draft: 'Ready to draft and reach out — the fit is strong and the evidence holds up.',
-  manual_review_then_draft: 'Review, then draft — the signals are promising but unconfirmed, so a person should eyeball it before sending.',
-  skip: 'Skip for now — not a strong enough fit to spend outreach on.',
-}
-
-// One section of the lead brief: a sentence-case heading over its content. Kept
-// deliberately plain (no ALL-CAPS labels, no enum badges) so the whole card reads
-// like a short written briefing rather than a dump of structured fields.
-function BriefSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 600, marginBottom: 5 }}>{title}</div>
-      {children}
-    </div>
-  )
-}
-
-const briefList: React.CSSProperties = { margin: 0, paddingLeft: 18, color: '#cbd5e1', fontSize: 13, lineHeight: 1.7 }
-
-// The lead brief: the AI research presented as a clean, plain-language briefing
-// — fit, who they are, why they fit, the way in, the caveats, and the next step —
-// instead of exposing the raw scoring fields, provenance enums, and action codes.
-// It still draws from the same data (the persisted evidence rows preferred over the
-// JSON snapshot, the deterministic score rationale, the risk flags), just rendered
-// for a person to read. Renders nothing when there's no research yet.
-function LeadBrief({ lead, intel, rows }: { lead: Lead; intel: LeadIntelligence; rows?: LeadEvidenceRow[] }) {
-  const evidence = rows && rows.length > 0
-    ? rows.map((r) => ({ text: r.signal, sourceUrl: r.sourceUrl }))
-    : (intel.evidence ?? []).map((e) => ({ text: e.signal, sourceUrl: e.sourceUrl }))
-  // Prefer the deterministic score rationale; fall back to the evidence signals.
-  const reasons = (intel.topReasons && intel.topReasons.length > 0)
-    ? intel.topReasons.map((t) => ({ text: t, sourceUrl: undefined as string | null | undefined }))
-    : evidence
-  const riskFlags = intel.riskFlags ?? []
-  const score = lead.score > 0 ? lead.score : (intel.finalScore ?? 0)
-
-  // Notable, positive facts only — surface them as a short prose line, not labelled
-  // fields. (A "not hiring" or "low maturity" non-signal would just add noise.)
-  const facts: string[] = []
-  if (intel.estimatedTeamSize) facts.push(`likely ${intel.estimatedTeamSize} people`)
-  if (intel.digitalMaturity) facts.push(`${intel.digitalMaturity} digital maturity`)
-  if (intel.hiringSignals) facts.push('actively hiring')
-
-  const hasContent = lead.aiSummary || reasons.length > 0 || lead.outreachAngle ||
-    riskFlags.length > 0 || intel.recommendedAction || facts.length > 0
-  if (!hasContent) return null
-
-  return (
-    <div style={{ ...s.cardInner, marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ color: colors.text, fontSize: 14, fontWeight: 700 }}>Lead brief</span>
-        {score > 0 && <span style={{ color: colors.amber, fontSize: 13, fontWeight: 700 }}>ICP fit {score}/100</span>}
-        {intel.confidence && <span style={s.badge(CONFIDENCE_COLOR[intel.confidence] ?? colors.textFaint)}>{intel.confidence} confidence</span>}
-      </div>
-
-      {(lead.aiSummary || facts.length > 0) && (
-        <div style={{ marginBottom: 14 }}>
-          {lead.aiSummary && <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.7 }}>{lead.aiSummary}</div>}
-          {facts.length > 0 && (
-            <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 6 }}>
-              {facts.join(' · ').replace(/^./, (c) => c.toUpperCase())}.
-            </div>
-          )}
-        </div>
-      )}
-
-      {reasons.length > 0 && (
-        <BriefSection title="Why they fit">
-          <ul style={briefList}>
-            {reasons.map((r, i) => (
-              <li key={i}>
-                {r.sourceUrl
-                  ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" style={{ color: colors.blueLight }}>{r.text}</a>
-                  : r.text}
-              </li>
-            ))}
-          </ul>
-        </BriefSection>
-      )}
-
-      {lead.outreachAngle && (
-        <BriefSection title="Best way in">
-          <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.7 }}>{lead.outreachAngle}</div>
-        </BriefSection>
-      )}
-
-      {riskFlags.length > 0 && (
-        <BriefSection title="Worth knowing before you reach out">
-          <ul style={{ ...briefList, color: colors.amber }}>
-            {riskFlags.map((r, i) => <li key={i}>{r}</li>)}
-          </ul>
-        </BriefSection>
-      )}
-
-      {intel.recommendedAction && (
-        <div style={{ color: colors.textMuted, fontSize: 13, lineHeight: 1.7 }}>
-          <span style={{ color: colors.textFaint }}>Suggested next step — </span>
-          {ACTION_NEXT_STEP[intel.recommendedAction] ?? intel.recommendedAction}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function JobProgressBar({ progress, state }: { progress: number; state: string }) {
-  const cfg: Record<string, { color: string; label: string }> = {
-    waiting: { color: colors.textFaint, label: 'Queued' },
-    active: { color: colors.amber, label: `Processing…` },
-    completed: { color: colors.green, label: 'Complete' },
-    failed: { color: colors.red, label: 'Failed' }
-  }
-  const c = cfg[state] ?? cfg.waiting
-  return (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ color: c.color, fontSize: 12, fontWeight: 600 }}>{c.label}</span>
-        {state === 'active' && <span style={{ color: colors.textFaint, fontSize: 11 }}>{progress}%</span>}
-      </div>
-      {state === 'active' && (
-        <div style={{ background: '#1e2d40', borderRadius: 3, height: 3, overflow: 'hidden' }}>
-          <div style={{ width: `${progress}%`, height: '100%', background: colors.amber, borderRadius: 3, transition: 'width 0.4s' }} />
-        </div>
-      )}
-    </div>
-  )
-}
-
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
-
-function LeadDetailPanel({ lead, api, toast, onUpdate, onClose, campaigns }: {
-  lead: Lead; api: ApiHook; toast: ToastHook
-  onUpdate: (l: Lead) => void; onClose: () => void
-  campaigns: Campaign[]
-}) {
-  const route = useMemo(() => makeRouteApi(api), [api])
-  const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState({ ...lead })
-  const [drafts, setDrafts] = useState<OutreachDraft[]>([])
-  const [evidenceRows, setEvidenceRows] = useState<LeadEvidenceRow[]>([])
-  const [saving, setSaving] = useState(false)
-  const [activeJobs, setActiveJobs] = useState<Record<string, { state: string; progress: number }>>({})
-  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map())
-
-  const loadEvidence = useCallback(() => {
-    api<{ evidence: LeadEvidenceRow[] }>(`/api/leads/${lead.id}/evidence`).then(d => setEvidenceRows(d.evidence || [])).catch(() => {})
-  }, [api, lead.id])
-
-  useEffect(() => {
-    api<{ drafts: OutreachDraft[] }>(`/api/leads/${lead.id}/drafts`).then(d => setDrafts(d.drafts)).catch(() => {})
-    loadEvidence()
-    return () => { eventSourcesRef.current.forEach(es => es.close()) }
-  }, [lead.id])
-
-  async function save() {
-    setSaving(true)
-    try {
-      const d = await route('PATCH /api/leads/:id', { params: { id: lead.id }, body: form }) as { lead: Lead }
-      onUpdate(d.lead)
-      setEditing(false)
-      toast.success('Lead updated')
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
-    finally { setSaving(false) }
-  }
-
-  async function streamJob(queue: string, jobId: string, type: string, onDone: () => void) {
-    // Exchange the session for a short-lived, single-use SSE ticket instead of
-    // putting a long-lived JWT in the EventSource URL.
-    let ticket: string
-    try {
-      const r = await route('POST /api/jobs/events/ticket')
-      ticket = r.ticket
-    } catch {
-      return
-    }
-
-    const es = new EventSource(
-      `${API_BASE}/api/jobs/events/${queue}/${jobId}?ticket=${encodeURIComponent(ticket)}`
-    )
-
-    setActiveJobs(j => ({ ...j, [type]: { state: 'waiting', progress: 0 } }))
-    eventSourcesRef.current.set(type, es)
-
-    es.addEventListener('progress', e => {
-      const data = JSON.parse(e.data)
-      setActiveJobs(j => ({ ...j, [type]: { state: data.state, progress: data.progress ?? 0 } }))
-    })
-
-    es.addEventListener('done', e => {
-      const data = JSON.parse(e.data)
-      setActiveJobs(j => ({ ...j, [type]: { state: data.state, progress: 100 } }))
-      es.close()
-      eventSourcesRef.current.delete(type)
-      if (data.state === 'completed') {
-        toast.success(`${type === 'research' ? 'Research' : 'Outreach'} complete`)
-        onDone()
-      } else {
-        toast.error(`${type} job failed`)
-      }
-    })
-
-    es.onerror = () => {
-      es.close()
-      eventSourcesRef.current.delete(type)
-      setActiveJobs(j => { const n = { ...j }; delete n[type]; return n })
-    }
-  }
-
-  async function enqueue(type: 'research' | 'outreach', opts: { override?: boolean } = {}) {
-    try {
-      const d = await route('POST /api/jobs/:type', { params: { type }, body: { leadId: lead.id, ...(opts.override ? { override: true } : {}) } })
-      streamJob(d.queue, d.jobId, type, async () => {
-        // Refresh lead data after completion
-        try {
-          const updated = await api<{ lead: Lead }>(`/api/leads/${lead.id}`)
-          onUpdate(updated.lead)
-          if (type === 'research') loadEvidence()
-          if (type === 'outreach') {
-            const ds = await api<{ drafts: OutreachDraft[] }>(`/api/leads/${lead.id}/drafts`)
-            setDrafts(ds.drafts)
-          }
-        } catch { /* ignore */ }
-      })
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to queue job') }
-  }
-
-  async function moveStage(stage: string) {
-    try {
-      const d = await route('PATCH /api/leads/:id', { params: { id: lead.id }, body: { stage } }) as { lead: Lead }
-      onUpdate(d.lead)
-      toast.success(`Moved to ${stage}`)
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Update failed') }
-  }
-
-  const ff = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-    setForm(f => ({ ...f, [field]: e.target.value }))
-
-  const tier = getScoreTier(lead.score)
-
-  return (
-    <div style={{ ...s.card, borderColor: colors.blue + '44' }}>
-      <div style={{ ...s.flexBetween, marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <h3 style={{ color: colors.text, margin: 0, fontSize: 16 }}>{lead.businessName}</h3>
-          {lead.score > 0 && <span style={s.badge(TIER_COLOR[tier])}>{tier} · {lead.score}</span>}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button style={s.btnSm} onClick={() => setEditing(v => !v)}>{editing ? 'Cancel' : 'Edit'}</button>
-          <button style={s.btnSm} aria-label="Close detail panel" onClick={onClose}>✕</button>
-        </div>
-      </div>
-
-      {editing ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-          {[
-            { label: 'Business Name', field: 'businessName' },
-            { label: 'Contact Name', field: 'contactName' },
-            { label: 'Email', field: 'email' },
-            { label: 'Phone', field: 'phone' },
-            { label: 'Website', field: 'website' },
-            { label: 'City', field: 'city' },
-            { label: 'Category', field: 'category' }
-          ].map(({ label, field }) => (
-            <div key={field}>
-              <label style={s.label} htmlFor="leads-field-0">{label}</label>
-              <input id="leads-field-0" style={s.input} value={(form as unknown as Record<string, string | number>)[field] as string ?? ''} onChange={ff(field)} />
-            </div>
-          ))}
-          <div>
-            <label style={s.label} htmlFor="leads-field-1">Campaign</label>
-            <select id="leads-field-1" style={s.input} value={form.campaignId ?? ''} onChange={ff('campaignId')}>
-              <option value="">No campaign</option>
-              {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <div style={{ gridColumn: '1/-1' }}>
-            <label style={s.label} htmlFor="leads-field-2">Notes</label>
-            <textarea id="leads-field-2" style={{ ...s.textarea, height: 80 }} value={form.notes ?? ''} onChange={ff('notes')} />
-          </div>
-          <div style={{ gridColumn: '1/-1', display: 'flex', gap: 8 }}>
-            <button style={s.btn} disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save Changes'}</button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-          {[
-            { label: 'Email', value: lead.email },
-            { label: 'Phone', value: lead.phone },
-            { label: 'Website', value: lead.website },
-            { label: 'City', value: lead.city },
-            { label: 'Category', value: lead.category },
-            { label: 'Contact', value: lead.contactName },
-            { label: 'Last Contact', value: lead.lastContactedAt ? new Date(lead.lastContactedAt).toLocaleDateString() : null }
-          ].filter(x => x.value).map(({ label, value }) => (
-            <div key={label}>
-              <span style={{ color: colors.textFaint, fontSize: 12 }}>{label}: </span>
-              <span style={{ color: colors.text, fontSize: 14 }}>{value}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Poor-fit suppression banner */}
-      {lead.outreachSkippedAt && (
-        <div style={{ ...s.cardInner, borderLeft: `3px solid ${colors.amber}`, marginBottom: 16 }}>
-          <div style={{ color: colors.amber, fontWeight: 700, fontSize: 13 }}>⏭ Outreach skipped — poor fit</div>
-          <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
-            {lead.outreachSkipReason || 'Research recommended skipping this lead.'} No draft was generated. Use “Generate anyway” to draft it into manual review.
-          </div>
-        </div>
-      )}
-
-      {/* Lead brief: the AI research as one clean, plain-language briefing
-          (summary, why they fit, the way in, caveats, next step). */}
-      {(lead.aiSummary || lead.outreachAngle || lead.aiIntelligence || evidenceRows.length > 0) && (
-        <LeadBrief lead={lead} intel={lead.aiIntelligence ?? {}} rows={evidenceRows} />
-      )}
-
-      {/* Outreach drafts */}
-      {drafts.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={s.sectionHeader}>Outreach Drafts ({drafts.length})</div>
-          {drafts.map(d => (
-            <div key={d.id} style={{ ...s.cardInner, marginBottom: 8 }}>
-              <div style={{ color: colors.text, fontWeight: 600, marginBottom: 4, fontSize: 13 }}>{d.subject}</div>
-              <div style={{ color: colors.textMuted, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{d.emailBody}</div>
-              {d.followup && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${colors.border}` }}>
-                  <div style={{ color: colors.textFaint, fontSize: 11, marginBottom: 4 }}>FOLLOW-UP</div>
-                  <div style={{ color: colors.textMuted, fontSize: 13 }}>{d.followup}</div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* AI action buttons + job progress */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        <button
-          style={{ ...s.btnSm, background: '#1e3a5f' }}
-          disabled={!!activeJobs.research}
-          onClick={() => enqueue('research')}
-        >
-          {activeJobs.research ? <><Spinner size={12} /> Researching…</> : '✦ Research'}
-        </button>
-        <button
-          style={{ ...s.btnSm, background: lead.outreachSkippedAt ? '#5e3a1d' : '#2d1d5e' }}
-          disabled={!!activeJobs.outreach}
-          onClick={() => enqueue('outreach', { override: !!lead.outreachSkippedAt })}
-          title={lead.outreachSkippedAt ? 'Research recommended skipping; generate anyway into manual review' : undefined}
-        >
-          {activeJobs.outreach
-            ? <><Spinner size={12} /> Generating…</>
-            : lead.outreachSkippedAt ? '✉ Generate anyway' : '✉ Generate Outreach'}
-        </button>
-      </div>
-
-      {Object.entries(activeJobs).map(([type, job]) => (
-        <JobProgressBar key={type} state={job.state} progress={job.progress} />
-      ))}
-
-      {/* Stage selector */}
-      <div style={{ marginTop: 12 }}>
-        <div style={s.label}>Pipeline Stage</div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {STAGES.map(stage => (
-            <button
-              key={stage}
-              onClick={() => moveStage(stage)}
-              style={{
-                ...s.btnSm,
-                background: lead.stage === stage ? (STAGE_COLOR[stage] || colors.textFaint) : '#1f2937',
-                color: lead.stage === stage ? '#fff' : colors.textMuted,
-                fontWeight: lead.stage === stage ? 700 : 400,
-                fontSize: 11
-              }}
-            >
-              {stage}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
@@ -583,6 +140,17 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     finally { setImporting(false); if (fileRef.current) fileRef.current.value = '' }
   }
 
+  function exportCsv() {
+    if (!workspace) return
+    const url = `${API_BASE}/api/leads/export?workspaceId=${workspace.id}`
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `leads-${new Date().toISOString().slice(0, 10)}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   async function bulkResearch() {
     if (!workspace || selectedIds.size === 0) return
     setBulkWorking('research')
@@ -638,8 +206,6 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   }
 
   const allSelected = leads.length > 0 && leads.every(l => selectedIds.has(l.id))
-  const ff = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm(f => ({ ...f, [field]: e.target.value }))
 
   // Client-side sort of the loaded page — same approach as Prospects.tsx. Default
   // (no sort) preserves server order; sorting only reorders the current page since
@@ -665,30 +231,6 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     })
   }, [leads, sort])
 
-  const columns: Column<Lead>[] = [
-    {
-      key: 'businessName', header: 'Business', sortable: true,
-      render: l => (
-        <span style={{ color: colors.text, fontSize: 14, fontWeight: 500 }}>
-          {l.businessName}
-          {l.outreachSkippedAt && <span style={{ ...s.badge(colors.amber), marginLeft: 6 }} title="Outreach skipped — poor fit">skipped</span>}
-        </span>
-      ),
-    },
-    { key: 'contactName', header: 'Contact', sortable: true, render: l => <span style={{ color: colors.textMuted, fontSize: 13 }}>{l.contactName || '–'}</span> },
-    { key: 'email', header: 'Email', sortable: true, render: l => <span style={{ color: colors.textMuted, fontSize: 13 }}>{l.email || '–'}</span> },
-    { key: 'category', header: 'Category', sortable: true, render: l => <span style={{ color: colors.textFaint, fontSize: 12 }}>{l.category || '–'}</span> },
-    { key: 'stage', header: 'Stage', sortable: true, render: l => <span style={s.badge(STAGE_COLOR[l.stage] || colors.textFaint)}>{l.stage}</span> },
-    { key: 'score', header: 'Score', sortable: true, render: l => <ScorePill score={l.score} /> },
-    ...(canManage ? [{
-      key: 'actions', header: '', render: (l: Lead) => (
-        <div onClick={e => e.stopPropagation()}>
-          <button style={s.btnDanger} aria-label={`Delete lead ${l.businessName}`} onClick={() => setDeleteTarget(l)}>✕</button>
-        </div>
-      ),
-    } as Column<Lead>] : []),
-  ]
-
   const toggleAllLeads = () => setSelectedIds(allSelected ? new Set() : new Set(leads.map(l => l.id)))
 
   return (
@@ -699,151 +241,62 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
         Leads are outreach-ready contacts — score, research, draft, and send campaigns here.
         Looking for new opportunities to qualify first? That's the <strong style={{ color: colors.textMuted }}>Prospects</strong> page.
       </div>
-      {/* Controls bar */}
-      <div style={{ ...s.card, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select style={{ ...s.input, width: 160 }} value={stageFilter} onChange={e => { setStageFilter(e.target.value); setPage(1) }}>
-          <option value="">All stages</option>
-          {STAGES.map(st => <option key={st} value={st}>{st}</option>)}
-        </select>
 
-        <input
-          style={{ ...s.input, width: 200 }}
-          placeholder="Search leads…"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1) }}
-        />
+      <LeadsToolbar
+        stageFilter={stageFilter}
+        onStageFilterChange={v => { setStageFilter(v); setPage(1) }}
+        search={search}
+        onSearchChange={v => { setSearch(v); setPage(1) }}
+        skippedOnly={skippedOnly}
+        onToggleSkipped={() => { setSkippedOnly(v => !v); setPage(1) }}
+        total={total}
+        canManage={canManage}
+        selectedCount={selectedIds.size}
+        bulkWorking={bulkWorking}
+        showBulkMenu={showBulkMenu}
+        onToggleBulkMenu={() => setShowBulkMenu(v => !v)}
+        onBulkResearch={bulkResearch}
+        onBulkDeleteRequest={() => setBulkDeleteConfirmOpen(true)}
+        onBulkStage={bulkStage}
+        importing={importing}
+        fileRef={fileRef}
+        onImportClick={() => fileRef.current?.click()}
+        onImportCsv={importCsv}
+        hasWorkspace={!!workspace}
+        onExportCsv={exportCsv}
+        onAddClick={() => setAdding(v => !v)}
+      />
 
-        <button
-          style={{ ...s.btnSm, background: skippedOnly ? colors.amber : '#1f2937', color: skippedOnly ? '#000' : colors.textMuted, fontWeight: skippedOnly ? 700 : 400 }}
-          title="Show only poor-fit leads the outreach gate skipped"
-          onClick={() => { setSkippedOnly(v => !v); setPage(1) }}
-        >
-          ⏭ Skipped
-        </button>
-
-        <span style={{ color: colors.textFaint, fontSize: 13 }}>{total} leads</span>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {canManage && selectedIds.size > 0 && (
-            <div style={{ position: 'relative' }}>
-              <button
-                style={{ ...s.btnSm, background: '#1e3a5f', color: colors.blueLight }}
-                onClick={() => setShowBulkMenu(v => !v)}
-                disabled={!!bulkWorking}
-              >
-                {bulkWorking ? <><Spinner size={12} /> Working…</> : `⚡ ${selectedIds.size} selected ▾`}
-              </button>
-              {showBulkMenu && (
-                <div style={{
-                  position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                  background: colors.bgElevated, border: `1px solid ${colors.border}`,
-                  borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180,
-                  display: 'grid', gap: 2
-                }}>
-                  <button style={{ ...s.btnSm, textAlign: 'left' }} onClick={bulkResearch}>
-                    ✦ Queue AI Research
-                  </button>
-                  <div style={{ borderTop: `1px solid ${colors.borderLight}`, margin: '4px 0' }} />
-                  <div style={{ color: colors.textFaint, fontSize: 11, padding: '4px 8px' }}>Move to stage</div>
-                  {['OUTREACH_SENT', 'REPLIED', 'BOOKED', 'CLOSED', 'DEAD'].map(st => (
-                    <button key={st} style={{ ...s.btnSm, textAlign: 'left', fontSize: 12 }} onClick={() => bulkStage(st)}>
-                      → {st}
-                    </button>
-                  ))}
-                  <div style={{ borderTop: `1px solid ${colors.borderLight}`, margin: '4px 0' }} />
-                  <button style={{ ...s.btnSm, textAlign: 'left', color: colors.red }} onClick={() => setBulkDeleteConfirmOpen(true)}>
-                    ✕ Delete selected
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          {canManage && (
-            <button style={s.btnSm} onClick={() => fileRef.current?.click()} disabled={importing}>
-              {importing ? <><Spinner size={12} /> Importing…</> : '↑ Import CSV'}
-            </button>
-          )}
-          <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importCsv} />
-          {canManage && workspace && (
-            <button style={s.btnSm} onClick={() => {
-              const url = `${API_BASE}/api/leads/export?workspaceId=${workspace.id}`
-              const link = document.createElement('a')
-              link.href = url
-              link.setAttribute('download', `leads-${new Date().toISOString().slice(0, 10)}.csv`)
-              document.body.appendChild(link)
-              link.click()
-              document.body.removeChild(link)
-            }}>
-              ↓ Export CSV
-            </button>
-          )}
-          {canManage && <button style={s.btn} onClick={() => setAdding(v => !v)}>+ Add Lead</button>}
-        </div>
-      </div>
-
-      {/* Add form */}
       {adding && (
-        <div style={s.card}>
-          <div style={s.sectionHeader}>New Lead</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
-            {[
-              { label: 'Business Name *', field: 'businessName' },
-              { label: 'Contact Name', field: 'contactName' },
-              { label: 'Email', field: 'email' },
-              { label: 'Phone', field: 'phone' },
-              { label: 'Website', field: 'website' },
-              { label: 'City', field: 'city' },
-              { label: 'Category', field: 'category' }
-            ].map(({ label, field }) => (
-              <div key={field}>
-                <label style={s.label} htmlFor="leads-field-3">{label}</label>
-                <input id="leads-field-3" style={s.input} value={(form as Record<string, string>)[field]} onChange={ff(field)} />
-              </div>
-            ))}
-            <div style={{ gridColumn: '1/-1' }}>
-              <label style={s.label} htmlFor="leads-field-4">Notes</label>
-              <textarea id="leads-field-4" style={{ ...s.textarea, height: 60 }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button style={s.btn} disabled={saving} onClick={addLead}>{saving ? 'Saving…' : 'Save Lead'}</button>
-            <button style={{ ...s.btn, background: '#1f2937' }} onClick={() => setAdding(false)}>Cancel</button>
-          </div>
-        </div>
+        <AddLeadForm
+          form={form}
+          setForm={setForm}
+          saving={saving}
+          onSave={addLead}
+          onCancel={() => setAdding(false)}
+        />
       )}
 
-      {/* Table */}
-      <div style={s.card} onClick={() => setShowBulkMenu(false)}>
-        {loading && leads.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 32 }}><Spinner /></div>
-        ) : leads.length === 0 ? (
-          <EmptyState
-            title="No leads found"
-            description="Add your first lead or import a CSV."
-            action={canManage ? <button style={s.btn} onClick={() => setAdding(true)}>+ Add Lead</button> : undefined}
-          />
-        ) : (
-          <Table<Lead>
-            columns={columns}
-            rows={sortedLeads}
-            rowKey={l => l.id}
-            onRowClick={l => setSelected(selected?.id === l.id ? null : l)}
-            sort={sort}
-            onSortChange={setSort}
-            {...(canManage ? { selectedKeys: selectedIds, onToggleRow: (id: string) => toggleSelect(id), onToggleAll: toggleAllLeads } : {})}
-          />
-        )}
+      <LeadsTable
+        leads={leads}
+        sortedLeads={sortedLeads}
+        loading={loading}
+        canManage={canManage}
+        onRowClick={l => setSelected(selected?.id === l.id ? null : l)}
+        sort={sort}
+        onSortChange={setSort}
+        selectedIds={selectedIds}
+        onToggleRow={toggleSelect}
+        onToggleAll={toggleAllLeads}
+        onDeleteRequest={setDeleteTarget}
+        onAddClick={() => setAdding(true)}
+        onDismissMenu={() => setShowBulkMenu(false)}
+        total={total}
+        page={page}
+        onPageChange={setPage}
+        limit={LIMIT}
+      />
 
-        {total > LIMIT && (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 16 }}>
-            <button style={s.btnSm} disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-            <span style={{ color: colors.textFaint, fontSize: 13 }}>Page {page} of {Math.ceil(total / LIMIT)}</span>
-            <button style={s.btnSm} disabled={leads.length < LIMIT} onClick={() => setPage(p => p + 1)}>Next →</button>
-          </div>
-        )}
-      </div>
-
-      {/* Detail panel */}
       {selected && (
         <LeadDetailPanel
           lead={selected}
