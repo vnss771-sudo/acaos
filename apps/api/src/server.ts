@@ -49,6 +49,9 @@ import { setProviderCallObserver } from '@acaos/backend-core/lib/observability.j
 import { incProviderCall } from './lib/metrics.js'
 import { attachBreakerStore } from './lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+import { Redis as IORedis } from 'ioredis'
+import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
+import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
 
 validateConfig()
 
@@ -271,15 +274,16 @@ async function warnIfAdminEmailStillSetPostBootstrap(): Promise<void> {
 }
 void warnIfAdminEmailStillSetPostBootstrap()
 
-// An unbounded Postgres connection pool (no `connection_limit` on DATABASE_URL)
-// is a real production risk under load — every replica opens Prisma's default
-// pool size with no shared ceiling, and Postgres has a hard max_connections.
+// Prisma itself now pins a bounded connection_limit when DATABASE_URL doesn't
+// set one (packages/backend-core/src/lib/prisma.ts, via databaseUrl.ts) — this
+// warning stays as a nudge to size it deliberately per replica/topology
+// instead of relying on the built-in default.
 // Sync/cheap, so it runs directly rather than as a fire-and-forget async check.
 function warnIfDatabaseUrlMissingConnectionLimit(): void {
   if (!isProduction()) return
   const url = process.env.DATABASE_URL
   if (url && !/[?&]connection_limit=/.test(url)) {
-    logger.warn('DATABASE_URL has no connection_limit set in production; an unbounded connection pool is a scale risk', { service: SERVICE })
+    logger.warn('DATABASE_URL has no connection_limit set in production; falling back to a built-in default pool size (DB_POOL_SIZE) — size it deliberately per docs/OPERATIONS.md', { service: SERVICE })
   }
 }
 warnIfDatabaseUrlMissingConnectionLimit()
@@ -290,6 +294,20 @@ setProviderCallObserver(incProviderCall)
 
 if (process.env.REDIS_URL) {
   attachBreakerStore(createRedisBreakerStore(getRedis()))
+
+  // Cross-pod ingestCache invalidation (see ingestCacheInvalidation.ts): a
+  // dedicated subscriber connection, since ioredis puts a client that issues
+  // SUBSCRIBE into subscriber mode where it can no longer run other commands
+  // — the shared getRedis() client stays free for PUBLISH and everything else.
+  const ingestCacheSubscriber = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    lazyConnect: true,
+  })
+  ingestCacheSubscriber.on('error', (err: Error) => {
+    logger.warn('ingest-cache invalidation subscriber error', { service: SERVICE, err: err.message })
+  })
+  attachIngestCacheInvalidator(createIngestCacheInvalidator(getRedis(), ingestCacheSubscriber))
 }
 
 const port = Number(process.env.PORT || 4000)
