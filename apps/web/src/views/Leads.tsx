@@ -7,6 +7,7 @@ import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
 import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Modal } from '../components/ui/Modal.js'
+import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -640,6 +641,56 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const ff = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [field]: e.target.value }))
 
+  // Client-side sort of the loaded page — same approach as Prospects.tsx. Default
+  // (no sort) preserves server order; sorting only reorders the current page since
+  // pagination itself stays server-side.
+  const [sort, setSort] = useState<SortState | undefined>()
+  const sortedLeads = useMemo(() => {
+    if (!sort) return leads
+    const dir = sort.dir === 'asc' ? 1 : -1
+    const val = (l: Lead): string | number => {
+      switch (sort.key) {
+        case 'businessName': return (l.businessName ?? '').toLowerCase()
+        case 'contactName': return (l.contactName ?? '').toLowerCase()
+        case 'email': return (l.email ?? '').toLowerCase()
+        case 'category': return (l.category ?? '').toLowerCase()
+        case 'stage': return l.stage ?? ''
+        case 'score': return l.score ?? 0
+        default: return ''
+      }
+    }
+    return [...leads].sort((a, b) => {
+      const av = val(a), bv = val(b)
+      return av < bv ? -dir : av > bv ? dir : 0
+    })
+  }, [leads, sort])
+
+  const columns: Column<Lead>[] = [
+    {
+      key: 'businessName', header: 'Business', sortable: true,
+      render: l => (
+        <span style={{ color: colors.text, fontSize: 14, fontWeight: 500 }}>
+          {l.businessName}
+          {l.outreachSkippedAt && <span style={{ ...s.badge(colors.amber), marginLeft: 6 }} title="Outreach skipped — poor fit">skipped</span>}
+        </span>
+      ),
+    },
+    { key: 'contactName', header: 'Contact', sortable: true, render: l => <span style={{ color: colors.textMuted, fontSize: 13 }}>{l.contactName || '–'}</span> },
+    { key: 'email', header: 'Email', sortable: true, render: l => <span style={{ color: colors.textMuted, fontSize: 13 }}>{l.email || '–'}</span> },
+    { key: 'category', header: 'Category', sortable: true, render: l => <span style={{ color: colors.textFaint, fontSize: 12 }}>{l.category || '–'}</span> },
+    { key: 'stage', header: 'Stage', sortable: true, render: l => <span style={s.badge(STAGE_COLOR[l.stage] || colors.textFaint)}>{l.stage}</span> },
+    { key: 'score', header: 'Score', sortable: true, render: l => <ScorePill score={l.score} /> },
+    ...(canManage ? [{
+      key: 'actions', header: '', render: (l: Lead) => (
+        <div onClick={e => e.stopPropagation()}>
+          <button style={s.btnDanger} aria-label={`Delete lead ${l.businessName}`} onClick={() => setDeleteTarget(l)}>✕</button>
+        </div>
+      ),
+    } as Column<Lead>] : []),
+  ]
+
+  const toggleAllLeads = () => setSelectedIds(allSelected ? new Set() : new Set(leads.map(l => l.id)))
+
   return (
     <div style={s.stack}>
       {loadError && <ErrorBanner message="Failed to load leads." onRetry={fetchLeads} />}
@@ -772,53 +823,15 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
             action={canManage ? <button style={s.btn} onClick={() => setAdding(true)}>+ Add Lead</button> : undefined}
           />
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${colors.borderLight}` }}>
-                <th style={{ width: 32, padding: '8px 12px' }}>
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={e => setSelectedIds(e.target.checked ? new Set(leads.map(l => l.id)) : new Set())}
-                  />
-                </th>
-                {['Business', 'Contact', 'Email', 'Category', 'Stage', 'Score', ''].map(h => (
-                  <th key={h} style={{ padding: '8px 12px', color: colors.textFaint, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map(lead => (
-                <tr
-                  key={lead.id}
-                  style={{ borderBottom: `1px solid ${colors.borderLight}`, cursor: 'pointer', background: selected?.id === lead.id ? '#0f172a' : 'transparent' }}
-                  onClick={() => setSelected(selected?.id === lead.id ? null : lead)}
-                >
-                  <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selectedIds.has(lead.id)} onChange={() => toggleSelect(lead.id)} />
-                  </td>
-                  <td style={{ padding: '10px 12px', color: colors.text, fontSize: 14, fontWeight: 500 }}>
-                    {lead.businessName}
-                    {lead.outreachSkippedAt && <span style={{ ...s.badge(colors.amber), marginLeft: 6 }} title="Outreach skipped — poor fit">skipped</span>}
-                  </td>
-                  <td style={{ padding: '10px 12px', color: colors.textMuted, fontSize: 13 }}>{lead.contactName || '–'}</td>
-                  <td style={{ padding: '10px 12px', color: colors.textMuted, fontSize: 13 }}>{lead.email || '–'}</td>
-                  <td style={{ padding: '10px 12px', color: colors.textFaint, fontSize: 12 }}>{lead.category || '–'}</td>
-                  <td style={{ padding: '10px 12px' }}>
-                    <span style={s.badge(STAGE_COLOR[lead.stage] || colors.textFaint)}>{lead.stage}</span>
-                  </td>
-                  <td style={{ padding: '10px 12px' }}>
-                    <ScorePill score={lead.score} />
-                  </td>
-                  <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
-                    {canManage && <button style={s.btnDanger} aria-label={`Delete lead ${lead.businessName}`} onClick={() => setDeleteTarget(lead)}>✕</button>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Table<Lead>
+            columns={columns}
+            rows={sortedLeads}
+            rowKey={l => l.id}
+            onRowClick={l => setSelected(selected?.id === l.id ? null : l)}
+            sort={sort}
+            onSortChange={setSort}
+            {...(canManage ? { selectedKeys: selectedIds, onToggleRow: (id: string) => toggleSelect(id), onToggleAll: toggleAllLeads } : {})}
+          />
         )}
 
         {total > LIMIT && (

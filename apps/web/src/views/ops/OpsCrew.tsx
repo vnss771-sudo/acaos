@@ -195,7 +195,7 @@ export function OpsCrew({ api, workspace, toast, canManage = false, setView }: P
       key: 'actions', header: '', render: (m: OpsCrewMember) => (
         <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
           <button style={s.btnSm} onClick={() => openEdit(m)}>Edit</button>
-          {m.isActive && <button style={s.btnDanger} onClick={() => setDeactivateTarget(m)}>Deactivate</button>}
+          {m.isActive && <button style={s.btnWarning} onClick={() => setDeactivateTarget(m)}>Deactivate</button>}
         </div>
       ),
     } as Column<OpsCrewMember>] : []),
@@ -281,7 +281,7 @@ export function OpsCrew({ api, workspace, toast, canManage = false, setView }: P
         width={420}
         footer={<>
           <button style={s.btnSecondary} onClick={() => setDeactivateTarget(null)}>Cancel</button>
-          <button style={s.btnDanger} disabled={deactivating} onClick={confirmDeactivate}>
+          <button style={s.btnWarning} disabled={deactivating} onClick={confirmDeactivate}>
             {deactivating ? 'Deactivating…' : 'Deactivate'}
           </button>
         </>}

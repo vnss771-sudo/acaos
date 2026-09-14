@@ -112,6 +112,21 @@ export const s = {
     fontSize: 13
   } as React.CSSProperties,
 
+  // For actions that remove something from active use but keep its history
+  // (soft-delete/deactivate/archive) — reversible in effect, so it shouldn't wear
+  // the same red as a genuinely irreversible delete. Same dark/light pairing
+  // convention as btnDanger, in amber (matches the existing warning-banner button
+  // in Settings.tsx).
+  btnWarning: {
+    padding: '6px 12px',
+    borderRadius: 6,
+    border: 'none',
+    background: '#92400e',
+    color: '#fbbf24',
+    cursor: 'pointer',
+    fontSize: 13
+  } as React.CSSProperties,
+
   btnGhost: {
     padding: '8px 14px',
     borderRadius: 6,

@@ -43,6 +43,10 @@ export function OpsDashboard({ api, workspace, toast, setView }: Props) {
     <div>
       <OpsSubNav view="ops-dashboard" setView={setView} />
 
+      <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 16 }}>
+        Field Ops is the operational side of the product — crew, job sites, and shift scheduling. It's separate from Leads/Campaigns, which cover sales and outreach.
+      </div>
+
       {loading && !overview ? (
         <Grid cols={4}>
           {[0, 1, 2, 3].map(i => <Card key={i}><Skeleton height={70} /></Card>)}
