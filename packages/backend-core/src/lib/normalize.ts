@@ -64,6 +64,38 @@ export function isDeliverableEmail(email: string | null | undefined): boolean {
 }
 
 /**
+ * True for a syntactically well-formed http(s) URL. Used to validate a
+ * model- or user-supplied `sourceUrl` before it's trusted as citable evidence
+ * provenance — a malformed string (or a non-http(s) scheme like `javascript:`)
+ * must never be persisted as though it were a real, followable citation.
+ */
+export function isWellFormedHttpUrl(value: string | null | undefined): boolean {
+  if (!value) return false
+  try {
+    const u = new URL(value)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True when a URL's hostname is the same as, a subdomain of, or a parent
+ * domain of a reference domain/website. Used to cross-check that a citation
+ * URL is actually about the record it's attached to (e.g. a Lead's `website`
+ * or a Prospect's `domain`) rather than an unrelated site the model
+ * hallucinated or a user pasted by mistake. Deliberately lenient in both
+ * directions (subdomain either way) since `www.` / regional-subdomain
+ * mismatches between the two inputs are common and not a real mismatch.
+ */
+export function urlHostnameMatchesDomain(url: string, referenceDomain: string): boolean {
+  const urlHost = normalizeDomain(url)
+  const refHost = normalizeDomain(referenceDomain)
+  if (!urlHost || !refHost) return false
+  return urlHost === refHost || urlHost.endsWith(`.${refHost}`) || refHost.endsWith(`.${urlHost}`)
+}
+
+/**
  * Suppression/contact-key normalization: trim + lowercase ONLY. Deliberately does
  * NOT fold plus-addressing — for suppression and contact-frequency we treat
  * `john+test@x.com` and `john@x.com` as DISTINCT recipients (provider-specific

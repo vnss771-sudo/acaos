@@ -179,7 +179,7 @@ const researchWorker = new Worker(
           stage: 'RESEARCHED'
         }
       })
-      await replaceLeadEvidence(tx, { workspaceId: lead.workspaceId, leadId, evidence: parsed.evidence })
+      await replaceLeadEvidence(tx, { workspaceId: lead.workspaceId, leadId, evidence: parsed.evidence, website: lead.website })
     })
 
     await job.updateProgress(100)
