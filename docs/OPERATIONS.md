@@ -76,11 +76,58 @@ by the same optional `METRICS_TOKEN`:
 Suggested alert: sustained `bullmq_queue_jobs{state="waiting"}` on `send-campaign`
 (a stuck send queue = unsent outreach), and any growth in `{state="failed"}`.
 
+### Multi-replica metric aggregation
+
+Every counter/gauge above is computed **in-process** — there is no shared
+Prometheus registry (`renderMetrics()`/`renderWorkerMetrics()` in
+`lib/metrics.ts` read from plain in-memory maps). Running more than one API
+or worker replica means a single `/metrics` scrape only ever sees that one
+replica's numbers. Getting a correct fleet-wide dashboard/alert needs two
+things:
+
+1. **Scrape every replica as its own target.** `prometheus.yml`'s
+   `static_configs` must list each replica (or use `dns_sd_configs`/your
+   platform's service discovery) — never a single load-balanced hostname. A
+   scrape that round-robins across replicas makes every counter look like it
+   resets/jumps at random, which breaks `rate()`/`increase()` regardless of
+   the query used downstream. See the comment block at the top of
+   `ops/monitoring/prometheus.yml`.
+2. **Aggregate with the right function**, because not every series means the
+   same thing across replicas:
+   - **Per-process counters** (`http_requests_total`, `worker_jobs_total`,
+     `acaos_send_outcomes_total`, `acaos_ai_cost_cents_total`, …) — each
+     replica only counts what it personally handled, so `sum(rate(...))`
+     across replicas gives the true fleet rate. This is what `alerts.yml`
+     and the Grafana dashboard already do for these.
+   - **Gauges sourced from state every replica sees identically** —
+     `bullmq_queue_jobs` (read from the shared Redis queue) and the worker's
+     DB-derived deliverability snapshot (`acaos_followup_*`,
+     `acaos_sender_*`, `acaos_warmup_*`) are recomputed by *every* worker
+     replica on its own scrape and come out the same. **`sum()` here
+     multiplies the true value by the replica count** — use `max()` (or
+     `min()`/`avg()`; they're equivalent up to scrape-timing jitter) instead.
+   - **Genuinely per-replica in-memory state** — `acaos_circuit_open` (each
+     process's own provider circuit breaker) — use `max()` to mean "open on
+     at least one replica," the actionable signal for that alert.
+
+`ops/monitoring/recording_rules.yml` pre-computes the correct form of every
+series above as `job:*` rules — prefer those in new dashboards/alerts over
+re-deriving the aggregation function each time. `alerts.yml`'s rules already
+use the right function per series (`max()` on the Redis/DB-shared gauges,
+`sum(rate())` on the per-process counters).
+
+A **push-gateway pattern was considered and rejected** for the worker: the
+worker runs as a long-lived process with a continuously-scraped `/metrics`
+(`WORKER_HEALTH_PORT`), not a short-lived batch job that could vanish between
+scrapes — the scrape-and-aggregate approach above is the right fit, not
+push-gateway's "push before exit."
+
 ### Ready-to-use monitoring assets
 
 [`ops/monitoring/`](../ops/monitoring/) ships an importable Grafana dashboard,
 Prometheus alert rules (5xx rate, p99 latency, saturation, send-campaign backlog,
-job failures, target down), and a scrape config wired to these exact series — see
+job failures, target down), replica-aggregation recording rules
+(`recording_rules.yml`), and a scrape config wired to these exact series — see
 [`ops/monitoring/README.md`](../ops/monitoring/README.md).
 
 ## Error reporting (Sentry — optional)
@@ -103,6 +150,43 @@ only turn on in production.
 With no DSN, error reporting is a **no-op** and the app behaves exactly as in
 dev/CI — telemetry never crashes startup. Any transport can be substituted by
 calling `setErrorReporter()` directly instead of `initErrorReporting()`.
+
+## Distributed tracing (OpenTelemetry — optional)
+
+The core outreach flow crosses three processes: an API route enqueues a BullMQ
+job, a worker picks it up, and the worker calls out to an AI provider / SMTP /
+Postgres. Correlating "why was this campaign send slow" across those three
+previously meant grep-ing three log streams by `requestId` (still true — see
+below). `lib/tracing.ts` adds real distributed tracing on top of that: a span
+is created where a route enqueues a job (`withEnqueueSpan`, wired into every
+`enqueue*` in `lib/queues.ts`), its W3C `traceparent` is stamped onto the job
+payload (`queueSchemas.ts`'s envelope), and the worker continues the SAME
+trace as a child span when it processes the job (`withConsumerSpan`, wired
+into every `Worker` in `worker.ts`) — so a tracing backend shows one trace per
+request across the whole API → queue → worker journey instead of three
+separate spans an operator has to stitch together by hand.
+
+This **complements, not replaces**, the existing `requestId` log correlation:
+both are stamped as attributes on every span (`acaos.request_id`,
+`acaos.workspace_id`), so an operator can jump from a log line to a trace and
+back. A worker-internal job with no originating API request (the daily
+retention sweep, the periodic follow-up scan) still gets its own root span
+instead of being skipped.
+
+Built on the real `@opentelemetry/api`, but with **manual spans only — no
+auto-instrumentation package** (`@opentelemetry/sdk-node`'s per-library
+auto-instrumentation meta-package is not a dependency). That mirrors why this
+app hand-rolls its own Prometheus metrics and its own minimal Sentry HTTP
+transport instead of `@sentry/node` (see above): spans are created by hand at
+exactly the two points that matter, so the heavier auto-instrumentation
+surface would only add dependency-review weight for nothing this app uses.
+
+**Set `OTEL_EXPORTER_OTLP_ENDPOINT`** to a collector's base URL to export real
+spans via OTLP/HTTP. With no endpoint set, every span is a genuine no-op (the
+OpenTelemetry API's global tracer is a no-op until a provider is registered)
+and no `traceparent` is added to job payloads — tracing never changes
+behavior in dev/CI. `OTEL_CONSOLE_EXPORTER=true` prints spans to stdout
+instead, for local debugging only (never set it in production).
 
 ## Load testing
 
@@ -181,6 +265,7 @@ nothing to check against.
 | Metrics (worker) | `GET :WORKER_HEALTH_PORT/metrics` |
 | Security policy | [`SECURITY.md`](../SECURITY.md) |
 | Error transport | `SENTRY_DSN` (built-in HTTP transport, no SDK install) |
+| Distributed tracing | `OTEL_EXPORTER_OTLP_ENDPOINT` (no-op unset) — `lib/tracing.ts` |
 | Load test | `npm run loadtest` |
 | Pool sizing | `DATABASE_URL?connection_limit=…` |
 | Deploy steps | [`LAUNCH_RUNBOOK.md`](./LAUNCH_RUNBOOK.md) |

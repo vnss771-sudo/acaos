@@ -1,7 +1,8 @@
 import { Redis as IORedis } from 'ioredis'
-import { Queue } from 'bullmq'
+import { Queue, type Job, type JobsOptions } from 'bullmq'
 import { createHash } from 'node:crypto'
 import { CURRENT_PAYLOAD_VERSION } from './queueSchemas.js'
+import { withEnqueueSpan } from './tracing.js'
 
 let _connection: IORedis | null = null
 
@@ -50,6 +51,23 @@ export function getQueue(name: string): Queue {
   return _queues.get(name)!
 }
 
+// Every enqueue below routes through this: it stamps schemaVersion (as every
+// producer already did) AND wraps the .add() in a tracing span whose W3C
+// traceparent is injected onto the payload as `traceparent` — see
+// lib/tracing.ts. Centralized here so the ~11 enqueue functions below don't
+// each hand-roll the same span/attribute wiring.
+async function addTraced(queueName: string, jobName: string, data: Record<string, unknown>, jobOpts: JobsOptions): Promise<Job> {
+  return withEnqueueSpan(
+    queueName,
+    jobName,
+    {
+      'acaos.request_id': typeof data.requestId === 'string' ? data.requestId : undefined,
+      'acaos.workspace_id': typeof data.workspaceId === 'string' ? data.workspaceId : undefined,
+    },
+    (traceparent) => getQueue(queueName).add(jobName, { ...data, schemaVersion: CURRENT_PAYLOAD_VERSION, traceparent }, jobOpts),
+  )
+}
+
 // Cap retained job records so completed/failed jobs don't accumulate unbounded in
 // Redis. The AI queues run one job per lead, so without these the high-volume
 // queues grow forever. Keep the last 1000 completed (or anything older than a day)
@@ -68,21 +86,22 @@ const aiJobOpts = { attempts: 3, backoff: { type: 'exponential', delay: 35_000 }
 // optional initiatedByUserId. Object params prevent the positional confusion that
 // previously let ingest pass a workspaceId into a `userId` field.
 export async function enqueueResearchLead(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string; requestId?: string }) {
-  return getQueue('research-lead').add('research-lead', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
+  return addTraced('research-lead', 'research-lead', opts, aiJobOpts)
 }
 
 export async function enqueueGenerateOutreach(opts: { leadId: string; workspaceId: string; initiatedByUserId?: string; requestId?: string; override?: boolean }) {
-  return getQueue('generate-outreach').add('generate-outreach', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
+  return addTraced('generate-outreach', 'generate-outreach', opts, aiJobOpts)
 }
 
 export async function enqueueAnalyzeReply(opts: { replyBody: string; workspaceId: string; leadId?: string; initiatedByUserId?: string; requestId?: string }) {
-  return getQueue('analyze-reply').add('analyze-reply', { ...opts, schemaVersion: CURRENT_PAYLOAD_VERSION }, aiJobOpts)
+  return addTraced('analyze-reply', 'analyze-reply', opts, aiJobOpts)
 }
 
 export async function enqueueSyncMailbox(workspaceId: string, userId?: string, requestId?: string) {
-  return getQueue('sync-mailbox').add(
+  return addTraced(
     'sync-mailbox',
-    { workspaceId, userId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    'sync-mailbox',
+    { workspaceId, userId, requestId },
     // Bounded retention like every other queue — the auto-sync scheduler enqueues
     // these continuously, so without it completed/failed sync jobs grow unbounded
     // in Redis.
@@ -96,7 +115,7 @@ export async function getJobById(queueName: string, jobId: string) {
 }
 
 export async function enqueueScoreProspects(workspaceId: string, requestId?: string) {
-  return getQueue('score-prospects').add('score-prospects', { workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+  return addTraced('score-prospects', 'score-prospects', { workspaceId, requestId }, defaultJobOpts)
 }
 
 // Async prospect discovery. attempts:1 — a discovery run calls a metered, paid
@@ -104,18 +123,18 @@ export async function enqueueScoreProspects(workspaceId: string, requestId?: str
 // failed run must not silently re-hit the provider; failures surface as a FAILED
 // (or PARTIAL) DiscoveryRun for the operator instead of being auto-retried.
 export async function enqueueDiscoverProspects(runId: string, workspaceId: string, requestId?: string) {
-  return getQueue('discover-prospects').add('discover-prospects', { runId, workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
+  return addTraced('discover-prospects', 'discover-prospects', { runId, workspaceId, requestId }, {
     attempts: 1,
     ...jobRetention,
   })
 }
 
 export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string, requestId?: string) {
-  return getQueue('generate-recommendations').add('generate-recommendations', { prospectId, workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+  return addTraced('generate-recommendations', 'generate-recommendations', { prospectId, workspaceId, requestId }, defaultJobOpts)
 }
 
 export async function enqueueCalibrate(workspaceId: string, requestId?: string) {
-  return getQueue('calibrate-scoring').add('calibrate-scoring', { workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, defaultJobOpts)
+  return addTraced('calibrate-scoring', 'calibrate-scoring', { workspaceId, requestId }, defaultJobOpts)
 }
 
 // Deterministic jobId so repeated "launch" clicks within the same minute collapse
@@ -138,7 +157,7 @@ export function sendCampaignJobId(
 }
 
 export async function enqueueSendCampaign(campaignId: string, workspaceId: string, leadIds?: string[], requestId?: string) {
-  return getQueue('send-campaign').add('send-campaign', { campaignId, workspaceId, leadIds, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION }, {
+  return addTraced('send-campaign', 'send-campaign', { campaignId, workspaceId, leadIds, requestId }, {
     jobId: sendCampaignJobId(campaignId, workspaceId, leadIds),
     attempts: 2,
     backoff: { type: 'exponential', delay: 10_000 },
@@ -159,9 +178,10 @@ export function sendFollowupJobId(taskId: string, now: number = Date.now()): str
 }
 
 export async function enqueueSendFollowup(taskId: string, workspaceId?: string, requestId?: string) {
-  return getQueue('send-followup').add(
+  return addTraced(
     'send-followup',
-    { taskId, workspaceId, requestId, schemaVersion: CURRENT_PAYLOAD_VERSION },
+    'send-followup',
+    { taskId, workspaceId, requestId },
     { jobId: sendFollowupJobId(taskId), attempts: 2, backoff: { type: 'exponential', delay: 30_000 }, ...jobRetention },
   )
 }

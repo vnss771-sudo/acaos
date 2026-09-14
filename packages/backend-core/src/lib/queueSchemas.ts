@@ -16,13 +16,18 @@ const id = z.string().min(1)
 // breaks an older worker — versioning is for INTENTIONAL shape changes.
 export const CURRENT_PAYLOAD_VERSION = 1
 
-// Common envelope fields carried by every job payload. Both optional so a job
-// enqueued by an older producer (no version/requestId) still validates.
+// Common envelope fields carried by every job payload. All optional so a job
+// enqueued by an older producer (no version/requestId/traceparent) still
+// validates.
 //   schemaVersion — the producer's CURRENT_PAYLOAD_VERSION at enqueue time
 //   requestId     — correlates API request → queue job → worker logs
+//   traceparent   — W3C Trace Context (see lib/tracing.ts) carrying the
+//                    enqueueing span's context, so the worker continues the
+//                    SAME distributed trace instead of starting a new one
 const meta = {
   schemaVersion: z.number().int().nonnegative().optional(),
   requestId: id.optional(),
+  traceparent: z.string().optional(),
 } as const
 
 // workspaceId is REQUIRED on lead-scoped jobs: the processor fetches the lead by

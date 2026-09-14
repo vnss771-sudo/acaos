@@ -44,6 +44,7 @@ import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { getRedis } from './lib/redis.js'
 import { initErrorReporting } from './lib/errorReporting.js'
+import { initTracing } from '@acaos/backend-core/lib/tracing.js'
 import { setProviderCallObserver } from '@acaos/backend-core/lib/observability.js'
 import { incProviderCall } from './lib/metrics.js'
 import { attachBreakerStore } from './lib/circuit.js'
@@ -241,6 +242,10 @@ assertStripePricesConfigured().catch((err: Error) => {
 })
 
 void initErrorReporting()
+
+// Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
+// debugging, OTEL_CONSOLE_EXPORTER) is set — see lib/tracing.ts.
+initTracing(SERVICE)
 
 // ADMIN_EMAIL is a one-time bootstrap escalation vector (see routes/admin.ts):
 // once a matching user has been promoted, the DB flag (`isPlatformAdmin`) is the
