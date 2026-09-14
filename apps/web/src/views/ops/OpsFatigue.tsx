@@ -66,7 +66,7 @@ export function OpsFatigue({ api, workspace, toast, setView }: Props) {
     { key: 'riskLevel', header: 'Risk Level', render: r => <Badge color={RISK_COLOR[r.riskLevel] ?? colors.textFaint}>{r.riskLevel}</Badge> },
     { key: 'riskScore', header: 'Score', align: 'right', render: r => r.riskScore },
     { key: 'totalHours7d', header: 'Hours (7d)', align: 'right', render: r => r.totalHours7d },
-    { key: 'consecutiveDays', header: 'Consecutive Days', align: 'right', render: r => r.consecutiveDays },
+    { key: 'consecutiveDays', header: 'Consecutive Days', align: 'right', render: r => `${r.consecutiveDays}${r.consecutiveDaysCapped ? '+' : ''}` },
     {
       key: 'recommendation',
       header: 'Recommendation',

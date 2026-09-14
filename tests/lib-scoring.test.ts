@@ -79,6 +79,24 @@ describe('computeLeadScore', () => {
     assert.ok(perfect >= 70, `Fully qualified lead should score ≥70, got ${perfect}`)
   })
 
+  it('scores the 10-50 sweet-spot team size higher than an unknown/default size', () => {
+    const unknown = computeLeadScore(lead())
+    const sweetSpot = computeLeadScore(lead({ estimatedTeamSize: '10-50' } as Parameters<typeof computeLeadScore>[0]))
+    assert.ok(sweetSpot > unknown, `sweetSpot ${sweetSpot} should beat unknown ${unknown}`)
+  })
+
+  it('scores an oversized team lower than an unknown/default size', () => {
+    const unknown = computeLeadScore(lead())
+    const tooBig = computeLeadScore(lead({ estimatedTeamSize: '500+' } as Parameters<typeof computeLeadScore>[0]))
+    assert.ok(tooBig < unknown, `tooBig ${tooBig} should be below unknown ${unknown}`)
+  })
+
+  it('falls back to the neutral default when estimatedTeamSize is missing', () => {
+    const noSize = computeLeadScore(lead())
+    const explicitNull = computeLeadScore(lead({ estimatedTeamSize: null } as Parameters<typeof computeLeadScore>[0]))
+    assert.equal(noSize, explicitNull)
+  })
+
   it('uses custom weights correctly', () => {
     const weights = { ...DEFAULT_SCORING_WEIGHTS, industry: 0, contact: 1.0, size: 0, hiring: 0, tech: 0, growth: 0, messageRelevance: 0, channelFit: 0, timingFit: 0, dataFreshness: 0 }
     const withEmail = computeLeadScore(lead({ email: 'a@b.com' }), weights)

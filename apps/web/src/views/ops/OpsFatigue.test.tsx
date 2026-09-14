@@ -19,6 +19,7 @@ const report: OpsFatigueRisk = {
   totalHours7d: 52,
   avgHoursPerDay: 7.4,
   consecutiveDays: 5,
+  consecutiveDaysCapped: false,
   lastShiftDate: '2026-09-10T00:00:00.000Z',
   recommendation: 'Limit to a single shift per day and enforce the minimum rest period between shifts before the next roster.',
 }

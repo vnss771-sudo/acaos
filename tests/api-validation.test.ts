@@ -9,7 +9,7 @@ import {
   normalizeOptionalString,
   sanitizeWorkspaceSlug,
   validatePassword
-} from '../apps/api/src/lib/validation.ts'
+} from '../apps/api/src/lib/textNormalize.ts'
 import { getJwtSecret, signJwt, verifyJwt, generateRefreshToken, hashRefreshToken } from '../packages/backend-core/src/lib/jwt.ts'
 
 // ── Email ─────────────────────────────────────────────────────────────────────

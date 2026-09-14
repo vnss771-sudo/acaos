@@ -5,6 +5,7 @@ import cors from 'cors'
 import compression from 'compression'
 import { authRouter } from './routes/auth.js'
 import { billingRouter } from './routes/billing.js'
+import { assertStripePricesConfigured } from './services/stripe.js'
 import { aiRouter } from './routes/ai.js'
 import { mailboxRouter } from './routes/mailbox.js'
 import { workspaceRouter } from './routes/workspaces.js'
@@ -228,6 +229,15 @@ app.use(errorHandler)
 
 getRedis().connect().catch((err: Error) => {
   logger.warn('api redis initial connection failed', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
+})
+
+// Boot-time Stripe price check: a transposed or wrong-environment
+// STRIPE_PRICE_* id fails loudly here instead of silently granting the wrong
+// tier the first time a real customer checks out. Non-fatal (fire-and-forget,
+// like the redis connect above) — see assertStripePricesConfigured's own
+// comment for why Stripe being unconfigured at all is not an error.
+assertStripePricesConfigured().catch((err: Error) => {
+  logger.error('stripe price boot check threw unexpectedly', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
 })
 
 void initErrorReporting()

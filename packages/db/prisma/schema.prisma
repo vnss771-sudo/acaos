@@ -1335,6 +1335,13 @@ model OpsAlert {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
+  // At most one alert row per shift+type: reconcileShiftAlerts() upserts against
+  // this (across every status, not just OPEN) so a condition that re-triggers
+  // after a reviewer already actioned the alert reopens that same row instead of
+  // creating a duplicate. NULL shiftRecordId values are each distinct under this
+  // constraint (standard SQL NULL semantics), which is fine — every alert this
+  // module creates today is shift-scoped.
+  @@unique([shiftRecordId, alertType])
   @@index([workspaceId, status])
   @@index([workspaceId, severity])
   @@index([workspaceId, createdAt])

@@ -418,6 +418,9 @@ export type OpsFatigueRisk = {
   totalHours7d: number
   avgHoursPerDay: number
   consecutiveDays: number
+  // True when the streak fills the server's lookback window — the real streak
+  // may be longer than `consecutiveDays` reports. Render "N+" in that case.
+  consecutiveDaysCapped: boolean
   lastShiftDate: string | null
   recommendation: string
 }

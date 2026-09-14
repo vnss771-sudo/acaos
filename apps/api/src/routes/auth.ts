@@ -20,7 +20,7 @@ import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-cor
 import { authRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
-import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/validation.js'
+import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/textNormalize.js'
 import { resolveUniqueWorkspaceSlug, normalizeWorkspaceRole } from '../lib/workspaces.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import { validate, emailField, passwordField } from '../lib/validate.js'

@@ -3,7 +3,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { scoreProspects, calibrateScoring, applyReplyAnalysis } from '../apps/worker/src/processors.ts'
+import { scoreProspects, calibrateScoring, applyReplyAnalysis, researchLead, generateOutreachDraft } from '../apps/worker/src/processors.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
@@ -195,4 +195,161 @@ test('applyReplyAnalysis on an auto-reply stamps the send but does NOT advance t
   const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } })
   assert.equal(updatedLead!.stage, 'OUTREACH_SENT') // unchanged
   assert.equal(await prisma.scoringOutcome.count({ where: { leadId: lead.id } }), 0)
+})
+
+test('applyReplyAnalysis feeds the SAME learning loop as POST /api/outcomes: the 7th outcome retunes weights', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+
+  // The first 6 replies must not trigger a recompute yet.
+  for (let i = 0; i < 6; i += 1) {
+    const { lead } = await seedRepliedLeadWithSend(workspace.id, `replier-${i}@x.test`)
+    await applyReplyAnalysis(lead.id, { classification: 'INTERESTED', confidence: 90, isAutoReply: false })
+  }
+  const modelBefore = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
+  assert.ok(modelBefore, 'a scoring model exists after the first outcome')
+  assert.equal(modelBefore!.updateCount, 0, 'fewer than 7 outcomes must not retune weights yet')
+
+  // The 7th reply crosses the recompute threshold.
+  const { lead: seventhLead } = await seedRepliedLeadWithSend(workspace.id, 'replier-6@x.test')
+  await applyReplyAnalysis(seventhLead.id, { classification: 'INTERESTED', confidence: 90, isAutoReply: false })
+
+  const modelAfter = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
+  assert.equal(await prisma.scoringOutcome.count({ where: { workspaceId: workspace.id } }), 7)
+  assert.equal(modelAfter!.updateCount, 1, 'the 7th outcome from the product\'s own reply pipeline must trigger a retune, matching the external FieldOps ingest path')
+  assert.ok(modelAfter!.lastWeightUpdate, 'lastWeightUpdate must be stamped')
+})
+
+// --- researchLead (extracted from worker.ts's research-lead handler) ---
+
+test('researchLead persists the intelligence snapshot, evidence rows, and score; advances the lead to RESEARCHED', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await prisma.lead.create({
+    data: { workspaceId: workspace.id, businessName: 'Acme Plumbing', website: 'https://acmeplumbing.test', category: 'plumbing', stage: 'NEW' },
+  })
+
+  const raw = JSON.stringify({
+    aiSummary: 'Growing plumbing contractor hiring field technicians.',
+    outreachAngle: 'Scaling dispatch across crews',
+    evidence: [{ signal: 'Hiring plumbers', type: 'confirmed', confidence: 'high', sourceUrl: 'https://acmeplumbing.test/careers' }],
+    riskFlags: [],
+    recommendedAction: 'auto_draft',
+    confidence: 'high',
+    icpScore: 80,
+    estimatedTeamSize: '10-50',
+  })
+
+  const result = await researchLead(lead.id, workspace.id, undefined, {
+    generateLeadResearch: async () => raw,
+  })
+
+  assert.equal(result.leadId, lead.id)
+  assert.ok(result.score > 0)
+  assert.equal(result.recommendedAction, 'auto_draft')
+
+  const updated = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.equal(updated!.stage, 'RESEARCHED')
+  assert.equal(updated!.score, result.score)
+  assert.ok(updated!.aiIntelligence, 'aiIntelligence snapshot must be persisted')
+
+  const evidenceRows = await prisma.leadEvidenceSource.findMany({ where: { leadId: lead.id } })
+  assert.equal(evidenceRows.length, 1)
+  assert.equal(evidenceRows[0]!.sourceUrl, 'https://acmeplumbing.test/careers', 'sourceUrl matches the lead\'s own website domain, so it is kept')
+})
+
+test('researchLead drops a sourceUrl whose domain is unrelated to the lead\'s own website', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await prisma.lead.create({
+    data: { workspaceId: workspace.id, businessName: 'Acme Plumbing', website: 'https://acmeplumbing.test', stage: 'NEW' },
+  })
+
+  const raw = JSON.stringify({
+    aiSummary: 'Summary.',
+    evidence: [{ signal: 'Some claim', type: 'confirmed', confidence: 'high', sourceUrl: 'https://totally-unrelated-site.example/' }],
+  })
+
+  await researchLead(lead.id, workspace.id, undefined, { generateLeadResearch: async () => raw })
+
+  const evidenceRows = await prisma.leadEvidenceSource.findMany({ where: { leadId: lead.id } })
+  assert.equal(evidenceRows.length, 1)
+  assert.equal(evidenceRows[0]!.sourceUrl, null, 'a citation for an unrelated domain must not be kept as provenance')
+})
+
+test('researchLead throws for a lead outside the given workspace (tenant isolation)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const other = await seedUserWithWorkspace('other-research@x.test')
+  const otherLead = await prisma.lead.create({ data: { workspaceId: other.workspace.id, businessName: 'Other Co', stage: 'NEW' } })
+
+  await assert.rejects(
+    () => researchLead(otherLead.id, workspace.id, undefined, { generateLeadResearch: async () => '{}' }),
+    /not found in workspace/,
+  )
+})
+
+// --- generateOutreachDraft (extracted from worker.ts's generate-outreach handler) ---
+
+async function seedResearchedLead(workspaceId: string, recommendedAction: string | undefined = 'auto_draft') {
+  return prisma.lead.create({
+    data: {
+      workspaceId, businessName: 'Acme Plumbing', stage: 'RESEARCHED', score: 75,
+      aiIntelligence: recommendedAction ? { recommendedAction } : undefined,
+    },
+  })
+}
+
+test('generateOutreachDraft persists a draft with the gated status and tone warnings', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await seedResearchedLead(workspace.id)
+
+  const raw = JSON.stringify({ subject: 'Quick idea for Acme', email: 'Hi there, worth a quick chat?', followup: 'Following up — any thoughts?' })
+  const result = await generateOutreachDraft(lead.id, workspace.id, undefined, undefined, { generateOutreach: async () => raw })
+
+  assert.equal(result.skipped, undefined)
+  assert.equal(result.subject, 'Quick idea for Acme')
+
+  const drafts = await prisma.outreachDraft.findMany({ where: { leadId: lead.id } })
+  assert.equal(drafts.length, 1)
+  assert.equal(drafts[0]!.status, 'DRAFTED', 'auto_draft recommendedAction -> normal DRAFTED flow')
+})
+
+test('generateOutreachDraft suppresses a poor-fit ("skip") lead without calling the model, and refunds the AI credit', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await seedResearchedLead(workspace.id, 'skip')
+
+  let generatorCalled = false
+  const result = await generateOutreachDraft(lead.id, workspace.id, undefined, undefined, {
+    generateOutreach: async () => { generatorCalled = true; return '{}' },
+  })
+
+  assert.equal(result.skipped, true)
+  assert.equal(generatorCalled, false, 'a suppressed lead must never reach the model')
+
+  const drafts = await prisma.outreachDraft.findMany({ where: { leadId: lead.id } })
+  assert.equal(drafts.length, 0)
+
+  const updated = await prisma.lead.findUnique({ where: { id: lead.id } })
+  assert.ok(updated!.outreachSkippedAt)
+})
+
+test('generateOutreachDraft: a human override on a skipped lead generates into POLICY_REVIEW', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await seedResearchedLead(workspace.id, 'skip')
+
+  const raw = JSON.stringify({ subject: 's', email: 'Worth a look?' })
+  const result = await generateOutreachDraft(lead.id, workspace.id, true, undefined, { generateOutreach: async () => raw })
+
+  assert.equal(result.skipped, undefined)
+  const drafts = await prisma.outreachDraft.findMany({ where: { leadId: lead.id } })
+  assert.equal(drafts.length, 1)
+  assert.equal(drafts[0]!.status, 'POLICY_REVIEW')
+})
+
+test('generateOutreachDraft throws for a lead outside the given workspace (tenant isolation)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const other = await seedUserWithWorkspace('other-outreach@x.test')
+  const otherLead = await seedResearchedLead(other.workspace.id)
+
+  await assert.rejects(
+    () => generateOutreachDraft(otherLead.id, workspace.id, undefined, undefined, { generateOutreach: async () => '{}' }),
+    /not found in workspace/,
+  )
 })

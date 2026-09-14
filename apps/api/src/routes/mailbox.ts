@@ -8,7 +8,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceMailRate } from '../lib/workspaceRateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
-import { isValidEmail } from '../lib/validation.js'
+import { isValidEmail } from '../lib/textNormalize.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { promises as dns } from 'dns'
 

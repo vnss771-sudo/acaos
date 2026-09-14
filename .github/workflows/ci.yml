@@ -98,6 +98,12 @@ jobs:
       - name: Check frontend mutations (typed route client)
         run: npm run check:frontend-mutations
 
+      # Ratchet: no NEW imports of the apps/api/src/lib/ backend-core re-export
+      # shims — new code should import @acaos/backend-core directly. Cheap, no
+      # Prisma needed.
+      - name: Check for new backend-core shim imports
+        run: npm run check:no-new-shim-imports
+
       # Lint runs without type information, so no Prisma client is needed — keep
       # it early and cheap alongside the boundary check.
       - name: Lint (ESLint)

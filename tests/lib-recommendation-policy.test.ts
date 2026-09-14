@@ -5,6 +5,7 @@ import {
   evidenceGatedPriority,
   AUTO_RECOMMEND_THRESHOLD,
   HIGH_CONFIDENCE_PRIORITY,
+  WARM_CONFIDENCE_PRIORITY,
 } from '../packages/backend-core/src/lib/recommendationPolicy.ts'
 
 const fresh = () => new Date()
@@ -19,23 +20,31 @@ test('hasValidEvidence: true only for a fresh, evidence-backed signal', () => {
   assert.equal(hasValidEvidence([]), false)
 })
 
-test('evidenceGatedPriority: caps high priority below the line without valid evidence', () => {
+test('evidenceGatedPriority: caps high priority below WARM without valid evidence', () => {
   const noEvidence = [{ type: 'HIRING' as const, detectedAt: fresh(), evidenceSourceId: null }]
-  assert.equal(evidenceGatedPriority(90, noEvidence), HIGH_CONFIDENCE_PRIORITY - 1)
-  assert.equal(evidenceGatedPriority(70, noEvidence), HIGH_CONFIDENCE_PRIORITY - 1)
+  assert.equal(evidenceGatedPriority(90, noEvidence), WARM_CONFIDENCE_PRIORITY - 1)
+  assert.equal(evidenceGatedPriority(70, noEvidence), WARM_CONFIDENCE_PRIORITY - 1)
+})
+
+test('evidenceGatedPriority: also gates WARM-tier priority without valid evidence', () => {
+  const noEvidence = [{ type: 'HIRING' as const, detectedAt: fresh(), evidenceSourceId: null }]
+  assert.equal(evidenceGatedPriority(50, noEvidence), WARM_CONFIDENCE_PRIORITY - 1)
+  assert.equal(evidenceGatedPriority(WARM_CONFIDENCE_PRIORITY, noEvidence), WARM_CONFIDENCE_PRIORITY - 1)
 })
 
 test('evidenceGatedPriority: leaves high priority intact with valid evidence', () => {
   const withEvidence = [{ type: 'FUNDING' as const, detectedAt: fresh(), evidenceSourceId: 'ev1' }]
   assert.equal(evidenceGatedPriority(90, withEvidence), 90)
+  assert.equal(evidenceGatedPriority(50, withEvidence), 50)
 })
 
-test('evidenceGatedPriority: never touches sub-threshold priorities', () => {
-  assert.equal(evidenceGatedPriority(50, []), 50)
-  assert.equal(evidenceGatedPriority(69, []), 69)
+test('evidenceGatedPriority: never touches sub-WARM priorities', () => {
+  assert.equal(evidenceGatedPriority(WARM_CONFIDENCE_PRIORITY - 1, []), WARM_CONFIDENCE_PRIORITY - 1)
+  assert.equal(evidenceGatedPriority(0, []), 0)
 })
 
 test('thresholds are sane', () => {
   assert.equal(AUTO_RECOMMEND_THRESHOLD, 70)
   assert.equal(HIGH_CONFIDENCE_PRIORITY, 70)
+  assert.equal(WARM_CONFIDENCE_PRIORITY, 48)
 })
