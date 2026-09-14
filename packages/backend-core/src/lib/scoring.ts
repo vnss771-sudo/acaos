@@ -234,3 +234,156 @@ export const TIER_COLOR: Record<string, string> = {
   WARM: '#f59e0b',
   COLD: '#475569'
 }
+
+// ---------------------------------------------------------------------------
+// Outcome-driven weight retuning — the "learning loop". Single source of truth
+// so every path that records a ScoringOutcome (the external FieldOps ingest
+// endpoint AND the product's own analyze-reply -> applyReplyAnalysis pipeline)
+// retunes the SAME workspace weights the SAME way, instead of two independent
+// implementations drifting apart. Ported from the former outcomes.ts-local
+// ScorerV2.updateWeights() logic.
+// ---------------------------------------------------------------------------
+
+export type ScoringPerformanceMetrics = {
+  totalScored: number
+  totalReplied: number
+  replyRate: number
+  avgScoreOfReplied: number
+  avgScoreOfNotReplied: number
+  correlationScore: number
+}
+
+export const DEFAULT_SCORING_METRICS: ScoringPerformanceMetrics = {
+  totalScored: 0,
+  totalReplied: 0,
+  replyRate: 0,
+  avgScoreOfReplied: 0,
+  avgScoreOfNotReplied: 0,
+  correlationScore: 0,
+}
+
+export type ScoringOutcomeSample = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
+
+export function calculateOutcomeCorrelation(outcomes: ScoringOutcomeSample[]): number {
+  const replied = outcomes.filter((o) => o.replied)
+  const notReplied = outcomes.filter((o) => !o.replied)
+  if (replied.length === 0 || notReplied.length === 0) return 0
+
+  const meanScore = outcomes.reduce((s, o) => s + o.score, 0) / outcomes.length
+  const meanReply = replied.length / outcomes.length
+
+  let numerator = 0, denomScore = 0, denomReply = 0
+  for (const o of outcomes) {
+    const sd = o.score - meanScore
+    const rd = (o.replied ? 1 : 0) - meanReply
+    numerator += sd * rd
+    denomScore += sd * sd
+    denomReply += rd * rd
+  }
+  if (denomScore === 0 || denomReply === 0) return 0
+  return numerator / Math.sqrt(denomScore * denomReply)
+}
+
+/**
+ * Pure weight-retuning step: given a workspace's recorded outcomes and its
+ * current weights, nudge weights toward whatever actually correlates with
+ * replies, clamp to >= 0, and renormalize to sum to 1. Also returns the
+ * performance metrics snapshot (reply rate, correlation, etc.) for the caller
+ * to persist alongside the retuned weights.
+ */
+export function recomputeScoringWeights(
+  outcomes: ScoringOutcomeSample[],
+  current: ScoringWeights,
+): { weights: ScoringWeights; metrics: ScoringPerformanceMetrics } {
+  const replied = outcomes.filter((o) => o.replied)
+  const notReplied = outcomes.filter((o) => !o.replied)
+
+  const avgReplied = replied.length > 0
+    ? replied.reduce((s, o) => s + o.score, 0) / replied.length : 0
+  const avgNotReplied = notReplied.length > 0
+    ? notReplied.reduce((s, o) => s + o.score, 0) / notReplied.length : 0
+
+  const correlation = calculateOutcomeCorrelation(outcomes)
+  const replyRate = outcomes.length > 0 ? replied.length / outcomes.length : 0
+
+  const w = { ...current }
+  const lr = 0.1
+
+  // Weak correlation -> shift weight from ICP to message/channel fit
+  if (correlation < 0.3) {
+    w.messageRelevance += lr * 0.02
+    w.channelFit += lr * 0.02
+    w.industry -= lr * 0.01
+  }
+
+  // Message relevance impact
+  const msgImpact = replied.length > 0
+    ? replied.reduce((s, o) => s + o.messageRelevance, 0) / replied.length : 0
+  if (msgImpact > 0.7) w.messageRelevance += lr * 0.01
+
+  // Channel impact — if LinkedIn replies outpace email, boost channelFit
+  const emailReplies = replied.filter((o) => o.channelUsed === 'EMAIL').length
+  const linkedinReplies = replied.filter((o) => o.channelUsed === 'LINKEDIN').length
+  if (linkedinReplies > emailReplies * 1.5) w.channelFit += lr * 0.01
+
+  // Clamp all weights to >= 0, then normalize to sum = 1
+  const weightKeys = Object.keys(DEFAULT_SCORING_WEIGHTS) as (keyof ScoringWeights)[]
+  for (const k of weightKeys) {
+    w[k] = Math.max(0, w[k])
+  }
+  const total = weightKeys.reduce((s, k) => s + w[k], 0)
+  if (total > 0) {
+    for (const k of weightKeys) {
+      w[k] = w[k] / total
+    }
+  }
+
+  return {
+    weights: w,
+    metrics: {
+      totalScored: outcomes.length,
+      totalReplied: replied.length,
+      replyRate,
+      avgScoreOfReplied: avgReplied,
+      avgScoreOfNotReplied: avgNotReplied,
+      correlationScore: correlation,
+    },
+  }
+}
+
+// Retune every Nth recorded outcome (rather than on every single one) so a
+// lone reply/non-reply can't swing weights on noise.
+const RECOMPUTE_EVERY_N_OUTCOMES = 7
+
+/**
+ * After a ScoringOutcome row has been recorded for a scoring model, check
+ * whether it's time to retune weights (every Nth outcome) and do so if it is.
+ * Shared by every path that records outcomes — the external FieldOps ingest
+ * endpoint (POST /api/outcomes) and the product's own reply-analysis pipeline
+ * (applyReplyAnalysis) — so a customer's own reply data improves their own
+ * scoring weights the same way FieldOps's does. Returns true when weights were
+ * actually updated (so the caller can invalidate any cached stats), alongside
+ * the total outcome count so callers don't need a second count query.
+ */
+export async function maybeRecomputeScoringWeights(
+  scoringModelId: string,
+  currentWeights: ScoringWeights,
+): Promise<{ updated: boolean; totalOutcomes: number }> {
+  const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId } })
+  if (totalOutcomes < RECOMPUTE_EVERY_N_OUTCOMES || totalOutcomes % RECOMPUTE_EVERY_N_OUTCOMES !== 0) {
+    return { updated: false, totalOutcomes }
+  }
+
+  const all = await prisma.scoringOutcome.findMany({
+    where: { scoringModelId },
+    select: { score: true, replied: true, messageRelevance: true, channelUsed: true },
+  })
+
+  const { weights, metrics } = recomputeScoringWeights(all, currentWeights)
+
+  await prisma.scoringModel.update({
+    where: { id: scoringModelId },
+    data: { weights, performanceMetrics: metrics, updateCount: { increment: 1 }, lastWeightUpdate: new Date() },
+  })
+  return { updated: true, totalOutcomes }
+}

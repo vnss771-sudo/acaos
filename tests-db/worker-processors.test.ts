@@ -196,3 +196,25 @@ test('applyReplyAnalysis on an auto-reply stamps the send but does NOT advance t
   assert.equal(updatedLead!.stage, 'OUTREACH_SENT') // unchanged
   assert.equal(await prisma.scoringOutcome.count({ where: { leadId: lead.id } }), 0)
 })
+
+test('applyReplyAnalysis feeds the SAME learning loop as POST /api/outcomes: the 7th outcome retunes weights', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+
+  // The first 6 replies must not trigger a recompute yet.
+  for (let i = 0; i < 6; i += 1) {
+    const { lead } = await seedRepliedLeadWithSend(workspace.id, `replier-${i}@x.test`)
+    await applyReplyAnalysis(lead.id, { classification: 'INTERESTED', confidence: 90, isAutoReply: false })
+  }
+  const modelBefore = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
+  assert.ok(modelBefore, 'a scoring model exists after the first outcome')
+  assert.equal(modelBefore!.updateCount, 0, 'fewer than 7 outcomes must not retune weights yet')
+
+  // The 7th reply crosses the recompute threshold.
+  const { lead: seventhLead } = await seedRepliedLeadWithSend(workspace.id, 'replier-6@x.test')
+  await applyReplyAnalysis(seventhLead.id, { classification: 'INTERESTED', confidence: 90, isAutoReply: false })
+
+  const modelAfter = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
+  assert.equal(await prisma.scoringOutcome.count({ where: { workspaceId: workspace.id } }), 7)
+  assert.equal(modelAfter!.updateCount, 1, 'the 7th outcome from the product\'s own reply pipeline must trigger a retune, matching the external FieldOps ingest path')
+  assert.ok(modelAfter!.lastWeightUpdate, 'lastWeightUpdate must be stamped')
+})

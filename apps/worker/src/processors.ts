@@ -4,7 +4,7 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { DEFAULT_SCORING_WEIGHTS } from '@acaos/backend-core/lib/scoring.js'
+import { DEFAULT_SCORING_WEIGHTS, maybeRecomputeScoringWeights, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -1259,7 +1259,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // with P2002; re-read in that case so we still get the id.
   let model = await prisma.scoringModel.findUnique({
     where: { workspaceId: lead.workspaceId },
-    select: { id: true },
+    select: { id: true, weights: true },
   })
   if (!model) {
     try {
@@ -1272,13 +1272,13 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
             avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0,
           },
         },
-        select: { id: true },
+        select: { id: true, weights: true },
       })
     } catch (err) {
       if ((err as { code?: string }).code !== 'P2002') throw err
       model = await prisma.scoringModel.findUnique({
         where: { workspaceId: lead.workspaceId },
-        select: { id: true },
+        select: { id: true, weights: true },
       })
     }
   }
@@ -1310,4 +1310,9 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       scoringModelId: model.id,
     },
   })
+
+  // Feed the same learning loop the external FieldOps ingest endpoint
+  // (POST /api/outcomes) already drives, so a customer's own reply data — not
+  // just FieldOps's — retunes their scoring weights over time.
+  await maybeRecomputeScoringWeights(model.id, model.weights as ScoringWeights)
 }
