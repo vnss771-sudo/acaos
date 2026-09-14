@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type { Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { Card } from '../components/ui/Card.js'
 import { Badge } from '../components/ui/Badge.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -63,7 +64,7 @@ export function InboxView({ api, workspace, toast }: Props) {
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
 
-  if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="✉" /></div>
+  if (!workspace) return <div style={s.card}><EmptyState title="No workspace selected" /></div>
 
   return (
     <div style={s.stack}>
@@ -86,7 +87,7 @@ export function InboxView({ api, workspace, toast }: Props) {
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : !data || data.replies.length === 0 ? (
         <div style={s.card}>
-          <EmptyState message="No replies yet. Once prospects respond to your outreach, classified replies land here." icon="✉" />
+          <EmptyState title="No replies yet" description="Once prospects respond to your outreach, classified replies land here." />
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

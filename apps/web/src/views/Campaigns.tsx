@@ -3,7 +3,8 @@ import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { LaunchApprovalModal } from '../components/LaunchApprovalModal.js'
 import { Modal } from '../components/ui/Modal.js'
@@ -262,7 +263,13 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : campaigns.length === 0 ? (
-        <div style={s.card}><EmptyState message="No campaigns yet. Create your first campaign to start organizing leads." icon="◈" /></div>
+        <div style={s.card}>
+          <EmptyState
+            title="No campaigns yet"
+            description="Create your first campaign to start organizing leads."
+            action={canManage ? <button style={s.btn} onClick={() => setShowMissionBuilder(true)}>+ New Mission</button> : undefined}
+          />
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {campaigns.map(c => {

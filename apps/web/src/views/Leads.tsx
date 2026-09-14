@@ -3,7 +3,8 @@ import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/sh
 import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence, LeadEvidenceRow } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { Modal } from '../components/ui/Modal.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -756,7 +757,11 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
         {loading && leads.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spinner /></div>
         ) : leads.length === 0 ? (
-          <EmptyState message="No leads found. Add your first lead or import a CSV." icon="◎" />
+          <EmptyState
+            title="No leads found"
+            description="Add your first lead or import a CSV."
+            action={canManage ? <button style={s.btn} onClick={() => setAdding(true)}>+ Add Lead</button> : undefined}
+          />
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>

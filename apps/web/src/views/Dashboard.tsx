@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react'
 import type { Workspace, StatsData, View, ScoringModel, Signal, Prospect } from '../types.js'
 import { STAGE_COLOR, TIER_COLOR, SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { GettingStarted } from '../components/GettingStarted.js'
 import { NextBestActionCard } from '../components/NextBestAction.js'
 import { OutboxHealth } from '../components/OutboxHealth.js'
@@ -299,7 +300,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
   if (!workspace) {
     return (
       <div style={s.card}>
-        <EmptyState message="No workspace selected" icon="◈" />
+        <EmptyState title="No workspace selected" />
       </div>
     )
   }
@@ -383,7 +384,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
               <FunnelBar key={stage} stage={stage} count={stats.funnel[stage] ?? 0} max={maxCount} />
             ))
           ) : (
-            <EmptyState message="No data yet" icon="◎" />
+            <EmptyState title="No data yet" />
           )}
         </div>
 
@@ -417,7 +418,11 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
                 ))}
               </div>
             ) : (
-              <EmptyState message="No leads yet — add your first lead" icon="◎" />
+              <EmptyState
+                title="No leads yet"
+                description="Add your first lead to start filling your pipeline."
+                action={<button style={s.btn} onClick={() => setView('leads')}>+ Add Lead</button>}
+              />
             )}
           </div>
 

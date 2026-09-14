@@ -8,7 +8,8 @@ import {
 } from '../types.js'
 import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -598,7 +599,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     load()
   }
 
-  if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="◎" /></div>
+  if (!workspace) return <div style={s.card}><EmptyState title="No workspace selected" /></div>
 
   return (
     <div style={s.stack}>
@@ -773,7 +774,11 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : prospects.length === 0 ? (
         <div style={s.card}>
-          <EmptyState message="No prospects yet. Add your first prospect to start tracking signals." icon="◎" />
+          <EmptyState
+            title="No prospects yet"
+            description="Add your first prospect to start tracking signals."
+            action={canManage ? <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button> : undefined}
+          />
         </div>
       ) : (
         <Table<Prospect>

@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import type { UpdateDraftRequest } from '@acaos/shared'
 import type { OutreachDraft, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { Card } from '../components/ui/Card.js'
 import { analyzeDraft } from '../lib/draftRisk.js'
 import { makeRouteApi } from '../lib/routeApi.js'
@@ -129,7 +130,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
       </p>
 
       {drafts.length === 0 ? (
-        <EmptyState message="No drafts awaiting review. Approved drafts send on the next campaign run." />
+        <EmptyState title="No drafts awaiting review" description="Approved drafts send on the next campaign run." />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {canManage && (

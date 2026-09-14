@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { UpdateMissionRequest, DiscoverProspectsRequest } from '@acaos/shared'
 import type { Mission, MissionDetail, MissionStatus, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { Card } from '../components/ui/Card.js'
 import { useIsTablet } from '../hooks/useMediaQuery.js'
@@ -94,7 +95,11 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
       </div>
 
       {missions.length === 0 ? (
-        <EmptyState message="No missions yet — launch your first mission to start acquiring customers." />
+        <EmptyState
+          title="No missions yet"
+          description="Launch your first mission to start acquiring customers."
+          action={canManage ? <button style={s.btn} onClick={() => setShowBuilder(true)}>+ New Mission</button> : undefined}
+        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {missions.map(m => {

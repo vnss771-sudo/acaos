@@ -21,12 +21,3 @@ export function LoadingRow({ cols = 1 }: { cols?: number }) {
     </tr>
   )
 }
-
-export function EmptyState({ message, icon = '◎' }: { message: string; icon?: string }) {
-  return (
-    <div style={{ textAlign: 'center', padding: '48px 20px', color: colors.textFaint }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>{icon}</div>
-      <div style={{ fontSize: 14 }}>{message}</div>
-    </div>
-  )
-}
