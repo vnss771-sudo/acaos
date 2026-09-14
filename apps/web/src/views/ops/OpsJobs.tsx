@@ -223,7 +223,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
       key: 'actions', header: '', render: (j: OpsJobSite) => (
         <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
           <button style={s.btnSm} onClick={() => openEdit(j)}>Edit</button>
-          {j.status === 'ACTIVE' && <button style={s.btnDanger} onClick={() => setArchiveTarget(j)}>Archive</button>}
+          {j.status === 'ACTIVE' && <button style={s.btnWarning} onClick={() => setArchiveTarget(j)}>Archive</button>}
         </div>
       ),
     } as Column<OpsJobSite>] : []),
@@ -304,7 +304,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
         width={420}
         footer={<>
           <button style={s.btnSecondary} onClick={() => setArchiveTarget(null)}>Cancel</button>
-          <button style={s.btnDanger} disabled={archiving} onClick={confirmArchive}>
+          <button style={s.btnWarning} disabled={archiving} onClick={confirmArchive}>
             {archiving ? 'Archiving…' : 'Archive'}
           </button>
         </>}
