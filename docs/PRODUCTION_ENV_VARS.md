@@ -91,6 +91,8 @@ All read live from the environment — flipping any of these takes effect on the
 - SENTRY_DSN — error-reporting transport. Optional, but **set it in production**: a DSN turns on error capture via a minimal built-in HTTP transport (`lib/sentryTransport.ts`) that posts directly to Sentry's ingest API — the `@sentry/node` SDK is deliberately not a dependency (its OpenTelemetry tree would otherwise drag a heavy, recurringly-vulnerable subtree through dependency review). Without a DSN, `captureError` is a no-op, though every error is still logged via the structured logger regardless.
 - STATS_RECONCILE_ENABLED — `true` to enable the periodic `CampaignDailyStats` ↔ `ContactEvent` reconciliation sweep that repairs projection drift. Default off; recommended `true` in production.
 - WORKER_HEALTH_PORT — port for the worker's `/live` `/ready` `/metrics` server. Default 9090 (or platform `$PORT`).
+- OTEL_EXPORTER_OTLP_ENDPOINT — base URL of an OTLP/HTTP collector (e.g. `https://otel-collector.internal:4318`; `/v1/traces` is appended). Turns on distributed tracing across API → queue → worker (`lib/tracing.ts`) via a real, minimal OpenTelemetry SDK (manual spans only — no auto-instrumentation package, same dependency-lean reasoning as SENTRY_DSN above). Unset by default: every span is then a genuine no-op and no `traceparent` is added to job payloads, so this never changes behavior in dev/CI.
+- OTEL_CONSOLE_EXPORTER — `true` to print spans to stdout instead (local debugging only; ignored when OTEL_EXPORTER_OTLP_ENDPOINT is set). Never set in production.
 
 ## Data Retention
 The worker periodically purges aged data and reclaims stale `SENDING` rows. The per-class `*_DAYS` windows override the defaults documented in `docs/DATA_RETENTION.md`. All optional.

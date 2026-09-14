@@ -151,6 +151,43 @@ With no DSN, error reporting is a **no-op** and the app behaves exactly as in
 dev/CI — telemetry never crashes startup. Any transport can be substituted by
 calling `setErrorReporter()` directly instead of `initErrorReporting()`.
 
+## Distributed tracing (OpenTelemetry — optional)
+
+The core outreach flow crosses three processes: an API route enqueues a BullMQ
+job, a worker picks it up, and the worker calls out to an AI provider / SMTP /
+Postgres. Correlating "why was this campaign send slow" across those three
+previously meant grep-ing three log streams by `requestId` (still true — see
+below). `lib/tracing.ts` adds real distributed tracing on top of that: a span
+is created where a route enqueues a job (`withEnqueueSpan`, wired into every
+`enqueue*` in `lib/queues.ts`), its W3C `traceparent` is stamped onto the job
+payload (`queueSchemas.ts`'s envelope), and the worker continues the SAME
+trace as a child span when it processes the job (`withConsumerSpan`, wired
+into every `Worker` in `worker.ts`) — so a tracing backend shows one trace per
+request across the whole API → queue → worker journey instead of three
+separate spans an operator has to stitch together by hand.
+
+This **complements, not replaces**, the existing `requestId` log correlation:
+both are stamped as attributes on every span (`acaos.request_id`,
+`acaos.workspace_id`), so an operator can jump from a log line to a trace and
+back. A worker-internal job with no originating API request (the daily
+retention sweep, the periodic follow-up scan) still gets its own root span
+instead of being skipped.
+
+Built on the real `@opentelemetry/api`, but with **manual spans only — no
+auto-instrumentation package** (`@opentelemetry/sdk-node`'s per-library
+auto-instrumentation meta-package is not a dependency). That mirrors why this
+app hand-rolls its own Prometheus metrics and its own minimal Sentry HTTP
+transport instead of `@sentry/node` (see above): spans are created by hand at
+exactly the two points that matter, so the heavier auto-instrumentation
+surface would only add dependency-review weight for nothing this app uses.
+
+**Set `OTEL_EXPORTER_OTLP_ENDPOINT`** to a collector's base URL to export real
+spans via OTLP/HTTP. With no endpoint set, every span is a genuine no-op (the
+OpenTelemetry API's global tracer is a no-op until a provider is registered)
+and no `traceparent` is added to job payloads — tracing never changes
+behavior in dev/CI. `OTEL_CONSOLE_EXPORTER=true` prints spans to stdout
+instead, for local debugging only (never set it in production).
+
 ## Load testing
 
 A dependency-free harness boots the real API against live Postgres + Redis and
@@ -228,6 +265,7 @@ nothing to check against.
 | Metrics (worker) | `GET :WORKER_HEALTH_PORT/metrics` |
 | Security policy | [`SECURITY.md`](../SECURITY.md) |
 | Error transport | `SENTRY_DSN` (built-in HTTP transport, no SDK install) |
+| Distributed tracing | `OTEL_EXPORTER_OTLP_ENDPOINT` (no-op unset) — `lib/tracing.ts` |
 | Load test | `npm run loadtest` |
 | Pool sizing | `DATABASE_URL?connection_limit=…` |
 | Deploy steps | [`LAUNCH_RUNBOOK.md`](./LAUNCH_RUNBOOK.md) |

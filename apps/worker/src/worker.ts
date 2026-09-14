@@ -43,6 +43,7 @@ import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/back
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
+import { initTracing, withConsumerSpan } from '@acaos/backend-core/lib/tracing.js'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
@@ -62,21 +63,21 @@ function log(queue: string, msg: string, requestId?: string) {
 // ── research-lead ─────────────────────────────────────────────────────────────
 const researchWorker = new Worker(
   'research-lead',
-  async (job) => {
+  async (job) => withConsumerSpan('research-lead', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { leadId, workspaceId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
     if (!isFeatureEnabled('ai')) { log('research-lead', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('research-lead', `Processing leadId=${leadId}`)
     const result = await runInWorkspaceContext(workspaceId, () => researchLead(leadId, workspaceId, (n) => job.updateProgress(n)))
     log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${result.score} why=${result.scoreReasons.join('; ') || 'n/a'}`)
     return result
-  },
+  }),
   { connection, concurrency: 3 }
 )
 
 // ── generate-outreach ─────────────────────────────────────────────────────────
 const outreachWorker = new Worker(
   'generate-outreach',
-  async (job) => {
+  async (job) => withConsumerSpan('generate-outreach', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { leadId, workspaceId, override } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
     if (!isFeatureEnabled('ai')) { log('generate-outreach', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('generate-outreach', `Processing leadId=${leadId}`)
@@ -90,14 +91,14 @@ const outreachWorker = new Worker(
       log('generate-outreach', `Done leadId=${leadId}`)
     }
     return result
-  },
+  }),
   { connection, concurrency: 3 }
 )
 
 // ── analyze-reply ─────────────────────────────────────────────────────────────
 const replyWorker = new Worker(
   'analyze-reply',
-  async (job) => {
+  async (job) => withConsumerSpan('analyze-reply', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { replyBody, leadId, workspaceId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
     if (!isFeatureEnabled('ai')) { log('analyze-reply', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('analyze-reply', `Processing${leadId ? ` leadId=${leadId}` : ''}`)
@@ -123,14 +124,14 @@ const replyWorker = new Worker(
     await job.updateProgress(100)
     log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)
     return parsed
-  },
+  }),
   { connection, concurrency: 5 }
 )
 
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
 const mailboxWorker = new Worker(
   'sync-mailbox',
-  async (job) => {
+  async (job) => withConsumerSpan('sync-mailbox', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId, autoSync } = parseJobPayload(SyncMailboxPayloadSchema, 'sync-mailbox', job.data)
     if (!isFeatureEnabled('mailboxSync')) { log('sync-mailbox', 'skipped: FEATURE_MAILBOX_SYNC disabled'); return { skipped: true, reason: 'FEATURE_MAILBOX_SYNC disabled' } }
     const { syncMailboxOnce, isMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
@@ -168,14 +169,14 @@ const mailboxWorker = new Worker(
     await job.updateProgress(100)
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued} bounced=${result.bounced} complained=${result.complained}`)
     return result
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
 // ── score-prospects ────────────────────────────────────────────────────────────
 const scoreProspectsWorker = new Worker(
   'score-prospects',
-  async (job) => {
+  async (job) => withConsumerSpan('score-prospects', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId } = parseJobPayload(ScoreProspectsPayloadSchema, 'score-prospects', job.data)
     log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
     const result = await runInWorkspaceContext(workspaceId, () => scoreProspects(workspaceId, (n) => job.updateProgress(n)))
@@ -188,7 +189,7 @@ const scoreProspectsWorker = new Worker(
         log('score-prospects', `enqueue recommendation failed for ${prospectId}: ${(e as Error).message}`))
     }
     return result
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
@@ -199,21 +200,21 @@ const scoreProspectsWorker = new Worker(
 // route checks. Low concurrency — provider calls are metered and rate-limited.
 const discoverWorker = new Worker(
   'discover-prospects',
-  async (job) => {
+  async (job) => withConsumerSpan('discover-prospects', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { runId, workspaceId } = parseJobPayload(DiscoverProspectsPayloadSchema, 'discover-prospects', job.data)
     if (!isFeatureEnabled('discovery')) { log('discover-prospects', 'skipped: FEATURE_DISCOVERY disabled'); return { skipped: true, reason: 'FEATURE_DISCOVERY disabled' } }
     log('discover-prospects', `Discovering run=${runId} workspace=${workspaceId}`)
     const result = await runInWorkspaceContext(workspaceId, () => discoverProspectsBatch(runId, workspaceId, (n) => job.updateProgress(n)))
     log('discover-prospects', `Done run=${runId} status=${result.status} imported=${result.imported} skipped=${result.skipped}`)
     return result
-  },
+  }),
   { connection, concurrency: 2 }
 )
 
 // ── generate-recommendations ──────────────────────────────────────────────────
 const recommendWorker = new Worker(
   'generate-recommendations',
-  async (job) => {
+  async (job) => withConsumerSpan('generate-recommendations', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { prospectId, workspaceId } = parseJobPayload(GenerateRecommendationsPayloadSchema, 'generate-recommendations', job.data)
     log('generate-recommendations', `Generating for prospectId=${prospectId}`)
 
@@ -283,14 +284,14 @@ const recommendWorker = new Worker(
     await job.updateProgress(100)
     log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel} priority=${priority}`)
     return { prospectId, ...rec, priority }
-  },
+  }),
   { connection, concurrency: 3 }
 )
 
 // ── send-campaign ─────────────────────────────────────────────────────────────
 const sendCampaignWorker = new Worker(
   'send-campaign',
-  async (job) => {
+  async (job) => withConsumerSpan('send-campaign', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { campaignId, workspaceId, leadIds } = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', job.data)
     if (!isFeatureEnabled('send')) { log('send-campaign', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled', sent: 0, skipped_count: leadIds?.length ?? 0 } }
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
@@ -300,7 +301,7 @@ const sendCampaignWorker = new Worker(
     const reasons = Object.entries(result.skippedByReason).filter(([, n]) => n > 0).map(([r, n]) => `${r}=${n}`).join(' ')
     log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}${reasons ? ` [${reasons}]` : ''}`)
     return result
-  },
+  }),
   { connection, concurrency: 2 }
 )
 
@@ -315,7 +316,7 @@ const sendCampaignWorker = new Worker(
 // that enqueues per-task children) and `{ taskId }` (dispatch one due step).
 const sendFollowupWorker = new Worker(
   'send-followup',
-  async (job) => {
+  async (job) => withConsumerSpan('send-followup', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { taskId, scan } = parseJobPayload(SendFollowupPayloadSchema, 'send-followup', job.data)
     if (!isFeatureEnabled('send')) { log('send-followup', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled' } }
     if (!areFollowupsEnabled()) { log('send-followup', 'skipped: FOLLOWUPS_ENABLED off'); return { skipped: true, reason: 'FOLLOWUPS_ENABLED off' } }
@@ -328,14 +329,14 @@ const sendFollowupWorker = new Worker(
     const result = await sendFollowupTask(taskId!)
     log('send-followup', `Done task=${taskId} status=${result.status}${result.reason ? ` reason=${result.reason}` : ''}`)
     return result
-  },
+  }),
   { connection, concurrency: 2 }
 )
 
 // ── calibrate-scoring ─────────────────────────────────────────────────────────
 const calibrateWorker = new Worker(
   'calibrate-scoring',
-  async (job) => {
+  async (job) => withConsumerSpan('calibrate-scoring', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId } = parseJobPayload(CalibrateScoringPayloadSchema, 'calibrate-scoring', job.data)
     log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
     const stats = await runInWorkspaceContext(workspaceId, () => calibrateScoring(workspaceId, (n) => job.updateProgress(n)))
@@ -345,7 +346,7 @@ const calibrateWorker = new Worker(
       log('calibrate-scoring', `Done workspace=${workspaceId} winRate=${Math.round(stats.baselineWinRate * 100)}%`)
     }
     return stats
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
@@ -354,7 +355,7 @@ const calibrateWorker = new Worker(
 // deleting rows past their window. Platform-wide, idempotent, runs daily.
 const retentionWorker = new Worker(
   'retention-purge',
-  async (job) => {
+  async (job) => withConsumerSpan('retention-purge', job.name, job.data?.traceparent, {}, async () => {
     parseJobPayload(RetentionPurgePayloadSchema, 'retention-purge', job.data)
     log('retention-purge', 'Starting retention sweep')
     const deleted = await purgeExpiredData()
@@ -374,7 +375,7 @@ const retentionWorker = new Worker(
     if (reconcile) log('retention-purge', `stats reconcile: checked=${reconcile.campaignsChecked} drift=${reconcile.drifted.length} rebuilt=${reconcile.workspacesRebuilt}`)
     log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
     return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0 }
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
@@ -521,6 +522,10 @@ const domainMetricsCache = createCachedValue(
 // Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
+
+// Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
+// debugging, OTEL_CONSOLE_EXPORTER) is set — see backend-core/lib/tracing.ts.
+initTracing(SERVICE)
 
 // Share circuit-breaker state with the API via Redis (reusing the BullMQ
 // connection) so a provider outage the worker trips also protects the API.
