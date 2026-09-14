@@ -27,6 +27,7 @@ import {
   DiscoverProspectsPayloadSchema,
   RetentionPurgePayloadSchema,
   SendFollowupPayloadSchema,
+  DlqAutoRetryPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
@@ -57,6 +58,12 @@ import {
   loadAdaptiveConfigFromEnv,
   type AdaptiveScaler,
 } from './lib/adaptiveConcurrency.js'
+import {
+  runAutoRetrySweep,
+  isDlqAutoRetryEnabled,
+  loadAutoRetryPolicyFromEnv,
+  dlqAutoRetryIntervalMs,
+} from './lib/dlqAutoRetry.js'
 
 const SERVICE = 'acaos-worker'
 const metadata = getRuntimeMetadata(SERVICE)
@@ -385,6 +392,33 @@ const retentionWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── dlq-auto-retry ────────────────────────────────────────────────────────────
+// Periodic sweep (see lib/dlqAutoRetry.ts): gives a few bonus retries to failed
+// jobs — across every other queue — whose error looks transient and haven't
+// already exhausted a small bonus-retry budget or gone stale. The manual,
+// operator-invoked counterpart is scripts/queue-drain.mjs. Default ON
+// (DLQ_AUTO_RETRY_ENABLED) — an operator can opt out if it ever misbehaves.
+// WORKER_QUEUES is defined below this worker but the closure only reads it once
+// a job actually runs, well after the module has finished initializing.
+const dlqAutoRetryWorker = new Worker(
+  'dlq-auto-retry',
+  async (job) => {
+    parseJobPayload(DlqAutoRetryPayloadSchema, 'dlq-auto-retry', job.data)
+    if (!isDlqAutoRetryEnabled()) { log('dlq-auto-retry', 'skipped: DLQ_AUTO_RETRY_ENABLED off'); return { skipped: true } }
+    const policy = loadAutoRetryPolicyFromEnv()
+    const targets = WORKER_QUEUES.map(([name]) => name).filter((name) => name !== 'dlq-auto-retry')
+    const results = await runAutoRetrySweep(targets, getQueue, policy)
+    const totalScanned = results.reduce((a, r) => a + r.scanned, 0)
+    const totalRetried = results.reduce((a, r) => a + r.retried, 0)
+    if (totalRetried > 0) {
+      const perQueue = results.filter((r) => r.retried > 0).map((r) => `${r.queue}=${r.retried}`).join(' ')
+      log('dlq-auto-retry', `Auto-retried ${totalRetried}/${totalScanned} scanned failed job(s) [${perQueue}]`)
+    }
+    return { scanned: totalScanned, retried: totalRetried, results }
+  },
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers + job metrics ───────────────────────────────────────────────
 const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
@@ -398,6 +432,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['send-followup',           sendFollowupWorker],
   ['discover-prospects',      discoverWorker],
   ['retention-purge',         retentionWorker],
+  ['dlq-auto-retry',          dlqAutoRetryWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
   worker.on('completed', (job) => {
@@ -510,6 +545,20 @@ const domainMetricsCache = createCachedValue(
   ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
 }
 
+// ── Repeatable DLQ auto-retry sweep (every 5 min by default) ─────────────────
+// Interval overridable via DLQ_AUTO_RETRY_INTERVAL_MS. Always registered
+// (idempotent), same as retention-purge/follow-up-scan above — the processor
+// itself checks DLQ_AUTO_RETRY_ENABLED and no-ops when an operator turns it off.
+{
+  const dlqQueue = new Queue('dlq-auto-retry', { connection })
+  const every = dlqAutoRetryIntervalMs()
+  dlqQueue.upsertJobScheduler(
+    'dlq-auto-retry-sweep',
+    { every },
+    { name: 'dlq-auto-retry-sweep', data: {}, opts: { attempts: 1, removeOnComplete: { count: 10 }, removeOnFail: { count: 20 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule DLQ auto-retry sweep:', err.message))
+}
+
 // ── Queue-depth-adaptive worker concurrency ───────────────────────────────────
 // Opt-in via WORKER_ADAPTIVE_CONCURRENCY_ENABLED — off by default, so this is a
 // pure addition: no worker's concurrency changes from its hardcoded value above
@@ -598,6 +647,7 @@ async function shutdown(signal: string, exitCode = 0) {
     sendFollowupWorker.close(),
     discoverWorker.close(),
     retentionWorker.close(),
+    dlqAutoRetryWorker.close(),
   ])
   closeMailTransports() // release pooled SMTP connections
   await prisma.$disconnect()

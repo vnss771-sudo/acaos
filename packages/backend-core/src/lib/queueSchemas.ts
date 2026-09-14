@@ -117,6 +117,11 @@ export type SendFollowupPayload = z.infer<typeof SendFollowupPayloadSchema>
 export const RetentionPurgePayloadSchema = z.object({}).passthrough()
 export type RetentionPurgePayload = z.infer<typeof RetentionPurgePayloadSchema>
 
+// The DLQ auto-retry sweep is platform-wide (no workspace) and carries no
+// parameters, same rationale as RetentionPurgePayloadSchema above.
+export const DlqAutoRetryPayloadSchema = z.object({}).passthrough()
+export type DlqAutoRetryPayload = z.infer<typeof DlqAutoRetryPayloadSchema>
+
 function formatIssues(error: z.ZodError): string {
   return error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
 }
