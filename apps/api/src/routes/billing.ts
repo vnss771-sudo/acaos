@@ -9,6 +9,7 @@ import { getMonthlyUsage, getPlanCatalog } from '../lib/limits.js'
 import { prisma } from '../lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
 import { recordAudit } from '../lib/audit.js'
+import { evictCachedWorkspace } from '../lib/ingestCache.js'
 import type { BillingPlan } from '@acaos/shared'
 
 export const billingRouter = Router()
@@ -182,7 +183,10 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
           } else {
             console.error(`[billing] checkout.session.completed workspace=${workspaceId} with unrecognized plan/price; activating without changing plan tier`)
           }
-          await prisma.workspace.update({ where: { id: workspaceId }, data })
+          const updated = await prisma.workspace.update({ where: { id: workspaceId }, data })
+          // Plan changed: an ingestCache entry cached under this workspace's key
+          // would keep serving the stale plan for up to the cache TTL otherwise.
+          if (plan !== null && updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
           console.log(`[billing] checkout.session.completed workspace=${workspaceId} plan=${plan ?? 'unchanged'}`)
         }
         break
@@ -209,10 +213,11 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
           if (plan === null) {
             console.warn(`[billing] subscription.updated ws=${ws.id} unrecognized priceId=${priceId}; preserving existing plan`)
           }
-          await prisma.workspace.update({
+          const updated = await prisma.workspace.update({
             where: { id: ws.id },
             data: { subscriptionStatus: sub.status, ...(plan !== null ? { plan } : {}) }
           })
+          if (plan !== null && updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
           console.log(`[billing] subscription.updated ws=${ws.id} status=${sub.status}`)
         }
         break
@@ -225,10 +230,11 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
           select: { id: true }
         })
         if (ws) {
-          await prisma.workspace.update({
+          const updated = await prisma.workspace.update({
             where: { id: ws.id },
             data: { subscriptionStatus: 'canceled', plan: 'free', stripeSubscriptionId: null }
           })
+          if (updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
           console.log(`[billing] subscription.deleted ws=${ws.id}`)
         }
         break

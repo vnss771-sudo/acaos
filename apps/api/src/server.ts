@@ -48,6 +48,9 @@ import { setProviderCallObserver } from '@acaos/backend-core/lib/observability.j
 import { incProviderCall } from './lib/metrics.js'
 import { attachBreakerStore } from './lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+import { Redis as IORedis } from 'ioredis'
+import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
+import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
 
 validateConfig()
 
@@ -286,6 +289,20 @@ setProviderCallObserver(incProviderCall)
 
 if (process.env.REDIS_URL) {
   attachBreakerStore(createRedisBreakerStore(getRedis()))
+
+  // Cross-pod ingestCache invalidation (see ingestCacheInvalidation.ts): a
+  // dedicated subscriber connection, since ioredis puts a client that issues
+  // SUBSCRIBE into subscriber mode where it can no longer run other commands
+  // — the shared getRedis() client stays free for PUBLISH and everything else.
+  const ingestCacheSubscriber = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    lazyConnect: true,
+  })
+  ingestCacheSubscriber.on('error', (err: Error) => {
+    logger.warn('ingest-cache invalidation subscriber error', { service: SERVICE, err: err.message })
+  })
+  attachIngestCacheInvalidator(createIngestCacheInvalidator(getRedis(), ingestCacheSubscriber))
 }
 
 const port = Number(process.env.PORT || 4000)
