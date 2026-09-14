@@ -50,6 +50,13 @@ import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
+import {
+  createAdaptiveScaler,
+  isAdaptiveConcurrencyEnabled,
+  adaptivePollIntervalMs,
+  loadAdaptiveConfigFromEnv,
+  type AdaptiveScaler,
+} from './lib/adaptiveConcurrency.js'
 
 const SERVICE = 'acaos-worker'
 const metadata = getRuntimeMetadata(SERVICE)
@@ -503,6 +510,27 @@ const domainMetricsCache = createCachedValue(
   ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
 }
 
+// ── Queue-depth-adaptive worker concurrency ───────────────────────────────────
+// Opt-in via WORKER_ADAPTIVE_CONCURRENCY_ENABLED — off by default, so this is a
+// pure addition: no worker's concurrency changes from its hardcoded value above
+// unless an operator explicitly turns it on. See lib/adaptiveConcurrency.ts.
+const adaptiveScalers: AdaptiveScaler[] = []
+if (isAdaptiveConcurrencyEnabled()) {
+  const pollIntervalMs = adaptivePollIntervalMs()
+  for (const [name, worker] of WORKER_QUEUES) {
+    const config = loadAdaptiveConfigFromEnv(name, worker.concurrency)
+    if (config.min >= config.max) continue // no room to scale (e.g. static concurrency is already 1)
+    adaptiveScalers.push(createAdaptiveScaler(name, getQueue(name), worker, {
+      pollIntervalMs,
+      config,
+      onChange: ({ queue, from, to, action, waiting }) =>
+        log(queue, `adaptive concurrency ${action}: ${from} -> ${to} (waiting=${waiting})`),
+      onError: (err) => log(name, `adaptive concurrency poll failed: ${err instanceof Error ? err.message : String(err)}`),
+    }))
+  }
+  console.log(`[worker] Adaptive concurrency enabled for ${adaptiveScalers.length}/${WORKER_QUEUES.length} queue(s), poll=${pollIntervalMs}ms`)
+}
+
 // ── Repeatable follow-up due-task scan (every 1 min by default) ───────────────
 // The scheduler is ALWAYS registered (idempotent), but every scan job no-ops
 // unless FOLLOWUPS_ENABLED is on (checked in the worker), so this stays dormant by
@@ -555,6 +583,8 @@ async function shutdown(signal: string, exitCode = 0) {
     process.exit(1)
   }, 10_000)
   forceExit.unref()
+
+  for (const scaler of adaptiveScalers) scaler.stop()
 
   await Promise.all([
     researchWorker.close(),
