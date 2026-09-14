@@ -1,10 +1,10 @@
 import { Router } from 'express'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
-import { recordCriticalAudit } from '../lib/audit.js'
+import { recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { getActivationFunnel } from '@acaos/backend-core/lib/analytics.js'
-import { getQueueStats } from '../lib/queues.js'
+import { getQueueStats } from '@acaos/backend-core/lib/queues.js'
 import { parseQuery } from '../lib/validate.js'
 import { pingDatabase, pingRedis, withTimeout, PROBE_TIMEOUT_MS } from '../lib/health.js'
 import {

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
@@ -56,7 +56,7 @@ async function requireIngestKeyOrAuth(
   // Fall back to JWT auth
   const auth = req.headers.authorization
   if (!auth?.startsWith('Bearer ')) { res.status(401).json({ error: 'Authentication required' }); return }
-  const { verifyJwt } = await import('../lib/jwt.js')
+  const { verifyJwt } = await import('@acaos/backend-core/lib/jwt.js')
   let payload: { userId: string }
   try { payload = verifyJwt(auth.slice(7)) } catch { res.status(401).json({ error: 'Unauthorized' }); return }
   const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true } })

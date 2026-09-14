@@ -1,9 +1,9 @@
 import type { Router } from 'express'
 import { asyncHandler, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { generateApiKey, hashApiKey } from '../../lib/apiKeys.js'
 import { evictCachedWorkspace } from '../../lib/ingestCache.js'
-import { recordAudit } from '../../lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 
 export function registerApiKeyRoutes(workspaceRouter: Router) {

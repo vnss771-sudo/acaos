@@ -1,6 +1,6 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -9,10 +9,10 @@ import {
   toRawSignal,
   MAX_SIGNALS_FOR_SCORING,
   type SignalType,
-} from '../../lib/signalEngine.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { enrichProspect } from '../../services/apollo.js'
-import { ingestSignal } from '../../lib/signalIngest.js'
+import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
 import { findContactEmail, isHunterConfigured } from '../../services/hunter.js'
 import { withDollars, getICP } from './helpers.js'
 

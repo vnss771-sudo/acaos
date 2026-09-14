@@ -4,7 +4,7 @@
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { getSource } from '../apps/api/src/lib/prospectSources.ts'
+import { getSource } from '../packages/backend-core/src/lib/prospectSources.ts'
 
 const origFetch = globalThis.fetch
 const origKey = process.env.GOOGLE_PLACES_API_KEY

@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express'
-import { verboseErrors } from './config.js'
-import { logger } from './logger.js'
-import { CircuitOpenError } from './circuit.js'
-import { captureError } from './observability.js'
+import { verboseErrors } from '@acaos/backend-core/lib/config.js'
+import { logger } from '@acaos/backend-core/lib/logger.js'
+import { CircuitOpenError } from '@acaos/backend-core/lib/circuit.js'
+import { captureError } from '@acaos/backend-core/lib/observability.js'
 import { ApiError } from '@acaos/backend-core/lib/errors.js'
 import type { AuthUser } from '../types/auth.js'
 

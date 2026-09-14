@@ -4,8 +4,8 @@
 // themselves for the endpoints that call them.
 
 import { ApiError } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
-import { recordAudit, recordCriticalAudit } from '../../lib/audit.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import type { Prisma } from '@prisma/client'
 

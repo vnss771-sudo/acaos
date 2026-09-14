@@ -5,10 +5,10 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { createCheckoutSession, constructWebhookEvent, createBillingPortalSession } from '../services/stripe.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
-import { getMonthlyUsage, getPlanCatalog } from '../lib/limits.js'
-import { prisma } from '../lib/prisma.js'
+import { getMonthlyUsage, getPlanCatalog } from '@acaos/backend-core/lib/limits.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { isMailConfigured, sendMail } from '../services/mail.js'
-import { recordAudit } from '../lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import type { BillingPlan } from '@acaos/shared'
 
 export const billingRouter = Router()

@@ -2,19 +2,19 @@ import type { Router } from 'express'
 import { requireVerifiedEmail } from '../../middleware/auth.js'
 import { requireFeature } from '../../middleware/featureGate.js'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { recordAudit } from '../../lib/audit.js'
-import { checkAndIncrementDiscoveryUsage } from '../../lib/limits.js'
-import { prisma } from '../../lib/prisma.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { checkAndIncrementDiscoveryUsage } from '@acaos/backend-core/lib/limits.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
   calcWinProbability,
   type SignalType,
-} from '../../lib/signalEngine.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
-import { enqueueScoreProspects, enqueueDiscoverProspects } from '../../lib/queues.js'
-import { ingestSignal } from '../../lib/signalIngest.js'
-import { listSources, getSource } from '../../lib/prospectSources.js'
+import { enqueueScoreProspects, enqueueDiscoverProspects } from '@acaos/backend-core/lib/queues.js'
+import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
+import { listSources, getSource } from '@acaos/backend-core/lib/prospectSources.js'
 import { getPack } from '../../lib/packs/index.js'
 import { createHash } from 'node:crypto'
 import { dollarsToCents } from '../../lib/money.js'

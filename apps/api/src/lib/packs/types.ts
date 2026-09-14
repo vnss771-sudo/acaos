@@ -1,7 +1,7 @@
 // Industry packs: pre-built ICP presets, the signals that matter for that
 // vertical, and evidence-mapped outreach templates. A pack lets an operator
 // onboard without inventing their own targeting/strategy from scratch.
-import type { SignalType } from '../signalEngine.js'
+import type { SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 
 export type IcpPreset = {
   targetIndustries: string[]

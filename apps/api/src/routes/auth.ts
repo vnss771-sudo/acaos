@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
   signJwt,
   generateRefreshToken,
@@ -8,12 +8,12 @@ import {
   refreshTokenExpiresAt,
   signMfaToken,
   verifyMfaToken
-} from '../lib/jwt.js'
+} from '@acaos/backend-core/lib/jwt.js'
 import { requireAuth, requireFreshAuth, requireVerifiedEmail } from '../middleware/auth.js'
-import { recordAudit, recordCriticalAudit } from '../lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { assertSeatAvailable } from '@acaos/backend-core/lib/limits.js'
-import { encryptSecret, decryptSecret } from '../lib/encrypt.js'
+import { encryptSecret, decryptSecret } from '@acaos/backend-core/lib/encrypt.js'
 import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { isLocked, lockRetryAfterSeconds, nextLockoutAfterFailure, CLEARED_LOCKOUT } from '@acaos/backend-core/lib/accountLockout.js'
 import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-core/lib/disposableEmail.js'

@@ -1,6 +1,6 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -9,20 +9,20 @@ import {
   predictBuyingIntent,
   toRawSignal,
   freshnessState,
-} from '../../lib/signalEngine.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
 import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
-import { listSources } from '../../lib/prospectSources.js'
+import { listSources } from '@acaos/backend-core/lib/prospectSources.js'
 import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
 import { clampInt } from '../../lib/textNormalize.js'
 import { normalizeDomain, withDollars, getICP } from './helpers.js'
-import { recordAudit } from '../../lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
-import { computeLeadScore, getWorkspaceWeights } from '../../lib/scoring.js'
+import { computeLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
-import { checkLeadLimit } from '../../lib/limits.js'
+import { checkLeadLimit } from '@acaos/backend-core/lib/limits.js'
 import { invalidateWorkspaceStats } from '../../lib/statsCache.js'
 
 // GET / query. Mirrors the prior raw parsing exactly:
