@@ -63,6 +63,15 @@ These are the items where the cost of shipping today measurably exceeds the cost
 
 ## 5. Phase 1 — Bounded public GA (target: 2–4 weeks after Phase 0)
 
+**Status: all items below closed as of 2026-09-14**, implemented by a 5-seat council working in parallel isolated worktrees and merged sequentially onto `claude/run-comparison-oz9ccj` with a full re-verification (typecheck across all 5 packages, lint, 1589 unit tests, 329 DB-tier tests against real Postgres, 230 web tests, the full `npm run verify` governance-check + build pipeline) after every merge, not just trusted from each seat's own report.
+
+Deferred, by explicit decision rather than oversight — tracked as Phase 2 backlog:
+- **5e's Settings.tsx/Leads.tsx decomposition** — excluded from this round's scope to avoid conflicting with concurrent smaller edits to the same files; still needed.
+- **5e's full deletion of the 23 `apps/api/src/lib/` shims** — judged too large/risky for one pass (~54 call sites); a CI ratchet (`check:no-new-shim-imports`) now blocks new shim imports as an interim guard-rail, with full deletion flagged as the real follow-up.
+- **S1's rate-limit tier** doesn't cover `jobs.ts`'s `/research-bulk` route (only per-lead quota is checked there) — pre-existing gap, not the cited call sites.
+- **R7's Dockerfile.web HEALTHCHECK** was code-reviewed only (no Docker daemon in the execution sandbox to live-test against).
+- **Item B's OpsAlert unique constraint** ships with no data-dedup step — fine for a fresh DB, but a real production deploy would need to check for/merge existing duplicate `(shiftRecordId, alertType)` rows first.
+
 ### 5a. UX — page-by-page, every item evidence-backed (the seat the user asked to prioritize)
 
 This section is organized by concrete, mechanical fix — not "polish," all of it is cheap relative to impact:
