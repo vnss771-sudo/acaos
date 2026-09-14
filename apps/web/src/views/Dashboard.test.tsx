@@ -1,5 +1,6 @@
 import { describe, test, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { Dashboard } from './Dashboard.js'
 import type { StatsData, Workspace } from '../types.js'
 
@@ -45,5 +46,18 @@ describe('Dashboard', () => {
     const api = vi.fn().mockResolvedValue(stats)
     render(<Dashboard api={api as never} workspace={workspace} setView={vi.fn()} toast={toast as never} />)
     expect(await screen.findByText(/Lead Tier Distribution/i)).toBeInTheDocument()
+  })
+
+  test('shows a persistent error banner (not just a toast) when the stats load fails, and Retry reloads', async () => {
+    const api = vi.fn().mockRejectedValue(new Error('Network error'))
+    render(<Dashboard api={api as never} workspace={workspace} setView={vi.fn()} toast={toast as never} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load dashboard data/i)
+    expect(toast.error).toHaveBeenCalledWith('Network error')
+
+    api.mockResolvedValue(stats)
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('142')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

@@ -91,6 +91,22 @@ describe('ApprovalsView', () => {
     expect(screen.getAllByText(/No opt-out language/i).length).toBeGreaterThan(0)
   })
 
+  test('shows a persistent error banner (not just a toast) when the load fails, and Retry reloads', async () => {
+    const api = vi.fn().mockRejectedValue(new Error('Network error'))
+    render(<ApprovalsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load approvals/i)
+    expect(toast.error).toHaveBeenCalledWith('Network error')
+
+    api.mockImplementation((path: string) => {
+      if (path.includes('/approvals/pending')) return Promise.resolve({ drafts: fixtures() })
+      return Promise.resolve({})
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   test('hides selection and action controls when the user cannot manage', async () => {
     const api = makeApi(fixtures())
     render(<ApprovalsView api={api as never} workspace={workspace} toast={toast as never} canManage={false} />)

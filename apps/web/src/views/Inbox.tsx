@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Card } from '../components/ui/Card.js'
 import { Badge } from '../components/ui/Badge.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -48,18 +49,26 @@ const FILTERS = ['INTERESTED', 'NEEDS_MORE_INFO', 'NOT_NOW', 'REFERRAL', 'OUT_OF
 export function InboxView({ api, workspace, toast }: Props) {
   const [data, setData] = useState<InboxResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [filter, setFilter] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadReqRef = useRef(0)
+  const load = useCallback(() => {
     if (!workspace) return
-    let cancelled = false
+    const reqId = ++loadReqRef.current
     setLoading(true)
+    setLoadError(false)
     api<InboxResponse>(`/api/inbox?workspaceId=${workspace.id}${filter ? `&classification=${filter}` : ''}`)
-      .then(d => { if (!cancelled) setData(d) })
-      .catch(e => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load replies') })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+      .then(d => { if (reqId === loadReqRef.current) setData(d) })
+      .catch(e => {
+        if (reqId !== loadReqRef.current) return
+        toast.error(e instanceof Error ? e.message : 'Failed to load replies')
+        setLoadError(true)
+      })
+      .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
   }, [workspace?.id, filter])
+
+  useEffect(() => { load() }, [load])
 
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
@@ -68,6 +77,8 @@ export function InboxView({ api, workspace, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load replies." onRetry={load} />}
+
       <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 4px' }}>
         Replies to your outreach, classified by intent. ACAOS suggests the next move for each.
       </p>

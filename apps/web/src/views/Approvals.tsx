@@ -4,6 +4,7 @@ import type { OutreachDraft, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Card } from '../components/ui/Card.js'
 import { analyzeDraft } from '../lib/draftRisk.js'
 import { makeRouteApi } from '../lib/routeApi.js'
@@ -21,6 +22,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
   const route = useMemo(() => makeRouteApi(api), [api])
   const [drafts, setDrafts] = useState<PendingDraft[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [edits, setEdits] = useState<Record<string, { subject: string; emailBody: string }>>({})
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -29,9 +31,13 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
   const load = useCallback(() => {
     if (!workspace) return
     setLoading(true)
+    setLoadError(false)
     api<{ drafts: PendingDraft[] }>(`/api/leads/approvals/pending?workspaceId=${workspace.id}`)
       .then(d => setDrafts(d.drafts || []))
-      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load approvals'))
+      .catch(e => {
+        toast.error(e instanceof Error ? e.message : 'Failed to load approvals')
+        setLoadError(true)
+      })
       .finally(() => setLoading(false))
   }, [api, workspace?.id, toast])
 
@@ -124,6 +130,8 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
 
   return (
     <div>
+      {loadError && <div style={{ marginBottom: 20 }}><ErrorBanner message="Failed to load approvals." onRetry={load} /></div>}
+
       <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 20px' }}>
         Review AI-drafted outreach before it sends. Edit the copy, then approve or reject.
         {drafts.length > 0 && <strong style={{ color: colors.text }}> · {drafts.length} pending</strong>}

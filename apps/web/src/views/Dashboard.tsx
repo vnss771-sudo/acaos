@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { Workspace, StatsData, View, ScoringModel, Signal, Prospect } from '../types.js'
 import { STAGE_COLOR, TIER_COLOR, SIGNAL_TYPE_ICONS, SIGNAL_TYPE_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { GettingStarted } from '../components/GettingStarted.js'
 import { NextBestActionCard } from '../components/NextBestAction.js'
 import { OutboxHealth } from '../components/OutboxHealth.js'
@@ -272,15 +273,19 @@ function SignalFeedSection({ signals }: { signals: RecentSignal[] }) {
 export function Dashboard({ api, workspace, setView, toast }: Props) {
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [hotProspects, setHotProspects] = useState<Prospect[]>([])
   const [recentSignals, setRecentSignals] = useState<RecentSignal[]>([])
 
-  useEffect(() => {
+  // Monotonic request id so a superseded workspace (switched quickly) can't
+  // clobber a newer load, and so Retry re-running this while a load is
+  // in-flight doesn't render two responses out of order.
+  const loadReqRef = useRef(0)
+  const load = useCallback(() => {
     if (!workspace) return
-    // Drop results from a superseded workspace so switching workspaces quickly
-    // doesn't render one workspace's stats under another.
-    let cancelled = false
+    const reqId = ++loadReqRef.current
     setLoading(true)
+    setLoadError(false)
     Promise.all([
       api<StatsData>(`/api/stats?workspaceId=${workspace.id}`),
       api<{ hot: Prospect[]; warm: Prospect[]; cold: Prospect[] }>(`/api/intelligence/opportunities?workspaceId=${workspace.id}`)
@@ -288,14 +293,18 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
       api<{ signals: RecentSignal[] }>(`/api/signals?workspaceId=${workspace.id}&limit=10`)
         .catch(() => ({ signals: [] }))
     ]).then(([statsData, opps, sigData]) => {
-      if (cancelled) return
+      if (reqId !== loadReqRef.current) return
       setStats(statsData)
       setHotProspects(opps.hot ?? [])
       setRecentSignals(sigData.signals ?? [])
-    }).catch(e => { if (!cancelled) toast.error(e.message) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    }).catch(e => {
+      if (reqId !== loadReqRef.current) return
+      toast.error(e.message)
+      setLoadError(true)
+    }).finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
   }, [workspace?.id])
+
+  useEffect(() => { load() }, [load])
 
   if (!workspace) {
     return (
@@ -310,6 +319,8 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load dashboard data." onRetry={load} />}
+
       {/* Acquisition Radar — the single highest-priority action, above analytics. */}
       {!loading && (
         <NextBestActionCard

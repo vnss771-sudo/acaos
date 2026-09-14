@@ -101,6 +101,19 @@ describe('Campaigns', () => {
     await waitFor(() => expect(screen.queryByText('Q3 Brisbane Outreach')).not.toBeInTheDocument())
   })
 
+  test('shows a persistent error banner (not just a toast) when the load fails, and Retry reloads', async () => {
+    const api = vi.fn().mockRejectedValue(new Error('Network error'))
+    render(<Campaigns api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load campaigns/i)
+    expect(toast.error).toHaveBeenCalledWith('Network error')
+
+    api.mockResolvedValue({ campaigns: [campaign] })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Q3 Brisbane Outreach')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   test('cancelling the delete confirmation leaves the campaign untouched', async () => {
     const api = vi.fn((path: string, init?: { method?: string }) => {
       if (init?.method === 'DELETE') return Promise.resolve({})

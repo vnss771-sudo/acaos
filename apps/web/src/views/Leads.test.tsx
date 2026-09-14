@@ -78,6 +78,29 @@ describe('Leads', () => {
     expect(screen.queryByRole('dialog', { name: /Delete lead\?/i })).not.toBeInTheDocument()
   })
 
+  test('shows a persistent error banner (not just a toast) when the load fails, and Retry reloads', async () => {
+    const api = vi.fn((path: string) => {
+      if (path.startsWith('/api/leads?')) return Promise.reject(new Error('Network error'))
+      if (path.startsWith('/api/campaigns')) return Promise.resolve({ campaigns: [] })
+      return Promise.resolve({})
+    })
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load leads/i)
+    expect(toast.error).toHaveBeenCalled()
+
+    // A subsequent successful retry clears the banner — it isn't stuck on
+    // once shown.
+    api.mockImplementation((path: string) => {
+      if (path.startsWith('/api/leads?')) return Promise.resolve({ leads: [lead], total: 1 })
+      if (path.startsWith('/api/campaigns')) return Promise.resolve({ campaigns: [] })
+      return Promise.resolve({})
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Acme Plumbing')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   test('cancelling the delete confirmation leaves the lead untouched', async () => {
     const api = apiFor([lead])
     render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)

@@ -10,6 +10,7 @@ import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -377,6 +378,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   const route = useMemo(() => makeRouteApi(api), [api])
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState(BLANK)
@@ -430,11 +432,12 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   const load = () => {
     if (!workspace) return
     setLoading(true)
+    setLoadError(false)
     api<{ prospects: Prospect[]; total: number }>(
       `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
     )
       .then(d => setProspects(d.prospects))
-      .catch(e => toast.error(e.message))
+      .catch(e => { toast.error(e.message); setLoadError(true) })
       .finally(() => setLoading(false))
   }
 
@@ -445,12 +448,13 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     if (!workspace) return
     let cancelled = false
     setLoading(true)
+    setLoadError(false)
     setSelectedIds(new Set())
     api<{ prospects: Prospect[]; total: number }>(
       `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
     )
       .then(d => { if (!cancelled) setProspects(d.prospects) })
-      .catch(e => { if (!cancelled) toast.error(e.message) })
+      .catch(e => { if (!cancelled) { toast.error(e.message); setLoadError(true) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [workspace?.id, search])
@@ -603,6 +607,8 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load prospects." onRetry={load} />}
+
       <div style={{ color: colors.textFaint, fontSize: 12 }}>
         Prospects are opportunities you're still qualifying — scored on fit, intent, and timing.
         Ready to reach out? Open a prospect and use <strong style={{ color: colors.textMuted }}>Convert to Lead</strong> to

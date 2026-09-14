@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { LaunchApprovalModal } from '../components/LaunchApprovalModal.js'
 import { Modal } from '../components/ui/Modal.js'
@@ -50,6 +51,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [campaigns, setCampaigns]   = useState<Campaign[]>([])
   const [loading, setLoading]       = useState(false)
+  const [loadError, setLoadError]   = useState(false)
   const [adding, setAdding]         = useState(false)
   const [editing, setEditing]       = useState<Campaign | null>(null)
   const [form, setForm]             = useState({ name: '', goalType: 'BOOK_CALL', description: '' })
@@ -70,21 +72,28 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
     } catch { /* non-fatal */ }
   }, [api])
 
-  useEffect(() => {
+  const loadReqRef = useRef(0)
+  const load = useCallback(() => {
     if (!workspace) return
-    let cancelled = false
+    const reqId = ++loadReqRef.current
     setLoading(true)
+    setLoadError(false)
     api<{ campaigns: Campaign[] }>(`/api/campaigns?workspaceId=${workspace.id}`)
       .then(d => {
-        if (cancelled) return
+        if (reqId !== loadReqRef.current) return
         const c = d.campaigns || []
         setCampaigns(c)
         c.forEach(camp => loadStats(camp.id))
       })
-      .catch(e => { if (!cancelled) toast.error(e.message) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [workspace?.id])
+      .catch(e => {
+        if (reqId !== loadReqRef.current) return
+        toast.error(e.message)
+        setLoadError(true)
+      })
+      .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
+  }, [workspace?.id, loadStats])
+
+  useEffect(() => { load() }, [load])
 
   async function create() {
     if (!form.name.trim() || !workspace) return
@@ -182,6 +191,8 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load campaigns." onRetry={load} />}
+
       {/* Approval modal — owns its own deliverability check */}
       {approvalPending && workspace && (
         <LaunchApprovalModal
