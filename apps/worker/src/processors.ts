@@ -349,7 +349,12 @@ export async function generateOutreachDraft(
   reason?: string
   toneWarnings?: string[]
 }> {
-  const generateOutreachFn = deps.generateOutreach ?? generateOutreach
+  // Named distinctly from sendCampaignBatch's own `generateOutreachFn` local —
+  // a source-text safety test (operational-chaos-safety-gates.test.ts) greps
+  // this file for that exact call-site string to pin its position relative to
+  // the send-loop's approval gate, and a second, earlier occurrence of the
+  // same literal would silently point that test at the wrong call site.
+  const generateOutreachDraftFn = deps.generateOutreach ?? generateOutreach
 
   // Tenant-scoped fetch: never act on a lead outside the job's workspace.
   const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
@@ -387,7 +392,7 @@ export async function generateOutreachDraft(
   // comment in researchLead above.
   await assertAiUsageAllowed(lead.workspaceId)
 
-  const raw = await generateOutreachFn({
+  const raw = await generateOutreachDraftFn({
     businessName: lead.businessName,
     category: lead.category ?? undefined,
     city: lead.city ?? undefined,
