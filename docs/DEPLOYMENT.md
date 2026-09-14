@@ -87,6 +87,12 @@ Deploy the worker with the same `DATABASE_URL`/`REDIS_URL` and
 
 ## 6. Rollback
 
+An automated canary bake + rollback gate is available (`.github/workflows/release.yml`'s
+`canary_bake` job, backed by `scripts/rollout-gate.mjs`) once `CANARY_URL` and
+the optional `PROMOTE_WEBHOOK_URL`/`ROLLBACK_WEBHOOK_URL` hooks are configured
+for your platform — see [`DEPLOY_RUNBOOK.md`](./DEPLOY_RUNBOOK.md#canary--blue-green-bake-and-automatic-rollback).
+Until then, or for a manual rollback:
+
 1. Redeploy the previous image tag for `api`, `worker`, and `web`.
 2. **Migrations are forward-only.** A new release that added a migration is not
    automatically reverted by rolling back the image. Prefer expand/contract
@@ -100,6 +106,7 @@ Deploy the worker with the same `DATABASE_URL`/`REDIS_URL` and
 
 - `GET /api/ready` → 200 on every API instance.
 - `post-deploy-smoke` workflow (`.github/workflows/post-deploy-smoke.yml`)
-  validates readiness after a release.
+  validates readiness after a release — auto-triggered by `release.yml` on
+  every published release, in addition to manual dispatch.
 - Watch the dashboards/alerts in [`ops/monitoring/`](../ops/monitoring/) and the
   SLOs in [`docs/SLO.md`](./SLO.md).
