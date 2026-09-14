@@ -128,9 +128,13 @@ export function geofenceViolationMeters(
 // a delete-then-recreate would lose reviewedBy/reviewedAt on an alert a reviewer
 // already actioned, and race a concurrent review (the review's UPDATE landing
 // between this function's DELETE and its INSERT would be silently undone).
-// Each alert type gets a stable, deterministic key so "should this alert exist"
-// is an idempotent upsert, and "should it no longer exist" only deletes an alert
-// that is still OPEN — a REVIEWED alert is historical record and is left alone.
+// Each alert type gets a stable, deterministic key — enforced at the DB level by
+// OpsAlert's @@unique([shiftRecordId, alertType]) — so "should this alert exist"
+// is an idempotent upsert against the ONE row for that (shift, type), and
+// "should it no longer exist" only deletes an alert that is still OPEN. A
+// condition that re-triggers after a reviewer already actioned the alert
+// REOPENS that same row (clearing the stale review stamp) instead of creating a
+// second row for the same (shiftRecordId, alertType) — see the upsert below.
 
 type AlertSpec = { alertType: 'MISSING_HEAT_CHECK' | 'FATIGUE_THRESHOLD' | 'MISSING_ALLOWANCE'; title: string; message: string; severity: 'MEDIUM' | 'HIGH' | 'CRITICAL' }
 
@@ -161,23 +165,40 @@ export async function reconcileShiftAlerts(
   const wanted = wantedAlerts(shift)
   const wantedTypes = new Set(wanted.map((a) => a.alertType))
 
+  // Across every status (not just OPEN): with the @@unique(shiftRecordId,
+  // alertType) constraint there is at most one row per type regardless of
+  // status, so this single lookup is enough to decide create/update/reopen.
   const existing = await prisma.opsAlert.findMany({
-    where: { workspaceId, shiftRecordId, status: 'OPEN' },
-    select: { id: true, alertType: true },
+    where: { workspaceId, shiftRecordId },
+    select: { id: true, alertType: true, status: true },
   })
-  const existingByType = new Map(existing.map((a) => [a.alertType, a.id]))
+  const existingByType = new Map(existing.map((a) => [a.alertType, a]))
 
   await prisma.$transaction([
     // No-longer-warranted OPEN alerts are cleared (e.g. the heat check was
-    // subsequently completed). REVIEWED alerts are never touched here.
+    // subsequently completed). REVIEWED alerts are never deleted here — a
+    // condition that's stopped applying still leaves its resolved history.
     prisma.opsAlert.deleteMany({
       where: { workspaceId, shiftRecordId, status: 'OPEN', alertType: { notIn: [...wantedTypes] } },
     }),
-    ...wanted.map((spec) =>
-      existingByType.has(spec.alertType)
-        ? prisma.opsAlert.update({ where: { id: existingByType.get(spec.alertType)! }, data: { title: spec.title, message: spec.message, severity: spec.severity } })
-        : prisma.opsAlert.create({ data: { workspaceId, shiftRecordId, ...spec } }),
-    ),
+    ...wanted.map((spec) => {
+      const found = existingByType.get(spec.alertType)
+      if (!found) {
+        return prisma.opsAlert.create({ data: { workspaceId, shiftRecordId, ...spec } })
+      }
+      // Reopen rather than duplicate: a re-triggered condition against an
+      // already-REVIEWED row means the review no longer reflects reality, so
+      // the stamp is cleared and the SAME row goes back to OPEN.
+      return prisma.opsAlert.update({
+        where: { id: found.id },
+        data: {
+          title: spec.title,
+          message: spec.message,
+          severity: spec.severity,
+          ...(found.status === 'REVIEWED' ? { status: 'OPEN' as const, reviewedBy: null, reviewedAt: null } : {}),
+        },
+      })
+    }),
   ])
 }
 
