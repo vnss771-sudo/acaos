@@ -1,10 +1,10 @@
 import { ApiError } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { centsToDollars } from '../../lib/money.js'
 import { workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
-import type { ICPConfig, SignalType } from '../../lib/signalEngine.js'
+import type { ICPConfig, SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 import type { Assert, Extends, DiscoverProspectsRequest } from '@acaos/shared'
 
 // Request contract for POST /discover, pinned to the shared type so they can't drift.

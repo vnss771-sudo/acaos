@@ -1,10 +1,10 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { listPacks, getPack } from '../lib/packs/index.js'
-import { recordAudit } from '../lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { validate, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import { z } from 'zod'
 

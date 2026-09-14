@@ -2,14 +2,14 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, workspaceIdField } from '../lib/validate.js'
 import { generateWebhookSecret, WEBHOOK_EVENT_TYPES, isWebhookEventType } from '@acaos/backend-core/lib/webhooks.js'
 import { resolvePublicMailHost } from '@acaos/backend-core/lib/ssrf.js'
 import { encryptSecret, decryptSecret, isEncrypted } from '@acaos/backend-core/lib/encrypt.js'
-import { recordAudit } from '../lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 
 // Outbound-webhook endpoint management. Customers register a URL + the events they
 // want; ACAOS POSTs signed payloads to it. Managing endpoints is an admin-level

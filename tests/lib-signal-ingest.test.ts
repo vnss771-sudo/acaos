@@ -2,7 +2,7 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
-import { ingestSignal, buildSignalFingerprint } from '../apps/api/src/lib/signalIngest.ts'
+import { ingestSignal, buildSignalFingerprint } from '../packages/backend-core/src/lib/signalIngest.ts'
 
 afterEach(() => resetPrisma())
 

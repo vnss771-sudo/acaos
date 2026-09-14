@@ -33,7 +33,7 @@ import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPaci
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
-import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig } from '@acaos/backend-core/lib/policyCheck.js'
+import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig, type DraftPolicyViolation } from '@acaos/backend-core/lib/policyCheck.js'
 import { assertOutreachTone, OutreachToneError } from '@acaos/backend-core/lib/outreachTone.js'
 import { buildOutreachEmail } from '@acaos/backend-core/lib/emailFooter.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
@@ -571,29 +571,17 @@ async function getMissionSendBlockReason(campaignId: string): Promise<string | n
   return null
 }
 
-/**
- * Execute a campaign: generate personalised outreach for each eligible lead
- * (or reuse an existing draft), send via SMTP, and record in OutreachSent for
- * closed-loop reply tracking. Processes leads serially to stay within plan limits.
- */
-export async function sendCampaignBatch(
-  campaignId: string,
-  workspaceId: string,
-  leadIds: string[] | undefined,
-  progress?: Progress,
-  // Optional injection seam: tests pass a `sendMail` stub so the suppression,
-  // idempotency, and fail-closed paths can be exercised without real SMTP (the
-  // real mailer does network I/O and SSRF-pins public hosts). Defaults to the
-  // real mailer, so production callers (worker.ts) are unchanged. `pageSize`
-  // lets a test exercise multi-page paging without seeding hundreds of leads.
-  deps: { sendMail?: typeof sendMail; generateOutreach?: typeof generateOutreach; pageSize?: number } = {}
-): Promise<SendCampaignResult> {
-  const sendMailFn = deps.sendMail ?? sendMail
-  // Injection seam (tests): generation is otherwise a live OpenAI call, so the
-  // failure→refund/skip paths can't be exercised without it. Defaults to the real
-  // generator, so production callers (worker.ts) are unchanged.
-  const generateOutreachFn = deps.generateOutreach ?? generateOutreach
-  // Load workspace-specific SMTP config (falls back to env vars in sendMail)
+// ── sendCampaignBatch and its named steps ──────────────────────────────────
+// The batch is decomposed into the pipeline it actually runs, in order: load
+// batch-level config → (per page) load fast-path lookup sets → (per lead)
+// resolve where the draft comes from → claim a send slot → generate + police
+// a fresh draft if needed → dispatch the email and record the outcome. Each
+// step below is a standalone function so it can be read (and in several
+// cases unit-tested) on its own; sendCampaignBatch itself is now just the
+// control flow that calls them in sequence.
+
+/** Workspace/campaign-level config a send batch needs before touching any lead. */
+async function loadCampaignSendConfig(campaignId: string, workspaceId: string) {
   // Load workspace config and ICP settings together — both are needed before
   // querying leads (approvalMode determines which drafts are eligible to send).
   const [wsCfgRecord, icp, workspace, missionCtx, draftPolicyRecord, campaignRow] = await Promise.all([
@@ -625,6 +613,416 @@ export async function sendCampaignBatch(
     : undefined
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
+  return { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg }
+}
+
+type CampaignSendConfig = Awaited<ReturnType<typeof loadCampaignSendConfig>>
+
+/**
+ * Per-page fast-path lookup sets so per-lead checks below are in-memory
+ * membership tests instead of one query per lead. Pre-filters/caches only —
+ * the atomic per-lead claim (unique (campaignId, leadId)) remains the real
+ * race guard.
+ */
+async function loadPageFastPathSets(page: CampaignLeadRow[], workspaceId: string, campaignId: string) {
+  const pageLeadIds = page.map((l) => l.id)
+  const pageEmails = page.map((l) => l.email!).filter(Boolean)
+  const isSuppressed = pageEmails.length > 0
+    ? await bulkCheckSuppression(workspaceId, pageEmails)
+    : () => false
+
+  const alreadySentLeadIds: Set<string> = new Set(
+    (await prisma.outreachSent.findMany({
+      where: { campaignId, leadId: { in: pageLeadIds }, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
+      select: { leadId: true },
+    }))
+      .map((r: { leadId: string | null }) => r.leadId)
+      .filter((id: string | null): id is string => id !== null)
+  )
+
+  const policyReviewLeadIds: Set<string> = new Set(
+    (await prisma.outreachDraft.findMany({
+      where: { leadId: { in: pageLeadIds }, status: 'POLICY_REVIEW' },
+      select: { leadId: true },
+    })).map((r: { leadId: string }) => r.leadId)
+  )
+
+  const linkedIntentRows = await prisma.outreachIntent
+    .findMany({
+      where: { leadId: { in: pageLeadIds }, status: 'APPROVED' },
+      select: { leadId: true, id: true, recommendationId: true, evidenceSnapshot: true },
+    })
+    .catch(() => [])
+  const linkedIntentByLeadId = new Map<string, (typeof linkedIntentRows)[number]>()
+  for (const intent of linkedIntentRows) {
+    if (intent.leadId !== null && !linkedIntentByLeadId.has(intent.leadId)) {
+      linkedIntentByLeadId.set(intent.leadId, intent)
+    }
+  }
+
+  return { isSuppressed, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId }
+}
+
+export type DraftSourceDecision =
+  | { action: 'reuse'; subject: string; body: string }
+  | { action: 'generate' }
+  | { action: 'skip'; reason: Extract<SendSkipReason, 'POLICY_REVIEW' | 'NO_APPROVED_DRAFT'> }
+
+/**
+ * Decide where a lead's send-batch draft comes from: an existing draft
+ * (already approved, or eligible for reuse), a fresh AI generation, or a
+ * skip (a POLICY_REVIEW draft awaiting human review, or approval required
+ * with nothing approved yet). Pure — no I/O — so it's unit-testable directly.
+ */
+export function resolveDraftSource(
+  lead: Pick<CampaignLeadRow, 'id' | 'outreachDrafts'>,
+  opts: { approvalRequired: boolean; policyReviewLeadIds: Set<string> }
+): DraftSourceDecision {
+  if (lead.outreachDrafts[0]) {
+    return { action: 'reuse', subject: lead.outreachDrafts[0].subject, body: lead.outreachDrafts[0].emailBody }
+  }
+  // A draft already flagged POLICY_REVIEW is awaiting human review — skip
+  // without regenerating (the selection query excludes it, so it never lands
+  // in outreachDrafts[0], but its lead still appears here in non-approval mode).
+  if (opts.policyReviewLeadIds.has(lead.id)) return { action: 'skip', reason: 'POLICY_REVIEW' }
+  // Approval mode: only human-approved drafts may be sent. The caller's query
+  // includes APPROVED drafts only, so an empty drafts array here means this
+  // lead has nothing approved — it must be skipped, never sent with freshly
+  // generated copy. (Without this guard, generating would bypass the entire
+  // approval gate.)
+  if (opts.approvalRequired) return { action: 'skip', reason: 'NO_APPROVED_DRAFT' }
+  return { action: 'generate' }
+}
+
+/** True for a Prisma unique-constraint violation (P2002). */
+export function isUniqueConstraintViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002'
+}
+
+/**
+ * Run the deterministic tone/content/grounding checks on a candidate draft
+ * and collect every violation. Pure and deterministic — no I/O — so it's
+ * unit-testable directly, unlike the DB-tier-only path it used to only be
+ * reachable through. Block-severity tone violations ("creepy"/presumptuous
+ * copy that asserts private knowledge of the recipient's problems) must
+ * never auto-send; folded in here (rather than left to throw) so one bad
+ * draft routes to POLICY_REVIEW instead of failing the whole batch. (Warn-
+ * level buzzwords are non-blocking.) Grounding = the lead facts the copy was
+ * generated from; a claim not supported by them is flagged as fabricated.
+ */
+export function collectDraftViolations(
+  draft: { subject: string; body: string; followup: string | null },
+  grounding: { text: string; hasPriorConnection: boolean },
+  draftPolicy: DraftPolicyConfig | undefined
+): DraftPolicyViolation[] {
+  const toneViolations: DraftPolicyViolation[] = []
+  try {
+    assertOutreachTone({ subject: draft.subject, email: draft.body, followup: draft.followup })
+  } catch (e) {
+    if (e instanceof OutreachToneError) {
+      toneViolations.push(...e.violations.map((v) => ({ code: `TONE_${v.kind.toUpperCase()}`, message: v.match })))
+    } else {
+      throw e
+    }
+  }
+  return [
+    ...checkDraftPolicy({ subject: draft.subject, emailBody: draft.body }, draftPolicy),
+    ...checkClaimGrounding(draft.body, { grounding: grounding.text, hasPriorConnection: grounding.hasPriorConnection }),
+    ...toneViolations,
+  ]
+}
+
+type ClaimOutcome =
+  | { claimed: true; claimId: string; release: () => Promise<void> }
+  | { claimed: false; reason: 'DAILY_CAP' | 'ALREADY_SENT' }
+
+/**
+ * Reserve the daily-cap slot and insert the unique outbox row in ONE
+ * advisory-locked transaction, BEFORE any generation/send. The unique
+ * (campaignId, leadId) constraint guarantees at-most-once delivery: a racing
+ * attempt — or a retry after a post-send crash — gets a P2002 and is
+ * reported as already claimed, having spent no AI. A `claimed: false,
+ * reason: 'DAILY_CAP'` result means the live daily cap is now reached.
+ */
+async function claimOutboxSlot(params: {
+  workspaceId: string
+  campaignId: string
+  lead: CampaignLeadRow
+  subject: string | null
+  body: string | null
+  dailySendLimit: number | null
+  startOfToday: Date
+  linkedIntent: { id: string; recommendationId: string | null; evidenceSnapshot: Prisma.JsonValue | null } | null
+  unsubscribeToken: string
+}): Promise<ClaimOutcome> {
+  const { workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, linkedIntent, unsubscribeToken } = params
+  try {
+    const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (dailySendLimit != null) {
+        const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
+        if (!ok) return null
+      }
+      return tx.outreachSent.create({
+        data: {
+          workspaceId, campaignId, leadId: lead.id,
+          toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body,
+          unsubscribeToken, status: 'SENDING',
+          ...(linkedIntent ? {
+            outreachIntentId: linkedIntent.id,
+            recommendationId: linkedIntent.recommendationId,
+            evidenceSnapshot: linkedIntent.evidenceSnapshot ?? undefined,
+          } : {}),
+        },
+        select: { id: true },
+      })
+    })
+    if (claim === null) return { claimed: false, reason: 'DAILY_CAP' }
+    const claimId = claim.id
+    // Release the claim on a pre-dispatch abort: nothing was sent, so delete the
+    // row (freeing its reserved cap slot) and leave the lead eligible for a later run.
+    const release = async () => { await prisma.outreachSent.delete({ where: { id: claimId } }).catch(() => {}) }
+    return { claimed: true, claimId, release }
+  } catch (err) {
+    // Unique violation — another attempt already owns this send. No AI spent.
+    if (isUniqueConstraintViolation(err)) return { claimed: false, reason: 'ALREADY_SENT' }
+    throw err
+  }
+}
+
+type GenerateDraftOutcome =
+  | { kind: 'generated'; subject: string; body: string }
+  | { kind: 'ai_limit' }
+  | { kind: 'invalid_json' }
+  | { kind: 'policy_review'; violations: DraftPolicyViolation[] }
+  | { kind: 'error'; message: string }
+
+/**
+ * Generate (via AI), validate, and persist a fresh draft for a lead whose
+ * claimed send slot has no existing draft to reuse. Re-checks the AI quota
+ * right before the model call, parses+validates the model's JSON, runs the
+ * tone/policy/grounding checks (collectDraftViolations), and on a violation
+ * persists the draft as POLICY_REVIEW instead of continuing to send. Any AI
+ * spend already reserved is refunded on every non-`generated` outcome.
+ */
+async function generateDraftForSend(
+  lead: CampaignLeadRow,
+  ctx: {
+    workspaceId: string
+    claimId: string
+    icp: CampaignSendConfig['icp']
+    missionCtx: CampaignSendConfig['missionCtx']
+    draftPolicy: DraftPolicyConfig | undefined
+    generateOutreachFn: typeof generateOutreach
+  }
+): Promise<GenerateDraftOutcome> {
+  const { workspaceId, claimId, icp, missionCtx, draftPolicy, generateOutreachFn } = ctx
+  try {
+    await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
+  } catch {
+    return { kind: 'ai_limit' }
+  }
+
+  try {
+    const raw = await generateOutreachFn({
+      businessName: lead.businessName,
+      category:      lead.category   ?? undefined,
+      city:          lead.city        ?? undefined,
+      contactName:   lead.contactName ?? undefined,
+      aiSummary:     lead.aiSummary   ?? undefined,
+      outreachAngle: lead.outreachAngle ?? undefined,
+      // Pass the workspace ICP (tone + product) merged with any per-mission
+      // override (offer + target customer), so a mission's sends reflect that
+      // mission rather than the generic seller profile.
+      icp: (icp || missionCtx) ? {
+        targetIndustries: icp?.targetIndustries,
+        businessType: icp?.businessType ?? undefined,
+        outreachTone: icp?.outreachTone ?? undefined,
+        offer: missionCtx?.offer ?? undefined,
+        targetCustomer: missionCtx?.targetCustomer ?? undefined,
+      } : undefined,
+    })
+    // The provider call was made — record its estimated spend for the
+    // acaos_ai_cost_cents_total metric (independent of quota refunds below,
+    // which track plan usage, not real dollars already spent).
+    incAiCost('AI_OUTREACH')
+    // Strict, schema-validated parse. A draft with bad JSON or a missing
+    // subject/body is unusable — refund the reserved call and report failure
+    // rather than failing the whole batch.
+    let parsed: OutreachDraftOutput
+    try {
+      parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'send-campaign')
+    } catch {
+      await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+      return { kind: 'invalid_json' }
+    }
+    const subject = parsed.subject
+    const body    = parsed.email
+    const followup = parsed.followup ?? null
+
+    // Record generation provenance (model + prompt version) so the draft is
+    // auditable/reproducible. Best-effort — never blocks the send.
+    const promptVersionId = await resolvePromptVersionId({ workspaceId, ...outreachGenerationMeta() })
+
+    // Deterministic policy check on freshly generated copy. On a violation,
+    // persist the draft as POLICY_REVIEW and report it — never auto-send
+    // unreviewed copy that tripped a policy. (Unsubscribe compliance is NOT
+    // checked here: the send footer guarantees a List-Unsubscribe link.)
+    const grounding = [lead.businessName, lead.category, lead.city, lead.aiSummary, lead.outreachAngle, lead.notes]
+      .filter(Boolean).join(' ')
+    const violations = collectDraftViolations(
+      { subject, body, followup },
+      { text: grounding, hasPriorConnection: Boolean(lead.notes?.trim()) },
+      draftPolicy,
+    )
+    if (violations.length > 0) {
+      await prisma.outreachDraft.create({
+        data: {
+          leadId: lead.id, workspaceId, subject, emailBody: body, followup, promptVersionId,
+          status: 'POLICY_REVIEW',
+          policyViolations: { violations: violations.map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
+        }
+      })
+      console.log(`[send-campaign] Draft for lead ${lead.id} flagged POLICY_REVIEW: ${violations.map(v => v.code).join(', ')}`)
+      return { kind: 'policy_review', violations }
+    }
+
+    // Persist the draft for reuse and fill the claim with the generated copy.
+    await prisma.outreachDraft.create({
+      data: { leadId: lead.id, workspaceId, subject, emailBody: body, followup, promptVersionId }
+    })
+    await prisma.outreachSent.update({ where: { id: claimId }, data: { subject, body } })
+    return { kind: 'generated', subject, body }
+  } catch (err) {
+    console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
+    // Generation failed after reserving the AI call — refund it.
+    await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+    return { kind: 'error', message: err instanceof Error ? err.message : 'unknown error' }
+  }
+}
+
+/**
+ * Render and send the actual email for a claimed lead, then record the
+ * outcome: on success, mark the outbox row SENT, advance the lead's stage,
+ * append the ledger event, bump daily stats, and best-effort schedule the
+ * next sequence step — all atomically with the send. On failure, mark the
+ * outbox row FAILED (fail-closed: never auto-resent) and append a FAILED
+ * ledger event, mirroring the success path's bookkeeping.
+ */
+async function dispatchOutreachEmail(p: {
+  sendMailFn: typeof sendMail
+  smtpCfg: SmtpConfig | null
+  lead: CampaignLeadRow
+  subject: string
+  body: string
+  claimId: string
+  workspaceId: string
+  campaignId: string
+  appUrl: string
+  unsubscribeToken: string
+  senderBusinessName: string | null | undefined
+  senderPostalAddress: string | null | undefined
+  linkedIntent: { id: string } | null
+  autoFollowupsEnabled: boolean
+}): Promise<{ ok: true } | { ok: false }> {
+  // Shared renderer: CAN-SPAM/CASL sender identity + physical address, unsubscribe
+  // link, and a clean text/plain alternative — identical to the follow-up path.
+  const { htmlBody, textBody, unsubscribeUrl } = buildOutreachEmail({
+    body: p.body, appUrl: p.appUrl, unsubscribeToken: p.unsubscribeToken,
+    senderBusinessName: p.senderBusinessName, senderPostalAddress: p.senderPostalAddress,
+  })
+
+  try {
+    // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
+    // endpoint already serves a safe GET confirmation and a POST one-click
+    // handler. Major mailbox providers require these for bulk senders.
+    const info = await p.sendMailFn(p.lead.email!, p.subject, htmlBody, p.smtpCfg, {
+      text: textBody,
+      headers: {
+        'List-Unsubscribe': `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    })
+    const msgId = (info as any).messageId ?? null
+
+    await prisma.$transaction([
+      prisma.outreachSent.update({
+        where: { id: p.claimId },
+        data: { messageId: msgId, status: 'SENT', sentAt: new Date() }
+      }),
+      prisma.lead.update({
+        where: { id: p.lead.id },
+        data: { stage: 'OUTREACH_SENT', lastContactedAt: new Date() }
+      }),
+      // Append the SENT lifecycle event to the contact ledger in the SAME
+      // transaction as the send, so the ledger can never disagree with the outbox.
+      prisma.contactEvent.create({
+        data: contactEventData({ workspaceId: p.workspaceId, email: p.lead.email!, type: 'SENT', leadId: p.lead.id, campaignId: p.campaignId, outreachSentId: p.claimId }),
+      }),
+      // Increment the campaign's daily SENT counter atomically with the send.
+      prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId: p.workspaceId, campaignId: p.campaignId, date: new Date(), field: 'sent' })),
+      // Advance the linked intent to SENT in the same transaction as the send.
+      ...(p.linkedIntent ? [prisma.outreachIntent.update({ where: { id: p.linkedIntent.id }, data: { status: 'SENT' } })] : []),
+    ])
+
+    // Schedule the next sequence step (best-effort; no-op unless the campaign
+    // opted into auto-followups and an active next step exists).
+    void scheduleNextFollowup({
+      workspaceId: p.workspaceId, campaignId: p.campaignId, leadId: p.lead.id, outreachSentId: p.claimId,
+      currentStep: 1, sentAt: new Date(), autoFollowupsEnabled: p.autoFollowupsEnabled,
+    }).catch(() => {})
+
+    return { ok: true }
+  } catch (err) {
+    // Known SMTP rejection (nodemailer throws only when the provider did NOT
+    // accept the message). Mark the claim FAILED with the error + failedAt for
+    // operator review instead of deleting it — fail-closed: it won't be
+    // auto-resent. (A crash AFTER provider acceptance leaves the row SENDING,
+    // also never resent.) Operators can clear FAILED rows to deliberately retry.
+    const message = err instanceof Error ? err.message : 'SMTP send failed'
+    console.error(`[send-campaign] SMTP failed for lead ${p.lead.id}: ${message}`)
+    // Mark the claim FAILED, append the FAILED ledger event, and bump the daily
+    // failed counter ATOMICALLY (mirrors the SENT path) so the ledger/stats can't
+    // disagree with the outbox. The whole tx is best-effort wrapped — a ledger
+    // hiccup must never mask the SMTP failure itself (we still count it failed).
+    await prisma.$transaction([
+      prisma.outreachSent.update({
+        where: { id: p.claimId },
+        data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
+      }),
+      prisma.contactEvent.create({
+        data: contactEventData({ workspaceId: p.workspaceId, email: p.lead.email!, type: 'FAILED', leadId: p.lead.id, campaignId: p.campaignId, outreachSentId: p.claimId, metadata: { error: message.slice(0, 200) } }),
+      }),
+      prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId: p.workspaceId, campaignId: p.campaignId, date: new Date(), field: 'failed' })),
+    ]).catch((e) => console.error(`[send-campaign] FAILED-record tx error for lead ${p.lead.id}: ${e instanceof Error ? e.message : e}`))
+    return { ok: false }
+  }
+}
+
+/**
+ * Execute a campaign: generate personalised outreach for each eligible lead
+ * (or reuse an existing draft), send via SMTP, and record in OutreachSent for
+ * closed-loop reply tracking. Processes leads serially to stay within plan limits.
+ */
+export async function sendCampaignBatch(
+  campaignId: string,
+  workspaceId: string,
+  leadIds: string[] | undefined,
+  progress?: Progress,
+  // Optional injection seam: tests pass a `sendMail` stub so the suppression,
+  // idempotency, and fail-closed paths can be exercised without real SMTP (the
+  // real mailer does network I/O and SSRF-pins public hosts). Defaults to the
+  // real mailer, so production callers (worker.ts) are unchanged. `pageSize`
+  // lets a test exercise multi-page paging without seeding hundreds of leads.
+  deps: { sendMail?: typeof sendMail; generateOutreach?: typeof generateOutreach; pageSize?: number } = {}
+): Promise<SendCampaignResult> {
+  const sendMailFn = deps.sendMail ?? sendMail
+  // Injection seam (tests): generation is otherwise a live OpenAI call, so the
+  // failure→refund/skip paths can't be exercised without it. Defaults to the real
+  // generator, so production callers (worker.ts) are unchanged.
+  const generateOutreachFn = deps.generateOutreach ?? generateOutreach
+
+  const { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg } =
+    await loadCampaignSendConfig(campaignId, workspaceId)
 
   let sent = 0
   let skipped = 0
@@ -797,40 +1195,8 @@ export async function sendCampaignBatch(
     // page instead of one for the whole campaign). These are pre-filters/caches
     // only; the atomic per-lead claim (unique (campaignId, leadId)) remains the
     // real race guard. Mission status is NOT cached — it's re-checked per lead.
-    const pageLeadIds = page.map((l: CampaignLeadRow) => l.id)
-    const pageEmails = page.map((l: CampaignLeadRow) => l.email!).filter(Boolean)
-    const isSuppressed = pageEmails.length > 0
-      ? await bulkCheckSuppression(workspaceId, pageEmails)
-      : () => false
-
-    const alreadySentLeadIds: Set<string> = new Set(
-      (await prisma.outreachSent.findMany({
-        where: { campaignId, leadId: { in: pageLeadIds }, status: { in: ['SENT', 'SENDING', 'FAILED'] } },
-        select: { leadId: true },
-      }))
-        .map((r: { leadId: string | null }) => r.leadId)
-        .filter((id: string | null): id is string => id !== null)
-    )
-
-    const policyReviewLeadIds: Set<string> = new Set(
-      (await prisma.outreachDraft.findMany({
-        where: { leadId: { in: pageLeadIds }, status: 'POLICY_REVIEW' },
-        select: { leadId: true },
-      })).map((r: { leadId: string }) => r.leadId)
-    )
-
-    const linkedIntentRows = await prisma.outreachIntent
-      .findMany({
-        where: { leadId: { in: pageLeadIds }, status: 'APPROVED' },
-        select: { leadId: true, id: true, recommendationId: true, evidenceSnapshot: true },
-      })
-      .catch(() => [])
-    const linkedIntentByLeadId = new Map<string, (typeof linkedIntentRows)[number]>()
-    for (const intent of linkedIntentRows) {
-      if (intent.leadId !== null && !linkedIntentByLeadId.has(intent.leadId)) {
-        linkedIntentByLeadId.set(intent.leadId, intent)
-      }
-    }
+    const { isSuppressed, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId } =
+      await loadPageFastPathSets(page, workspaceId, campaignId)
 
     for (const lead of page) {
 
@@ -874,28 +1240,11 @@ export async function sendCampaignBatch(
     // happens BEFORE any generation, so a racing send job loses the unique
     // (campaignId, leadId) claim and skips before burning AI quota — no duplicate
     // AI spend and no duplicate draft (the previous order generated first).
-    let subject: string | null = null
-    let body: string | null = null
-    let needGeneration = false
-
-    if (lead.outreachDrafts[0]) {
-      subject = lead.outreachDrafts[0].subject
-      body = lead.outreachDrafts[0].emailBody
-    } else {
-      // A draft already flagged POLICY_REVIEW is awaiting human review — skip
-      // without regenerating (the selection query excludes it, so it never lands
-      // in outreachDrafts[0], but its lead still appears here in non-approval mode).
-      if (policyReviewLeadIds.has(lead.id)) { skip('POLICY_REVIEW'); continue }
-
-      // Approval mode: only human-approved drafts may be sent. The query above
-      // includes APPROVED drafts only, so an empty drafts array here means this
-      // lead has nothing approved — it must be skipped, never sent with freshly
-      // generated copy. (Without this guard, generating below would bypass the
-      // entire approval gate.)
-      if (approvalRequired) { skip('NO_APPROVED_DRAFT'); continue }
-
-      needGeneration = true
-    }
+    const draftSource = resolveDraftSource(lead, { approvalRequired, policyReviewLeadIds })
+    if (draftSource.action === 'skip') { skip(draftSource.reason); continue }
+    let subject: string | null = draftSource.action === 'reuse' ? draftSource.subject : null
+    let body: string | null = draftSource.action === 'reuse' ? draftSource.body : null
+    const needGeneration = draftSource.action === 'generate'
 
     // Provenance (Stage 5): an APPROVED OutreachIntent linked to this lead, stamped
     // onto the claim so the record is self-auditable and marked SENT on success.
@@ -903,151 +1252,41 @@ export async function sendCampaignBatch(
     const linkedIntent = linkedIntentByLeadId.get(lead.id) ?? null
     const unsubscribeToken = randomBytes(24).toString('hex')
 
-    // CLAIM FIRST: reserve the daily-cap slot and insert the unique outbox row in
-    // ONE advisory-locked transaction, BEFORE generating. subject/body may be null
-    // here and are filled once the draft is prepared. The unique (campaignId,
-    // leadId) constraint guarantees at-most-once delivery: a racing attempt — or a
-    // retry after a post-send crash — gets a P2002 and skips, having spent no AI.
-    // A null result means the live daily cap is now reached.
-    let claimId: string
-    try {
-      const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        if (dailySendLimit != null) {
-          const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
-          if (!ok) return null
-        }
-        return tx.outreachSent.create({
-          data: {
-            workspaceId, campaignId, leadId: lead.id,
-            toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body,
-            unsubscribeToken, status: 'SENDING',
-            ...(linkedIntent ? {
-              outreachIntentId: linkedIntent.id,
-              recommendationId: linkedIntent.recommendationId,
-              evidenceSnapshot: linkedIntent.evidenceSnapshot ?? undefined,
-            } : {}),
-          },
-          select: { id: true },
-        })
-      })
-      if (claim === null) {
+    // CLAIM FIRST: reserve the daily-cap slot and insert the unique outbox row
+    // before generating — see claimOutboxSlot's doc comment for why.
+    const claimOutcome = await claimOutboxSlot({
+      workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, linkedIntent, unsubscribeToken,
+    })
+    if (!claimOutcome.claimed) {
+      if (claimOutcome.reason === 'DAILY_CAP') {
         // Daily cap reached mid-batch — skip the remaining leads (across pages) and stop.
         const remaining = total - sent - skipped - failed
         console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached mid-batch for workspace ${workspaceId}; skipped remaining=${remaining}`)
         skip('DAILY_CAP', remaining)
         break pageLoop
       }
-      claimId = claim.id
-    } catch (err) {
-      // Unique violation — another attempt already owns this send. Skip (no AI spent).
-      if ((err as { code?: string }).code === 'P2002') { skip('ALREADY_SENT'); continue }
-      throw err
+      skip('ALREADY_SENT'); continue
     }
-
-    // Release the claim on a pre-dispatch abort: nothing was sent, so delete the row
-    // (freeing its reserved cap slot) and leave the lead eligible for a later run.
-    const releaseClaim = async () => { await prisma.outreachSent.delete({ where: { id: claimId } }).catch(() => {}) }
+    const claimId = claimOutcome.claimId
+    const releaseClaim = claimOutcome.release
 
     // Generate now that the claim is held (a racing job has already lost it, so this
     // AI call happens at most once per (campaign, lead)).
     if (needGeneration) {
-      try {
-        await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
-      } catch {
-        await releaseClaim(); skip('AI_LIMIT'); continue  // AI limit reached
-      }
-
-      try {
-        const raw = await generateOutreachFn({
-          businessName: lead.businessName,
-          category:      lead.category   ?? undefined,
-          city:          lead.city        ?? undefined,
-          contactName:   lead.contactName ?? undefined,
-          aiSummary:     lead.aiSummary   ?? undefined,
-          outreachAngle: lead.outreachAngle ?? undefined,
-          // Pass the workspace ICP (tone + product) merged with any per-mission
-          // override (offer + target customer), so a mission's sends reflect that
-          // mission rather than the generic seller profile.
-          icp: (icp || missionCtx) ? {
-            targetIndustries: icp?.targetIndustries,
-            businessType: icp?.businessType ?? undefined,
-            outreachTone: icp?.outreachTone ?? undefined,
-            offer: missionCtx?.offer ?? undefined,
-            targetCustomer: missionCtx?.targetCustomer ?? undefined,
-          } : undefined,
-        })
-        // The provider call was made — record its estimated spend for the
-        // acaos_ai_cost_cents_total metric (independent of quota refunds below,
-        // which track plan usage, not real dollars already spent).
-        incAiCost('AI_OUTREACH')
-        // Strict, schema-validated parse. A draft with bad JSON or a missing
-        // subject/body is unusable — refund the reserved call, release the claim,
-        // and skip this lead rather than failing the whole batch.
-        let parsed: OutreachDraftOutput
-        try {
-          parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'send-campaign')
-        } catch {
-          await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+      const outcome = await generateDraftForSend(lead, { workspaceId, claimId, icp, missionCtx, draftPolicy, generateOutreachFn })
+      switch (outcome.kind) {
+        case 'ai_limit':
+          await releaseClaim(); skip('AI_LIMIT'); continue
+        case 'invalid_json':
           await releaseClaim(); skip('AI_GENERATION_FAILED'); continue
-        }
-        subject = parsed.subject
-        body    = parsed.email
-        const followup = parsed.followup ?? null
-
-        // Record generation provenance (model + prompt version) so the draft is
-        // auditable/reproducible. Best-effort — never blocks the send.
-        const promptVersionId = await resolvePromptVersionId({ workspaceId, ...outreachGenerationMeta() })
-
-        // Deterministic policy check on freshly generated copy. On a violation,
-        // persist the draft as POLICY_REVIEW, release the claim, and skip — never
-        // auto-send unreviewed copy that tripped a policy. (Unsubscribe compliance
-        // is NOT checked here: the send footer guarantees a List-Unsubscribe link.)
-        // Also fact-check generated claims against what we actually know about the
-        // prospect — fabricated prior-contact or unsupported event claims must not
-        // auto-send. Grounding = the lead facts the copy was generated from.
-        const grounding = [lead.businessName, lead.category, lead.city, lead.aiSummary, lead.outreachAngle, lead.notes]
-          .filter(Boolean).join(' ')
-        // Block-severity tone violations ("creepy"/presumptuous copy that asserts
-        // private knowledge of the recipient's problems) must never auto-send. The
-        // generate-outreach queue path lets assertOutreachTone throw so BullMQ
-        // regenerates; in the batch we instead fold the block-violations into the
-        // POLICY_REVIEW path below, so one bad draft routes to review rather than
-        // failing the whole batch. (Warn-level buzzwords are non-blocking.)
-        const toneViolations: { code: string; message: string }[] = []
-        try {
-          assertOutreachTone({ subject, email: body, followup })
-        } catch (e) {
-          if (e instanceof OutreachToneError) {
-            toneViolations.push(...e.violations.map((v) => ({ code: `TONE_${v.kind.toUpperCase()}`, message: v.match })))
-          } else { throw e }
-        }
-        const violations = [
-          ...checkDraftPolicy({ subject, emailBody: body }, draftPolicy),
-          ...checkClaimGrounding(body, { grounding, hasPriorConnection: Boolean(lead.notes?.trim()) }),
-          ...toneViolations,
-        ]
-        if (violations.length > 0) {
-          await prisma.outreachDraft.create({
-            data: {
-              leadId: lead.id, workspaceId, subject, emailBody: body, followup, promptVersionId,
-              status: 'POLICY_REVIEW',
-              policyViolations: { violations: violations.map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
-            }
-          })
-          console.log(`[send-campaign] Draft for lead ${lead.id} flagged POLICY_REVIEW: ${violations.map(v => v.code).join(', ')}`)
+        case 'policy_review':
           await releaseClaim(); skip('POLICY_REVIEW'); continue
-        }
-
-        // Persist the draft for reuse and fill the claim with the generated copy.
-        await prisma.outreachDraft.create({
-          data: { leadId: lead.id, workspaceId, subject, emailBody: body, followup, promptVersionId }
-        })
-        await prisma.outreachSent.update({ where: { id: claimId }, data: { subject, body } })
-      } catch (err) {
-        console.error(`[send-campaign] Draft generation failed for lead ${lead.id}: ${(err as Error).message}`)
-        // Generation failed after reserving the AI call — refund it and release.
-        await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
-        await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue
+        case 'error':
+          await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue
+        case 'generated':
+          subject = outcome.subject
+          body = outcome.body
+          break
       }
     }
 
@@ -1055,79 +1294,18 @@ export async function sendCampaignBatch(
     // Guard defensively so a logic slip fails this one lead, not the whole batch.
     if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue }
 
-    // Shared renderer: CAN-SPAM/CASL sender identity + physical address, unsubscribe
-    // link, and a clean text/plain alternative — identical to the follow-up path.
-    const { htmlBody, textBody, unsubscribeUrl } = buildOutreachEmail({
-      body, appUrl, unsubscribeToken,
+    const dispatchOutcome = await dispatchOutreachEmail({
+      sendMailFn, smtpCfg, lead, subject, body, claimId,
+      workspaceId, campaignId, appUrl, unsubscribeToken,
       senderBusinessName: workspace?.senderBusinessName,
       senderPostalAddress: workspace?.senderPostalAddress,
+      linkedIntent, autoFollowupsEnabled,
     })
-
-    try {
-      // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
-      // endpoint already serves a safe GET confirmation and a POST one-click
-      // handler. Major mailbox providers require these for bulk senders.
-      const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
-        text: textBody,
-        headers: {
-          'List-Unsubscribe': `<${unsubscribeUrl}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        },
-      })
-      const msgId = (info as any).messageId ?? null
-
-      await prisma.$transaction([
-        prisma.outreachSent.update({
-          where: { id: claimId },
-          data: { messageId: msgId, status: 'SENT', sentAt: new Date() }
-        }),
-        prisma.lead.update({
-          where: { id: lead.id },
-          data: { stage: 'OUTREACH_SENT', lastContactedAt: new Date() }
-        }),
-        // Append the SENT lifecycle event to the contact ledger in the SAME
-        // transaction as the send, so the ledger can never disagree with the outbox.
-        prisma.contactEvent.create({
-          data: contactEventData({ workspaceId, email: lead.email!, type: 'SENT', leadId: lead.id, campaignId, outreachSentId: claimId }),
-        }),
-        // Increment the campaign's daily SENT counter atomically with the send.
-        prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'sent' })),
-        // Advance the linked intent to SENT in the same transaction as the send.
-        ...(linkedIntent ? [prisma.outreachIntent.update({ where: { id: linkedIntent.id }, data: { status: 'SENT' } })] : []),
-      ])
-
-      // Schedule the next sequence step (best-effort; no-op unless the campaign
-      // opted into auto-followups and an active next step exists).
-      void scheduleNextFollowup({
-        workspaceId, campaignId, leadId: lead.id, outreachSentId: claimId,
-        currentStep: 1, sentAt: new Date(), autoFollowupsEnabled,
-      }).catch(() => {})
-
+    if (dispatchOutcome.ok) {
       sent++
       incSendOutcome('send-campaign', 'sent')
       if (domainCounts) { const d = emailDomain(lead.email); if (d) domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1) }
-    } catch (err) {
-      // Known SMTP rejection (nodemailer throws only when the provider did NOT
-      // accept the message). Mark the claim FAILED with the error + failedAt for
-      // operator review instead of deleting it — fail-closed: it won't be
-      // auto-resent. (A crash AFTER provider acceptance leaves the row SENDING,
-      // also never resent.) Operators can clear FAILED rows to deliberately retry.
-      const message = err instanceof Error ? err.message : 'SMTP send failed'
-      console.error(`[send-campaign] SMTP failed for lead ${lead.id}: ${message}`)
-      // Mark the claim FAILED, append the FAILED ledger event, and bump the daily
-      // failed counter ATOMICALLY (mirrors the SENT path) so the ledger/stats can't
-      // disagree with the outbox. The whole tx is best-effort wrapped — a ledger
-      // hiccup must never mask the SMTP failure itself (we still count it failed).
-      await prisma.$transaction([
-        prisma.outreachSent.update({
-          where: { id: claimId },
-          data: { status: 'FAILED', failedAt: new Date(), lastError: message.slice(0, 500) },
-        }),
-        prisma.contactEvent.create({
-          data: contactEventData({ workspaceId, email: lead.email!, type: 'FAILED', leadId: lead.id, campaignId, outreachSentId: claimId, metadata: { error: message.slice(0, 200) } }),
-        }),
-        prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'failed' })),
-      ]).catch((e) => console.error(`[send-campaign] FAILED-record tx error for lead ${lead.id}: ${e instanceof Error ? e.message : e}`))
+    } else {
       failed++
       incSendOutcome('send-campaign', 'failed')
     }

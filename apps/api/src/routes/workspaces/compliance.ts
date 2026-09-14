@@ -1,9 +1,9 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { normalizeEmail, isValidEmail } from '../../lib/textNormalize.js'
-import { recordAudit } from '../../lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
 import {
