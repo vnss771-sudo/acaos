@@ -125,6 +125,25 @@ describe('ProspectsView', () => {
     expect(screen.queryByLabelText('Select all rows')).not.toBeInTheDocument()
   })
 
+  test('shows a persistent error banner (not just a toast) when the load fails, and Retry reloads', async () => {
+    const api = makeApi((path) => {
+      if (path.includes('/api/prospects?')) return Promise.reject(new Error('Network error'))
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load prospects/i)
+    expect(toast.error).toHaveBeenCalledWith('Network error')
+
+    api.mockImplementation((path: string) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [] })
+      if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect], total: 1 })
+      return Promise.resolve({ prospects: [], total: 0 })
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   test('surfaces discovery run history including provider failures', async () => {
     const api = makeApi((path) => {
       if (path.includes('/discovery-runs')) return Promise.resolve({ runs: [

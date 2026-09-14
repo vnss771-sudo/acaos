@@ -3,7 +3,9 @@ import type { CreateLeadRequest, ImportLeadsRequest, LeadInput } from '@acaos/sh
 import type { Lead, Workspace, Campaign, OutreachDraft, LeadIntelligence, LeadEvidenceRow } from '../types.js'
 import { STAGES, STAGE_COLOR, TIER_COLOR, getScoreTier } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Modal } from '../components/ui/Modal.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -476,6 +478,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
   const [form, setForm] = useState(BLANK_FORM)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -496,13 +499,18 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
     if (!workspace) return
     const reqId = ++leadsReqRef.current
     setLoading(true)
+    setLoadError(false)
     const params = new URLSearchParams({ workspaceId: workspace.id, page: String(page), limit: String(LIMIT) })
     if (stageFilter) params.set('stage', stageFilter)
     if (skippedOnly) params.set('skipped', 'true')
     if (search.trim()) params.set('search', search.trim())
     api<{ leads: Lead[]; total: number }>(`/api/leads?${params}`)
       .then(d => { if (reqId === leadsReqRef.current) { setLeads(d.leads || []); setTotal(d.total || 0) } })
-      .catch(e => { if (reqId === leadsReqRef.current) toast.error(e.message) })
+      .catch(e => {
+        if (reqId !== leadsReqRef.current) return
+        toast.error(e.message)
+        setLoadError(true)
+      })
       .finally(() => { if (reqId === leadsReqRef.current) setLoading(false) })
   }, [workspace?.id, page, stageFilter, skippedOnly, search])
 
@@ -634,6 +642,8 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load leads." onRetry={fetchLeads} />}
+
       <div style={{ color: colors.textFaint, fontSize: 12 }}>
         Leads are outreach-ready contacts — score, research, draft, and send campaigns here.
         Looking for new opportunities to qualify first? That's the <strong style={{ color: colors.textMuted }}>Prospects</strong> page.
@@ -756,7 +766,11 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
         {loading && leads.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spinner /></div>
         ) : leads.length === 0 ? (
-          <EmptyState message="No leads found. Add your first lead or import a CSV." icon="◎" />
+          <EmptyState
+            title="No leads found"
+            description="Add your first lead or import a CSV."
+            action={canManage ? <button style={s.btn} onClick={() => setAdding(true)}>+ Add Lead</button> : undefined}
+          />
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
