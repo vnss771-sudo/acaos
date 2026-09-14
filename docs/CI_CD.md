@@ -116,7 +116,9 @@ not sufficient — the PR's CI `required` check is the authority.
 
 `release.yml` now computes immutable release metadata, writes `dist-pack/release-manifest.json`, and carries that metadata into packaging. Docker builds stamp `ACAOS_RELEASE_VERSION`, `ACAOS_RELEASE_SHA`, and `ACAOS_BUILD_TIME` into the API and worker images.
 
-`post-deploy-smoke.yml` is a manual deploy-gate workflow that runs `npm run smoke:deploy` against the API `/api/ready` and worker `/ready` endpoints, optionally enforcing `--expect-version` and `--expect-commit`, and fails on API/worker release drift.
+`post-deploy-smoke.yml` runs `npm run smoke:deploy` against the API `/api/ready` and worker `/ready` endpoints, optionally enforcing `--expect-version` and `--expect-commit`, and fails on API/worker release drift. It supports manual dispatch AND is auto-triggered by `release.yml`'s `post_deploy_smoke` job on every published release (`workflow_call`).
+
+`release.yml`'s `canary_bake` job bakes a canary/blue-green target's health and 5xx burn rate (`scripts/rollout-gate.mjs`) before promoting, with optional webhook hand-offs to promote or automatically roll back on the target platform — see [`DEPLOY_RUNBOOK.md`](./DEPLOY_RUNBOOK.md#canary--blue-green-bake-and-automatic-rollback). It no-ops cleanly until `CANARY_URL` is configured.
 
 ## Environment variables for rollout smoke
 
@@ -125,10 +127,14 @@ Define these GitHub **environment variables** per environment:
 - `SMOKE_API_URL`
 - `SMOKE_WORKER_URL`
 - `SMOKE_WEB_URL` (optional)
+- `CANARY_URL` (optional — enables the canary bake gate)
+- `CANARY_BAKE_SECONDS` (optional, default 120)
+- `PROMOTE_WEBHOOK_URL` (optional)
 
-And this optional **environment secret**:
+And these optional **environment secrets**:
 
 - `METRICS_TOKEN`
+- `ROLLBACK_WEBHOOK_URL`
 
 
 ## Post-deploy smoke workflow inputs
