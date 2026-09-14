@@ -208,7 +208,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "bullmq_queue_jobs{state=\"waiting\"}",
+          "expr": "max by (queue) (bullmq_queue_jobs{state=\"waiting\"})",
           "legendFormat": "{{queue}}"
         }
       ]

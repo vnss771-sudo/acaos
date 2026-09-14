@@ -1,12 +1,40 @@
 # Prometheus scrape config for ACAOS. The API and worker both expose the
 # Prometheus text format at /metrics, gated by METRICS_TOKEN (sent as a bearer).
 # Substitute the token and targets for your environment (env-var expansion shown).
+#
+# ── Running more than one replica of the API or the worker? ───────────────────
+# Each `targets` list below MUST list every replica individually (or use a
+# service-discovery block that does), never a single load-balanced hostname:
+#
+#   static_configs:
+#     - targets: ["acaos-api-1:4000", "acaos-api-2:4000", "acaos-api-3:4000"]
+#
+# or, for an environment where DNS resolves one name to multiple A records
+# (Docker Swarm, headless k8s Service, ECS Service Discovery):
+#
+#   dns_sd_configs:
+#     - names: ["acaos-api"]
+#       type: A
+#       port: 4000
+#
+# Why this matters: a scrape aimed at a single load-balanced hostname/VIP lands
+# on a DIFFERENT backend replica on every poll. Every ACAOS counter (e.g.
+# `http_requests_total`, `worker_jobs_total`) is a PER-PROCESS in-memory value
+# (see packages/backend-core/src/lib/metrics.ts, apps/worker/src/lib/metrics.ts —
+# no shared registry), so a scrape that lands on a different replica each time
+# makes the series jump non-monotonically and `rate()`/`increase()` over it are
+# meaningless. Scraping every replica as its own target (its own `instance`
+# label) is what makes `sum(rate(http_requests_total[5m]))` across replicas
+# correct — see "Multi-replica metric aggregation" in docs/OPERATIONS.md for the
+# full query-pattern reference (which metrics to `sum()` vs `max()` across
+# replicas) and ops/monitoring/recording_rules.yml for the canonical rules.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
 rule_files:
   - alerts.yml
+  - recording_rules.yml
 
 # Route firing alerts to Alertmanager (ops/monitoring/alertmanager.yml).
 alerting:

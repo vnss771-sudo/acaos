@@ -76,11 +76,58 @@ by the same optional `METRICS_TOKEN`:
 Suggested alert: sustained `bullmq_queue_jobs{state="waiting"}` on `send-campaign`
 (a stuck send queue = unsent outreach), and any growth in `{state="failed"}`.
 
+### Multi-replica metric aggregation
+
+Every counter/gauge above is computed **in-process** — there is no shared
+Prometheus registry (`renderMetrics()`/`renderWorkerMetrics()` in
+`lib/metrics.ts` read from plain in-memory maps). Running more than one API
+or worker replica means a single `/metrics` scrape only ever sees that one
+replica's numbers. Getting a correct fleet-wide dashboard/alert needs two
+things:
+
+1. **Scrape every replica as its own target.** `prometheus.yml`'s
+   `static_configs` must list each replica (or use `dns_sd_configs`/your
+   platform's service discovery) — never a single load-balanced hostname. A
+   scrape that round-robins across replicas makes every counter look like it
+   resets/jumps at random, which breaks `rate()`/`increase()` regardless of
+   the query used downstream. See the comment block at the top of
+   `ops/monitoring/prometheus.yml`.
+2. **Aggregate with the right function**, because not every series means the
+   same thing across replicas:
+   - **Per-process counters** (`http_requests_total`, `worker_jobs_total`,
+     `acaos_send_outcomes_total`, `acaos_ai_cost_cents_total`, …) — each
+     replica only counts what it personally handled, so `sum(rate(...))`
+     across replicas gives the true fleet rate. This is what `alerts.yml`
+     and the Grafana dashboard already do for these.
+   - **Gauges sourced from state every replica sees identically** —
+     `bullmq_queue_jobs` (read from the shared Redis queue) and the worker's
+     DB-derived deliverability snapshot (`acaos_followup_*`,
+     `acaos_sender_*`, `acaos_warmup_*`) are recomputed by *every* worker
+     replica on its own scrape and come out the same. **`sum()` here
+     multiplies the true value by the replica count** — use `max()` (or
+     `min()`/`avg()`; they're equivalent up to scrape-timing jitter) instead.
+   - **Genuinely per-replica in-memory state** — `acaos_circuit_open` (each
+     process's own provider circuit breaker) — use `max()` to mean "open on
+     at least one replica," the actionable signal for that alert.
+
+`ops/monitoring/recording_rules.yml` pre-computes the correct form of every
+series above as `job:*` rules — prefer those in new dashboards/alerts over
+re-deriving the aggregation function each time. `alerts.yml`'s rules already
+use the right function per series (`max()` on the Redis/DB-shared gauges,
+`sum(rate())` on the per-process counters).
+
+A **push-gateway pattern was considered and rejected** for the worker: the
+worker runs as a long-lived process with a continuously-scraped `/metrics`
+(`WORKER_HEALTH_PORT`), not a short-lived batch job that could vanish between
+scrapes — the scrape-and-aggregate approach above is the right fit, not
+push-gateway's "push before exit."
+
 ### Ready-to-use monitoring assets
 
 [`ops/monitoring/`](../ops/monitoring/) ships an importable Grafana dashboard,
 Prometheus alert rules (5xx rate, p99 latency, saturation, send-campaign backlog,
-job failures, target down), and a scrape config wired to these exact series — see
+job failures, target down), replica-aggregation recording rules
+(`recording_rules.yml`), and a scrape config wired to these exact series — see
 [`ops/monitoring/README.md`](../ops/monitoring/README.md).
 
 ## Error reporting (Sentry — optional)

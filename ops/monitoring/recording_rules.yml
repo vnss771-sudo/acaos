@@ -1,0 +1,80 @@
+# Multi-replica aggregation rules for ACAOS. Every ACAOS metric falls into one of
+# three categories, and each needs a DIFFERENT aggregation across replicas — see
+# "Multi-replica metric aggregation" in docs/OPERATIONS.md for the full writeup.
+# This file gives the canonical, pre-computed form of each so a Grafana dashboard
+# or a new alert can reuse `job:*` series instead of re-deriving the right
+# aggregation function by hand (and getting it wrong).
+#
+#   1. Per-process counters (`*_total`) — every replica only counts requests/jobs
+#      IT handled, so `sum(rate(...))` across replicas is correct and gives the
+#      fleet-wide rate. Requires every replica to be scraped as its own target
+#      (see ops/monitoring/prometheus.yml) — a scrape that round-robins across
+#      replicas behind one hostname breaks rate() regardless of the query.
+#   2. Gauges sourced from state shared by all replicas (BullMQ queue depth
+#      read from Redis, the worker's DB-derived deliverability snapshot) — every
+#      replica reports the SAME value each scrape, so `sum()` multiplies the true
+#      value by the replica count. Use `max()` (or `min()`/`avg()`; they're
+#      equivalent up to scrape-timing jitter) to de-duplicate back to one number.
+#   3. Gauges that are genuinely per-process in-memory state (the provider
+#      circuit breaker) — `max()` across replicas answers "is this true
+#      anywhere", which is what an alert wants.
+groups:
+  - name: acaos-api-replica-aggregation
+    rules:
+      # Category 1: counters — sum(rate()) across replicas.
+      - record: job:http_requests:rate5m
+        expr: sum by (job, method, route, status) (rate(http_requests_total[5m]))
+      - record: job:http_requests_errors:rate5m
+        expr: sum by (job) (rate(http_requests_total{status=~"5.."}[5m]))
+      # Two-step histogram aggregation: sum the per-bucket rate across replicas
+      # first (this rule), then histogram_quantile() over the summed buckets
+      # (e.g. `histogram_quantile(0.99, sum by (le, route) (job:http_request_duration_seconds_bucket:rate5m))`).
+      - record: job:http_request_duration_seconds_bucket:rate5m
+        expr: sum by (le, route) (rate(http_request_duration_seconds_bucket[5m]))
+
+  - name: acaos-worker-replica-aggregation
+    rules:
+      # Category 1: counters — every job is processed by exactly one worker
+      # replica, so summing these across replicas gives the true fleet total.
+      - record: job:worker_jobs:rate5m
+        expr: sum by (queue, result) (rate(worker_jobs_total[5m]))
+      - record: job:worker_job_duration_seconds_bucket:rate5m
+        expr: sum by (le, queue) (rate(worker_job_duration_seconds_bucket[5m]))
+      - record: job:acaos_send_outcomes:rate5m
+        expr: sum by (queue, outcome) (rate(acaos_send_outcomes_total[5m]))
+      - record: job:acaos_reputation_enforce_blocks:rate15m
+        expr: sum by (queue) (rate(acaos_reputation_enforce_blocks_total[15m]))
+      - record: job:acaos_ai_cost_cents:increase1h
+        expr: sum by (action) (increase(acaos_ai_cost_cents_total[1h]))
+      - record: job:acaos_ai_calls:rate5m
+        expr: sum by (action) (rate(acaos_ai_calls_total[5m]))
+
+      # Category 2: Redis-shared queue depth — every worker replica reports the
+      # identical BullMQ count each scrape; de-duplicate with max(), never sum().
+      - record: job:bullmq_queue_jobs:max
+        expr: max by (queue, state) (bullmq_queue_jobs)
+
+      # Category 2: DB-derived deliverability snapshot — same query result on
+      # every replica (see apps/worker/src/worker.ts's collectDomainMetrics);
+      # de-duplicate with max().
+      - record: job:acaos_followup_tasks:max
+        expr: max by (status) (acaos_followup_tasks)
+      - record: job:acaos_followup_due_unsent:max
+        expr: max(acaos_followup_due_unsent)
+      - record: job:acaos_sender_workspaces_evaluated:max
+        expr: max(acaos_sender_workspaces_evaluated)
+      - record: job:acaos_sender_workspaces_unhealthy:max
+        expr: max(acaos_sender_workspaces_unhealthy)
+      - record: job:acaos_sender_bounce_rate:max
+        expr: max by (workspace) (acaos_sender_bounce_rate)
+      - record: job:acaos_sender_complaint_rate:max
+        expr: max by (workspace) (acaos_sender_complaint_rate)
+      - record: job:acaos_warmup_day:max
+        expr: max by (workspace) (acaos_warmup_day)
+      - record: job:acaos_warmup_cap:max
+        expr: max by (workspace) (acaos_warmup_cap)
+
+      # Category 3: genuinely per-replica in-memory state — max() means "open on
+      # at least one replica", which is the actionable signal for this breaker.
+      - record: job:acaos_circuit_open:max
+        expr: max by (provider) (acaos_circuit_open)
