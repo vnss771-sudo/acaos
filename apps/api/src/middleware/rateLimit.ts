@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { getRedis } from '../lib/redis.js'
 import { hashApiKey } from '../lib/apiKeys.js'
-import { normalizeEmail } from '../lib/validation.js'
+import { normalizeEmail } from '../lib/textNormalize.js'
 
 interface RateLimitOptions {
   windowMs: number
