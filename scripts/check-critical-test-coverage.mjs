@@ -104,6 +104,14 @@ const result = spawnSync(
     'tsx', '--test', '--test-timeout=60000',
     '--experimental-test-coverage',
     '--test-coverage-exclude=tests/**',
+    // Both other --experimental-test-coverage runs in this repo (test:db,
+    // test:redis, in package.json) pin --test-concurrency=1; this one never
+    // did. Without it, Node runs test files in parallel worker threads, and
+    // V8's coverage collection has known gaps aggregating across concurrent
+    // workers — plausibly why CI consistently under-reported line/branch
+    // coverage for several files here while an identical local run (fewer/
+    // different available cores, so a different concurrency degree) did not.
+    '--test-concurrency=1',
     '--test-reporter=lcov',
     `--test-reporter-destination=${lcovPath}`,
     ...testFiles,
