@@ -18,6 +18,13 @@ function makeApi(overrides?: (path: string, init?: { method?: string }) => unkno
     if (path.includes('/invites')) return Promise.resolve({ invites: [] })
     if (path.includes('/icp')) return Promise.resolve({ icp: null })
     if (path.includes('/email-config')) return Promise.resolve({ config: null })
+    if (path.includes('/stats/reputation')) return Promise.resolve({
+      healthy: true, totalSends: 0, bounces: 0, complaints: 0, bounceRate: 0, complaintRate: 0,
+      reason: null, thresholds: { windowDays: 7, minSends: 50, maxBounceRate: 0.05, maxComplaintRate: 0.003 },
+      guardMode: 'observe',
+      warmup: { active: false, startedAt: null, day: null, totalDays: 8, cap: null, complete: false },
+    })
+    if (path.includes('/unsubscribe')) return Promise.resolve({ suppressions: [] })
     if (path.includes('/compliance')) return Promise.resolve({
       posture: {
         lawfulBasis: null, liaAcknowledgedAt: null, termsAcceptedAt: null, termsVersion: null,
@@ -113,6 +120,38 @@ describe('Settings', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/members/u2', expect.objectContaining({ method: 'DELETE' }))
+  })
+
+  test('shows warmup ramp status and sender reputation once SMTP is configured', async () => {
+    const api = makeApi((path) => {
+      if (path.includes('/email-config')) return Promise.resolve({ config: { smtpFrom: 'sales@northwind.test', smtpHost: 'smtp.acme.test' } })
+      if (path.includes('/stats/reputation')) return Promise.resolve({
+        healthy: false, totalSends: 200, bounces: 20, complaints: 1, bounceRate: 0.1, complaintRate: 0.005,
+        reason: 'BOUNCE_RATE_HIGH', thresholds: { windowDays: 7, minSends: 50, maxBounceRate: 0.05, maxComplaintRate: 0.003 },
+        guardMode: 'observe',
+        warmup: { active: true, startedAt: new Date().toISOString(), day: 2, totalDays: 8, cap: 40, complete: false },
+      })
+    })
+    renderSettings(api, { canManage: true })
+
+    expect(await screen.findByText(/Warming up — day 2 of 8, today's cap: 40\/day/)).toBeInTheDocument()
+    expect(await screen.findByText(/BLOCKED — bounce rate too high/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Restart warmup' })).toBeInTheDocument()
+  })
+
+  test('starting warmup posts to the warmup/start endpoint', async () => {
+    const api = makeApi((path, init) => {
+      if (path.includes('/email-config')) return Promise.resolve({ config: { smtpFrom: 'sales@northwind.test', smtpHost: 'smtp.acme.test' } })
+      if (path === '/api/workspaces/ws1/warmup/start' && init?.method === 'POST')
+        return Promise.resolve({ warmupStartedAt: new Date().toISOString() })
+    })
+    renderSettings(api, { canManage: true })
+
+    const startBtn = await screen.findByRole('button', { name: 'Start warmup' })
+    await userEvent.click(startBtn)
+
+    expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/warmup/start', expect.objectContaining({ method: 'POST' }))
+    expect(toast.success).toHaveBeenCalledWith('Warmup started')
   })
 
   test('revoking the API key asks for confirmation via a dialog, then revokes it', async () => {
