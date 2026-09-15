@@ -60,6 +60,36 @@ describe('ProspectsView', () => {
     expect(screen.queryByRole('button', { name: /Apollo/i })).not.toBeInTheDocument()
   })
 
+  test('opening a prospect shows the score explanation (Prospect brief) with real evidence', async () => {
+    const detail = {
+      ...prospect,
+      fitBreakdown: [
+        { text: 'Construction is one of your target industries', positive: true },
+        { text: '45 employees is within your target range (10–500)', positive: true },
+      ],
+      prediction: { predictedStage: 'PURCHASING', confidence: 80, trajectory: 'ACCELERATING', nextAction: 'Fast-track to proposal — company is ready to buy' },
+      scoreBreakdown: [
+        { type: 'FUNDING', title: 'Series B raised', contribution: 62, detectedAt: new Date().toISOString(), freshness: 'LIVE', evidence: null },
+      ],
+      signals: [
+        { id: 's1', type: 'FUNDING', strength: 80, sourceReliability: 90, industryRelevance: 70, detectedAt: new Date().toISOString(), createdAt: new Date().toISOString() },
+      ],
+    } as unknown as Prospect
+    const api = makeApi((path) => {
+      if (path.includes('/sources')) return Promise.resolve({ sources: [] })
+      if (path.includes('/api/prospects?')) return Promise.resolve({ prospects: [prospect], total: 1 })
+      if (path === '/api/prospects/p1') return Promise.resolve(detail)
+    })
+    render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    await userEvent.click(await screen.findByText('Meridian Roofing'))
+
+    expect(await screen.findByText('Prospect brief')).toBeInTheDocument()
+    expect(screen.getByText(/Driven mainly by their funding signal/i)).toBeInTheDocument()
+    expect(screen.getByText(/Construction is one of your target industries/)).toBeInTheDocument()
+    expect(screen.getByText(/Fast-track to proposal/)).toBeInTheDocument()
+  })
+
   test('shows the empty state when the workspace has no prospects', async () => {
     const api = makeApi()
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)

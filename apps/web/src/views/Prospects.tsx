@@ -12,6 +12,7 @@ import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
 import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Table, type Column, type SortState } from '../components/ui/Table.js'
+import { ProspectBrief } from '../components/prospects/ProspectBrief.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -221,6 +222,10 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
                 </div>
               ))}
             </div>
+
+            {/* Prospect brief: plain-language "why this score" narrative, built
+                from the real per-signal evidence behind Intent/Fit/Timing/Confidence. */}
+            <ProspectBrief prospect={p} />
 
             {/* Buying stage + outcome */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
