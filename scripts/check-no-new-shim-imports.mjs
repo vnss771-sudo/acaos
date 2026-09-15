@@ -21,7 +21,35 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const API_SRC = join(ROOT, 'apps/api/src')
 const LIB_DIR = join(API_SRC, 'lib')
 
-const REEXPORT_ONLY = /^\s*(?:\/\/.*\n|\/\*[\s\S]*?\*\/\n)*\s*export\s*\*\s*from\s*['"]@acaos\/backend-core\/lib\/[^'"]+\.js['"]\s*;?\s*$/
+// The statement a pure re-export shim's body must reduce to once any leading
+// comments are stripped. Deliberately simple (one line, no repeated
+// alternation) — see isPureReexportShim below for why comment-stripping is
+// done as a plain line scan rather than folded into this regex.
+const REEXPORT_STATEMENT = /^export\s*\*\s*from\s*['"]@acaos\/backend-core\/lib\/[^'"]+\.js['"]\s*;?$/
+
+// True when `src`, once its leading //-comments and /* */-comments are
+// stripped, is nothing but a single `export * from '@acaos/backend-core/lib/
+// X.js'` statement. Strips comments with a plain per-line scan rather than a
+// regex whose comment-matching alternation repeats an unbounded number of
+// times (CodeQL flagged the previous version of this check as vulnerable to
+// catastrophic backtracking on crafted input) — this file's content is
+// first-party source under CI's control, not attacker input, but a linear
+// line scan is both safer and no harder to read than the regex it replaces.
+function isPureReexportShim(src) {
+  const lines = src.split('\n')
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i].trim()
+    if (line === '' || line.startsWith('//')) { i++; continue }
+    if (line.startsWith('/*')) {
+      while (i < lines.length && !lines[i].includes('*/')) i++
+      i++
+      continue
+    }
+    break
+  }
+  return REEXPORT_STATEMENT.test(lines.slice(i).join('\n').trim())
+}
 
 function walk(dir) {
   const out = []
@@ -37,7 +65,7 @@ function walk(dir) {
 const reintroducedShims = []
 for (const file of walk(LIB_DIR)) {
   const src = readFileSync(file, 'utf8')
-  if (REEXPORT_ONLY.test(src)) reintroducedShims.push(relative(ROOT, file))
+  if (isPureReexportShim(src)) reintroducedShims.push(relative(ROOT, file))
 }
 
 // 2. No file anywhere in apps/api/src may import such a shim by relative path.
