@@ -26,7 +26,9 @@ import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
-import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
+import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { bulkCheckConsent, hasConsent } from '@acaos/backend-core/lib/consent.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
@@ -549,6 +551,7 @@ export type SendSkipReason =
   | 'REPUTATION_BLOCKED'
   | 'DOMAIN_PACED'
   | 'OUTSIDE_SEND_WINDOW'
+  | 'CONSENT_REQUIRED'
 
 type SendCampaignResult = {
   campaignId: string
@@ -587,7 +590,13 @@ async function loadCampaignSendConfig(campaignId: string, workspaceId: string) {
   const [wsCfgRecord, icp, workspace, missionCtx, draftPolicyRecord, campaignRow] = await Promise.all([
     prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
     prisma.workspaceICP.findUnique({ where: { workspaceId } }),
-    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true } }),
+    prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: {
+        senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true,
+        lawfulBasis: true, targetsCanada: true,
+      },
+    }),
     // Per-mission outreach overrides (offer + target customer), if this campaign
     // is the execution arm of a mission. campaignId is unique on Mission.
     prisma.mission.findUnique({ where: { campaignId }, select: { targetCustomer: true, offer: true } }),
@@ -624,12 +633,28 @@ type CampaignSendConfig = Awaited<ReturnType<typeof loadCampaignSendConfig>>
  * the atomic per-lead claim (unique (campaignId, leadId)) remains the real
  * race guard.
  */
-async function loadPageFastPathSets(page: CampaignLeadRow[], workspaceId: string, campaignId: string) {
+async function loadPageFastPathSets(
+  page: CampaignLeadRow[],
+  workspaceId: string,
+  campaignId: string,
+  // Only bother querying ConsentRecord for this page when the workspace's
+  // compliance posture actually requires it — see the CONSENT_REQUIRED check
+  // in sendCampaignBatch for what sets this.
+  consentRequired = false,
+) {
   const pageLeadIds = page.map((l) => l.id)
   const pageEmails = page.map((l) => l.email!).filter(Boolean)
   const isSuppressed = pageEmails.length > 0
     ? await bulkCheckSuppression(workspaceId, pageEmails)
     : () => false
+  // Fail-closed: when consent is required and there's nothing to check against
+  // (no emails), `hasConsent` defaults to false rather than true — no bulk call
+  // trivially "passes" a page it never inspected.
+  const hasConsent = consentRequired && pageEmails.length > 0
+    ? await bulkCheckConsent(workspaceId, pageEmails)
+    : consentRequired
+      ? () => false
+      : () => true
 
   const alreadySentLeadIds: Set<string> = new Set(
     (await prisma.outreachSent.findMany({
@@ -660,7 +685,7 @@ async function loadPageFastPathSets(page: CampaignLeadRow[], workspaceId: string
     }
   }
 
-  return { isSuppressed, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId }
+  return { isSuppressed, hasConsent, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId }
 }
 
 export type DraftSourceDecision =
@@ -1031,10 +1056,24 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
+
+  // Per-contact consent gate — DORMANT unless COMPLIANCE_GATE_ENABLED (same
+  // launch-control flag as getSendReadiness, so this never surprises an existing
+  // workspace before the compliance surface is turned on for real). Once enabled:
+  // a 'consent' lawful basis requires an on-file ConsentRecord for EVERY
+  // recipient (GDPR Art. 6(1)(a) is per-data-subject, not a workspace-wide
+  // attestation), and a Canada-targeting workspace requires one too (CASL
+  // express/implied consent is required per recipient, not just "some" on file —
+  // this tightens the workspace-level getSendReadiness check, which only proves
+  // at least one record exists). Fail CLOSED: a lead with no matching record is
+  // skipped, never sent.
+  const consentRequired = isComplianceGateEnabled() &&
+    (workspace?.lawfulBasis === 'consent' || workspace?.targetsCanada === true)
+  const consentReason = workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada'
 
   // Operator drain switch: halt all sends for a suppressed workspace before any
   // lead work, without touching the global FEATURE_SEND kill-switch. Counted as a
@@ -1195,8 +1234,8 @@ export async function sendCampaignBatch(
     // page instead of one for the whole campaign). These are pre-filters/caches
     // only; the atomic per-lead claim (unique (campaignId, leadId)) remains the
     // real race guard. Mission status is NOT cached — it's re-checked per lead.
-    const { isSuppressed, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId } =
-      await loadPageFastPathSets(page, workspaceId, campaignId)
+    const { isSuppressed, hasConsent, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId } =
+      await loadPageFastPathSets(page, workspaceId, campaignId, consentRequired)
 
     for (const lead of page) {
 
@@ -1229,6 +1268,20 @@ export async function sendCampaignBatch(
     // Reject structurally-invalid addresses before claiming/generating — a bad
     // address would only burn an SMTP attempt and hurt sender reputation.
     if (!isDeliverableEmail(lead.email)) { skip('INVALID_EMAIL'); continue }
+
+    // Compliance gate (dormant unless COMPLIANCE_GATE_ENABLED): a consent-basis or
+    // Canada-targeting workspace must have an on-file ConsentRecord for THIS
+    // recipient — fail closed, never send on the strength of "some" workspace has
+    // consent recorded. Audited per skip (fire-and-forget) for the SAR/compliance
+    // trail; never blocks the send loop even if the audit write fails.
+    if (consentRequired && !hasConsent(lead.email!)) {
+      skip('CONSENT_REQUIRED')
+      void recordAudit({
+        workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: lead.id,
+        metadata: { campaignId, reason: consentReason },
+      })
+      continue
+    }
 
     // Per-domain pacing: don't burst past the provider's tolerance for one domain.
     if (domainCounts) {
@@ -1369,7 +1422,10 @@ export async function sendFollowupTask(
     prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { dailySendLimit: true, monthlySendLimit: true, warmupStartedAt: true, sendWindowStartHour: true, sendWindowEndHour: true, sendTimezone: true, sendWeekdaysOnly: true } }),
     // Sender identity for the CAN-SPAM/CASL physical-address line — every commercial
     // message needs it, follow-ups included (previously omitted here).
-    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true } }),
+    prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true, lawfulBasis: true, targetsCanada: true },
+    }),
   ])
 
   // Guards (each leaves the task in a terminal, explainable state).
@@ -1395,6 +1451,22 @@ export async function sendFollowupTask(
   // Contact policy: re-checked at send time, not just at scheduling.
   const decision = await canContactRecipient({ workspaceId, email: lead.email, leadId })
   if (!decision.allowed) return finish('BLOCKED', 'BLOCKED', { cancelledReason: decision.reason })
+
+  // Compliance gate (dormant unless COMPLIANCE_GATE_ENABLED) — same rule as the
+  // initial campaign send: a consent-basis or Canada-targeting workspace needs an
+  // on-file ConsentRecord for THIS recipient, re-checked at send time since a
+  // follow-up can fire long after the original send (and any consent basis on
+  // file then may no longer apply). Fail closed.
+  if (isComplianceGateEnabled() && (workspace?.lawfulBasis === 'consent' || workspace?.targetsCanada === true)) {
+    const consented = await hasConsent(workspaceId, lead.email)
+    if (!consented) {
+      void recordAudit({
+        workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: leadId,
+        metadata: { campaignId, reason: workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada', followup: true },
+      })
+      return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'CONSENT_REQUIRED' })
+    }
+  }
 
   // Build the follow-up email from the sequence step, via the SAME renderer the
   // initial campaign send uses — so the sender identity + physical address (and
