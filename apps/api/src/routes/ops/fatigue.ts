@@ -174,7 +174,7 @@ fatigueRouter.get(
 
     const since = new Date(Date.now() - CONSECUTIVE_LOOKBACK_MS)
     const crew = await prisma.opsCrewMember.findMany({ where: { workspaceId, isActive: true }, select: { id: true } })
-    const crewIds = crew.map((c) => c.id)
+    const crewIds: string[] = crew.map((c: { id: string }) => c.id)
 
     // One query for every crew member's window, bucketed in memory — a per-crew
     // member query would be an N+1 over the whole active roster.
@@ -192,15 +192,15 @@ fatigueRouter.get(
       else byCrewMember.set(shift.crewMemberId, [shift])
     }
 
-    const reports = crewIds
-      .map((id) => computeFatigue(id, byCrewMember.get(id) ?? []))
-      .sort((a, b) => b.riskScore - a.riskScore)
+    const reports: FatigueRisk[] = crewIds
+      .map((id: string) => computeFatigue(id, byCrewMember.get(id) ?? []))
+      .sort((a: FatigueRisk, b: FatigueRisk) => b.riskScore - a.riskScore)
 
     const summary = {
-      critical: reports.filter((r) => r.riskLevel === 'CRITICAL').length,
-      high: reports.filter((r) => r.riskLevel === 'HIGH').length,
-      medium: reports.filter((r) => r.riskLevel === 'MEDIUM').length,
-      low: reports.filter((r) => r.riskLevel === 'LOW').length,
+      critical: reports.filter((r: FatigueRisk) => r.riskLevel === 'CRITICAL').length,
+      high: reports.filter((r: FatigueRisk) => r.riskLevel === 'HIGH').length,
+      medium: reports.filter((r: FatigueRisk) => r.riskLevel === 'MEDIUM').length,
+      low: reports.filter((r: FatigueRisk) => r.riskLevel === 'LOW').length,
     }
 
     res.json({ summary, reports })

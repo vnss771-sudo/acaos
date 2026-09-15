@@ -60,13 +60,13 @@ export async function assertOwnership(
   if (ids.crewMemberId) {
     checks.push(
       prisma.opsCrewMember.findFirst({ where: { id: ids.crewMemberId, workspaceId }, select: { id: true } })
-        .then((r) => { if (!r) throw new ApiError(404, 'Crew member not found') }),
+        .then((r: { id: string } | null) => { if (!r) throw new ApiError(404, 'Crew member not found') }),
     )
   }
   if (ids.jobSiteId) {
     checks.push(
       prisma.opsJobSite.findFirst({ where: { id: ids.jobSiteId, workspaceId }, select: { id: true } })
-        .then((r) => { if (!r) throw new ApiError(404, 'Job site not found') }),
+        .then((r: { id: string } | null) => { if (!r) throw new ApiError(404, 'Job site not found') }),
     )
   }
   await Promise.all(checks)
@@ -172,7 +172,9 @@ export async function reconcileShiftAlerts(
     where: { workspaceId, shiftRecordId },
     select: { id: true, alertType: true, status: true },
   })
-  const existingByType = new Map(existing.map((a) => [a.alertType, a]))
+  const existingByType = new Map<string, { id: string; alertType: string; status: string }>(
+    existing.map((a: { id: string; alertType: string; status: string }) => [a.alertType, a] as const),
+  )
 
   await prisma.$transaction([
     // No-longer-warranted OPEN alerts are cleared (e.g. the heat check was

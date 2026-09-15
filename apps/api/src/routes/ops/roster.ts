@@ -146,8 +146,8 @@ rosterRouter.post(
       prisma.opsCrewMember.findMany({ where: { id: { in: crewMemberIds }, workspaceId }, select: { id: true } }),
       prisma.opsJobSite.findMany({ where: { id: { in: jobSiteIds }, workspaceId }, select: { id: true } }),
     ])
-    const foundCrewIds = new Set(foundCrew.map((c) => c.id))
-    const foundSiteIds = new Set(foundSites.map((s) => s.id))
+    const foundCrewIds = new Set(foundCrew.map((c: { id: string }) => c.id))
+    const foundSiteIds = new Set(foundSites.map((s: { id: string }) => s.id))
     const missingCrew = crewMemberIds.filter((id) => !foundCrewIds.has(id))
     const missingSites = jobSiteIds.filter((id) => !foundSiteIds.has(id))
     if (missingCrew.length || missingSites.length) {
