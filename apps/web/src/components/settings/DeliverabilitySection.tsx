@@ -4,9 +4,41 @@ import { Spinner } from '../Spinner.js'
 
 export type DomainCheckResult = { hasSPF: boolean; hasDKIM: boolean } | null
 
+export type WarmupStatus = {
+  active: boolean
+  startedAt: string | null
+  day: number | null
+  totalDays: number
+  cap: number | null
+  complete: boolean
+}
+
+export type ReputationVerdict = {
+  healthy: boolean
+  totalSends: number
+  bounces: number
+  complaints: number
+  bounceRate: number
+  complaintRate: number
+  reason: 'BOUNCE_RATE_HIGH' | 'COMPLAINT_RATE_HIGH' | null
+  thresholds: { windowDays: number; minSends: number; maxBounceRate: number; maxComplaintRate: number }
+  guardMode: 'observe' | 'enforce' | string
+}
+
+function pct(n: number): string {
+  return `${(n * 100).toFixed(2)}%`
+}
+
+/** "Not started" | "Warming up — day X of N, today's cap: Y/day" | "Warmup complete". */
+function warmupHeadline(w: WarmupStatus): string {
+  if (!w.active) return 'Not started'
+  if (w.complete) return 'Warmup complete — full daily limit applies'
+  return `Warming up — day ${w.day} of ${w.totalDays}, today's cap: ${w.cap}/day`
+}
+
 export function DeliverabilitySection({
   smtpFromConfigured, domainCheck, domainCheckLoading, suppressionCount,
-  dailySendLimit, approvalMode,
+  dailySendLimit, approvalMode, warmup, reputation, canManage, startingWarmup, onStartWarmup,
 }: {
   smtpFromConfigured: boolean
   domainCheck: DomainCheckResult
@@ -14,6 +46,11 @@ export function DeliverabilitySection({
   suppressionCount: number | null
   dailySendLimit?: number
   approvalMode?: boolean
+  warmup?: WarmupStatus | null
+  reputation?: ReputationVerdict | null
+  canManage?: boolean
+  startingWarmup?: boolean
+  onStartWarmup?: () => void
 }) {
   return (
     <div style={s.card}>
@@ -105,6 +142,70 @@ export function DeliverabilitySection({
               </div>
             </div>
           </div>
+
+          {/* Domain warmup */}
+          {warmup && (
+            <div style={{ ...s.cardInner }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: warmup.active ? 10 : 0 }}>
+                <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                  Domain Warmup
+                </div>
+                {canManage && onStartWarmup && (
+                  <button
+                    style={{ ...s.btnSecondary, fontSize: 12, padding: '4px 10px' }}
+                    disabled={startingWarmup}
+                    onClick={onStartWarmup}
+                  >
+                    {startingWarmup ? 'Starting…' : warmup.active ? 'Restart warmup' : 'Start warmup'}
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: colors.textMuted, fontSize: 13 }}>Ramp status</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: !warmup.active ? colors.textFaint : warmup.complete ? colors.green : colors.amber }}>
+                  {warmupHeadline(warmup)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Sender reputation */}
+          {reputation && (
+            <div style={{ ...s.cardInner }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                  Sender Reputation
+                </div>
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                  color: reputation.healthy ? colors.green : colors.red,
+                  background: reputation.healthy ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                }}>
+                  {reputation.healthy ? 'HEALTHY' : `BLOCKED — ${reputation.reason === 'COMPLAINT_RATE_HIGH' ? 'complaint rate' : 'bounce rate'} too high`}
+                </span>
+              </div>
+              {reputation.totalSends < reputation.thresholds.minSends ? (
+                <div style={{ color: colors.textFaint, fontSize: 13 }}>
+                  Not enough sends yet ({reputation.totalSends} of {reputation.thresholds.minSends} needed) to compute a reliable rate.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: colors.textMuted, fontSize: 13 }}>Bounce rate (last {reputation.thresholds.windowDays}d)</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: reputation.bounceRate > reputation.thresholds.maxBounceRate ? colors.red : colors.text }}>
+                      {pct(reputation.bounceRate)} of {reputation.totalSends} sends
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: colors.textMuted, fontSize: 13 }}>Complaint rate</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: reputation.complaintRate > reputation.thresholds.maxComplaintRate ? colors.red : colors.text }}>
+                      {pct(reputation.complaintRate)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
