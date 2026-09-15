@@ -25,12 +25,32 @@
 // Failing tests elsewhere in the suite are NOT this script's concern; `npm
 // test` (run separately in `npm run verify`) already gates on that.
 import { spawnSync } from 'node:child_process'
-import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, existsSync, mkdtempSync, rmSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
+
+// Resolve the unit-tier file list ourselves rather than handing `tests/**/*.test.ts`
+// to `tsx --test` as a literal glob string: unlike `npm test` (defined with an
+// unquoted glob in package.json, so the SHELL expands it into explicit argv
+// before tsx ever sees it), this script spawns tsx directly — no shell — so an
+// unexpanded glob string here depends on Node's own `--test` glob resolution,
+// which has differed across Node patch versions in practice (confirmed: CI's
+// `node-version: 22` consistently under-collected coverage for several files
+// vs. an identical local run pinned to a specific 22.x patch). A plain
+// recursive walk using only stable fs APIs removes that dependency entirely.
+function findTestFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...findTestFiles(full))
+    else if (entry.isFile() && entry.name.endsWith('.test.ts')) out.push(full)
+  }
+  return out
+}
+const testFiles = findTestFiles(join(ROOT, 'tests')).map((f) => relative(ROOT, f))
 
 // Safety-critical source modules (repo-relative paths) with their minimum
 // line/branch coverage in the unit tier. Adding a module here is a deliberate
@@ -86,7 +106,7 @@ const result = spawnSync(
     '--test-coverage-exclude=tests/**',
     '--test-reporter=lcov',
     `--test-reporter-destination=${lcovPath}`,
-    'tests/**/*.test.ts',
+    ...testFiles,
   ],
   {
     cwd: ROOT,
