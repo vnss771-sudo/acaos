@@ -50,7 +50,16 @@ function findTestFiles(dir) {
   }
   return out
 }
-const testFiles = findTestFiles(join(ROOT, 'tests')).map((f) => relative(ROOT, f))
+// Sorted for a deterministic run order matching `tests/**/*.test.ts` as the
+// SHELL expands it for `npm test`/`npm run test:coverage` (always
+// alphabetical) — `readdirSync`'s own order is filesystem-dependent, not
+// alphabetical, and can differ between environments for the identical file
+// set. See the TAP diagnostic below: this script's own file order (raw
+// readdirSync, unsorted) reproducibly fails ~90 of ~150 test files in CI
+// while the alphabetically-sorted glob `test:coverage` uses passes clean on
+// the exact same commit, which points at order-dependent state leaking
+// between test files rather than a coverage-instrumentation gap.
+const testFiles = findTestFiles(join(ROOT, 'tests')).map((f) => relative(ROOT, f)).sort()
 
 // Safety-critical source modules (repo-relative paths) with their minimum
 // line/branch coverage in the unit tier. Adding a module here is a deliberate
@@ -109,18 +118,28 @@ function runOnce() {
   //
   // This diagnostic is what finally found the real cause of this gate's
   // CI-only floor violations: in CI (never locally), 90 of ~150 test files
-  // came back `not ok`, cascading from partway through the file list onward,
-  // while the sibling `npm run test:coverage` job — the exact same coverage
-  // instrumentation over the exact same file set, on the exact same commit —
-  // completed all 1717 tests cleanly. The one deliberate difference was
-  // --test-concurrency=1, added by an earlier commit in this same
-  // investigation on the theory that Node's coverage aggregation had gaps
-  // under concurrency; forcing every one of ~150 test files to fork and run
-  // fully serially instead apparently exhausts some CI-runner-specific
-  // resource (never reproduced locally, where both settings always passed)
-  // partway through the file list. Reverting to Node's default concurrency —
-  // what `test:coverage` already uses successfully in this same CI — is the
-  // fix.
+  // came back `not ok`, while the sibling `npm run test:coverage` job — the
+  // exact same coverage instrumentation over the exact same file set, on the
+  // exact same commit — completed all 1717 tests cleanly. Neither
+  // --test-concurrency=1 (an earlier commit's now-reverted attempt) nor
+  // unsorted file order (readdirSync vs. a sorted glob — tested by sorting
+  // testFiles above) explain it: removing concurrency=1 reproduced the exact
+  // same 90 failures, and the CI failure indices already lined up with sorted
+  // order before the sort was added.
+  //
+  // The remaining, and most likely, explanation: `spawnSync` defaults
+  // `maxBuffer` to 1MB. Every one of ~150 forked test-file subprocesses
+  // running under `--experimental-test-coverage` (an experimental API) emits
+  // Node's ExperimentalWarning to stderr once, and that — plus each file's
+  // own console output — funnels through this top-level tsx process's own
+  // stdout/stderr, which is exactly what `spawnSync` here buffers. Once
+  // combined output crosses 1MB, Node truncates it and terminates the
+  // process; a cascading block of "not ok" from a consistent point onward
+  // (rather than one bad test) is exactly what an output-volume ceiling hit
+  // partway through a large, alphabetically-run file list would look like,
+  // and it would only manifest wherever combined stderr/stdout volume is
+  // higher — plausibly CI's Node build vs. the local sandbox's. Raising
+  // maxBuffer removes that ceiling entirely.
   const tapPath = join(tmpDir, 'tap.log')
   const result = spawnSync(
     'npx',
@@ -139,6 +158,7 @@ function runOnce() {
       env: { ...process.env, NODE_OPTIONS: '--conditions=acaos-src' },
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 200,
     }
   )
   const tap = existsSync(tapPath) ? readFileSync(tapPath, 'utf8') : ''
@@ -188,11 +208,13 @@ function runOnce() {
 // that passed 100% clean under `npm test` and under this exact script run
 // locally, reproduced with a from-scratch `npm ci` and the exact CI-observed
 // Node patch version, ruling out file-selection, install staleness, and the
-// Node patch as the cause. The actual cause (found via the TAP diagnostic
-// above): a since-reverted `--test-concurrency=1` was silently failing ~90 of
-// ~150 test files in CI's runner specifically, starving the coverage report
-// of real data for whatever module happened to depend on a later-failing
-// file — not a coverage-instrumentation gap at all.
+// Node patch as the cause. The TAP diagnostic above found the actual shape of
+// the problem: ~90 of ~150 test files silently coming back `not ok` in CI's
+// runner specifically, starving the coverage report of real data for
+// whatever module happened to depend on a later-failing file — not a
+// coverage-instrumentation gap at all. Two further hypotheses for WHY
+// (--test-concurrency=1, unsorted file order) were tested and ruled out
+// in-place above; `maxBuffer` is the current leading explanation and fix.
 // `--experimental-test-coverage` is still, per its name, not a stable API, so
 // the retry-3x below is kept as a safety net against any remaining
 // instability; nothing is ever skipped, disabled, or weakened on a retry —
