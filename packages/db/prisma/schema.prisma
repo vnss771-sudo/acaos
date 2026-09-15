@@ -142,6 +142,8 @@ model Workspace {
   termsVersion           String?
   subprocessorsAckAt     DateTime?
   subprocessorsAckVersion String?
+  dpaAcknowledgedAt      DateTime?  // operator reviewed the in-product DPA (see lib/subprocessors.ts dpaDisclosure)
+  dpaAckVersion          String?
   targetsCanada          Boolean    @default(false) // gates the CASL consent check
   // Operator drain switch: when true, the worker halts all sends for THIS workspace
   // (returns SUPPRESSED) without touching the global FEATURE_SEND kill-switch — so a

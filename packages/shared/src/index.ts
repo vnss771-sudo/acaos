@@ -339,6 +339,7 @@ export interface ComplianceUpdateRequest {
   acceptTerms?: boolean
   acknowledgeSubprocessors?: boolean
   acknowledgeLia?: boolean
+  acknowledgeDpa?: boolean
 }
 /** Body for POST /api/workspaces/:id/consent (append a consent/basis record). */
 export interface ConsentRecordRequest {

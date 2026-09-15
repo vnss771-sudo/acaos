@@ -138,11 +138,13 @@ const DEMO_COMPLIANCE = {
     lawfulBasis: 'legitimate_interest', liaAcknowledgedAt: new Date(Date.now() - 30 * 86_400_000).toISOString(),
     termsAcceptedAt: new Date(Date.now() - 30 * 86_400_000).toISOString(), termsVersion: 'v1',
     subprocessorsAckAt: new Date(Date.now() - 30 * 86_400_000).toISOString(), subprocessorsAckVersion: 'v1',
+    dpaAcknowledgedAt: new Date(Date.now() - 30 * 86_400_000).toISOString(), dpaAckVersion: 'v1',
     targetsCanada: false,
   },
   consentCount: 0,
   currentTermsVersion: 'v1',
   subprocessors: { version: 'v1', subprocessors: [] },
+  dpa: { version: 'v1', clauses: [] },
 }
 
 const DEMO_INBOX = {

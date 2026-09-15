@@ -7,7 +7,7 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
 import {
-  subprocessorDisclosure, COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION,
+  subprocessorDisclosure, dpaDisclosure, COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION, DPA_VERSION,
   LAWFUL_BASES, CONSENT_BASES, CONSENT_SOURCES,
 } from '@acaos/backend-core/lib/subprocessors.js'
 import { z } from 'zod'
@@ -23,6 +23,7 @@ const complianceUpdateSchema = z.object({
   acceptTerms: z.boolean().optional(),
   acknowledgeSubprocessors: z.boolean().optional(),
   acknowledgeLia: z.boolean().optional(),
+  acknowledgeDpa: z.boolean().optional(),
 })
 type _ComplianceUpdateConforms = Assert<Extends<z.infer<typeof complianceUpdateSchema>, ComplianceUpdateRequest>>
 
@@ -37,6 +38,7 @@ type _ConsentConforms = Assert<Extends<z.infer<typeof consentSchema>, ConsentRec
 const POSTURE_SELECT = {
   lawfulBasis: true, liaAcknowledgedAt: true, termsAcceptedAt: true, termsVersion: true,
   subprocessorsAckAt: true, subprocessorsAckVersion: true, targetsCanada: true,
+  dpaAcknowledgedAt: true, dpaAckVersion: true,
 } as const
 
 export function registerComplianceRoutes(workspaceRouter: Router) {
@@ -60,6 +62,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
         consentCount,
         currentTermsVersion: COMPLIANCE_TERMS_VERSION,
         subprocessors: subprocessorDisclosure(),
+        dpa: dpaDisclosure(),
       })
     })
   )
@@ -81,6 +84,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
       if (body.acceptTerms) { data.termsAcceptedAt = new Date(); data.termsVersion = COMPLIANCE_TERMS_VERSION }
       if (body.acknowledgeSubprocessors) { data.subprocessorsAckAt = new Date(); data.subprocessorsAckVersion = SUBPROCESSORS_VERSION }
       if (body.acknowledgeLia) data.liaAcknowledgedAt = new Date()
+      if (body.acknowledgeDpa) { data.dpaAcknowledgedAt = new Date(); data.dpaAckVersion = DPA_VERSION }
       if (Object.keys(data).length === 0) throw new ApiError(400, 'No compliance fields to update')
 
       const posture = await prisma.workspace.update({ where: { id: workspaceId }, data, select: POSTURE_SELECT })
