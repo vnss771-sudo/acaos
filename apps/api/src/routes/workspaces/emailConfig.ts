@@ -129,6 +129,23 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
         update: data,
       })
 
+      // Auto-start domain warmup the first time this workspace saves a real SMTP
+      // host — a freshly-configured sender is exactly the case warmup exists to
+      // protect. Fires at most once per workspace (guarded by warmupStartedAt
+      // already being null), so re-saving/editing an established sender's config
+      // never resets its ramp. An explicit manual restart lives at
+      // POST /:id/warmup/start for the "reset after a long pause" case.
+      if (data.smtpHost) {
+        const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { warmupStartedAt: true } })
+        if (!icp || icp.warmupStartedAt == null) {
+          await prisma.workspaceICP.upsert({
+            where: { workspaceId },
+            create: { workspaceId, warmupStartedAt: new Date(), targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+            update: { warmupStartedAt: new Date() },
+          })
+        }
+      }
+
       // Audit the config change. Record only non-secret connection hints — never
       // the SMTP/IMAP passwords (encrypted or raw); just whether they were set.
       void recordAudit({

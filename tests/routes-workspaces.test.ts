@@ -113,8 +113,16 @@ test('GET /:id/members lists members for a member', async () => {
 
 // ── email-config SSRF guard (F-04): hosts are run through assertPublicMailHost ──
 
-const emailConfigSpec = () => spec({
+// workspaceICP defaults to "no ICP row yet, warmup never started" so a saved SMTP
+// host auto-starts warmup (see the dedicated tests below); override per-test to
+// simulate an already-warming workspace.
+const emailConfigSpec = (icp: Record<string, any> = {}) => spec({
   workspaceEmailConfig: { findUnique: async () => null, upsert: async (a: any) => ({ workspaceId: WS, ...a.update }) },
+  workspaceICP: {
+    findUnique: async () => null,
+    upsert: async (a: any) => ({ workspaceId: WS, ...a.create, ...a.update }),
+    ...icp,
+  },
 })
 
 test('PUT /:id/email-config rejects an smtpHost on the cloud-metadata IP', async () => {
@@ -146,6 +154,67 @@ test('PUT /:id/email-config accepts a public host', async () => {
   })
   assert.equal(res.status, 200)
   assert.equal(prisma.callsTo('workspaceEmailConfig', 'upsert').length, 1)
+})
+
+// ── warmup auto-start on first successful SMTP save ──
+
+test('PUT /:id/email-config with a real host auto-starts warmup when never started', async () => {
+  prisma = createFakePrisma(emailConfigSpec()); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/email-config`, {
+    method: 'PUT', headers: jsonAuth,
+    body: JSON.stringify({ smtpHost: '8.8.8.8', smtpPort: 587 }),
+  })
+  assert.equal(res.status, 200)
+  const upserts = prisma.callsTo('workspaceICP', 'upsert')
+  assert.equal(upserts.length, 1)
+  assert.ok((upserts[0].args[0] as any).update.warmupStartedAt instanceof Date)
+})
+
+test('PUT /:id/email-config does not reset warmup once already started', async () => {
+  prisma = createFakePrisma(emailConfigSpec({ findUnique: async () => ({ warmupStartedAt: new Date('2026-01-01') }) }))
+  installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/email-config`, {
+    method: 'PUT', headers: jsonAuth,
+    body: JSON.stringify({ smtpHost: '8.8.8.8', smtpPort: 587 }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(prisma.callsTo('workspaceICP', 'upsert').length, 0)
+})
+
+test('PUT /:id/email-config clearing SMTP does not touch warmup', async () => {
+  prisma = createFakePrisma(emailConfigSpec()); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/email-config`, {
+    method: 'PUT', headers: jsonAuth,
+    body: JSON.stringify({ smtpHost: null }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(prisma.callsTo('workspaceICP', 'upsert').length, 0)
+})
+
+// ── POST /:id/warmup/start (manual start / restart) ──
+
+const warmupStartSpec = () => spec({
+  workspaceICP: { upsert: async (a: any) => ({ workspaceId: WS, ...a.create, ...a.update }) },
+})
+
+test('POST /:id/warmup/start stamps warmupStartedAt for an owner/admin', async () => {
+  prisma = createFakePrisma(warmupStartSpec()); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/warmup/start`, { method: 'POST', headers: jsonAuth, body: '{}' })
+  assert.equal(res.status, 200)
+  assert.ok(typeof res.body.warmupStartedAt === 'string')
+  const upserts = prisma.callsTo('workspaceICP', 'upsert')
+  assert.equal(upserts.length, 1)
+  assert.ok((upserts[0].args[0] as any).update.warmupStartedAt instanceof Date)
+})
+
+test('POST /:id/warmup/start denies a non-admin member', async () => {
+  prisma = createFakePrisma(spec({
+    membership: { findFirst: async (a: any) => (a?.where?.role?.in ? null : { role: 'member' }) },
+    workspaceICP: { upsert: async () => { throw new Error('should not be called') } },
+  }))
+  installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/warmup/start`, { method: 'POST', headers: jsonAuth, body: '{}' })
+  assert.equal(res.status, 403)
 })
 
 test('POST /:id/members — an owner can grant the admin role', async () => {

@@ -14,7 +14,7 @@ import { WorkspaceSection, type WorkspaceForm } from '../components/settings/Wor
 import { TeamSection, type MemberForm, type PendingInvite } from '../components/settings/TeamSection.js'
 import { IcpSection, type IcpForm } from '../components/settings/IcpSection.js'
 import { EmailConfigSection, type EmailConfigForm } from '../components/settings/EmailConfigSection.js'
-import { DeliverabilitySection, type DomainCheckResult } from '../components/settings/DeliverabilitySection.js'
+import { DeliverabilitySection, type DomainCheckResult, type WarmupStatus, type ReputationVerdict } from '../components/settings/DeliverabilitySection.js'
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
 
@@ -79,6 +79,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [domainCheck, setDomainCheck] = useState<DomainCheckResult>(null)
   const [domainCheckLoading, setDomainCheckLoading] = useState(false)
   const [suppressionCount, setSuppressionCount] = useState<number | null>(null)
+  const [warmup, setWarmup] = useState<WarmupStatus | null>(null)
+  const [reputation, setReputation] = useState<ReputationVerdict | null>(null)
+  const [startingWarmup, setStartingWarmup] = useState(false)
 
   useEffect(() => {
     setHasKey(!!workspace?.ingestApiKey)
@@ -168,6 +171,46 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       .catch(() => { if (!cancelled) setSuppressionCount(null) })
     return () => { cancelled = true }
   }, [api, workspace?.id])
+
+  // Domain-warmup ramp status + sender-reputation verdict, for the Deliverability
+  // section. Refetched by loadDeliverability() below whenever the underlying state
+  // may have changed (workspace switch, or right after starting warmup).
+  const loadDeliverability = React.useCallback((workspaceId: string) => {
+    let cancelled = false
+    api<Partial<ReputationVerdict> & { warmup?: WarmupStatus }>(`/api/stats/reputation?workspaceId=${workspaceId}`)
+      .then(d => {
+        if (cancelled) return
+        // Defensively require the shape this endpoint actually returns — a mocked
+        // or unexpected `{}` response should render "no data" rather than a
+        // half-populated card.
+        if (d && typeof d.totalSends === 'number' && d.warmup) {
+          const { warmup: w, ...rest } = d
+          setReputation(rest as ReputationVerdict)
+          setWarmup(w)
+        } else {
+          setReputation(null)
+          setWarmup(null)
+        }
+      })
+      .catch(() => { if (!cancelled) { setReputation(null); setWarmup(null) } })
+    return () => { cancelled = true }
+  }, [api])
+
+  useEffect(() => {
+    if (!workspace) return
+    return loadDeliverability(workspace.id)
+  }, [workspace?.id, loadDeliverability])
+
+  async function startWarmup() {
+    if (!workspace) return
+    setStartingWarmup(true)
+    try {
+      await route('POST /api/workspaces/:id/warmup/start', { params: { id: workspace.id } })
+      toast.success('Warmup started')
+      loadDeliverability(workspace.id)
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to start warmup') }
+    finally { setStartingWarmup(false) }
+  }
 
   // Dismiss the API-key modal with Escape (only active while it's open).
   useEscapeKey(() => setNewKeyModal(null), !!newKeyModal)
@@ -435,6 +478,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           suppressionCount={suppressionCount}
           dailySendLimit={icp?.dailySendLimit}
           approvalMode={icp?.approvalMode}
+          warmup={warmup}
+          reputation={reputation}
+          canManage={isOwnerOrAdmin}
+          startingWarmup={startingWarmup}
+          onStartWarmup={startWarmup}
         />
       )}
 

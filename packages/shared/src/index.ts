@@ -557,6 +557,7 @@ export interface RouteContracts {
   'PATCH /api/workspaces/:id/compliance': { params: { id: string }; body: ComplianceUpdateRequest; response: unknown }
   'POST /api/workspaces/:id/consent': { params: { id: string }; body: ConsentRecordRequest; response: { id: string; recordedAt: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
+  'POST /api/workspaces/:id/warmup/start': { params: { id: string }; response: { warmupStartedAt: string } }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }
   'POST /api/workspaces/:id/members': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }
