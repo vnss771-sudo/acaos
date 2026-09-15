@@ -7,7 +7,8 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { computeLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
-import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
+import { normalizeEmailKey, normalizeEmail } from '@acaos/backend-core/lib/normalize.js'
+import { CONSENT_BASES } from '@acaos/backend-core/lib/subprocessors.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { checkLeadLimit, reserveLeadCapacity } from '@acaos/backend-core/lib/limits.js'
 import { escCsv } from '../lib/csv.js'
@@ -59,6 +60,12 @@ const createLeadSchema = z.object({
   city: z.string().optional(),
   category: z.string().optional(),
   notes: z.string().optional(),
+  // Optional consent evidence carried by the row itself (e.g. a CSV "consent
+  // date" column) — when present with an email, a ConsentRecord is appended
+  // alongside the lead so consent-basis workspaces don't rely on a separate
+  // manual admin step for every imported contact.
+  consentBasis: z.enum(CONSENT_BASES).optional(),
+  consentAt: z.string().optional(),
 })
 const importLeadsSchema = z.object({
   workspaceId: workspaceIdField,
@@ -181,6 +188,22 @@ leadsRouter.post(
       workspaceId, actorUserId: user.id, type: 'lead.created',
       entityType: 'lead', entityId: lead.id,
     })
+    // Auto-record consent when the caller supplied evidence for it (e.g. a form
+    // submission or an import row with a consent-date column) — see LeadInput.
+    if (body.consentBasis && leadData.email) {
+      const parsedAt = body.consentAt ? new Date(body.consentAt) : new Date()
+      const consent = await prisma.consentRecord.create({
+        data: {
+          workspaceId, emailKey: normalizeEmail(leadData.email), basis: body.consentBasis,
+          source: 'import', note: `Auto-recorded from lead ${lead.id}`,
+          recordedAt: Number.isNaN(parsedAt.getTime()) ? new Date() : parsedAt,
+        },
+      })
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'consent.recorded',
+        entityType: 'consentRecord', entityId: consent.id, metadata: { basis: body.consentBasis, source: 'import', leadId: lead.id },
+      })
+    }
     res.status(201).json({ lead })
   })
 )
@@ -196,6 +219,7 @@ leadsRouter.post(
 
     const weights = await getWorkspaceWeights(workspaceId)
 
+    const validConsentBases: readonly string[] = CONSENT_BASES
     const rows = leads
       .filter((l) => typeof l?.businessName === 'string' && l.businessName.trim())
       .map((l) => {
@@ -212,11 +236,21 @@ leadsRouter.post(
           notes: typeof l.notes === 'string' ? l.notes.trim() || null : null,
           sourceTag: typeof l.sourceTag === 'string' ? l.sourceTag.trim() || null : null
         }
-        return { ...row, score: computeLeadScore(row, weights) }
+        // Optional consent evidence carried by this row (e.g. a CSV "consent
+        // date" column) — collected alongside the lead row so a valid
+        // (email, basis) pair can seed a ConsentRecord after the leads insert.
+        const consentBasis = typeof l.consentBasis === 'string' && validConsentBases.includes(l.consentBasis) ? l.consentBasis : null
+        const consentAt = typeof l.consentAt === 'string' ? l.consentAt : null
+        return { ...row, score: computeLeadScore(row, weights), consentBasis, consentAt }
       })
 
     const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
     for (const cid of campaignIds) await assertCampaignInWorkspace(cid, workspaceId)
+
+    // Rows carrying valid consent evidence — recorded as a ConsentRecord per
+    // recipient in the same transaction as the lead insert (all-or-nothing with
+    // the import itself).
+    const consentRows = rows.filter((r) => r.consentBasis && r.email)
 
     // Reserve capacity and insert atomically under a per-workspace lock so the
     // batch as a whole is checked against the plan cap (not just "already full"),
@@ -229,17 +263,37 @@ leadsRouter.post(
           `Lead limit reached — importing ${rows.length} leads would exceed your plan's cap (${allowed} slot${allowed === 1 ? '' : 's'} remaining). Upgrade or import fewer.`
         )
       }
-      const result = await tx.lead.createMany({ data: rows, skipDuplicates: false })
+      const result = await tx.lead.createMany({
+        data: rows.map(({ consentBasis: _cb, consentAt: _ca, ...leadRow }) => leadRow),
+        skipDuplicates: false,
+      })
+      if (consentRows.length > 0) {
+        await tx.consentRecord.createMany({
+          data: consentRows.map((r) => {
+            const parsedAt = r.consentAt ? new Date(r.consentAt) : new Date()
+            return {
+              workspaceId, emailKey: normalizeEmail(r.email!), basis: r.consentBasis!,
+              source: 'import', recordedAt: Number.isNaN(parsedAt.getTime()) ? new Date() : parsedAt,
+            }
+          }),
+        })
+      }
       return result.count
     })
     if (created > 0) invalidateWorkspaceStats(workspaceId) // bulk import shifts totals/funnel
+    if (consentRows.length > 0) {
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'consent.recorded',
+        entityType: 'consentRecord', metadata: { count: consentRows.length, source: 'import' },
+      })
+    }
     if (created > 0) {
       void recordAudit({
         workspaceId, actorUserId: user.id, type: 'lead.imported',
         entityType: 'lead', metadata: { created },
       })
     }
-    res.json({ created })
+    res.json({ created, consentRecorded: consentRows.length })
   })
 )
 

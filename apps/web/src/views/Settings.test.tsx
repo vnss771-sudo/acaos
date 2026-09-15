@@ -28,11 +28,13 @@ function makeApi(overrides?: (path: string, init?: { method?: string }) => unkno
     if (path.includes('/compliance')) return Promise.resolve({
       posture: {
         lawfulBasis: null, liaAcknowledgedAt: null, termsAcceptedAt: null, termsVersion: null,
-        subprocessorsAckAt: null, subprocessorsAckVersion: null, targetsCanada: false,
+        subprocessorsAckAt: null, subprocessorsAckVersion: null,
+        dpaAcknowledgedAt: null, dpaAckVersion: null, targetsCanada: false,
       },
       consentCount: 0,
       currentTermsVersion: 'v1',
       subprocessors: { version: 'v1', subprocessors: [] },
+      dpa: { version: 'v1', clauses: [] },
     })
     return Promise.resolve({})
   })

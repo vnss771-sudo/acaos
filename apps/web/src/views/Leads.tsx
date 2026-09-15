@@ -120,21 +120,34 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
 
       // Shape mapped CSV rows to the shared LeadInput contract (the API ignores
       // any field not listed there, e.g. phone — so we don't send it).
-      const leads: LeadInput[] = rows.map(r => ({
-        businessName: r.businessName || r.business_name || r.Business || r['Business Name'] || '',
-        contactName: r.contactName || r.contact_name || r.Contact || '',
-        email: r.email || r.Email || '',
-        website: r.website || r.Website || '',
-        city: r.city || r.City || '',
-        category: r.category || r.Category || '',
-        notes: r.notes || r.Notes || ''
-      })).filter(l => l.businessName.trim())
+      // Optional consent evidence: a "consent date" column is the common shape
+      // (an opt-in export) and implies express consent unless a basis column
+      // says otherwise — the API records a ConsentRecord alongside the lead
+      // when it recognizes the basis (see CONSENT_BASES in the compliance API).
+      const leads: LeadInput[] = rows.map(r => {
+        const consentAt = r.consentAt || r.consent_at || r['Consent Date'] || r.consentDate || r['Opt-in Date'] || r.optInAt || ''
+        const consentBasisRaw = r.consentBasis || r.consent_basis || r['Consent Basis'] || ''
+        const consentBasis = ['express_consent', 'implied_consent', 'legitimate_interest'].includes(consentBasisRaw)
+          ? consentBasisRaw
+          : (consentAt ? 'express_consent' : '')
+        return {
+          businessName: r.businessName || r.business_name || r.Business || r['Business Name'] || '',
+          contactName: r.contactName || r.contact_name || r.Contact || '',
+          email: r.email || r.Email || '',
+          website: r.website || r.Website || '',
+          city: r.city || r.City || '',
+          category: r.category || r.Category || '',
+          notes: r.notes || r.Notes || '',
+          ...(consentBasis ? { consentBasis, consentAt: consentAt || undefined } : {}),
+        }
+      }).filter(l => l.businessName.trim())
 
       if (leads.length === 0) { toast.error('No rows with a businessName found. Check your CSV column headers.'); return }
 
       const body: ImportLeadsRequest = { workspaceId: workspace.id, leads }
       const d = await route('POST /api/leads/import', { body })
-      toast.success(`Imported ${d.created} leads with auto-scoring`)
+      const consentNote = d.consentRecorded > 0 ? ` (${d.consentRecorded} with consent recorded)` : ''
+      toast.success(`Imported ${d.created} leads with auto-scoring${consentNote}`)
       fetchLeads()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Import failed') }
     finally { setImporting(false); if (fileRef.current) fileRef.current.value = '' }

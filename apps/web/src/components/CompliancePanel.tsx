@@ -15,14 +15,18 @@ type Posture = {
   termsVersion: string | null
   subprocessorsAckAt: string | null
   subprocessorsAckVersion: string | null
+  dpaAcknowledgedAt: string | null
+  dpaAckVersion: string | null
   targetsCanada: boolean
 }
 type Subprocessor = { name: string; purpose: string; data: string; conditional?: string }
+type DpaClause = { title: string; body: string }
 type ComplianceData = {
   posture: Posture
   consentCount: number
   currentTermsVersion: string
   subprocessors: { version: string; subprocessors: Subprocessor[] }
+  dpa: { version: string; clauses: DpaClause[] }
 }
 
 const LAWFUL_BASIS_LABELS: Record<string, string> = {
@@ -31,9 +35,12 @@ const LAWFUL_BASIS_LABELS: Record<string, string> = {
   contract: 'Contract / existing relationship',
 }
 
-// Settings → Compliance: attest GDPR lawful basis, accept terms, acknowledge the
-// sub-processor list, and flag Canada targeting (CASL). Reporting/attestation only —
-// the send gate stays dormant until COMPLIANCE_GATE_ENABLED is turned on server-side.
+// Settings → Compliance: attest GDPR lawful basis, accept terms, review the DPA
+// and the sub-processor list, and flag Canada targeting (CASL). Attestation here
+// is recorded immediately; the send-side enforcement (workspace-level readiness
+// checks in getSendReadiness, plus the per-contact ConsentRecord gate in the
+// worker's send pipeline) stays dormant until COMPLIANCE_GATE_ENABLED is turned
+// on server-side.
 export function CompliancePanel({ api, workspace, toast, canManage = true }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [data, setData] = useState<ComplianceData | null>(null)
@@ -122,6 +129,15 @@ export function CompliancePanel({ api, workspace, toast, canManage = true }: Pro
           onClick={() => patch({ acknowledgeSubprocessors: true }, 'acknowledgeSubprocessors')}
         />
         <AckRow
+          label="Data Processing Agreement (DPA) reviewed"
+          done={fmt(p.dpaAcknowledgedAt)}
+          version={p.dpaAckVersion}
+          current={data.dpa.version}
+          busy={saving === 'acknowledgeDpa'}
+          disabled={!canManage}
+          onClick={() => patch({ acknowledgeDpa: true }, 'acknowledgeDpa')}
+        />
+        <AckRow
           label="Legitimate-interest assessment (LIA) on file"
           done={fmt(p.liaAcknowledgedAt)}
           busy={saving === 'acknowledgeLia'}
@@ -129,6 +145,20 @@ export function CompliancePanel({ api, workspace, toast, canManage = true }: Pro
           onClick={() => patch({ acknowledgeLia: true }, 'acknowledgeLia')}
         />
       </div>
+
+      {/* Data Processing Agreement */}
+      <details style={{ marginBottom: 8 }}>
+        <summary style={{ cursor: 'pointer', color: colors.textMuted, fontSize: 13 }}>
+          Data Processing Agreement · v{data.dpa.version}
+        </summary>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {data.dpa.clauses.map(c => (
+            <div key={c.title} style={{ fontSize: 12, color: colors.textMuted, borderLeft: `2px solid ${colors.border}`, paddingLeft: 8 }}>
+              <span style={{ color: colors.text, fontWeight: 600 }}>{c.title}</span> — {c.body}
+            </div>
+          ))}
+        </div>
+      </details>
 
       {/* Sub-processor disclosure */}
       <details>
