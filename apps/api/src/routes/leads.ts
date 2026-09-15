@@ -12,7 +12,7 @@ import { CONSENT_BASES } from '@acaos/backend-core/lib/subprocessors.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { checkLeadLimit, reserveLeadCapacity } from '@acaos/backend-core/lib/limits.js'
 import { escCsv } from '../lib/csv.js'
-import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Prisma } from '@prisma/client'
 import type { Assert, CreateLeadRequest, Extends, ImportLeadsRequest, LeadStage } from '@acaos/shared'
@@ -199,7 +199,10 @@ leadsRouter.post(
           recordedAt: Number.isNaN(parsedAt.getTime()) ? new Date() : parsedAt,
         },
       })
-      void recordAudit({
+      // Awaited (not fire-and-forget): consent.recorded is a compliance-critical
+      // event proving lawful basis for processing this contact — same durability
+      // class as the other access/consent events recordCriticalAudit covers.
+      await recordCriticalAudit({
         workspaceId, actorUserId: user.id, type: 'consent.recorded',
         entityType: 'consentRecord', entityId: consent.id, metadata: { basis: body.consentBasis, source: 'import', leadId: lead.id },
       })
@@ -282,7 +285,8 @@ leadsRouter.post(
     })
     if (created > 0) invalidateWorkspaceStats(workspaceId) // bulk import shifts totals/funnel
     if (consentRows.length > 0) {
-      void recordAudit({
+      // Awaited for the same reason as the single-lead path above.
+      await recordCriticalAudit({
         workspaceId, actorUserId: user.id, type: 'consent.recorded',
         entityType: 'consentRecord', metadata: { count: consentRows.length, source: 'import' },
       })

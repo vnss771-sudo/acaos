@@ -28,7 +28,7 @@ import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { bulkCheckConsent, hasConsent } from '@acaos/backend-core/lib/consent.js'
-import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
@@ -1464,7 +1464,10 @@ export async function sendFollowupTask(
   if (isComplianceGateEnabled() && (workspace?.lawfulBasis === 'consent' || workspace?.targetsCanada === true)) {
     const consented = await hasConsent(workspaceId, lead.email)
     if (!consented) {
-      void recordAudit({
+      // Awaited (unlike the campaign-batch per-lead loop above): this runs once
+      // per follow-up task, not in a tight per-lead loop, so durability here
+      // costs nothing worth trading away for the SAR/compliance trail.
+      await recordCriticalAudit({
         workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: leadId,
         metadata: { campaignId, reason: workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada', followup: true },
       })
