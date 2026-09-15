@@ -148,6 +148,12 @@ export interface LeadInput {
   category?: string
   notes?: string
   sourceTag?: string
+  // Optional consent evidence carried by the import row itself (e.g. a CSV column
+  // recording when/how a recipient opted in). When present with a valid basis and
+  // an email, a ConsentRecord is created alongside the lead — see
+  // POST /api/leads and /api/leads/import.
+  consentBasis?: string
+  consentAt?: string
 }
 
 export interface CreateLeadRequest extends LeadInput {
@@ -519,7 +525,7 @@ export interface RouteContracts {
   'POST /api/leads': { body: CreateLeadRequest; response: unknown }
   'PATCH /api/leads/:id': { params: { id: string }; body: UpdateLeadRequest; response: unknown }
   'DELETE /api/leads/:id': { params: { id: string }; response: unknown }
-  'POST /api/leads/import': { body: ImportLeadsRequest; response: { created: number } }
+  'POST /api/leads/import': { body: ImportLeadsRequest; response: { created: number; consentRecorded: number } }
   'POST /api/leads/bulk-delete': { body: BulkLeadIdsRequest; response: { deleted: number } }
   'POST /api/leads/bulk-stage': { body: BulkLeadStageRequest; response: { updated: number } }
 
