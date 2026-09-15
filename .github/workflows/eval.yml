@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # the eval job commits its own score-history JSON back to the repo (see below)
 
 env:
   NODE_VERSION: '22'
@@ -61,13 +61,36 @@ jobs:
 
       # A real regression (a FAIL finding) must fail the job — both scripts
       # already exit 1 on any FAIL, so a non-zero exit here IS the loud signal;
-      # nothing here catches or downgrades that exit code.
+      # nothing here catches or downgrades that exit code. Each script also
+      # writes its score to eval-results/*.json (and prints the lift vs. the
+      # last recorded run) before exiting, pass or fail — `if: always()` below
+      # carries that write through to the commit step even after a FAIL, so a
+      # real regression shows up in the trend instead of being silently omitted.
       - name: Outreach quality eval
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: npm run eval:outreach
 
       - name: Research quality eval
+        if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: npm run eval:research
+
+      # Persist the score history the two steps above just wrote, so "lift" is
+      # a real number tracked over time (eval-results/*.json) rather than only
+      # ever visible in this run's ephemeral job log. Runs even if an eval step
+      # failed, and no-ops cleanly if there's nothing new to record (e.g. the
+      # OPENAI_API_KEY check above failed before either script could run).
+      - name: Commit eval score history
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain -- eval-results)" ]; then
+            echo "No eval score changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add eval-results
+          git commit -m "chore(eval): record eval run results [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
