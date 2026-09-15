@@ -99,6 +99,14 @@ for (const { path } of CRITICAL) {
 function runOnce() {
   const tmpDir = mkdtempSync(join(tmpdir(), 'acaos-critical-coverage-'))
   const lcovPath = join(tmpDir, 'lcov.info')
+  // A second, parallel TAP reporter purely for diagnostics: --test-reporter=lcov
+  // replaces stdout's default TAP output entirely, so on a floor violation we'd
+  // otherwise have no way to tell "every test genuinely ran and this module is
+  // just undertested" apart from "some test file silently timed out/crashed and
+  // its coverage never made it into the lcov report" (Node's --test isolates
+  // each test FILE into its own subprocess even at --test-concurrency=1, and a
+  // killed subprocess's coverage is simply missing, not reported as an error).
+  const tapPath = join(tmpDir, 'tap.log')
   const result = spawnSync(
     'npx',
     [
@@ -108,6 +116,8 @@ function runOnce() {
       '--test-concurrency=1',
       '--test-reporter=lcov',
       `--test-reporter-destination=${lcovPath}`,
+      '--test-reporter=tap',
+      `--test-reporter-destination=${tapPath}`,
       ...testFiles,
     ],
     {
@@ -117,10 +127,16 @@ function runOnce() {
       encoding: 'utf8',
     }
   )
+  const tap = existsSync(tapPath) ? readFileSync(tapPath, 'utf8') : ''
+  const failedTests = tap.split('\n').filter((l) => /^not ok /.test(l))
+  const planMatch = tap.match(/^# tests (\d+)/m)
+  const testDiagnostic = planMatch
+    ? `${planMatch[1]} test(s) ran; ${failedTests.length} failed${failedTests.length ? ':\n' + failedTests.map((l) => `      ${l}`).join('\n') : ''}`
+    : `no TAP plan line found (process likely crashed or timed out before finishing)`
 
   if (!existsSync(lcovPath)) {
     rmSync(tmpDir, { recursive: true, force: true })
-    return { crashed: true, output: `${result.stdout || ''}${result.stderr || ''}` }
+    return { crashed: true, output: `${result.stdout || ''}${result.stderr || ''}\n\n[diagnostic] ${testDiagnostic}` }
   }
 
   // Parse LCOV, keyed by the repo-relative source path Node's lcov reporter
@@ -150,7 +166,7 @@ function runOnce() {
     if (linePct < lineFloor) errors.push(`${path}: line coverage ${linePct.toFixed(1)}% is below the ${lineFloor}% floor.`)
     if (branchPct < branchFloor) errors.push(`${path}: branch coverage ${branchPct.toFixed(1)}% is below the ${branchFloor}% floor.`)
   }
-  return { crashed: false, errors }
+  return { crashed: false, errors, testDiagnostic }
 }
 
 // This gate has shown a real but so far unexplained CI-only failure mode: a
@@ -173,7 +189,7 @@ let lastCrashOutput = null
 let passed = false
 for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   console.log(`[check:critical-test-coverage] Running the unit test tier with coverage instrumentation (attempt ${attempt}/${MAX_ATTEMPTS}, mirrors \`npm test\` timing)…`)
-  const { crashed, output, errors } = runOnce()
+  const { crashed, output, errors, testDiagnostic } = runOnce()
   if (crashed) {
     lastCrashOutput = output
     console.error(`  attempt ${attempt} crashed before producing a coverage report; ${attempt < MAX_ATTEMPTS ? 'retrying' : 'out of attempts'}.`)
@@ -184,6 +200,7 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   lastErrors = errors
   console.error(`  attempt ${attempt}/${MAX_ATTEMPTS} found ${errors.length} floor violation(s)${attempt < MAX_ATTEMPTS ? ' — retrying once to rule out coverage-instrumentation flakiness' : ''}:`)
   for (const e of errors) console.error(`    ${e}`)
+  console.error(`  [diagnostic] underlying test run: ${testDiagnostic}`)
 }
 
 if (lastCrashOutput !== null) {
