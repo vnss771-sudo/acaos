@@ -3,7 +3,16 @@
 export function parseCsvLine(line: string): string[] {
   const fields: string[] = []
   let i = 0
-  while (i <= line.length) {
+  // The outer condition used to be `i <= line.length`. That off-by-one let the
+  // loop run once more after the last field with line[i] as undefined, which
+  // fell into the unquoted branch and pushed a spurious extra empty field
+  // whenever a line ended on a quoted value — parsing `"a"` produced ['a', '']
+  // instead of ['a']. A genuine trailing comma (`a,b,`) must still yield its
+  // own trailing empty field though, including right after a quoted value
+  // (`"a",` -> ['a', '']), so the quoted branch explicitly loops back (via
+  // `continue`) after consuming a trailing comma instead of relying on one
+  // more full outer-loop pass to pick it up.
+  for (;;) {
     if (line[i] === '"') {
       let field = ''
       i++ // skip opening quote
@@ -17,7 +26,8 @@ export function parseCsvLine(line: string): string[] {
         }
       }
       fields.push(field)
-      if (line[i] === ',') i++
+      if (line[i] === ',') { i++; continue }
+      break
     } else {
       const end = line.indexOf(',', i)
       if (end === -1) { fields.push(line.slice(i).trim()); break }
