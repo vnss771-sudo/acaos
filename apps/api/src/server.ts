@@ -5,6 +5,7 @@ import cors from 'cors'
 import compression from 'compression'
 import { authRouter } from './routes/auth.js'
 import { billingRouter } from './routes/billing.js'
+import { assertStripePricesConfigured } from './services/stripe.js'
 import { aiRouter } from './routes/ai.js'
 import { mailboxRouter } from './routes/mailbox.js'
 import { workspaceRouter } from './routes/workspaces.js'
@@ -25,6 +26,7 @@ import { intelligenceRouter } from './routes/intelligence.js'
 import { adminRouter } from './routes/admin.js'
 import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { legalRouter } from './routes/legal.js'
+import { opsRouter } from './routes/ops/index.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { requestContext } from './middleware/requestContext.js'
@@ -32,20 +34,23 @@ import { tenantContext } from './middleware/tenantContext.js'
 import { metricsMiddleware } from './middleware/metrics.js'
 import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
-import { prisma } from './lib/prisma.js'
-import { isProduction, isOriginAllowed, validateConfig, getReadinessReport } from './lib/config.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { isProduction, isOriginAllowed, corsAllowsAnyOrigin, validateConfig, getReadinessReport } from '@acaos/backend-core/lib/config.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
 import { parseTrustProxy } from './lib/trustProxy.js'
-import { captureError } from './lib/observability.js'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { getRedis } from './lib/redis.js'
-import { initErrorReporting } from './lib/errorReporting.js'
-import { setProviderCallObserver } from '@acaos/backend-core/lib/observability.js'
+import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
+import { initTracing } from '@acaos/backend-core/lib/tracing.js'
+import { captureError, setProviderCallObserver } from '@acaos/backend-core/lib/observability.js'
 import { incProviderCall } from './lib/metrics.js'
-import { attachBreakerStore } from './lib/circuit.js'
+import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+import { Redis as IORedis } from 'ioredis'
+import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
+import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
 
 validateConfig()
 
@@ -78,9 +83,13 @@ app.use(requestContext)
 app.use(metricsMiddleware)
 
 app.use(cors({
-  origin: isProduction()
-    ? (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin))
-    : true,
+  // Reflecting any origin with credentials:true is only safe in the two explicit
+  // local envs — gating this on isProduction() instead would leave staging,
+  // preview, and an unset/typo'd NODE_ENV wide open to credentialed cross-origin
+  // requests from any site.
+  origin: corsAllowsAnyOrigin()
+    ? true
+    : (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin)),
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Protection']
@@ -216,6 +225,7 @@ app.use('/api/intelligence', intelligenceRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/unsubscribe', unsubscribeRouter)
 app.use('/api/legal', legalRouter)
+app.use('/api/ops', opsRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)
@@ -224,7 +234,58 @@ getRedis().connect().catch((err: Error) => {
   logger.warn('api redis initial connection failed', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
 })
 
+// Boot-time Stripe price check: a transposed or wrong-environment
+// STRIPE_PRICE_* id fails loudly here instead of silently granting the wrong
+// tier the first time a real customer checks out. Non-fatal (fire-and-forget,
+// like the redis connect above) — see assertStripePricesConfigured's own
+// comment for why Stripe being unconfigured at all is not an error.
+assertStripePricesConfigured().catch((err: Error) => {
+  logger.error('stripe price boot check threw unexpectedly', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
+})
+
 void initErrorReporting()
+
+// Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
+// debugging, OTEL_CONSOLE_EXPORTER) is set — see lib/tracing.ts.
+initTracing(SERVICE)
+
+// ADMIN_EMAIL is a one-time bootstrap escalation vector (see routes/admin.ts):
+// once a matching user has been promoted, the DB flag (`isPlatformAdmin`) is the
+// sole source of truth and the env var does nothing except sit there as a
+// latent "whoever controls this env var can re-target admin to a new account"
+// risk (routes/admin.ts's bootstrap check would need someone to also gain
+// step-up auth as that address, but leaving the var set is still unnecessary
+// exposure). Warn once at startup, after bootstrap has actually happened, so
+// operators get a nudge to unset it — this never fails startup.
+async function warnIfAdminEmailStillSetPostBootstrap(): Promise<void> {
+  const adminEmail = process.env.ADMIN_EMAIL?.trim()
+  if (!adminEmail) return
+  try {
+    const bootstrapped = await prisma.user.findFirst({ where: { isPlatformAdmin: true }, select: { id: true } })
+    if (bootstrapped) {
+      logger.warn('ADMIN_EMAIL is still set in the environment after bootstrap completed; consider unsetting it', { service: SERVICE })
+    }
+  } catch (err) {
+    // Best-effort: a DB hiccup at startup shouldn't be logged as if the check
+    // itself found something wrong, and must never block/crash startup.
+    logger.warn('admin bootstrap check failed', { service: SERVICE, err: (err as Error).message })
+  }
+}
+void warnIfAdminEmailStillSetPostBootstrap()
+
+// Prisma itself now pins a bounded connection_limit when DATABASE_URL doesn't
+// set one (packages/backend-core/src/lib/prisma.ts, via databaseUrl.ts) — this
+// warning stays as a nudge to size it deliberately per replica/topology
+// instead of relying on the built-in default.
+// Sync/cheap, so it runs directly rather than as a fire-and-forget async check.
+function warnIfDatabaseUrlMissingConnectionLimit(): void {
+  if (!isProduction()) return
+  const url = process.env.DATABASE_URL
+  if (url && !/[?&]connection_limit=/.test(url)) {
+    logger.warn('DATABASE_URL has no connection_limit set in production; falling back to a built-in default pool size (DB_POOL_SIZE) — size it deliberately per docs/OPERATIONS.md', { service: SERVICE })
+  }
+}
+warnIfDatabaseUrlMissingConnectionLimit()
 
 // Route provider-call outcomes from backend-core (providerClient) into the API's
 // prometheus counter. backend-core stays metrics-agnostic via this seam.
@@ -232,6 +293,20 @@ setProviderCallObserver(incProviderCall)
 
 if (process.env.REDIS_URL) {
   attachBreakerStore(createRedisBreakerStore(getRedis()))
+
+  // Cross-pod ingestCache invalidation (see ingestCacheInvalidation.ts): a
+  // dedicated subscriber connection, since ioredis puts a client that issues
+  // SUBSCRIBE into subscriber mode where it can no longer run other commands
+  // — the shared getRedis() client stays free for PUBLISH and everything else.
+  const ingestCacheSubscriber = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    lazyConnect: true,
+  })
+  ingestCacheSubscriber.on('error', (err: Error) => {
+    logger.warn('ingest-cache invalidation subscriber error', { service: SERVICE, err: err.message })
+  })
+  attachIngestCacheInvalidator(createIngestCacheInvalidator(getRedis(), ingestCacheSubscriber))
 }
 
 const port = Number(process.env.PORT || 4000)

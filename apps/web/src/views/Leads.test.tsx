@@ -62,4 +62,54 @@ describe('Leads', () => {
     await userEvent.click(screen.getByRole('button', { name: /Add Lead/i }))
     expect(screen.getByText('New Lead')).toBeInTheDocument()
   })
+
+  test('deleting a lead asks for confirmation via a dialog, not the browser confirm()', async () => {
+    const api = apiFor([lead])
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
+    await screen.findByText('Acme Plumbing')
+
+    await userEvent.click(screen.getByRole('button', { name: /Delete lead Acme Plumbing/i }))
+    expect(screen.getByRole('dialog', { name: /Delete lead\?/i })).toBeInTheDocument()
+    // Nothing sent yet — the delete only fires once confirmed.
+    expect(api).not.toHaveBeenCalledWith('/api/leads/l1', expect.anything())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/leads/l1', expect.objectContaining({ method: 'DELETE' })))
+    expect(screen.queryByRole('dialog', { name: /Delete lead\?/i })).not.toBeInTheDocument()
+  })
+
+  test('shows a persistent error banner (not just a toast) when the load fails, and Retry reloads', async () => {
+    const api = vi.fn((path: string) => {
+      if (path.startsWith('/api/leads?')) return Promise.reject(new Error('Network error'))
+      if (path.startsWith('/api/campaigns')) return Promise.resolve({ campaigns: [] })
+      return Promise.resolve({})
+    })
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load leads/i)
+    expect(toast.error).toHaveBeenCalled()
+
+    // A subsequent successful retry clears the banner — it isn't stuck on
+    // once shown.
+    api.mockImplementation((path: string) => {
+      if (path.startsWith('/api/leads?')) return Promise.resolve({ leads: [lead], total: 1 })
+      if (path.startsWith('/api/campaigns')) return Promise.resolve({ campaigns: [] })
+      return Promise.resolve({})
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Acme Plumbing')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  test('cancelling the delete confirmation leaves the lead untouched', async () => {
+    const api = apiFor([lead])
+    render(<Leads api={api as never} workspace={workspace} toast={toast as never} canManage />)
+    await screen.findByText('Acme Plumbing')
+
+    await userEvent.click(screen.getByRole('button', { name: /Delete lead Acme Plumbing/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: /Delete lead\?/i })).not.toBeInTheDocument()
+    expect(api).not.toHaveBeenCalledWith('/api/leads/l1', expect.anything())
+    expect(screen.getByText('Acme Plumbing')).toBeInTheDocument()
+  })
 })

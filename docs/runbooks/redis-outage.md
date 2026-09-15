@@ -32,10 +32,15 @@ reconnects automatically through a flap.
 2. Restore Redis (restart/failover the managed instance, check memory/maxmemory
    eviction and connection limits). Both API and worker reconnect on their own —
    **no app restart needed.**
-3. If readiness flapping is yanking healthy API instances out of rotation and the
-   queue-backed flows can tolerate brief degradation, you can point the LB at
-   `/api/ready` (Redis optional) instead of `/api/ready/strict` while you fix
-   Redis. Revert afterward.
+3. `/api/ready` does **not** help here in production — it gates on Redis there
+   too (same as `/api/ready/strict`; see `docs/OPERATIONS.md`), so pointing the
+   LB at it will not stop the flapping during a production Redis outage. The
+   Redis-optional leniency only applies outside production. If readiness
+   flapping is yanking healthy API instances out of rotation and you've judged
+   that serving degraded (queue-backed flows stalled) beats no instances at all,
+   the actual lever is a deploy-config change to bypass the readiness gate
+   entirely (or force the LB to keep instances in rotation) — not a different
+   endpoint. Prefer restoring Redis over this.
 
 ## Diagnosis steps
 - `redis-cli -u $REDIS_URL PING` / `INFO server` / `INFO clients` (connected

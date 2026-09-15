@@ -1,5 +1,5 @@
 import { ApiError } from '../../lib/http.js'
-import type { SignalType } from '../../lib/signalEngine.js'
+import type { SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 
 // ── F-04: SSRF protection helpers ────────────────────────────────────────────
 // Host validation lives in lib/ssrf.ts (`assertPublicMailHost`), which resolves

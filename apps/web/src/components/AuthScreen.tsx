@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import type { LoginRequest, ForgotPasswordRequest, ResetPasswordRequest } from '@acaos/shared'
-import { s } from '../styles.js'
+import { s, colors } from '../styles.js'
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -144,7 +144,7 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ color: '#2563eb', fontWeight: 800, fontSize: 26, letterSpacing: 2 }}>ACAOS</div>
-          <div style={{ color: '#475569', fontSize: 13, marginTop: 4 }}>Agentic Client Acquisition OS</div>
+          <div style={{ color: colors.textFaint, fontSize: 13, marginTop: 4 }}>Agentic Client Acquisition OS</div>
         </div>
 
         <div style={{ ...s.card, padding: 28 }}>

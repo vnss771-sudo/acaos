@@ -162,7 +162,7 @@ export function Billing({ api, workspace, toast }: Props) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[billingStatus.status] || colors.textFaint, display: 'inline-block' }} />
                   <span style={{ color: STATUS_COLOR[billingStatus.status] || colors.textFaint, fontSize: 13, textTransform: 'capitalize' }}>
-                    {billingStatus.status === 'none' ? 'No subscription' : billingStatus.status.replace(/_/g, ' ')}
+                    {!billingStatus.status || billingStatus.status === 'none' ? 'No subscription' : billingStatus.status.replace(/_/g, ' ')}
                   </span>
                 </div>
               )}

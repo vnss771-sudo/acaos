@@ -1,8 +1,8 @@
 // Hunter.io domain-search: given a company domain, find the best contact email.
 // Used as a post-discovery enrichment step when a prospect has no contactEmail.
 
-import { callProvider, ProviderError } from '../lib/providerClient.js'
-import { hunterBreaker } from '../lib/circuit.js'
+import { callProvider, ProviderError } from '@acaos/backend-core/lib/providerClient.js'
+import { hunterBreaker } from '@acaos/backend-core/lib/circuit.js'
 
 type HunterContact = {
   email: string

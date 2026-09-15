@@ -5,7 +5,7 @@ import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { workspaceRouter } from '../apps/api/src/routes/workspaces/index.ts'
 import { getSendReadiness } from '../apps/api/src/lib/sendReadiness.ts'
-import { COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION } from '../packages/backend-core/src/lib/subprocessors.ts'
+import { COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION, DPA_VERSION } from '../packages/backend-core/src/lib/subprocessors.ts'
 import {
   prisma, resetDb, disconnect, seedUserWithWorkspace,
   startTestServer, bearer, type TestServer,
@@ -27,15 +27,27 @@ async function freshAuth(userId: string) {
   await prisma.user.update({ where: { id: userId }, data: { lastReauthAt: new Date() } })
 }
 
-test('GET returns the (initially empty) posture + disclosed sub-processors', async () => {
+test('GET returns the (initially empty) posture + disclosed sub-processors + DPA', async () => {
   const { user, workspace } = await seedUserWithWorkspace('c-get@x.test')
   const res = await req('GET', `/api/workspaces/${workspace.id}/compliance`, bearer(user.id))
   assert.equal(res.status, 200, JSON.stringify(res.body))
   assert.equal(res.body.posture.lawfulBasis, null)
+  assert.equal(res.body.posture.dpaAcknowledgedAt, null)
   assert.equal(res.body.consentCount, 0)
   assert.equal(res.body.currentTermsVersion, COMPLIANCE_TERMS_VERSION)
   assert.equal(res.body.subprocessors.version, SUBPROCESSORS_VERSION)
   assert.ok(res.body.subprocessors.subprocessors.some((s: { name: string }) => s.name === 'OpenAI'))
+  assert.equal(res.body.dpa.version, DPA_VERSION)
+  assert.ok(res.body.dpa.clauses.length > 0, 'the DPA is surfaced with real clause content, not just a version stamp')
+})
+
+test('PATCH acknowledgeDpa stamps dpaAcknowledgedAt + the current DPA version', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('c-dpa@x.test')
+  await freshAuth(user.id)
+  const res = await req('PATCH', `/api/workspaces/${workspace.id}/compliance`, bearer(user.id), { acknowledgeDpa: true })
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  assert.equal(res.body.posture.dpaAckVersion, DPA_VERSION)
+  assert.ok(res.body.posture.dpaAcknowledgedAt)
 })
 
 test('PATCH attests posture: lawful basis + terms/sub-processor acknowledgements stamp versions', async () => {

@@ -33,6 +33,12 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    heading: 'Field Ops',
+    items: [
+      { id: 'ops-dashboard', label: 'Field Ops', icon: '⚡' },
+    ],
+  },
+  {
     heading: 'Account',
     items: [
       { id: 'settings', label: 'Settings', icon: '◌' },
@@ -119,7 +125,10 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hu
               </div>
             )}
             {group.items.map(n => {
-              const active = view === n.id
+              // The single "Field Ops" entry stands in for 7 view ids (its own
+              // always-visible sub-nav switches between them — see OpsSubNav) — so
+              // it stays highlighted for any of them, not just the exact match.
+              const active = n.id === 'ops-dashboard' ? view.startsWith('ops-') : view === n.id
               return (
                 <button
                   key={n.id}

@@ -85,6 +85,22 @@ test('a query pinned to a DIFFERENT workspace is not treated as scoped (flagged)
   assert.equal(classify('Lead', 'findMany', { where: { workspaceId: 'other-ws' } }), 'unscoped')
 })
 
+test('an OR with one unscoped branch is unscoped — OR is a union, not a narrowing filter', () => {
+  // OR: [{workspaceId: WS}, {anythingAtAll}] can still return every OTHER
+  // workspace's rows through the second branch; a scoped sibling doesn't cover it.
+  assert.equal(classify('Lead', 'findMany', { where: { OR: [{ workspaceId: WS }, { stage: 'NEW' }] } }), 'unscoped')
+  assert.equal(classify('Lead', 'findMany', { where: { OR: [{ workspaceId: WS }, {}] } }), 'unscoped')
+  // Every branch scoped (directly or via FK) — the union can't escape the tenant.
+  assert.equal(classify('Lead', 'findMany', { where: { OR: [{ workspaceId: WS }, { workspaceId: WS }] } }), 'scoped')
+  assert.equal(classify('OutreachSent', 'findMany', { where: { OR: [{ workspaceId: WS }, { campaignId: 'c1' }] } }), 'scoped_via_fk')
+})
+
+test('NOT is an exclusion, never scoping evidence, even when it wraps workspaceId', () => {
+  // NOT: {workspaceId: theirs} means "everyone EXCEPT that workspace" — the
+  // opposite of scoping to it, and every other workspace's rows still match.
+  assert.equal(classify('Lead', 'findMany', { where: { NOT: { workspaceId: 'other-ws' } } }), 'unscoped')
+})
+
 test('createMany where any row is missing workspaceId → unscoped', () => {
   assert.equal(classify('Lead', 'createMany', { data: [{ workspaceId: WS }, { email: 'x@y.test' }] }), 'unscoped')
   assert.equal(classify('Lead', 'createMany', { data: [] }), 'unscoped')

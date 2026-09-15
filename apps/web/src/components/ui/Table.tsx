@@ -75,7 +75,7 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange
         <thead>
           <tr>
             {selectable && (
-              <th style={{ ...thBase, width: 36, textAlign: 'center' }}>
+              <th scope="col" style={{ ...thBase, width: 36, textAlign: 'center' }}>
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -89,6 +89,7 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, sort, onSortChange
               return (
                 <th
                   key={col.key}
+                  scope="col"
                   onClick={() => toggleSort(col)}
                   style={{
                     ...thBase,

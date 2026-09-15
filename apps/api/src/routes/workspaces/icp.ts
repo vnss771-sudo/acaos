@@ -1,6 +1,6 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'

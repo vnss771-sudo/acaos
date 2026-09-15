@@ -1,6 +1,6 @@
 import type { Router } from 'express'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -8,11 +8,11 @@ import {
   generateRuleBasedRecommendation,
   getOpportunityTier,
   toRawSignal,
-} from '../../lib/signalEngine.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../../lib/workspaces.js'
-import { enqueueScoreProspects, enqueueCalibrate } from '../../lib/queues.js'
-import { evidenceGatedPriority } from '../../lib/recommendationPolicy.js'
-import { createOutreachIntentForRecommendation } from '../../lib/outreachIntent.js'
+import { enqueueScoreProspects, enqueueCalibrate } from '@acaos/backend-core/lib/queues.js'
+import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
+import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { dollarsToCents, centsToDollars } from '../../lib/money.js'
 import { withDollars, getICP } from './helpers.js'
 import { validate, parseParams, idField } from '../../lib/validate.js'

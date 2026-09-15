@@ -33,6 +33,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   'Suppression', 'UnsubscribeEvent', 'UsageRecord', 'WorkspaceDraftPolicy',
   'WebhookEndpoint',
   'WorkspaceEmailConfig', 'WorkspaceICP', 'WorkspaceInvite',
+  'OpsCrewMember', 'OpsJobSite', 'OpsShiftRecord', 'OpsAlert', 'OpsRosterEntry',
 ])
 
 // Tenant-owned foreign keys that transitively scope a query to a workspace: a row
@@ -68,29 +69,6 @@ export function tenantGuardMode(): TenantGuardMode {
 
 export type TenantAccessResult = 'skipped' | 'scoped' | 'scoped_via_fk' | 'unscoped'
 
-/** Shallow-recursive search for a key anywhere in a Prisma where/data object,
- *  descending only through AND/OR/NOT combinators and plain nested objects. Bounded
- *  depth so a pathological payload can't blow the stack. Returns the matched value. */
-function findKey(obj: unknown, key: string, depth = 0): unknown {
-  if (depth > 6 || obj === null || typeof obj !== 'object') return undefined
-  if (Array.isArray(obj)) {
-    for (const el of obj) {
-      const hit = findKey(el, key, depth + 1)
-      if (hit !== undefined) return hit
-    }
-    return undefined
-  }
-  const rec = obj as Record<string, unknown>
-  if (key in rec && rec[key] !== undefined) return rec[key]
-  for (const combinator of ['AND', 'OR', 'NOT'] as const) {
-    if (combinator in rec) {
-      const hit = findKey(rec[combinator], key, depth + 1)
-      if (hit !== undefined) return hit
-    }
-  }
-  return undefined
-}
-
 /** True if a where-side workspaceId predicate pins the value to exactly `expected`
  *  (either `workspaceId: id` or `workspaceId: { equals: id }`). A broader predicate
  *  (in / not / unconstrained) is NOT treated as scoped. */
@@ -101,6 +79,59 @@ function matchesWorkspace(value: unknown, expected: string): boolean {
     return eq === expected
   }
   return false
+}
+
+type SubtreeVerdict = 'scoped' | 'scoped_via_fk' | 'unscoped'
+
+/**
+ * Classify whether a where/data subtree is ITSELF soundly tenant-scoped. Bounded
+ * depth so a pathological payload can't blow the stack.
+ *
+ * Combinator semantics matter here and are easy to get backwards:
+ *   - AND narrows the result set — if any branch of an AND is scoped, the whole
+ *     AND is scoped (the other branches can only restrict further).
+ *   - OR widens the result set (it's a union) — a scoped branch says nothing
+ *     about a sibling branch, so ALL branches must independently be scoped or
+ *     the query can still cross the tenant boundary through the unscoped one.
+ *   - NOT is an exclusion, not a positive constraint — `NOT: { workspaceId: x }`
+ *     means "rows outside workspace x", the opposite of scoping to it. NOT is
+ *     therefore never descended into for scoping evidence.
+ *
+ * The previous implementation (findKey) returned on the FIRST match of
+ * workspaceId/a tenant FK anywhere in the tree, including inside an OR branch —
+ * so `OR: [{ workspaceId: theirs }, { anythingAtAll }]` was certified "scoped"
+ * by the first branch alone, even though the second branch can return any
+ * workspace's rows. This walks every branch instead of stopping at the first hit.
+ */
+function classifySubtree(obj: unknown, workspaceId: string, depth = 0): SubtreeVerdict {
+  if (depth > 6 || obj === null || typeof obj !== 'object' || Array.isArray(obj)) return 'unscoped'
+  const rec = obj as Record<string, unknown>
+
+  if (matchesWorkspace(rec.workspaceId, workspaceId)) return 'scoped'
+  for (const fk of TENANT_FOREIGN_KEYS) {
+    if (rec[fk] !== undefined) return 'scoped_via_fk'
+  }
+
+  if ('AND' in rec) {
+    const branches = Array.isArray(rec.AND) ? rec.AND : [rec.AND]
+    for (const branch of branches) {
+      const verdict = classifySubtree(branch, workspaceId, depth + 1)
+      if (verdict !== 'unscoped') return verdict
+    }
+  }
+
+  if ('OR' in rec) {
+    const branches = Array.isArray(rec.OR) ? rec.OR : [rec.OR]
+    if (branches.length > 0) {
+      const verdicts = branches.map((branch) => classifySubtree(branch, workspaceId, depth + 1))
+      if (verdicts.every((v) => v !== 'unscoped')) {
+        return verdicts.every((v) => v === 'scoped') ? 'scoped' : 'scoped_via_fk'
+      }
+    }
+  }
+
+  // NOT deliberately not descended into — see doc comment above.
+  return 'unscoped'
 }
 
 /**
@@ -129,18 +160,19 @@ export function classifyTenantAccess(params: {
   const argObj = (args ?? {}) as Record<string, unknown>
   const subject = isCreate ? argObj.data : argObj.where
 
-  // createMany takes data: T[]; require EVERY row to carry the workspace.
+  // createMany takes data: T[]; require EVERY row to carry the workspace directly
+  // (each row is a flat object, never itself an AND/OR/NOT combinator).
   if (operation === 'createMany' && Array.isArray(subject)) {
-    const allScoped = subject.length > 0 && subject.every((row) => matchesWorkspace(findKey(row, 'workspaceId'), workspaceId))
+    const allScoped = subject.length > 0 && subject.every((row) => matchesWorkspace((row as Record<string, unknown>)?.workspaceId, workspaceId))
     if (allScoped) return { result: 'scoped' }
     return { result: 'unscoped', reason: 'createMany row missing workspaceId' }
   }
 
-  if (matchesWorkspace(findKey(subject, 'workspaceId'), workspaceId)) {
-    return { result: 'scoped' }
+  const verdict = classifySubtree(subject, workspaceId)
+  if (verdict === 'scoped') return { result: 'scoped' }
+  if (verdict === 'scoped_via_fk') return { result: 'scoped_via_fk' }
+  return {
+    result: 'unscoped',
+    reason: `${operation} on ${model} has no workspaceId or tenant foreign-key filter that holds across every OR branch`,
   }
-  for (const fk of TENANT_FOREIGN_KEYS) {
-    if (findKey(subject, fk) !== undefined) return { result: 'scoped_via_fk', reason: fk }
-  }
-  return { result: 'unscoped', reason: `${operation} on ${model} has no workspaceId or tenant foreign-key filter` }
 }

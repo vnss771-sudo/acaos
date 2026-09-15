@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { getRedis } from '../lib/redis.js'
 import { hashApiKey } from '../lib/apiKeys.js'
-import { normalizeEmail } from '../lib/validation.js'
+import { normalizeEmail } from '../lib/textNormalize.js'
 
 interface RateLimitOptions {
   windowMs: number
@@ -137,7 +137,11 @@ export const authRateLimit: RequestHandler = (req, res, next) => {
   })
 }
 
-// 60 AI requests per hour per IP (generous for demos)
+// 60 AI requests per hour per IP (generous for demos). This is the IP tier only
+// — many users behind one NAT/office IP share this bucket. The workspace tier
+// that stops a single compromised/abusive workspace from bursting the shared
+// OpenAI key across rotating IPs is `enforceWorkspaceAiRate` (lib/workspaceRateLimit.ts),
+// called explicitly by the jobs.ts route handlers alongside this middleware.
 export const aiRateLimit = createRateLimiter({
   name: 'ai',
   windowMs: 60 * 60 * 1000,
@@ -153,7 +157,10 @@ export const generalRateLimit = createRateLimiter({
   message: 'Request limit reached. Please slow down.'
 })
 
-// 5 outbound mail sends per hour per IP (prevents spam abuse)
+// 5 outbound mail sends per hour per IP (prevents spam abuse). Per-IP tier
+// only — the workspace tier (`enforceWorkspaceMailRate`, lib/workspaceRateLimit.ts)
+// is called explicitly at the mailbox.ts send-test handler alongside this
+// middleware, so a workspace spraying sends across rotating IPs is still capped.
 export const mailRateLimit = createRateLimiter({
   name: 'mail',
   windowMs: 60 * 60 * 1000,

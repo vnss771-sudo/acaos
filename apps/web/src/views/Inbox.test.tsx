@@ -51,4 +51,17 @@ describe('InboxView', () => {
     render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
     expect(await screen.findByText(/No replies yet/i)).toBeInTheDocument()
   })
+
+  test('shows a persistent error banner (not just a toast) when the load fails, and Retry reloads', async () => {
+    const api = vi.fn().mockRejectedValue(new Error('Network error'))
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load replies/i)
+    expect(toast.error).toHaveBeenCalledWith('Network error')
+
+    api.mockResolvedValue(payload)
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })

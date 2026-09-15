@@ -8,8 +8,12 @@
 // the final HTTP hop needs a live endpoint.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { request as httpsRequest } from 'node:https'
 import { prisma } from './prisma.js'
 import { logger } from './logger.js'
+import { isProduction } from './config.js'
+import { resolvePublicMailHost } from './ssrf.js'
+import { decryptSecret, isEncrypted } from './encrypt.js'
 import type { PrismaClient, Prisma } from '@prisma/client'
 
 type Db = PrismaClient | Prisma.TransactionClient
@@ -76,36 +80,97 @@ export const WEBHOOK_FAILURE_DISABLE_THRESHOLD = 15
 export type DeliveryResult = { ok: boolean; status: number | null }
 export type DeliverDeps = { fetch?: typeof fetch; now?: () => number; timeoutMs?: number }
 
-// Sign + POST one envelope to one endpoint. NEVER throws — a customer's broken URL
-// must not break the action that triggered the event. Returns the outcome so the
-// caller can update delivery health.
+/**
+ * Deliver one webhook through a DNS-pinned HTTPS connection.
+ *
+ * Production never uses the global fetch() transport: resolving a hostname for
+ * validation and then asking fetch() to resolve it again leaves a DNS-rebinding
+ * window between the check and the connect. Here the pinned IP is dialled
+ * directly (port 443 only) while TLS SNI/certificate verification still uses the
+ * customer's original hostname via `servername`. `agent: false` opts out of any
+ * proxy/env-mediated routing so the socket only ever reaches the validated address.
+ */
+async function deliverPinnedHttps(
+  url: URL,
+  secret: string,
+  envelope: WebhookEnvelope,
+  nowSec: number,
+  timeoutMs: number,
+): Promise<DeliveryResult> {
+  const pinned = await resolvePublicMailHost(url.hostname, 'webhook url')
+  const body = JSON.stringify(envelope)
+  return await new Promise<DeliveryResult>((resolve) => {
+    const req = httpsRequest({
+      protocol: 'https:',
+      hostname: pinned.host,
+      port: 443,
+      path: `${url.pathname}${url.search}`,
+      method: 'POST',
+      servername: pinned.servername,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Acaos-Signature': webhookSignatureHeader(secret, nowSec, body),
+        'Acaos-Event': envelope.type,
+        'Acaos-Delivery': envelope.id,
+      },
+      timeout: timeoutMs,
+      agent: false,
+    }, (res) => {
+      res.resume()
+      resolve({ ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300, status: res.statusCode ?? null })
+    })
+    req.once('timeout', () => req.destroy(new Error('webhook timeout')))
+    req.once('error', () => resolve({ ok: false, status: null }))
+    req.end(body)
+  })
+}
+
+// Sign + POST one envelope to one endpoint. NEVER throws on a bad customer URL — a
+// broken endpoint must not break the action that triggered the event. HTTPS on the
+// default port is required and redirects are never followed, closing redirect- and
+// DNS-rebinding-based SSRF against internal services.
+//
+// `deps.fetch` is a test-only transport seam; supplying it in production would
+// silently bypass the pinned transport below, so that combination throws instead
+// of failing open.
 export async function deliverWebhook(
   endpoint: { url: string; secret: string },
   envelope: WebhookEnvelope,
   deps: DeliverDeps = {},
 ): Promise<DeliveryResult> {
-  const doFetch = deps.fetch ?? fetch
+  if (deps.fetch && isProduction()) {
+    throw new Error('deliverWebhook: deps.fetch is a test-only transport and must never be supplied in production')
+  }
   const nowSec = Math.floor((deps.now ? deps.now() : Date.now()) / 1000)
-  const body = JSON.stringify(envelope)
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 5000)
-    try {
-      const res = await doFetch(endpoint.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Acaos-Signature': webhookSignatureHeader(endpoint.secret, nowSec, body),
-          'Acaos-Event': envelope.type,
-          'Acaos-Delivery': envelope.id,
-        },
-        body,
-        signal: controller.signal,
-      })
-      return { ok: res.status >= 200 && res.status < 300, status: res.status }
-    } finally {
-      clearTimeout(timer)
+    const url = new URL(endpoint.url)
+    if (url.protocol !== 'https:') return { ok: false, status: null }
+    if (url.port && url.port !== '443') return { ok: false, status: null }
+
+    if (deps.fetch) {
+      const body = JSON.stringify(envelope)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 5000)
+      try {
+        const res = await deps.fetch(endpoint.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Acaos-Signature': webhookSignatureHeader(endpoint.secret, nowSec, body),
+            'Acaos-Event': envelope.type,
+            'Acaos-Delivery': envelope.id,
+          },
+          body,
+          signal: controller.signal,
+        })
+        return { ok: res.status >= 200 && res.status < 300, status: res.status }
+      } finally {
+        clearTimeout(timer)
+      }
     }
+
+    return await deliverPinnedHttps(url, endpoint.secret, envelope, nowSec, deps.timeoutMs ?? 5000)
   } catch {
     return { ok: false, status: null }
   }
@@ -145,9 +210,16 @@ export async function emitWebhookEvent(
     const occurredAt = new Date()
     await Promise.all(
       endpoints.map(async (ep: { id: string; url: string; secret: string; failureCount: number }) => {
-        const envelope = buildWebhookEnvelope(type, data, `evt_${randomBytes(12).toString('hex')}`, occurredAt)
-        const result = await deliverWebhook(ep, envelope, deps)
-        await recordDeliveryOutcome(client, ep.id, result, ep.failureCount).catch(() => {})
+        // Isolated per-endpoint: an unreadable secret (e.g. a stale key version) on
+        // one endpoint must not abort delivery to the workspace's other endpoints.
+        try {
+          const envelope = buildWebhookEnvelope(type, data, `evt_${randomBytes(12).toString('hex')}`, occurredAt)
+          const secret = isEncrypted(ep.secret) ? decryptSecret(ep.secret) : ep.secret
+          const result = await deliverWebhook({ ...ep, secret }, envelope, deps)
+          await recordDeliveryOutcome(client, ep.id, result, ep.failureCount).catch(() => {})
+        } catch (err) {
+          logger.warn('webhook delivery failed', { endpointId: ep.id, error: (err as Error).message })
+        }
       }),
     )
   } catch (err) {

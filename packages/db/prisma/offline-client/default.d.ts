@@ -1,6 +1,7 @@
 export namespace Prisma {
   export type JsonPrimitive = string | number | boolean | null
   export type InputJsonValue = JsonPrimitive | { [key: string]: InputJsonValue } | InputJsonValue[]
+  export type JsonValue = JsonPrimitive | { [key: string]: JsonValue } | JsonValue[]
   export interface TransactionClient {
     [key: string]: any
   }

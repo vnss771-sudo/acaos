@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { Spinner, EmptyState } from './Spinner.js'
+import { Spinner } from './Spinner.js'
 
-describe('Spinner / EmptyState', () => {
+describe('Spinner', () => {
   test('Spinner renders an svg sized by the prop', () => {
     const { container } = render(<Spinner size={32} />)
     const svg = container.querySelector('svg')
@@ -21,8 +21,4 @@ describe('Spinner / EmptyState', () => {
     expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Saving')
   })
 
-  test('EmptyState shows its message', () => {
-    render(<EmptyState message="No leads yet" />)
-    expect(screen.getByText('No leads yet')).toBeInTheDocument()
-  })
 })

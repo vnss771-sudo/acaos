@@ -112,12 +112,18 @@ model User {
   // Step-up auth: timestamp of the most recent password (or MFA) proof. Sensitive
   // mutations (billing, admin, MFA disable) require this to be recent.
   lastReauthAt        DateTime?
+  // Timestamp of the most recent COMPLETED login (signup, password login, or an
+  // MFA-verified login) — distinct from lastReauthAt, which also advances on a
+  // mid-session step-up re-proof. Null means the account has never completed a
+  // login since this column was added. Surfaced in the SOC2 access-review report.
+  lastLoginAt         DateTime?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
   memberships         Membership[]
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   emailVerifications  EmailVerificationToken[]
+  opsCrewLinks        OpsCrewMember[]
 }
 
 model Workspace {
@@ -141,6 +147,8 @@ model Workspace {
   termsVersion           String?
   subprocessorsAckAt     DateTime?
   subprocessorsAckVersion String?
+  dpaAcknowledgedAt      DateTime?  // operator reviewed the in-product DPA (see lib/subprocessors.ts dpaDisclosure)
+  dpaAckVersion          String?
   targetsCanada          Boolean    @default(false) // gates the CASL consent check
   // Operator drain switch: when true, the worker halts all sends for THIS workspace
   // (returns SUPPRESSED) without touching the global FEATURE_SEND kill-switch — so a
@@ -179,6 +187,11 @@ model Workspace {
   aiPromptVersions     AiPromptVersion[]
   draftPolicy          WorkspaceDraftPolicy?
   webhookEndpoints     WebhookEndpoint[]
+  opsCrewMembers       OpsCrewMember[]
+  opsJobSites          OpsJobSite[]
+  opsShiftRecords      OpsShiftRecord[]
+  opsAlerts            OpsAlert[]
+  opsRosterEntries     OpsRosterEntry[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -345,6 +358,11 @@ model Lead {
   outreachSent   OutreachSent[]
   followupTasks  FollowupTask[]
   evidenceSources LeadEvidenceSource[]
+  // Inverse side of Prospect.convertedLeadId — the Prospect this Lead was
+  // created from, when it came from a "Convert to Lead" action rather than
+  // manual entry/import. At most one Prospect converts to a given Lead
+  // (enforced by the @unique on Prospect.convertedLeadId).
+  convertedFromProspect Prospect?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -907,6 +925,15 @@ model Prospect {
   aiSummary        String?
   sourceTag        String?
   isExample        Boolean      @default(false)
+  // Set once this Prospect has been converted into a workspace Lead (the
+  // "Convert to Lead" action — see POST /api/prospects/:id/convert-to-lead).
+  // @unique makes the relation strictly 1:1: a Prospect converts to at most
+  // one Lead, and a Lead has at most one source Prospect. onDelete: SetNull
+  // so deleting the created Lead doesn't cascade into deleting the Prospect
+  // it came from — it just un-marks the conversion.
+  convertedLeadId  String?      @unique
+  convertedAt      DateTime?
+  convertedLead    Lead?        @relation(fields: [convertedLeadId], references: [id], onDelete: SetNull)
   // The mission this prospect was discovered for (if any). Lets the mission
   // control plane own its prospects, and carries through to recommendations.
   missionId        String?
@@ -1148,4 +1175,207 @@ model WorkspaceICP {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// ── Operations module (field crew / shift / job-site management) ───────────────
+// A workspace-scoped module for tracking crew members, job sites, shifts, and
+// rosters. All 5 models carry workspaceId directly and are guarded by the same
+// tenant-isolation posture as the rest of the schema (see TENANT_MODELS in
+// tenantGuard.ts, which this section is kept in sync with).
+
+enum OpsJobStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum OpsRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum OpsShiftType {
+  REGULAR
+  OVERTIME
+  CALLOUT
+  ON_CALL
+}
+
+enum OpsRosterStatus {
+  DRAFT
+  PUBLISHED
+}
+
+// Closed set of conditions the fatigue/compliance sweep can raise. Extend this
+// (and the matching switch in ops/utils.ts) together — a raw string here would
+// let a typo silently create an alert type no UI or alert rule recognizes.
+enum OpsAlertType {
+  MISSING_HEAT_CHECK
+  FATIGUE_THRESHOLD
+  MISSING_ALLOWANCE
+}
+
+// Mirrors the 4-level scale fatigue.ts already computes (see FatigueRisk) so a
+// CRITICAL fatigue condition can actually be represented as a CRITICAL alert
+// instead of being capped at HIGH.
+enum OpsAlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum OpsAlertStatus {
+  OPEN
+  REVIEWED
+}
+
+model OpsCrewMember {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  employeeCode     String
+  fullName         String
+  role             String
+  crewName         String?
+  baseRate         Float?
+  allowanceProfile String?
+  licenceNotes     String?
+  isActive         Boolean   @default(true)
+  // Optional link to the app account this crew member IS, so clock-in/out can
+  // verify the caller is the person being clocked, not just any workspace
+  // member. Nullable: a crew member with no app login (common — many never
+  // sign in) has no self-service identity to bind to, so their clock actions
+  // require 'ops:manage' instead — see clock.ts. onDelete: SetNull rather than
+  // Cascade/Restrict: deleting the User account must not touch shift history.
+  userId           String?
+  user             User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  shifts           OpsShiftRecord[]
+  rosterEntries    OpsRosterEntry[]
+
+  @@unique([workspaceId, employeeCode])
+  @@unique([workspaceId, userId])
+  @@index([workspaceId, isActive])
+}
+
+model OpsJobSite {
+  id            String       @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  jobCode       String
+  siteName      String
+  location      String?
+  supervisor    String?
+  status        OpsJobStatus @default(ACTIVE)
+  // Site's typical shift pattern (e.g. "Day", "Night", "Rotating") — a free-text
+  // descriptive label, not a fixed state machine like OpsRosterEntry.shiftType.
+  shiftType     String?
+  riskLevel     OpsRiskLevel @default(MEDIUM)
+  lat           Float?
+  lng           Float?
+  radiusMeters  Int          @default(500)
+  notes         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  shifts        OpsShiftRecord[]
+  rosterEntries OpsRosterEntry[]
+
+  @@unique([workspaceId, jobCode])
+  @@index([workspaceId, status])
+}
+
+model OpsShiftRecord {
+  id                 String        @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  crewMemberId       String
+  crewMember         OpsCrewMember @relation(fields: [crewMemberId], references: [id])
+  jobSiteId          String
+  jobSite            OpsJobSite    @relation(fields: [jobSiteId], references: [id])
+  shiftDate          DateTime
+  startTime          DateTime
+  // Nullable: null represents an open (in-progress) shift. A migration-only
+  // partial unique index (see the migration.sql for this model — Prisma's schema
+  // DSL has no WHERE-qualified @@unique) enforces at most one open shift per
+  // crew member at a time, since the DB is the only place that can make that
+  // check-then-create atomic.
+  endTime            DateTime?
+  breakMinutes       Int           @default(0)
+  totalHours         Float         @default(0)
+  // Free-text allowance category (e.g. "HEAT", "REMOTE_SITE") — workspaces define
+  // their own set, so this is deliberately not an enum. "NONE" is the default.
+  allowanceTag       String        @default("NONE")
+  outdoorHighRisk    Boolean       @default(false)
+  heatCheckCompleted Boolean       @default(false)
+  fatigueConcern     Boolean       @default(false)
+  corRelated         Boolean       @default(false)
+  reviewed           Boolean       @default(false)
+  notes              String?
+  clockInLat         Float?
+  clockInLng         Float?
+  clockOutLat        Float?
+  clockOutLng        Float?
+  photoUrl           String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  alerts             OpsAlert[]
+
+  @@index([workspaceId, shiftDate])
+  @@index([workspaceId, crewMemberId, endTime])
+}
+
+model OpsAlert {
+  id            String           @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  shiftRecordId String?
+  shiftRecord   OpsShiftRecord?  @relation(fields: [shiftRecordId], references: [id])
+  alertType     OpsAlertType
+  title         String
+  message       String?
+  severity      OpsAlertSeverity @default(MEDIUM)
+  status        OpsAlertStatus   @default(OPEN)
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  // At most one alert row per shift+type: reconcileShiftAlerts() upserts against
+  // this (across every status, not just OPEN) so a condition that re-triggers
+  // after a reviewer already actioned the alert reopens that same row instead of
+  // creating a duplicate. NULL shiftRecordId values are each distinct under this
+  // constraint (standard SQL NULL semantics), which is fine — every alert this
+  // module creates today is shift-scoped.
+  @@unique([shiftRecordId, alertType])
+  @@index([workspaceId, status])
+  @@index([workspaceId, severity])
+  @@index([workspaceId, createdAt])
+}
+
+model OpsRosterEntry {
+  id           String          @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  crewMemberId String
+  crewMember   OpsCrewMember   @relation(fields: [crewMemberId], references: [id])
+  jobSiteId    String
+  jobSite      OpsJobSite      @relation(fields: [jobSiteId], references: [id])
+  rosterDate   DateTime
+  startTime    DateTime
+  endTime      DateTime
+  shiftType    OpsShiftType    @default(REGULAR)
+  status       OpsRosterStatus @default(DRAFT)
+  notes        String?
+  publishedBy  String?
+  publishedAt  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  // Prevents a bulk/roster-builder create from double-booking the same crew
+  // member for the same start slot on the same day.
+  @@unique([workspaceId, crewMemberId, rosterDate, startTime])
+  @@index([workspaceId, rosterDate])
+  @@index([workspaceId, crewMemberId])
 }

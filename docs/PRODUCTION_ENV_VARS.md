@@ -56,7 +56,7 @@ All read live from the environment — flipping any of these takes effect on the
 - FOLLOWUPS_ENABLED — master switch for the automatic multi-step follow-up sender. Default `false`. On top of this, each campaign must set `autoFollowupsEnabled`. Both must be true before any follow-up is dispatched.
 
 ### Compliance gate (opt-IN — default OFF)
-- COMPLIANCE_GATE_ENABLED — when `true`, getSendReadiness additionally requires a recorded GDPR lawful basis + accepted outreach terms (and, for Canada-targeting workspaces, a CASL consent basis) before a workspace can launch outreach. Default `false` (ships dormant) — turn on only after the legal copy (sub-processor list, T&Cs, LIA prompts) is signed off. The compliance posture is recorded via Settings → Compliance regardless of this flag.
+- COMPLIANCE_GATE_ENABLED — when `true`: (1) getSendReadiness additionally requires a recorded GDPR lawful basis + accepted outreach terms (and, for Canada-targeting workspaces, a CASL consent basis) before a workspace can launch outreach; and (2) the send pipeline (sendCampaignBatch and sendFollowupTask, in apps/worker) enforces per-RECIPIENT consent — any workspace with `lawfulBasis: 'consent'` or `targetsCanada: true` skips (fail-closed, audited as `consent.enforcement.skipped`) any contact lacking an on-file ConsentRecord, rather than relying on the workspace-level "at least one record exists" check alone. Default `false` (ships dormant) — turn on only after the legal copy (sub-processor list, T&Cs, DPA, LIA prompts) is signed off. The compliance posture is recorded via Settings → Compliance regardless of this flag.
 - FOLLOWUP_SCAN_INTERVAL_MS — how often the worker scans for due follow-up tasks. Default 60000 (1 min).
 
 ### Sender-reputation circuit breaker
@@ -88,9 +88,11 @@ All read live from the environment — flipping any of these takes effect on the
 ## Observability
 - METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production; when unset, `/metrics` is disabled and a startup warning is logged.
 - LOG_LEVEL — `debug` | `info` | `warn` | `error`. Default `info`.
-- SENTRY_DSN — error-reporting transport. Optional, but **set it in production**: `@sentry/node` is bundled, so a DSN turns on error capture (without it, `captureError` is a silent no-op).
+- SENTRY_DSN — error-reporting transport. Optional, but **set it in production**: a DSN turns on error capture via a minimal built-in HTTP transport (`lib/sentryTransport.ts`) that posts directly to Sentry's ingest API — the `@sentry/node` SDK is deliberately not a dependency (its OpenTelemetry tree would otherwise drag a heavy, recurringly-vulnerable subtree through dependency review). Without a DSN, `captureError` is a no-op, though every error is still logged via the structured logger regardless.
 - STATS_RECONCILE_ENABLED — `true` to enable the periodic `CampaignDailyStats` ↔ `ContactEvent` reconciliation sweep that repairs projection drift. Default off; recommended `true` in production.
 - WORKER_HEALTH_PORT — port for the worker's `/live` `/ready` `/metrics` server. Default 9090 (or platform `$PORT`).
+- OTEL_EXPORTER_OTLP_ENDPOINT — base URL of an OTLP/HTTP collector (e.g. `https://otel-collector.internal:4318`; `/v1/traces` is appended). Turns on distributed tracing across API → queue → worker (`lib/tracing.ts`) via a real, minimal OpenTelemetry SDK (manual spans only — no auto-instrumentation package, same dependency-lean reasoning as SENTRY_DSN above). Unset by default: every span is then a genuine no-op and no `traceparent` is added to job payloads, so this never changes behavior in dev/CI.
+- OTEL_CONSOLE_EXPORTER — `true` to print spans to stdout instead (local debugging only; ignored when OTEL_EXPORTER_OTLP_ENDPOINT is set). Never set in production.
 
 ## Data Retention
 The worker periodically purges aged data and reclaims stale `SENDING` rows. The per-class `*_DAYS` windows override the defaults documented in `docs/DATA_RETENTION.md`. All optional.

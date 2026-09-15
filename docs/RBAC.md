@@ -39,3 +39,21 @@ The three owner-only capabilities are the privilege-escalation / destructive
 actions: only an owner can mint another admin, remove a member, or wipe the
 scoring model. Every boundary in this table is pinned by
 `tests/lib-permissions.test.ts`.
+
+## Platform admin bootstrap
+
+`User.isPlatformAdmin` is set once, automatically, the first time a signed-in
+user whose email matches the `ADMIN_EMAIL` environment variable hits an
+`/api/admin` route — there's no separate promote/demote UI. Unset or rotate
+`ADMIN_EMAIL` after bootstrapping so a stale value can't later grant admin to a
+different account that ends up claiming that address.
+
+The `/admin` screen this flag gates is workspace-agnostic — it can see and act
+across every workspace on the platform, which is a different axis of privilege
+than the workspace `owner`/`admin`/`member` roles above.
+
+Workspace-stored inbound-mail credentials (SMTP/IMAP passwords) are encrypted
+at rest with `EMAIL_ENCRYPTION_KEY` (64 hex chars / 32 bytes). Any explicitly
+set `NODE_ENV` other than `development`/`test` requires a real key; the
+insecure fallback is only permitted when `NODE_ENV` is unset or one of those
+two. See `PRODUCTION_ENV_VARS.md` for how to generate and set it.

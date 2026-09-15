@@ -1,9 +1,9 @@
 import type { Router } from 'express'
 import { asyncHandler, requireUser } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
-import { encryptSecret } from '../../lib/encrypt.js'
-import { assertPublicMailHost } from '../../lib/ssrf.js'
-import { recordAudit } from '../../lib/audit.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { encryptSecret } from '@acaos/backend-core/lib/encrypt.js'
+import { assertPublicMailHost } from '@acaos/backend-core/lib/ssrf.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
@@ -128,6 +128,23 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
         create: { workspaceId, ...data },
         update: data,
       })
+
+      // Auto-start domain warmup the first time this workspace saves a real SMTP
+      // host — a freshly-configured sender is exactly the case warmup exists to
+      // protect. Fires at most once per workspace (guarded by warmupStartedAt
+      // already being null), so re-saving/editing an established sender's config
+      // never resets its ramp. An explicit manual restart lives at
+      // POST /:id/warmup/start for the "reset after a long pause" case.
+      if (data.smtpHost) {
+        const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { warmupStartedAt: true } })
+        if (!icp || icp.warmupStartedAt == null) {
+          await prisma.workspaceICP.upsert({
+            where: { workspaceId },
+            create: { workspaceId, warmupStartedAt: new Date(), targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+            update: { warmupStartedAt: new Date() },
+          })
+        }
+      }
 
       // Audit the config change. Record only non-secret connection hints — never
       // the SMTP/IMAP passwords (encrypted or raw); just whether they were set.

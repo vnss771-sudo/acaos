@@ -12,14 +12,25 @@ export type ToneViolation = {
   match: string
 }
 
+// Singular- and plural-noun forms of the "your X" possessive subject, so
+// "your crew is..." and "your crews are..." are both recognized as the same
+// presumptuous-claim shape.
+const POSSESSIVE_SUBJECT = '(?:teams?|businesse?s|compan(?:y|ies)|crews?|shops?|firms?)'
+
 // High-precision patterns: the sender CLAIMING to know the recipient is
 // struggling / behind / overwhelmed, etc. Deliberately narrow (an explicit
 // "I noticed/know… you're struggling" shape) to avoid flagging legitimate
 // question-framed copy like "how are you handling scheduling as you grow?".
 const PRESUMPTUOUS_PATTERNS: RegExp[] = [
-  /\bI\s+(?:noticed|saw|see|can\s+see|know|can\s+tell|understand|realiz\w*|recogniz\w*)\s+(?:that\s+)?(?:you(?:'re|\s+are|\s+guys|r\s+team)?|your\s+(?:team|business|company|crew|shop|firm))\b[^.?!]*\b(?:struggl\w*|having\s+(?:trouble|issues|a\s+hard\s+time)|dealing\s+with|overwhelmed|drowning|falling\s+behind|behind\s+on|losing|missing|wasting|bleeding|disorganiz\w*|in\s+chaos|a\s+mess)\b/i,
+  new RegExp(
+    `\\bI\\s+(?:noticed|saw|see|can\\s+see|know|can\\s+tell|understand|realiz\\w*|recogniz\\w*)\\s+(?:that\\s+)?(?:you(?:'re|\\s+are|\\s+guys|r\\s+team)?|your\\s+${POSSESSIVE_SUBJECT})\\b[^.?!]*\\b(?:struggl\\w*|having\\s+(?:trouble|issues|a\\s+hard\\s+time)|dealing\\s+with|overwhelmed|drowning|falling\\s+behind|behind\\s+on|losing|missing|wasting|bleeding|disorganiz\\w*|in\\s+chaos|a\\s+mess)\\b`,
+    'i',
+  ),
   /\byou(?:'re|\s+are)\s+(?:clearly|obviously|definitely|probably|likely|no\s+doubt)\s+(?:struggl\w*|deal\w*|overwhelm\w*|los\w*|miss\w*|wast\w*|behind)\b/i,
-  /\byour\s+(?:team|business|company|crew)\s+is\s+(?:clearly|obviously|definitely|no\s+doubt)\b/i,
+  new RegExp(
+    `\\byour\\s+${POSSESSIVE_SUBJECT}\\s+(?:is|are|'re)\\s+(?:clearly|obviously|definitely|probably|likely|no\\s+doubt)\\b`,
+    'i',
+  ),
 ]
 
 // Vague corporate filler the prompt already bans. WARN-only: a stray match isn't

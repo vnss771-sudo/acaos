@@ -135,4 +135,20 @@ describe('MissionsView control plane', () => {
     expect(screen.queryByRole('button', { name: 'Score & recommend' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Generate draft' })).not.toBeInTheDocument()
   })
+
+  test('shows a persistent error banner (not just a toast) when the mission list fails to load, and Retry reloads', async () => {
+    const api = vi.fn().mockRejectedValue(new Error('Network error'))
+    render(<MissionsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load missions/i)
+    expect(toast.error).toHaveBeenCalledWith('Network error')
+
+    api.mockImplementation((path: string) => {
+      if (path === '/api/missions?workspaceId=ws1') return Promise.resolve({ missions: [mission] })
+      return Promise.resolve({})
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Q3 Roofers')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })

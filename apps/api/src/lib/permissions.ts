@@ -36,6 +36,10 @@ export type Permission =
   | 'prospects:discover'
   | 'prospects:import'
   | 'prospects:delete'
+  // Ops module: crew/job-site/roster CRUD and alert review. Clock in/out and
+  // read-only views are plain membership (any crew member clocks in for
+  // themselves); this covers the admin-level management surface only.
+  | 'ops:manage'
   // owner-only capabilities
   | 'members:grant_admin'
   | 'members:remove'
@@ -70,6 +74,7 @@ const ADMIN_PERMISSIONS: Permission[] = [
   'prospects:discover',
   'prospects:import',
   'prospects:delete',
+  'ops:manage',
 ]
 
 const OWNER_PERMISSIONS: Permission[] = [

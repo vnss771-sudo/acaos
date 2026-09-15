@@ -51,6 +51,18 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   return getAllowedOrigins().includes(origin)
 }
 
+/**
+ * Whether CORS may skip the allowlist and reflect any origin (with credentials).
+ * Fails closed like {@link enforceSendReadiness}: only the two explicit local
+ * environments get the permissive path. Gating this on `isProduction()` instead
+ * — as opposed to naming the safe envs — would silently reflect-and-credential
+ * any origin for staging, preview, or an unset/typo'd NODE_ENV in a deployed
+ * environment, exactly the CORS misconfiguration this guards against.
+ */
+export function corsAllowsAnyOrigin(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test'
+}
+
 // Variables without which the API cannot function at all in production.
 const REQUIRED_IN_PRODUCTION = [
   'DATABASE_URL',
@@ -112,6 +124,13 @@ export function validateConfig(): void {
       // Warn but don't crash — CORS middleware will reject cross-origin requests
       // regardless. This allows the API to start before the web frontend URL is known.
       console.warn('[config] ALLOWED_ORIGINS and WEB_URL are not set — all cross-origin requests will be rejected')
+    }
+    // RATE_LIMIT_DISABLED is a test/E2E escape hatch (createRateLimiter honors it
+    // unconditionally) with no guard of its own — a leftover env var from a load
+    // test or a copy-pasted .env would silently strip auth-brute-force, mail, and
+    // API-key throttling in production. Fail the boot instead of failing open.
+    if (process.env.RATE_LIMIT_DISABLED === 'true') {
+      problems.push('RATE_LIMIT_DISABLED=true is not allowed in production (it disables all rate limiting, including auth brute-force protection)')
     }
   } else if (process.env.NODE_ENV === undefined) {
     console.warn('[config] NODE_ENV is not set — defaulting to non-production behavior. Set NODE_ENV=production for deployments.')

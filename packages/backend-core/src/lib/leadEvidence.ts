@@ -7,6 +7,7 @@
 // both an evidenceSnapshot JSON and EvidenceSource rows).
 import type { Prisma } from '@prisma/client'
 import type { EvidenceItem } from './aiSchemas.js'
+import { isWellFormedHttpUrl, urlHostnameMatchesDomain } from './normalize.js'
 
 const EVIDENCE_TYPES = new Set(['confirmed', 'observed', 'inferred'])
 const CONFIDENCE_LEVELS = new Set(['low', 'medium', 'high'])
@@ -32,9 +33,17 @@ function sourceTypeFor(evidenceType: string, hasUrl: boolean): string {
  * Map validated research evidence items to LeadEvidenceSource row inputs. Pure.
  * Unknown/missing type or confidence degrade to the weakest tier (inferred/low) so
  * a drifting field never lets a guess masquerade as a confirmed fact; a sourceUrl
- * is kept only for `confirmed` items (provenance must be real to be cited).
+ * is kept only for `confirmed` items (provenance must be real to be cited), and
+ * only when it's a well-formed http(s) URL. When `referenceWebsite` (the lead's
+ * own website) is known, a sourceUrl whose hostname is unrelated to it is dropped
+ * too — a "confirmed" claim citing a completely different company's domain is a
+ * hallucinated/mismatched citation, not real provenance, even though the
+ * underlying observation may still be worth keeping at face value.
  */
-export function mapEvidenceToRows(evidence: EvidenceItem[] | undefined | null): LeadEvidenceRowInput[] {
+export function mapEvidenceToRows(
+  evidence: EvidenceItem[] | undefined | null,
+  referenceWebsite?: string | null,
+): LeadEvidenceRowInput[] {
   if (!Array.isArray(evidence)) return []
   return evidence
     .filter((e) => e && typeof e.signal === 'string' && e.signal.trim().length > 0)
@@ -42,8 +51,10 @@ export function mapEvidenceToRows(evidence: EvidenceItem[] | undefined | null): 
     .map((e) => {
       const evidenceType = EVIDENCE_TYPES.has(e.type) ? e.type : 'inferred'
       const confidence = CONFIDENCE_LEVELS.has(e.confidence) ? e.confidence : 'low'
-      const sourceUrl = evidenceType === 'confirmed' && typeof e.sourceUrl === 'string' && e.sourceUrl.trim()
-        ? e.sourceUrl.slice(0, 2000)
+      const rawUrl = evidenceType === 'confirmed' && typeof e.sourceUrl === 'string' ? e.sourceUrl.trim() : ''
+      const domainOk = !referenceWebsite || !rawUrl || urlHostnameMatchesDomain(rawUrl, referenceWebsite)
+      const sourceUrl = rawUrl && isWellFormedHttpUrl(rawUrl) && domainOk
+        ? rawUrl.slice(0, 2000)
         : null
       return {
         evidenceType,
@@ -63,9 +74,9 @@ export function mapEvidenceToRows(evidence: EvidenceItem[] | undefined | null): 
  */
 export async function replaceLeadEvidence(
   db: Prisma.TransactionClient,
-  input: { workspaceId: string; leadId: string; evidence: EvidenceItem[] | undefined | null },
+  input: { workspaceId: string; leadId: string; evidence: EvidenceItem[] | undefined | null; website?: string | null },
 ): Promise<number> {
-  const rows = mapEvidenceToRows(input.evidence)
+  const rows = mapEvidenceToRows(input.evidence, input.website)
   await db.leadEvidenceSource.deleteMany({ where: { leadId: input.leadId } })
   if (rows.length === 0) return 0
   await db.leadEvidenceSource.createMany({

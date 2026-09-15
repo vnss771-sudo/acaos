@@ -14,6 +14,9 @@ import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import { authRouter } from '../apps/api/src/routes/auth.ts'
 import { signMfaToken } from '../packages/backend-core/src/lib/jwt.ts'
+import { encryptSecret } from '../packages/backend-core/src/lib/encrypt.ts'
+import { generateTotpSecret, generateTotp } from '../packages/backend-core/src/lib/totp.ts'
+import { setErrorReporter } from '../packages/backend-core/src/lib/observability.ts'
 import {
   createFakePrisma,
   installPrisma,
@@ -48,7 +51,13 @@ function spec() {
     },
     // login's non-MFA path persists a refresh token; harmless for MFA cases but
     // present so the spec is complete.
-    refreshToken: { create: async (args: any) => ({ id: 'rt-1', ...args.data }) },
+    refreshToken: {
+      create: async (args: any) => ({ id: 'rt-1', ...args.data }),
+      updateMany: async () => ({ count: 0 }),
+    },
+    // Default: audit writes succeed silently. Overridden per-test to throw and
+    // assert the failure is escalated (mfa.activate durability, below).
+    auditEvent: { create: async () => ({ id: 'ae-1' }) },
   }
 }
 
@@ -62,6 +71,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.close()
   resetPrisma()
+  setErrorReporter(null)
 })
 
 // Unique source IP per request so the per-IP auth rate limiter never bleeds
@@ -159,4 +169,29 @@ test('mfa/activate rejects a too-short code (zod 400)', async () => {
 test('mfa/activate without a Bearer token → 401', async () => {
   const res = await post('/api/auth/mfa/activate', { code: '123456' })
   assert.equal(res.status, 401)
+})
+
+// ── Audit durability: turning MFA ON is as critical as turning it OFF ─────────
+//
+// `mfa.activate` routes through `recordCriticalAudit` (not fire-and-forget
+// `recordAudit`) — the same class of security-state change as `mfa.disable`.
+// Prove a write failure is escalated to the error reporter, not swallowed.
+test('mfa/activate escalates an audit-write failure to the error reporter', async () => {
+  const secret = generateTotpSecret()
+  users.push({
+    id: 'u-6', email: 'activate-durability@x.test', name: 'A', emailVerified: true,
+    lastReauthAt: new Date(), totpEnabled: false, totpSecret: encryptSecret(secret),
+  })
+  const captured: Array<{ ctx?: Record<string, unknown> }> = []
+  setErrorReporter((_err, ctx) => { captured.push({ ctx }) })
+  installPrisma(createFakePrisma({
+    ...spec(),
+    auditEvent: { create: async () => { throw new Error('db down') } },
+  }))
+
+  const res = await post('/api/auth/mfa/activate', { code: generateTotp(secret) }, { Authorization: bearer('u-6') })
+  assert.equal(res.status, 200, 'MFA still activates even though the audit write failed')
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].ctx?.kind, 'critical-audit-failure')
+  assert.equal(captured[0].ctx?.auditType, 'mfa.activate')
 })

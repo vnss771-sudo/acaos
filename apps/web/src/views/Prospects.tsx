@@ -8,8 +8,11 @@ import {
 } from '../types.js'
 import type { SignalType, BuyingStage, OutcomeStage } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Table, type Column, type SortState } from '../components/ui/Table.js'
+import { ProspectBrief } from '../components/prospects/ProspectBrief.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -127,10 +130,18 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
 
   const handleRescore = async () => {
     try {
-      const updated = await route('POST /api/prospects/:id/rescore', { params: { id: prospect.id } }) as Prospect
-      setDetail(updated)
+      const updated = await route('POST /api/prospects/:id/rescore', { params: { id: prospect.id } }) as Partial<Prospect>
+      // A real backend always returns the full updated prospect; a mutation in
+      // demo mode resolves as a no-op `{}` (there's no backend to actually
+      // rescore against) — only replace the rendered detail when the response
+      // looks like a real prospect, so demo mode doesn't blank the panel.
+      if (typeof updated.opportunityScore === 'number') {
+        setDetail(updated as Prospect)
+        toast.success(`Rescored: ${updated.opportunityScore}`)
+      } else {
+        toast.success('Rescored')
+      }
       onRefresh()
-      toast.success(`Rescored: ${updated.opportunityScore}`)
     } catch (e: unknown) { toast.error((e as Error).message) }
   }
 
@@ -153,6 +164,18 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
         ? `Apollo enriched — ${result.signalsCreated} new signal${result.signalsCreated !== 1 ? 's' : ''} added`
         : 'Apollo enriched — no new signals found')
     } catch (e: unknown) { toast.error((e as Error).message) }
+  }
+
+  const [converting, setConverting] = useState(false)
+  const handleConvert = async () => {
+    setConverting(true)
+    try {
+      const result = await route('POST /api/prospects/:id/convert-to-lead', { params: { id: prospect.id } }) as { lead?: { id: string; businessName: string }; prospect?: Prospect }
+      if (result.prospect) setDetail(result.prospect)
+      onRefresh()
+      toast.success(result.lead ? `Converted to lead: ${result.lead.businessName} — find it on the Leads page` : 'Converted to lead')
+    } catch (e: unknown) { toast.error((e as Error).message) }
+    finally { setConverting(false) }
   }
 
   const p = detail ?? prospect
@@ -199,6 +222,10 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
                 </div>
               ))}
             </div>
+
+            {/* Prospect brief: plain-language "why this score" narrative, built
+                from the real per-signal evidence behind Intent/Fit/Timing/Confidence. */}
+            <ProspectBrief prospect={p} />
 
             {/* Buying stage + outcome */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
@@ -283,12 +310,28 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button style={s.btnSm} onClick={handleRescore}>Rescore</button>
               {canManage && (
                 <button style={{ ...s.btnSm, background: '#1d4ed8', color: '#fff' }} onClick={handleEnrich} title="Pull signals from Apollo.io">
                   ⚡ Enrich with Apollo
                 </button>
+              )}
+              {canManage && (
+                p.convertedLeadId ? (
+                  <span style={{ color: colors.green, fontSize: 12, fontWeight: 600 }} title="A Lead was created from this prospect — find it on the Leads page">
+                    ✓ Converted to Lead
+                  </span>
+                ) : (
+                  <button
+                    style={{ ...s.btnSm, background: colors.green, color: '#fff' }}
+                    onClick={handleConvert}
+                    disabled={converting}
+                    title="Create an outreach-ready Lead from this prospect's company and contact info"
+                  >
+                    {converting ? 'Converting…' : '→ Convert to Lead'}
+                  </button>
+                )
               )}
               <button style={s.btnGhost} onClick={onClose}>Close</button>
             </div>
@@ -340,6 +383,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   const route = useMemo(() => makeRouteApi(api), [api])
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState(BLANK)
@@ -393,11 +437,12 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
   const load = () => {
     if (!workspace) return
     setLoading(true)
+    setLoadError(false)
     api<{ prospects: Prospect[]; total: number }>(
       `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
     )
       .then(d => setProspects(d.prospects))
-      .catch(e => toast.error(e.message))
+      .catch(e => { toast.error(e.message); setLoadError(true) })
       .finally(() => setLoading(false))
   }
 
@@ -408,12 +453,13 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     if (!workspace) return
     let cancelled = false
     setLoading(true)
+    setLoadError(false)
     setSelectedIds(new Set())
     api<{ prospects: Prospect[]; total: number }>(
       `/api/prospects?workspaceId=${workspace.id}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ''}`
     )
       .then(d => { if (!cancelled) setProspects(d.prospects) })
-      .catch(e => { if (!cancelled) toast.error(e.message) })
+      .catch(e => { if (!cancelled) { toast.error(e.message); setLoadError(true) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [workspace?.id, search])
@@ -562,12 +608,19 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     load()
   }
 
-  if (!workspace) return <div style={s.card}><EmptyState message="No workspace selected" icon="◎" /></div>
+  if (!workspace) return <div style={s.card}><EmptyState title="No workspace selected" /></div>
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load prospects." onRetry={load} />}
+
+      <div style={{ color: colors.textFaint, fontSize: 12 }}>
+        Prospects are opportunities you're still qualifying — scored on fit, intent, and timing.
+        Ready to reach out? Open a prospect and use <strong style={{ color: colors.textMuted }}>Convert to Lead</strong> to
+        move it to the <strong style={{ color: colors.textMuted }}>Leads</strong> page for outreach.
+      </div>
       {/* Header */}
-      <div style={s.flexBetween}>
+      <div style={{ ...s.flexBetween, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text" placeholder="Search prospects…" value={search}
@@ -575,7 +628,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
             style={{ ...s.input, width: 240 }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {canManage && (<>
           <button style={s.btnSm} onClick={() => {
             const url = `${API_BASE}/api/prospects/export?workspaceId=${workspace.id}`
@@ -732,7 +785,11 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : prospects.length === 0 ? (
         <div style={s.card}>
-          <EmptyState message="No prospects yet. Add your first prospect to start tracking signals." icon="◎" />
+          <EmptyState
+            title="No prospects yet"
+            description="Add your first prospect to start tracking signals."
+            action={canManage ? <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button> : undefined}
+          />
         </div>
       ) : (
         <Table<Prospect>

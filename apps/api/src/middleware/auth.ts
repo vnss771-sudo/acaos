@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express'
-import { verifyJwt } from '../lib/jwt.js'
-import { prisma } from '../lib/prisma.js'
+import { verifyJwt } from '@acaos/backend-core/lib/jwt.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 
 export function requireVerifiedEmail(req: Request, res: Response, next: NextFunction) {
   const user = req.user
