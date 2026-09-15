@@ -27,7 +27,24 @@ export type CalibrateResult = {
   }
 }
 
-const MIN_OUTCOMES = 10
+// Cold-start gate: minimum outcome sample size before calibrate() will trust
+// the data enough to recompute anything. 10 is a conservative default, not a
+// tightly derived optimum: it bounds the standard error of the baseline win
+// rate — SE = sqrt(p(1-p)/n), worst case ~0.158 (≈16 points) at n=10, p=0.5 —
+// which every per-signal lift multiplier below is computed against, and it
+// gives at least a couple of signal types a realistic shot at clearing the
+// MIN_TYPE_SAMPLES floor. Below this, the baseline itself is too noisy to use
+// as a pivot, and per-type shrinkage (SHRINKAGE_PRIOR below) cannot fix a bad
+// reference point — it only protects individual *types* from overfitting, not
+// the shared baseline they're all measured against. A workspace that wants
+// faster feedback (and will accept noisier early weights) can lower this via
+// LEARNING_LOOP_MIN_OUTCOMES; there's no evidence a single "better" default
+// suits every workspace, so it's configurable rather than hardcoded lower.
+export function learningLoopMinOutcomes(): number {
+  const n = Number(process.env.LEARNING_LOOP_MIN_OUTCOMES)
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 10
+}
+
 // Per-signal-type minimum sample size before its win rate is trusted at all.
 const MIN_TYPE_SAMPLES = 3
 // Pseudocount strength for shrinking a per-type win rate toward the baseline.
@@ -40,7 +57,8 @@ export function calibrate(outcomes: Outcome[]): CalibrateResult {
   const total = outcomes.length
   const won = outcomes.filter(o => o.stage === 'WON')
 
-  if (total < MIN_OUTCOMES) {
+  const minOutcomes = learningLoopMinOutcomes()
+  if (total < minOutcomes) {
     return {
       stats: { calibrated: false, reason: 'insufficient data', totalOutcomes: total, baselineWinRate: 0 },
       signalWeights: {},
