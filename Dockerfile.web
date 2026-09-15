@@ -33,10 +33,13 @@ RUN npm --workspace @acaos/web run build
 FROM nginxinc/nginx-unprivileged:alpine@sha256:26b5d4920434bc4d8c17a68201488cf4b3d2391f0d25305cdfe66ccdc6d18aa4
 # Patch base-image OS packages that carry published security fixes post-dating the
 # pinned digest — e.g. libexpat CVE-2026-56131/56407/56408 (fixed in 2.8.2-r0),
-# which the Trivy HIGH/CRITICAL gate flags. apk needs root; drop back to the
-# unprivileged nginx user (101) so the container still runs non-root at runtime.
+# and (as of this pass) curl/libcurl CVE-2026-5773/6276/8286/8458/8925/8927/9547/
+# 11352/11586/12064, libssl3/libcrypto3 CVE-2026-14456, and util-linux/libuuid
+# CVE-2026-53612/53613/53614/76642/78408/78410 — which the Trivy HIGH/CRITICAL
+# gate flags. apk needs root; drop back to the unprivileged nginx user (101) so
+# the container still runs non-root at runtime.
 USER root
-RUN apk upgrade --no-cache libexpat
+RUN apk upgrade --no-cache libexpat curl libcurl libcrypto3 libssl3 libuuid
 USER 101
 # COPY runs as root (build daemon) regardless of the base image's USER 101, so
 # the SPA assets and our hardened server block land readable by the nginx user.
