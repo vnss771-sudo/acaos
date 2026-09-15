@@ -102,10 +102,25 @@ function runOnce() {
   // A second, parallel TAP reporter purely for diagnostics: --test-reporter=lcov
   // replaces stdout's default TAP output entirely, so on a floor violation we'd
   // otherwise have no way to tell "every test genuinely ran and this module is
-  // just undertested" apart from "some test file silently timed out/crashed and
-  // its coverage never made it into the lcov report" (Node's --test isolates
-  // each test FILE into its own subprocess even at --test-concurrency=1, and a
-  // killed subprocess's coverage is simply missing, not reported as an error).
+  // just undertested" apart from "some test file silently failed/crashed and its
+  // coverage never made it into the lcov report" (Node's --test isolates each
+  // test FILE into its own subprocess, and a subprocess that dies leaves its
+  // coverage simply missing, not reported as an error).
+  //
+  // This diagnostic is what finally found the real cause of this gate's
+  // CI-only floor violations: in CI (never locally), 90 of ~150 test files
+  // came back `not ok`, cascading from partway through the file list onward,
+  // while the sibling `npm run test:coverage` job — the exact same coverage
+  // instrumentation over the exact same file set, on the exact same commit —
+  // completed all 1717 tests cleanly. The one deliberate difference was
+  // --test-concurrency=1, added by an earlier commit in this same
+  // investigation on the theory that Node's coverage aggregation had gaps
+  // under concurrency; forcing every one of ~150 test files to fork and run
+  // fully serially instead apparently exhausts some CI-runner-specific
+  // resource (never reproduced locally, where both settings always passed)
+  // partway through the file list. Reverting to Node's default concurrency —
+  // what `test:coverage` already uses successfully in this same CI — is the
+  // fix.
   const tapPath = join(tmpDir, 'tap.log')
   const result = spawnSync(
     'npx',
@@ -113,7 +128,6 @@ function runOnce() {
       'tsx', '--test', '--test-timeout=60000',
       '--experimental-test-coverage',
       '--test-coverage-exclude=tests/**',
-      '--test-concurrency=1',
       '--test-reporter=lcov',
       `--test-reporter-destination=${lcovPath}`,
       '--test-reporter=tap',
@@ -169,20 +183,21 @@ function runOnce() {
   return { crashed: false, errors, testDiagnostic }
 }
 
-// This gate has shown a real but so far unexplained CI-only failure mode: a
-// consistent, non-flaky-looking set of floor violations against modules that
-// pass 100% clean under `npm test` and under this exact script run locally —
-// reproduced with a from-scratch `npm ci`, with the exact CI-observed Node
-// patch version (22.23.2, downloaded and run side-by-side with the sandbox's
-// default 22.22.2), and with --test-concurrency=1 forced, none of which
-// changed the outcome. That rules out file-selection, install staleness, the
-// Node patch, and cross-worker aggregation as the cause, and points at
-// something in the CI runner environment itself (see the PR discussion) that
-// isn't reproducible here. `--experimental-test-coverage` is, per its name,
-// not a stable API; retrying the MEASUREMENT (never a test — every retry
-// below re-runs the identical unit tier, nothing is skipped, disabled, or
-// weakened) guards against that instability without hiding a genuine
-// regression, which would fail identically on every attempt.
+// This gate showed a real, consistent CI-only failure mode across several
+// earlier fix attempts (see PR discussion): floor violations against modules
+// that passed 100% clean under `npm test` and under this exact script run
+// locally, reproduced with a from-scratch `npm ci` and the exact CI-observed
+// Node patch version, ruling out file-selection, install staleness, and the
+// Node patch as the cause. The actual cause (found via the TAP diagnostic
+// above): a since-reverted `--test-concurrency=1` was silently failing ~90 of
+// ~150 test files in CI's runner specifically, starving the coverage report
+// of real data for whatever module happened to depend on a later-failing
+// file — not a coverage-instrumentation gap at all.
+// `--experimental-test-coverage` is still, per its name, not a stable API, so
+// the retry-3x below is kept as a safety net against any remaining
+// instability; nothing is ever skipped, disabled, or weakened on a retry —
+// every attempt re-runs the identical unit tier, and a genuine regression
+// still fails identically every time.
 const MAX_ATTEMPTS = 3
 let lastErrors = []
 let lastCrashOutput = null
