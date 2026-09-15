@@ -56,6 +56,15 @@ async function markReauth(userId: string) {
   await prisma.user.update({ where: { id: userId }, data: { lastReauthAt: new Date() } })
 }
 
+// Record a COMPLETED login (signup, password login, or an MFA-verified login) —
+// distinct from markReauth, which also advances on a mid-session step-up
+// re-proof (mfa.activate, /reauth) that isn't a new login. Feeds the SOC2
+// access-review report's "last login" column.
+async function recordLogin(userId: string) {
+  const now = new Date()
+  await prisma.user.update({ where: { id: userId }, data: { lastReauthAt: now, lastLoginAt: now } })
+}
+
 // Verify a TOTP code AND atomically consume its time-step so it cannot be replayed
 // within its ±1-step (≈90s) validity window. Returns true only when the code matches
 // and its step is strictly newer than the last step this user consumed — the
@@ -120,7 +129,7 @@ authRouter.post(
 
     const { token, refreshToken } = issueTokens(result.user.id)
     await persistRefreshToken(result.user.id, refreshToken)
-    await markReauth(result.user.id)
+    await recordLogin(result.user.id)
 
     // Send verification email (non-blocking — don't fail signup if SMTP is down)
     sendVerificationEmail(result.user.id, result.user.email).catch(() => {})
@@ -161,7 +170,7 @@ authRouter.post(
 
     const { token, refreshToken } = issueTokens(user.id)
     await persistRefreshToken(user.id, refreshToken)
-    await markReauth(user.id)
+    await recordLogin(user.id)
 
     setRefreshCookie(res, refreshToken)
     res.json({
@@ -231,7 +240,7 @@ authRouter.post(
 
     const { token, refreshToken } = issueTokens(user.id)
     await persistRefreshToken(user.id, refreshToken)
-    await markReauth(user.id)
+    await recordLogin(user.id)
 
     setRefreshCookie(res, refreshToken)
     res.json({ token, user: { id: user.id, email: user.email, name: user.name } })
@@ -544,7 +553,10 @@ authRouter.post(
       data: { revokedAt: new Date() }
     })
     await markReauth(user.id) // proving a code is a fresh credential
-    void recordAudit({ actorUserId: user.id, type: 'mfa.activate', entityType: 'User', entityId: user.id })
+    // Critical: turning MFA ON is the same class of security-state change as
+    // turning it OFF (mfa.disable, below) — a lost record here is as much a
+    // SOC2 gap as a lost disable record, so this must be durable too.
+    await recordCriticalAudit({ actorUserId: user.id, type: 'mfa.activate', entityType: 'User', entityId: user.id })
     res.json({ ok: true })
   })
 )
@@ -734,7 +746,10 @@ authRouter.post(
       prisma.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } }),
     ])
 
-    void recordAudit({
+    // Critical: this is the moment a user actually gains workspace access (a
+    // Membership row with a role is created) — the same access-grant class as
+    // workspace.member.add, so it must be durable for SOC2 access reviews.
+    await recordCriticalAudit({
       workspaceId: invite.workspaceId, actorUserId: authedUser.id, type: 'invite.accept',
       entityType: 'workspaceInvite', entityId: invite.id, metadata: { role: invite.role },
     })

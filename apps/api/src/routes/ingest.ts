@@ -11,6 +11,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { getCachedWorkspace, setCachedWorkspace, evictCachedWorkspace } from '../lib/ingestCache.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
+import { recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import type { Prisma } from '@prisma/client'
 
 export const ingestRouter = Router()
@@ -194,6 +195,16 @@ keyRouter.post(
     const rawKey = generateApiKey()
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: hashApiKey(rawKey) } })
 
+    // Gap fix: this endpoint performs the exact same credential rotation as
+    // POST /api/workspaces/:id/api-key/rotate (apps/api/src/routes/workspaces/apiKeys.ts)
+    // but historically recorded NO audit event at all — a SOC2 audit-completeness
+    // gap worse than a merely-routine fire-and-forget write. Critical + durable,
+    // matching the sibling route. Never log the raw or hashed key.
+    await recordCriticalAudit({
+      workspaceId, actorUserId: user.id, type: 'workspace.api_key.rotate',
+      entityType: 'workspace', entityId: workspaceId,
+    })
+
     res.json({ ingestApiKey: rawKey })
   })
 )
@@ -214,6 +225,13 @@ keyRouter.delete(
     if (existing?.ingestApiKey) evictCachedWorkspace(existing.ingestApiKey)
 
     await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
+
+    // Gap fix — see the rotate handler above for why this must be critical/durable.
+    await recordCriticalAudit({
+      workspaceId, actorUserId: user.id, type: 'workspace.api_key.revoke',
+      entityType: 'workspace', entityId: workspaceId,
+    })
+
     res.json({ ok: true })
   })
 )

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import { authRouter } from '../apps/api/src/routes/auth.ts'
 import { hashRefreshToken } from '../packages/backend-core/src/lib/jwt.ts'
+import { setErrorReporter } from '../packages/backend-core/src/lib/observability.ts'
 import {
   createFakePrisma,
   installPrisma,
@@ -115,6 +116,9 @@ function spec() {
         return { count }
       },
     },
+    // Default: audit writes succeed silently. Individual durability tests
+    // override this to throw and assert the failure is escalated.
+    auditEvent: { create: async () => ({ id: 'ae-1' }) },
   }
 }
 
@@ -133,6 +137,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.close()
   resetPrisma()
+  setErrorReporter(null)
 })
 
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
@@ -324,6 +329,27 @@ test('accepting an invite creates a membership and marks it accepted', async () 
   assert.equal(res.body.workspaceId, 'ws-1')
   assert.equal(memberships.length, 1)
   assert.ok(invites[0].acceptedAt)
+})
+
+// `invite.accept` is the moment a user actually gains workspace access, so it
+// routes through `recordCriticalAudit` (not fire-and-forget `recordAudit`) —
+// a write failure must be escalated, not silently dropped.
+test('accepting an invite escalates an audit-write failure to the error reporter', async () => {
+  const captured: Array<{ ctx?: Record<string, unknown> }> = []
+  setErrorReporter((_err, ctx) => { captured.push({ ctx }) })
+  users.push({ id: 'u-1', email: 'invitee@acme.test', emailVerified: true })
+  const raw = 'accept-token-durability'
+  invites.push({ id: 'inv-1', email: 'invitee@acme.test', role: 'member', workspaceId: 'ws-1', tokenHash: hashRefreshToken(raw), expiresAt: new Date(Date.now() + 60_000), acceptedAt: null })
+  installPrisma(createFakePrisma({
+    ...spec(),
+    auditEvent: { create: async () => { throw new Error('db down') } },
+  }))
+  const res = await post('/api/auth/invite/accept', { token: raw }, { Authorization: bearer('u-1') })
+  assert.equal(res.status, 200, 'the membership is still granted even though the audit write failed')
+  assert.equal(memberships.length, 1)
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].ctx?.kind, 'critical-audit-failure')
+  assert.equal(captured[0].ctx?.auditType, 'invite.accept')
 })
 
 test('accepting an invite rejects a signed-in user with a different email', async () => {
