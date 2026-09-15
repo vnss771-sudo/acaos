@@ -9,6 +9,8 @@ import {
   predictBuyingIntent,
   toRawSignal,
   freshnessState,
+  explainFitScore,
+  signalIntentContribution,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
@@ -240,10 +242,13 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     const rawSignals = prospect.signals.map(toRawSignal)
     const prediction = predictBuyingIntent(rawSignals, prospect.buyingStage, prospect.opportunityScore)
 
+    // scoreBreakdown: real per-signal contribution to the intent score (same
+    // math calcIntentScore uses internally), so the UI can name the signal
+    // actually driving the score instead of just showing the final number.
     const scoreBreakdown = prospect.signals?.map((s: any) => ({
       type: s.type,
       title: s.title,
-      contribution: s.weight ?? null,
+      contribution: Math.round(signalIntentContribution(toRawSignal(s)) * 10) / 10,
       detectedAt: s.detectedAt,
       freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
       evidence: s.evidenceSource
@@ -257,7 +262,20 @@ export function registerCrudRoutes(prospectsRouter: Router) {
         : null,
     })) ?? []
 
-    res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown })
+    // fitBreakdown: plain-language reasons behind fitScore, computed from the
+    // same ICP config and factors calcFitScore uses — kept in sync by sharing
+    // that logic rather than re-deriving it here or in the client.
+    const icp = await getICP(prospect.workspaceId)
+    const fitBreakdown = explainFitScore({
+      industry: prospect.industry,
+      employeeCount: prospect.employeeCount,
+      contactEmail: prospect.contactEmail,
+      contactName: prospect.contactName,
+      domain: prospect.domain,
+      location: prospect.location,
+    }, icp)
+
+    res.json({ ...withDollars({ ...prospect, tier: getOpportunityTier(prospect.opportunityScore), prediction }), scoreBreakdown, fitBreakdown })
   }))
 
   // POST /api/prospects
