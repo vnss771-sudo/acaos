@@ -17,6 +17,7 @@ import { EmailConfigSection, type EmailConfigForm } from '../components/settings
 import { DeliverabilitySection, type DomainCheckResult, type WarmupStatus, type ReputationVerdict } from '../components/settings/DeliverabilitySection.js'
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
+import { AccessReviewSection } from '../components/settings/AccessReviewSection.js'
 
 type IcpConfig = {
   targetIndustries: string[]
@@ -450,6 +451,10 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           onSendInvite={sendInvite}
           onCancelInvite={cancelInvite}
         />
+      )}
+
+      {workspace && isOwnerOrAdmin && (
+        <AccessReviewSection api={api} workspaceId={workspace.id} toast={toast} />
       )}
 
       {workspace && (

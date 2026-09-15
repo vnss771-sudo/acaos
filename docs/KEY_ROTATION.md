@@ -88,10 +88,16 @@ accept the breakage. Prefer the versioned rotation above.
 3. Verify with `POST /api/mailbox/send-test` and an IMAP sync.
 
 ### Per-workspace ingest API keys
-Self-service and owner-only — no env change:
-- Rotate: `POST /api/ingest/keys/rotate?workspaceId=…` (returns the new raw key
+Self-service — no env change. The Settings UI calls the workspace-scoped routes
+(any workspace admin/owner, gated by the `api_keys:manage` permission):
+- Rotate: `POST /api/workspaces/:id/api-key/rotate` (returns the new raw key
   once; the old hash is evicted from cache so it can't be replayed).
-- Revoke: `DELETE /api/ingest/keys?workspaceId=…`.
+- Revoke: `DELETE /api/workspaces/:id/api-key`.
+
+An equivalent owner-only API also exists at `POST /api/ingest/keys/rotate?workspaceId=…`
+and `DELETE /api/ingest/keys?workspaceId=…` (`apps/api/src/routes/ingest.ts`) for
+API consumers that don't go through the Settings UI. Both paths rotate/revoke the
+same `Workspace.ingestApiKey` and both now record a critical (durable) audit event.
 
 ## After any rotation
 - Confirm `/api/ready` is green and error rates are normal.

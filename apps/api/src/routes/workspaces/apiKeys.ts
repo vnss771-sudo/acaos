@@ -3,7 +3,7 @@ import { asyncHandler, requireUser } from '../../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { generateApiKey, hashApiKey } from '../../lib/apiKeys.js'
 import { evictCachedWorkspace } from '../../lib/ingestCache.js'
-import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 
 export function registerApiKeyRoutes(workspaceRouter: Router) {
@@ -28,7 +28,10 @@ export function registerApiKeyRoutes(workspaceRouter: Router) {
       })
 
       // Never log the raw or hashed key — only that a rotation occurred.
-      void recordAudit({
+      // Critical: a workspace's ingest credential changed — SOC2 access reviews
+      // and incident response both depend on this being a durable record, not
+      // a best-effort one that can silently disappear.
+      await recordCriticalAudit({
         workspaceId, actorUserId: user.id, type: 'workspace.api_key.rotate',
         entityType: 'workspace', entityId: workspaceId,
       })
@@ -53,7 +56,9 @@ export function registerApiKeyRoutes(workspaceRouter: Router) {
       await prisma.workspace.update({ where: { id: workspaceId }, data: { ingestApiKey: null } })
 
       // Never log the revoked key — only that a revocation occurred.
-      void recordAudit({
+      // Critical: same reasoning as rotate above — a credential revocation
+      // must leave a durable trail.
+      await recordCriticalAudit({
         workspaceId, actorUserId: user.id, type: 'workspace.api_key.revoke',
         entityType: 'workspace', entityId: workspaceId,
       })

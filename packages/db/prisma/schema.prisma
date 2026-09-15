@@ -112,6 +112,11 @@ model User {
   // Step-up auth: timestamp of the most recent password (or MFA) proof. Sensitive
   // mutations (billing, admin, MFA disable) require this to be recent.
   lastReauthAt        DateTime?
+  // Timestamp of the most recent COMPLETED login (signup, password login, or an
+  // MFA-verified login) — distinct from lastReauthAt, which also advances on a
+  // mid-session step-up re-proof. Null means the account has never completed a
+  // login since this column was added. Surfaced in the SOC2 access-review report.
+  lastLoginAt         DateTime?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
   memberships         Membership[]

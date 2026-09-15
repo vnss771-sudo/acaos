@@ -7,7 +7,7 @@ import { generateRefreshToken, hashRefreshToken } from '@acaos/backend-core/lib/
 import { isMailConfigured, sendMail } from '../../services/mail.js'
 import { escapeHtml } from '../../lib/html.js'
 import { normalizeEmail, isValidEmail } from '../../lib/textNormalize.js'
-import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { assertSeatAvailable } from '@acaos/backend-core/lib/limits.js'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { z } from 'zod'
@@ -81,9 +81,10 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       // denied check — drop it so they're admitted immediately.
       invalidateWorkspaceMembership(invitee.id, workspaceId)
 
-      // Audit the membership add + role assignment (the role-change action for
-      // directly-added members).
-      void recordAudit({
+      // Critical: this is a direct access grant (membership + role, possibly
+      // 'admin') — an access-control event a SOC2 access review depends on, so
+      // it must be durable rather than best-effort.
+      await recordCriticalAudit({
         workspaceId, actorUserId: user.id, type: 'workspace.member.add',
         entityType: 'membership', entityId: invitee.id,
         metadata: { memberId: invitee.id, email: invitee.email, role },
@@ -234,7 +235,10 @@ export function registerMemberRoutes(workspaceRouter: Router) {
       // Drop the removed member's cached role so they're denied immediately.
       invalidateWorkspaceMembership(targetUserId, workspaceId)
 
-      void recordAudit({
+      // Critical: access revocation (offboarding) — a SOC2 access review needs
+      // a durable trail proving removed access was actually removed, not a
+      // best-effort row that can silently vanish.
+      await recordCriticalAudit({
         workspaceId, actorUserId: user.id, type: 'workspace.member.remove',
         entityType: 'membership', entityId: targetUserId,
         metadata: { memberId: targetUserId, role: targetMembership.role },
