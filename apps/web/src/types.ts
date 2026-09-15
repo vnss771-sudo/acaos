@@ -487,6 +487,41 @@ export type Signal = {
   createdAt: string
 }
 
+// Signal decay state, mirroring the backend's freshnessState() labels — how
+// much of a signal's original strength remains after age-based decay.
+export type SignalFreshness = 'LIVE' | 'RECENT' | 'STALE' | 'EXPIRED'
+
+// One entry of a prospect's scoreBreakdown (from GET /api/prospects/:id) — a
+// single signal's real contribution to the intent score, plus its freshness
+// and any provenance, so the UI can point at the signal actually driving the
+// number instead of just showing the number.
+export type ScoreBreakdownEntry = {
+  type: SignalType
+  title?: string | null
+  contribution: number | null
+  detectedAt: string
+  freshness: SignalFreshness
+  evidence?: {
+    provider: string
+    sourceType: string
+    sourceUrl?: string | null
+    confidence: number
+    observedAt: string
+  } | null
+}
+
+// One plain-language reason behind a prospect's fitScore, computed server-side
+// from the same ICP factors calcFitScore uses (industry, size, contact info).
+export type FitReason = { text: string; positive: boolean }
+
+// Buying-stage forecast returned alongside a prospect (predictBuyingIntent).
+export type BuyingIntentPrediction = {
+  predictedStage: BuyingStage
+  confidence: number
+  trajectory: 'ACCELERATING' | 'STABLE' | 'DECELERATING'
+  nextAction: string
+}
+
 export type Recommendation = {
   id: string
   bestContact?: string | null
@@ -539,6 +574,11 @@ export type Prospect = {
   convertedLeadId?: string | null
   convertedAt?: string | null
   createdAt: string
+  // Present on the GET /api/prospects/:id detail response only — real
+  // signal-level evidence behind the scores, not on the list-view rows.
+  scoreBreakdown?: ScoreBreakdownEntry[]
+  fitBreakdown?: FitReason[]
+  prediction?: BuyingIntentPrediction
 }
 
 export type OpportunitiesData = {
