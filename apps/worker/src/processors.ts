@@ -73,6 +73,7 @@ type ScoreProspectRow = {
 
 type CalibrationOutcomeRow = {
   stage: string
+  recordedAt: Date
   prospect: {
     industry: string | null
     employeeCount: number | null
@@ -472,6 +473,9 @@ export async function calibrateScoring(
 
   const outcomes = rawOutcomes.map((o: CalibrationOutcomeRow) => ({
     stage: o.stage as 'WON' | 'LOST',
+    // Feeds calibrate()'s recency weighting so a recent WON/LOST outweighs an
+    // old one of otherwise-identical shape (see learningLoop.ts).
+    recordedAt: o.recordedAt,
     prospect: {
       industry: o.prospect.industry,
       employeeCount: o.prospect.employeeCount,
