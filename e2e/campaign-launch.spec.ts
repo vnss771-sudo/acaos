@@ -66,8 +66,11 @@ test('Launching an approval-mode campaign sends { approved: true } and is accept
   // correctly rejects it as "nothing approved to send".
   await approveDraftForLead(workspaceId, 'one@example.com')
 
-  // Drive the real UI.
-  await page.getByRole('button', { name: /Campaigns/ }).click()
+  // Drive the real UI. Campaigns lives under the Outreach hub (5-hub nav, on by
+  // default — see apps/web/src/lib/hubs.ts) as a sub-tab, not a top-level
+  // sidebar button.
+  await page.getByRole('button', { name: 'Outreach' }).click()
+  await page.getByRole('tab', { name: /Campaigns/ }).click()
   await expect(page.getByText('E2E Launch Campaign')).toBeVisible()
 
   // Exact match on the launch button's accessible name. A loose /Launch Campaign/
