@@ -10,8 +10,12 @@ import { getPack } from '../lib/packs/index.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
-import type { Assert, CreateMissionRequest, Extends, MissionStatus, UpdateMissionRequest } from '@acaos/shared'
-import type { Prisma } from '@prisma/client'
+import { getICP, resolveEffectiveTargeting } from './prospects/helpers.js'
+import type {
+  Assert, CreateMissionRequest, Extends, MissionIcpOverrideFields, MissionStatus,
+  UpdateMissionIcpOverrideRequest, UpdateMissionRequest,
+} from '@acaos/shared'
+import { Prisma } from '@prisma/client'
 
 export const missionsRouter = Router()
 missionsRouter.use(requireAuth)
@@ -34,9 +38,22 @@ const updateMissionSchema = z.object({
   status: z.enum(MISSION_STATUSES).optional(),
 })
 
+// A non-null `override` sets it to exactly these fields (a full replace, not a
+// merge — matches how it's stored, as one JSON blob); `null` clears it.
+const missionIcpOverrideFieldsSchema = z.object({
+  targetIndustries: z.array(z.string()).optional(),
+  targetGeos: z.array(z.string()).optional(),
+  minEmployees: z.number().int().nonnegative().optional(),
+  maxEmployees: z.number().int().nonnegative().optional(),
+})
+const updateMissionIcpOverrideSchema = z.object({
+  override: missionIcpOverrideFieldsSchema.nullable(),
+})
+
 // Compile-time guards: the validated requests must satisfy the shared contracts.
 type _CreateConforms = Assert<Extends<z.infer<typeof createMissionSchema>, CreateMissionRequest>>
 type _UpdateConforms = Assert<Extends<z.infer<typeof updateMissionSchema>, UpdateMissionRequest>>
+type _IcpOverrideConforms = Assert<Extends<z.infer<typeof updateMissionIcpOverrideSchema>, UpdateMissionIcpOverrideRequest>>
 
 // List missions for a workspace, with their linked campaign + lead counts.
 missionsRouter.get(
@@ -282,6 +299,53 @@ missionsRouter.patch(
       })
     }
     res.json({ mission })
+  })
+)
+
+// Resolve the mission's effective targeting: its own override (if any) merged
+// over the workspace ICP, falling back to the mission's playbook preset for
+// any field neither one sets. Membership-scoped like the other GETs (read-only).
+missionsRouter.get(
+  '/:id/icp',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const mission = await prisma.mission.findUnique({
+      where: { id: req.params.id as string },
+      select: { workspaceId: true, playbookId: true, icpOverride: true },
+    })
+    if (!mission) throw new ApiError(404, 'Mission not found')
+    if (!(await userBelongsToWorkspace(user.id, mission.workspaceId))) throw new ApiError(403, 'Access denied')
+
+    const icp = await getICP(mission.workspaceId)
+    const pack = mission.playbookId ? getPack(mission.playbookId) : undefined
+    const override = (mission.icpOverride ?? null) as MissionIcpOverrideFields | null
+    const effective = resolveEffectiveTargeting(override, icp, pack)
+
+    res.json({ override, effective })
+  })
+)
+
+// Set (replace) or clear (null body) the mission's targeting override.
+missionsRouter.patch(
+  '/:id/icp',
+  validate(updateMissionIcpOverrideSchema),
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const existing = await prisma.mission.findUnique({ where: { id: req.params.id as string }, select: { id: true, workspaceId: true } })
+    if (!existing) throw new ApiError(404, 'Mission not found')
+    await assertMinimumWorkspaceRole(user.id, existing.workspaceId, 'admin')
+
+    const { override } = req.body as z.infer<typeof updateMissionIcpOverrideSchema>
+    const mission = await prisma.mission.update({
+      where: { id: existing.id },
+      data: { icpOverride: override === null ? Prisma.JsonNull : override },
+      select: { icpOverride: true },
+    })
+    void recordAudit({
+      workspaceId: existing.workspaceId, actorUserId: user.id, type: 'mission.icp_override',
+      entityType: 'mission', entityId: existing.id, metadata: { cleared: override === null },
+    })
+    res.json({ override: mission.icpOverride })
   })
 )
 

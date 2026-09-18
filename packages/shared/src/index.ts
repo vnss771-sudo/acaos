@@ -228,6 +228,22 @@ export interface UpdateMissionRequest {
   status?: MissionStatus
 }
 
+// PATCH /api/missions/:id/icp — set (an object) or clear (null) a per-mission
+// targeting override. Any field left unset falls through to the workspace ICP,
+// then to the mission's playbook preset — see GET /api/missions/:id/icp.
+// Wrapped in a named field (rather than a bare nullable top-level body)
+// because the API's JSON body parser runs in strict mode, which rejects a
+// literal `null` top-level request body.
+export interface MissionIcpOverrideFields {
+  targetIndustries?: string[]
+  targetGeos?: string[]
+  minEmployees?: number
+  maxEmployees?: number
+}
+export interface UpdateMissionIcpOverrideRequest {
+  override: MissionIcpOverrideFields | null
+}
+
 // ── Approval queue / drafts ───────────────────────────────────────────────────
 // PATCH /api/leads/:id/drafts/:draftId — reviewer edits copy before approving.
 export interface UpdateDraftRequest {
@@ -555,6 +571,7 @@ export interface RouteContracts {
   // Missions
   'POST /api/missions': { body: CreateMissionRequest; response: unknown }
   'PATCH /api/missions/:id': { params: { id: string }; body: UpdateMissionRequest; response: unknown }
+  'PATCH /api/missions/:id/icp': { params: { id: string }; body: UpdateMissionIcpOverrideRequest; response: unknown }
   'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
 
   // Workspaces
