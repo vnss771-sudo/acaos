@@ -308,6 +308,10 @@ model Mission {
   targetCustomer String?
   offer          String?
   playbookId     String?
+  // Per-mission targeting override: takes priority over the workspace ICP,
+  // falling back to it (then to the playbook's own preset) for any field left
+  // unset. Shape: { targetIndustries?, targetGeos?, minEmployees?, maxEmployees? }.
+  icpOverride    Json?
   status         MissionStatus @default(ACTIVE)
   campaignId     String?   @unique
   createdAt      DateTime  @default(now())

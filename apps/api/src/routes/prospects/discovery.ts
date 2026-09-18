@@ -20,7 +20,8 @@ import { createHash } from 'node:crypto'
 import { dollarsToCents } from '../../lib/money.js'
 import { validate } from '../../lib/validate.js'
 import { z } from 'zod'
-import { discoverSchema, nonEmpty, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import { discoverSchema, nonEmpty, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, resolveEffectiveTargeting, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import type { MissionIcpOverrideFields } from '@acaos/shared'
 import { workspaceIdField } from '../../lib/validate.js'
 
 // POST /import body. Mirrors the prior checks: workspaceId required (400), rows a
@@ -47,10 +48,12 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     // discovered prospects + activity. The mission must belong to the same workspace.
     const missionId = typeof body.missionId === 'string' && body.missionId.trim() ? body.missionId.trim() : null
     let missionPlaybookId: string | null = null
+    let missionIcpOverride: MissionIcpOverrideFields | null = null
     if (missionId) {
-      const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true, playbookId: true } })
+      const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true, playbookId: true, icpOverride: true } })
       if (!mission || mission.workspaceId !== workspaceId) throw new ApiError(404, 'Mission not found')
       missionPlaybookId = mission.playbookId
+      missionIcpOverride = (mission.icpOverride ?? null) as MissionIcpOverrideFields | null
     }
 
     const sourceName = String(body.source ?? 'apollo')
@@ -64,17 +67,19 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
       throw new ApiError(503, `${source.label} is not configured. ${hint}`)
     }
 
-    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
+    const icp = await getICP(workspaceId)
     const limit = body.limit ?? 25 // bounded to 1..50 by discoverSchema
 
-    // Layered targeting: explicit request → workspace ICP → mission playbook preset.
+    // Layered targeting: explicit request → mission ICP override → workspace
+    // ICP → mission playbook preset.
     const pack = missionPlaybookId ? getPack(missionPlaybookId) : undefined
+    const effective = resolveEffectiveTargeting(missionIcpOverride, icp, pack)
     const query = {
-      industries: body.industries ?? nonEmpty(icp?.targetIndustries) ?? pack?.icp.targetIndustries ?? [],
-      locations:  body.locations  ?? nonEmpty(icp?.targetGeos)       ?? pack?.icp.targetGeos       ?? [],
+      industries: body.industries ?? nonEmpty(effective.targetIndustries) ?? [],
+      locations:  body.locations  ?? nonEmpty(effective.targetGeos)       ?? [],
       keywords:   body.keywords   ?? [],
-      minEmployees: icp?.minEmployees ?? body.minEmployees ?? pack?.icp.minEmployees,
-      maxEmployees: icp?.maxEmployees ?? body.maxEmployees ?? pack?.icp.maxEmployees,
+      minEmployees: effective.minEmployees ?? body.minEmployees,
+      maxEmployees: effective.maxEmployees ?? body.maxEmployees,
       limit,
     }
 

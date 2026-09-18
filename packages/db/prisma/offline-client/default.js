@@ -48,6 +48,7 @@ class PrismaClient {
 }
 
 const Prisma = {
+  JsonNull: Symbol('JsonNull'),
   OfflineStub: true,
   defineExtension: (extension) => extension,
   getExtensionContext: () => { throw offlineError('Prisma.getExtensionContext') },

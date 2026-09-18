@@ -5,7 +5,8 @@ import { centsToDollars } from '../../lib/money.js'
 import { workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
 import type { ICPConfig, SignalType } from '@acaos/backend-core/lib/signalEngine.js'
-import type { Assert, Extends, DiscoverProspectsRequest } from '@acaos/shared'
+import type { Assert, Extends, DiscoverProspectsRequest, MissionIcpOverrideFields } from '@acaos/shared'
+import type { IndustryPack } from '../../lib/packs/types.js'
 
 // Request contract for POST /discover, pinned to the shared type so they can't drift.
 export const discoverSchema = z.object({
@@ -50,6 +51,25 @@ export function withDollars<T extends Record<string, unknown>>(p: T): T {
   if ('expectedDealValue' in out) out.expectedDealValue = centsToDollars(out.expectedDealValue as number | null)
   if ('estimatedRevenue' in out) out.estimatedRevenue = centsToDollars(out.estimatedRevenue as number | null)
   return out as T
+}
+
+// Effective targeting for a mission: an explicit per-mission override takes
+// priority over the workspace ICP, which takes priority over the mission's
+// playbook preset (if any) — mirroring the request-time layering already used
+// in POST /prospects/discover (explicit request > workspace ICP > pack), just
+// with the mission override slotted in ahead of the workspace ICP. Any field
+// left unset/empty at one layer falls through to the next.
+export function resolveEffectiveTargeting(
+  override: MissionIcpOverrideFields | null | undefined,
+  icp: ICPConfig | undefined,
+  pack: IndustryPack | undefined,
+): { targetIndustries: string[]; targetGeos: string[]; minEmployees?: number; maxEmployees?: number } {
+  return {
+    targetIndustries: nonEmpty(override?.targetIndustries) ?? nonEmpty(icp?.targetIndustries) ?? pack?.icp.targetIndustries ?? [],
+    targetGeos: nonEmpty(override?.targetGeos) ?? nonEmpty(icp?.targetGeos) ?? pack?.icp.targetGeos ?? [],
+    minEmployees: override?.minEmployees ?? icp?.minEmployees ?? pack?.icp.minEmployees,
+    maxEmployees: override?.maxEmployees ?? icp?.maxEmployees ?? pack?.icp.maxEmployees,
+  }
 }
 
 // Single canonical ICP loader — returns shaped ICPConfig or undefined
