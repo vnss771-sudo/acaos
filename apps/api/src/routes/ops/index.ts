@@ -7,6 +7,7 @@ import { rosterRouter } from './roster.js'
 import { alertsRouter } from './alerts.js'
 import { fatigueRouter } from './fatigue.js'
 import { adminRouter } from './admin.js'
+import { performanceRouter } from './performance.js'
 
 // The Ops module: workspace-scoped field crew / job-site / shift / roster
 // management. Each concern is its own router (each already carries its own
@@ -15,6 +16,8 @@ import { adminRouter } from './admin.js'
 // register handler functions onto one shared router to keep flat URLs, Ops
 // endpoints are naturally namespaced (GET /api/ops/crew, POST /api/ops/clock/in,
 // …) so separate routers at separate prefixes is the natural fit.
+//
+// Phase 4.1: Added performance monitoring endpoints for multi-tenant health checks.
 export const opsRouter = Router()
 
 opsRouter.use('/crew', crewRouter)
@@ -25,3 +28,4 @@ opsRouter.use('/roster', rosterRouter)
 opsRouter.use('/alerts', alertsRouter)
 opsRouter.use('/fatigue', fatigueRouter)
 opsRouter.use('/admin', adminRouter)
+opsRouter.use('/performance', performanceRouter)
