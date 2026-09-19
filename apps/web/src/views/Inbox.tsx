@@ -80,7 +80,7 @@ export function InboxView({ api, workspace, toast }: Props) {
       {loadError && <ErrorBanner message="Failed to load replies." onRetry={load} />}
 
       <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 4px' }}>
-        Replies to your outreach, classified by intent. ACAOS suggests the next move for each.
+        Inbox Assistant classifies incoming replies by intent and suggests the best next action. Review, approve, and respond with AI-generated replies.
       </p>
 
       {/* Filter chips */}
