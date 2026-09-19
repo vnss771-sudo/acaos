@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto'
 import { dollarsToCents } from '../../lib/money.js'
 import { validate } from '../../lib/validate.js'
 import { z } from 'zod'
-import { discoverSchema, nonEmpty, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, resolveEffectiveTargeting, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import { discoverSchema, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, resolveEffectiveTargeting, buildDiscoveryQuery, IMPORT_SIGNAL_TYPES } from './helpers.js'
 import type { MissionIcpOverrideFields } from '@acaos/shared'
 import { workspaceIdField } from '../../lib/validate.js'
 
@@ -68,20 +68,12 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     }
 
     const icp = await getICP(workspaceId)
-    const limit = body.limit ?? 25 // bounded to 1..50 by discoverSchema
 
     // Layered targeting: explicit request → mission ICP override → workspace
     // ICP → mission playbook preset.
     const pack = missionPlaybookId ? getPack(missionPlaybookId) : undefined
     const effective = resolveEffectiveTargeting(missionIcpOverride, icp, pack)
-    const query = {
-      industries: body.industries ?? nonEmpty(effective.targetIndustries) ?? [],
-      locations:  body.locations  ?? nonEmpty(effective.targetGeos)       ?? [],
-      keywords:   body.keywords   ?? [],
-      minEmployees: effective.minEmployees ?? body.minEmployees,
-      maxEmployees: effective.maxEmployees ?? body.maxEmployees,
-      limit,
-    }
+    const query = buildDiscoveryQuery(body, effective) // limit bounded to 1..50 by discoverSchema
 
     // Stable hash of (source + canonical query) for in-flight dedup. Sorting the
     // array fields + fixing key order makes the hash insensitive to request-order
