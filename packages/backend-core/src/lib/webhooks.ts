@@ -20,7 +20,16 @@ type Db = PrismaClient | Prisma.TransactionClient
 
 // The event types a customer can subscribe an endpoint to. Keep in sync with the
 // emit sites; a closed set keeps validation simple and documents the contract.
-export const WEBHOOK_EVENT_TYPES = ['reply.received', 'campaign.sent', 'meeting.booked'] as const
+// Event tiers: core (reply, campaign) for FieldOps; enriched (lead created, quality signal)
+// for external integrations like Slack, Zapier, and CRM sync.
+export const WEBHOOK_EVENT_TYPES = [
+  'reply.received',       // Core: prospect replied to outreach
+  'campaign.sent',        // Core: campaign outreach sent
+  'meeting.booked',       // Core: outcome achieved (demo booked, call scheduled)
+  'lead.created',         // Enriched: new lead added to workspace
+  'lead.qualified',       // Enriched: lead reached HOT tier (confidence ≥72)
+  'quality.alert',        // Enriched: data quality signal (e.g., high-quality enrichment available)
+] as const
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number]
 
 export function isWebhookEventType(v: unknown): v is WebhookEventType {

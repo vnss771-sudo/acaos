@@ -4,11 +4,13 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { parseQuery, workspaceIdField } from '../lib/validate.js'
+import { parseQuery, parseBody, parseParams, workspaceIdField } from '../lib/validate.js'
+import { sendMail, isMailConfigured } from '../services/mail.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
-// Read-only; the raw inbound body is never stored, so only derived fields here.
+// POST /api/inbox/reply/:replyId/send — send an AI-suggested reply to the original sender
 export const inboxRouter = Router()
 inboxRouter.use(requireAuth)
 inboxRouter.use(requireVerifiedForMutation)
@@ -21,6 +23,22 @@ const inboxQuerySchema = z.object({
   workspaceId: workspaceIdField,
   // Optional filter by classification; 'all' (or omitted) returns everything.
   classification: z.enum(REPLY_CLASSIFICATIONS).optional(),
+})
+
+const replyParamsSchema = z.object({
+  replyId: z.string().uuid(),
+})
+
+const sendReplySchema = z.object({
+  workspaceId: workspaceIdField,
+  // Optional: use custom body instead of suggestion
+  customBody: z.string().min(1).max(5000).optional(),
+})
+
+const classificationFeedbackSchema = z.object({
+  workspaceId: workspaceIdField,
+  feedback: z.enum(['correct', 'incorrect', 'unsure']),
+  correctedIntent: z.enum(REPLY_CLASSIFICATIONS).optional(),
 })
 
 inboxRouter.get(
@@ -73,5 +91,148 @@ inboxRouter.get(
     }
 
     res.json({ replies, counts, total })
+  })
+)
+
+// POST /api/inbox/reply/:replyId/send — send a reply to the original sender.
+// Accepts either the suggested reply (replySuggestedAction) or a custom body.
+// Creates audit trail. This is the Inbox Assistant core flow.
+// Returns: { success: true, sentAt: ISO string, message: string }
+inboxRouter.post(
+  '/reply/:replyId/send',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { replyId } = parseParams(replyParamsSchema, req)
+    const { workspaceId, customBody } = parseBody(sendReplySchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const reply = await prisma.outreachSent.findUnique({
+      where: { id: replyId },
+      select: {
+        id: true,
+        workspaceId: true,
+        toEmail: true,
+        subject: true,
+        replySuggestedAction: true,
+        repliedAt: true,
+        status: true,
+        lead: { select: { id: true, businessName: true } },
+      },
+    })
+
+    if (!reply) throw new ApiError(404, 'Reply not found')
+    if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
+    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only send replies to messages that have received a reply')
+
+    // Ensure mail is configured
+    if (!isMailConfigured()) {
+      throw new ApiError(503, 'Email service not configured for this workspace')
+    }
+
+    // Use custom body or fall back to suggestion
+    const replyBody = customBody || reply.replySuggestedAction || 'Thank you for your reply.'
+    const replySubject = reply.subject?.startsWith('Re:') ? reply.subject : `Re: ${reply.subject || '(no subject)'}`
+
+    // Send the reply email
+    try {
+      await sendMail(reply.toEmail, replySubject, replyBody)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Email service error'
+      // Classify errors for better user messaging
+      let statusCode = 502
+      let userMessage = `Failed to send reply: ${errorMsg}`
+
+      if (errorMsg.includes('invalid email') || errorMsg.includes('malformed')) {
+        statusCode = 400
+        userMessage = `Invalid recipient email address: ${reply.toEmail}`
+      } else if (errorMsg.includes('timeout') || errorMsg.includes('ECONNREFUSED')) {
+        statusCode = 503
+        userMessage = 'Email service temporarily unavailable. Please try again.'
+      }
+
+      throw new ApiError(statusCode, userMessage)
+    }
+
+    const sentAt = new Date()
+
+    // Audit trail (for compliance + learning)
+    await recordAudit({
+      workspaceId,
+      actorUserId: user.id,
+      type: 'inbox.reply_sent',
+      entityType: 'outreachSent',
+      entityId: replyId,
+      metadata: {
+        toEmail: reply.toEmail,
+        hasCustomBody: !!customBody,
+        replyClassification: reply.replySuggestedAction ? 'suggested' : 'custom',
+      },
+    })
+
+    res.json({
+      success: true,
+      sentAt: sentAt.toISOString(),
+      message: `✓ Reply sent to ${reply.toEmail}`,
+    })
+  })
+)
+
+// PATCH /api/inbox/reply/:replyId/feedback — record user feedback on classification
+// This feeds the learning loop to improve future classifications.
+// Returns: { success: true, message: string }
+inboxRouter.patch(
+  '/reply/:replyId/feedback',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { replyId } = parseParams(replyParamsSchema, req)
+    const { workspaceId, feedback, correctedIntent } = parseBody(classificationFeedbackSchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const reply = await prisma.outreachSent.findUnique({
+      where: { id: replyId },
+      select: {
+        id: true,
+        workspaceId: true,
+        replyIntent: true,
+        replyConfidence: true,
+        status: true,
+      },
+    })
+
+    if (!reply) throw new ApiError(404, 'Reply not found')
+    if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
+    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only provide feedback on messages with replies')
+
+    // Record the feedback as metadata for the learning loop
+    const correctedIntentValue = feedback === 'incorrect' ? correctedIntent : null
+    const feedbackMessage = feedback === 'correct'
+      ? 'Classification marked as correct'
+      : feedback === 'incorrect'
+        ? `Classification corrected to ${correctedIntentValue || reply.replyIntent}`
+        : 'Classification marked as uncertain'
+
+    // Record audit trail for feedback
+    await recordAudit({
+      workspaceId,
+      actorUserId: user.id,
+      type: 'inbox.classification_feedback',
+      entityType: 'outreachSent',
+      entityId: replyId,
+      metadata: {
+        originalIntent: reply.replyIntent,
+        correctedIntent: correctedIntentValue,
+        feedback,
+        confidence: reply.replyConfidence,
+      },
+    })
+
+    res.json({
+      success: true,
+      message: feedbackMessage,
+    })
   })
 )

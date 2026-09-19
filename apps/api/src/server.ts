@@ -12,6 +12,7 @@ import { workspaceRouter } from './routes/workspaces.js'
 import { campaignsRouter } from './routes/campaigns.js'
 import { missionsRouter } from './routes/missions.js'
 import { leadsRouter } from './routes/leads.js'
+import { leadScoringRouter } from './routes/lead-scoring.js'
 import { statsRouter } from './routes/stats.js'
 import { inboxRouter } from './routes/inbox.js'
 import { sendsRouter } from './routes/sends.js'
@@ -23,6 +24,7 @@ import { prospectsRouter } from './routes/prospects.js'
 import { packsRouter } from './routes/packs.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
+import { integrationsRouter } from './routes/integrations.js'
 import { adminRouter } from './routes/admin.js'
 import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { legalRouter } from './routes/legal.js'
@@ -53,6 +55,9 @@ import { attachProviderQuotaStore } from '@acaos/backend-core/lib/providerQuota.
 import { Redis as IORedis } from 'ioredis'
 import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
 import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
+import { logPoolHealth } from './lib/dbMonitor.js'
+import { startCacheCleanup } from '@acaos/backend-core/lib/queryResultCache.js'
+import { tracingMiddleware } from './middleware/tracingMiddleware.js'
 
 validateConfig()
 checkEncryptionKeyHealth()
@@ -83,6 +88,7 @@ app.use((_req, res, next) => {
 app.use(compression())
 app.use(securityHeaders)
 app.use(requestContext)
+app.use(tracingMiddleware)
 app.use(metricsMiddleware)
 
 app.use(cors({
@@ -214,6 +220,7 @@ app.use('/api/workspaces', workspaceRouter)
 app.use('/api/campaigns', campaignsRouter)
 app.use('/api/missions', missionsRouter)
 app.use('/api/leads', leadsRouter)
+app.use('/api/lead-scoring', leadScoringRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/inbox', inboxRouter)
 app.use('/api/sends', sendsRouter)
@@ -225,6 +232,7 @@ app.use('/api/prospects', prospectsRouter)
 app.use('/api/packs', packsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
+app.use('/api/integrations', integrationsRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/unsubscribe', unsubscribeRouter)
 app.use('/api/legal', legalRouter)
@@ -245,6 +253,20 @@ getRedis().connect().catch((err: Error) => {
 assertStripePricesConfigured().catch((err: Error) => {
   logger.error('stripe price boot check threw unexpectedly', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
 })
+
+// Phase 4.1: Boot-time database pool verification and periodic health monitoring.
+// Ensures the pool is responsive and within acceptable latency before serving traffic.
+void logPoolHealth()
+
+// Periodic pool health check every 60 seconds (fire-and-forget; errors are logged
+// but never crash the process, like Redis connection retries).
+const poolHealthCheckIntervalMs = 60 * 1000
+const poolHealthCheckTimer = setInterval(() => void logPoolHealth(), poolHealthCheckIntervalMs)
+if (poolHealthCheckTimer.unref) poolHealthCheckTimer.unref()
+
+// Phase 4.2: Start query result cache cleanup (remove expired entries every 5 min).
+const cacheCleanupTimer = startCacheCleanup()
+if (cacheCleanupTimer.unref) cacheCleanupTimer.unref()
 
 void initErrorReporting()
 

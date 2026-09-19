@@ -10,7 +10,7 @@ import { requireFreshAuth } from '../../middleware/auth.js'
 import { z } from 'zod'
 import type { Assert, Extends, DeleteWorkspaceRequest } from '@acaos/shared'
 import { createBillingPortalSession } from '../../services/stripe.js'
-import { seededScore, SEED_COMPANIES, EXAMPLE_SIGNALS } from './helpers.js'
+import { seededScore, SEED_COMPANIES, EXAMPLE_SIGNALS, seedExampleReplies } from './helpers.js'
 
 // DELETE /:id body — the caller must echo the exact workspace name (GitHub-style
 // typed confirmation), so an irreversible erase can't fire from a stray request.
@@ -78,6 +78,11 @@ export function registerCoreRoutes(workspaceRouter: Router) {
           memberships: { create: { userId: user.id, role: 'owner' } }
         },
         select: { id: true, name: true, slug: true, plan: true }
+      })
+
+      // Seed example replies to show product value immediately
+      void seedExampleReplies(workspace.id, prisma).catch(err => {
+        console.error(`Failed to seed example replies for workspace ${workspace.id}:`, err)
       })
 
       res.status(201).json({ workspace })

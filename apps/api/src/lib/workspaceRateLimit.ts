@@ -1,5 +1,6 @@
 import { getRedis } from './redis.js'
 import { ApiError } from './http.js'
+import { checkForRateLimitSpike } from './abuseDetection.js'
 
 // Per-workspace rate limits at the HTTP edge, keyed by workspaceId instead of
 // (or in addition to) the caller's IP. The per-IP limiters in middleware/rateLimit.ts
@@ -66,6 +67,8 @@ function createWorkspaceRateLimit(opts: WorkspaceRateLimitOptions) {
     }
 
     if (count > max) {
+      // Phase 4.1: Record abuse signal when rate limits are hit
+      void checkForRateLimitSpike(workspaceId).catch(() => {})
       throw new ApiError(429, message)
     }
   }
@@ -73,40 +76,48 @@ function createWorkspaceRateLimit(opts: WorkspaceRateLimitOptions) {
   return { enforce, _resetForTest: () => fallback.clear() }
 }
 
+// Phase 4.1: AI rate limiting per workspace per hour. The monthly quota via
+// PLAN_LIMITS is the true ceiling; this hourly window is a burst limiter that
+// prevents a single workspace from monopolizing shared infrastructure (OpenAI key,
+// token budget) in the time window between quota checks. Tuned for realistic
+// concurrent use (5 concurrent users * 20 AI calls/hour each).
 const aiLimiter = createWorkspaceRateLimit({
   name: 'ws_ai',
   windowMs: 60 * 60 * 1000,
   envVar: 'WORKSPACE_AI_RATE_MAX',
-  defaultMax: 120,
-  message: 'Workspace AI rate limit reached. Please wait before making more AI requests.',
+  defaultMax: 500,
+  message: 'Workspace AI rate limit reached (500/hour). Check monthly quota or contact support.',
 })
 
 /**
  * Throw ApiError(429) when the workspace has exceeded its AI requests for the
  * current fixed window; otherwise record this request and return.
- * Tunable via WORKSPACE_AI_RATE_MAX (default 120/hour); set 0 to disable.
+ * Tunable via WORKSPACE_AI_RATE_MAX (default 500/hour); set 0 to disable.
+ * Note: this is a burst limiter — the monthly quota (PLAN_LIMITS) is the
+ * billing-relevant ceiling.
  */
 export const enforceWorkspaceAiRate = aiLimiter.enforce
 
 /** Test-only: clear the in-process fallback counters. */
 export const _resetWorkspaceAiRateForTest = aiLimiter._resetForTest
 
-// Outbound mail (send-test, and any future workspace-scoped send path) is a
-// lower-volume, higher-abuse-cost resource than AI generation — a leaked
-// workspace credential spraying test/relay sends is a deliverability and SMTP
-// reputation risk regardless of how many source IPs it rotates through.
+// Phase 4.1: Outbound mail rate limiting per workspace per minute. Email is a
+// high-abuse-cost resource (SMTP relay reputation, bounce handling) — a leaked
+// workspace credential or abuse pattern must not take down the shared mail
+// infrastructure. 100 emails/min = 6000 emails/hour, which allows legitimate
+// sales teams to send while preventing runaway loops.
 const mailLimiter = createWorkspaceRateLimit({
   name: 'ws_mail',
-  windowMs: 60 * 60 * 1000,
+  windowMs: 60 * 1000,
   envVar: 'WORKSPACE_MAIL_RATE_MAX',
-  defaultMax: 30,
-  message: 'Workspace mail rate limit reached. Please wait before sending more email.',
+  defaultMax: 100,
+  message: 'Workspace mail rate limit reached (100/min). Please wait before sending more email.',
 })
 
 /**
  * Throw ApiError(429) when the workspace has exceeded its outbound mail sends
  * for the current fixed window; otherwise record this request and return.
- * Tunable via WORKSPACE_MAIL_RATE_MAX (default 30/hour); set 0 to disable.
+ * Tunable via WORKSPACE_MAIL_RATE_MAX (default 100/min); set 0 to disable.
  */
 export const enforceWorkspaceMailRate = mailLimiter.enforce
 

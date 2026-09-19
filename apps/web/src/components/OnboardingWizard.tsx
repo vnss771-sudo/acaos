@@ -76,6 +76,36 @@ function StepDots({ total, current }: { total: number; current: number }) {
   )
 }
 
+function StepProgressBar({ current, total }: { current: number; total: number }) {
+  const steps = [
+    { num: 1, label: 'Choose playbook', shortLabel: 'Playbook' },
+    { num: 2, label: 'Configure settings', shortLabel: 'Settings' },
+    { num: 3, label: 'Review & done', shortLabel: 'Review' },
+  ]
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 12, color: colors.textMuted, marginBottom: 8 }}>
+        Step {current}/3: {steps[current - 1]?.label}
+      </div>
+      <div style={{
+        height: 4,
+        background: colors.border,
+        borderRadius: 2,
+        overflow: 'hidden',
+        width: '100%'
+      }}>
+        <div style={{
+          height: '100%',
+          background: colors.blue,
+          width: `${(current / 3) * 100}%`,
+          transition: 'width 0.3s ease'
+        }} />
+      </div>
+    </div>
+  )
+}
+
 export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [step, setStep] = useState(1)
@@ -155,6 +185,7 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
     <div style={overlayStyle}>
       <div style={cardStyle}>
         <StepDots total={4} current={step} />
+        {step <= 3 && <StepProgressBar current={step} total={3} />}
 
         {step === 1 && (
           <Step1
@@ -203,10 +234,10 @@ function Step1({
     <div>
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <h1 style={{ color: colors.text, fontSize: 22, fontWeight: 700, margin: '0 0 10px' }}>
-          Welcome to ACAOS — let's set up your Acquisition Radar
+          Welcome to Inbox Assistant
         </h1>
-        <p style={{ color: colors.textMuted, fontSize: 14, margin: 0 }}>
-          This takes 3 minutes. We'll configure your intelligence engine and show you live opportunities.
+        <p style={{ color: colors.textMuted, fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+          AI-powered email classification and reply suggestions. Select your business type to get started, or skip to see example replies.
         </p>
       </div>
 
@@ -244,16 +275,20 @@ function Step1({
       </div>
 
       <div style={{ textAlign: 'center' }}>
+        <p style={{ color: colors.textFaint, fontSize: 12, margin: '20px 0 12px' }}>
+          Not sure which to pick? You can skip setup and start with example emails.
+        </p>
         <button
           onClick={onSkip}
           disabled={saving}
           style={{
             background: 'none',
             border: 'none',
-            color: colors.textFaint,
+            color: colors.blue,
             cursor: 'pointer',
             fontSize: 13,
-            textDecoration: 'underline'
+            textDecoration: 'underline',
+            fontWeight: 500
           }}
         >
           Skip setup →
@@ -286,7 +321,7 @@ function Step2({
         Configure your Ideal Customer Profile
       </h2>
       <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 24px' }}>
-        These settings tell ACAOS which signals to surface and who to prioritise.
+        These settings help Inbox Assistant understand your business and optimize email intelligence for your workflow.
       </p>
 
       <div style={{ ...s.stack, gap: 16 }}>
@@ -403,7 +438,7 @@ function Step3({
   return (
     <div>
       <h2 style={{ color: colors.text, fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>
-        ACAOS will show you example opportunities while you add real prospects
+        You're all set! Let's see Inbox Assistant in action.
       </h2>
 
       <div
@@ -418,15 +453,18 @@ function Step3({
           lineHeight: 1.5
         }}
       >
-        We'll seed your radar with 3 clearly marked <strong>EXAMPLE</strong> companies so the dashboard
-        never looks empty. These are fictional — you cannot send outreach to them. They disappear once
-        you add real prospects.
+        We've pre-loaded 3 example classified replies so you can see Inbox Assistant in action immediately.
+        These show different reply intents (interested, needs info, not now) with confidence scores and suggested actions.
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <div style={{ ...s.sectionHeader, marginBottom: 12 }}>Preview — example companies</div>
+        <div style={{ ...s.sectionHeader, marginBottom: 12 }}>Example replies in your inbox</div>
         <div style={{ ...s.stack, gap: 8 }}>
-          {playbook.sampleCompanies.map((c, i) => (
+          {[
+            { intent: 'INTERESTED', from: 'contact@techstartup.example', confidence: 92 },
+            { intent: 'NEEDS_MORE_INFO', from: 'hello@midsize.example', confidence: 78 },
+            { intent: 'NOT_NOW', from: 'ops@logistics.example', confidence: 85 }
+          ].map((r, i) => (
             <div
               key={i}
               style={{
@@ -438,10 +476,10 @@ function Step3({
             >
               <div>
                 <span style={{ color: colors.text, fontSize: 14, fontWeight: 600 }}>
-                  {c.companyName}
+                  {r.from}
                 </span>
                 <span style={{ color: colors.textMuted, fontSize: 12, marginLeft: 8 }}>
-                  {c.location} · {c.industry}
+                  Classified as {r.intent.replace(/_/g, ' ')} ({r.confidence}% confidence)
                 </span>
               </div>
               <span
@@ -456,7 +494,7 @@ function Step3({
                   letterSpacing: '0.04em'
                 }}
               >
-                EXAMPLE
+                DEMO
               </span>
             </div>
           ))}

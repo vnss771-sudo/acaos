@@ -5,6 +5,7 @@ import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { workspaceRouter } from '../apps/api/src/routes/workspaces/index.ts'
 import { getSendReadiness } from '../apps/api/src/lib/sendReadiness.ts'
+import { encryptSecret, isEncrypted } from '../packages/backend-core/src/lib/encrypt.ts'
 import { COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION, DPA_VERSION } from '../packages/backend-core/src/lib/subprocessors.ts'
 import {
   prisma, resetDb, disconnect, seedUserWithWorkspace,
@@ -125,4 +126,91 @@ test('send-readiness compliance gate is DORMANT by default and active only when 
     if (saved === undefined) delete process.env.COMPLIANCE_GATE_ENABLED
     else process.env.COMPLIANCE_GATE_ENABLED = saved
   }
+})
+
+test('GET /data-export returns GDPR-compliant workspace export without secrets', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('c-export@x.test')
+  // Add email config with encrypted credentials
+  const plainPass = 'super-secret-password'
+  await prisma.workspaceEmailConfig.create({
+    data: {
+      workspaceId: workspace.id,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpSecure: true,
+      smtpUser: 'sender@example.com',
+      smtpPass: encryptSecret(plainPass),
+      smtpFrom: 'sender@example.com',
+    },
+  })
+
+  const res = await req('GET', `/api/workspaces/${workspace.id}/data-export`, bearer(user.id))
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  assert.ok(res.body.exportedAt)
+  assert.equal(res.body.exportedBy, user.id)
+  assert.equal(res.body.exportVersion, '1.0')
+
+  // Verify email config is present but passwords are redacted
+  assert.ok(res.body.emailConfig)
+  assert.equal(res.body.emailConfig.smtpHost, 'smtp.example.com')
+  assert.equal(res.body.emailConfig.smtpUser, 'sender@example.com')
+  assert.equal(res.body.emailConfig.smtpPasswordEncrypted, 'REDACTED')
+  assert.equal(res.body.emailConfig.smtpPass, undefined, 'plaintext password never exported')
+
+  // Verify workspace data is present
+  assert.equal(res.body.workspace.id, workspace.id)
+  assert.equal(res.body.workspace.name, workspace.name)
+})
+
+test('POST /encryption-verify detects encrypted email credentials', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('c-encver@x.test')
+  // Add encrypted email config
+  const plainPass = 'secret-smtp-password'
+  await prisma.workspaceEmailConfig.create({
+    data: {
+      workspaceId: workspace.id,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpSecure: true,
+      smtpUser: 'sender@example.com',
+      smtpPass: encryptSecret(plainPass),
+      smtpFrom: 'sender@example.com',
+    },
+  })
+
+  const res = await req('POST', `/api/workspaces/${workspace.id}/encryption-verify`, bearer(user.id))
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  assert.equal(res.body.encrypted, true)
+  assert.equal(res.body.warning, undefined, 'no warning when properly encrypted')
+})
+
+test('/encryption-verify detects plaintext passwords (compliance audit)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('c-plaintext@x.test')
+  // Simulate plaintext password (by bypassing encryptSecret) - this would be a security issue
+  // We'll test the isEncrypted() check by inserting a non-encrypted blob
+  await prisma.workspaceEmailConfig.create({
+    data: {
+      workspaceId: workspace.id,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpSecure: true,
+      smtpUser: 'sender@example.com',
+      smtpPass: 'plaintext-should-never-happen', // Not encrypted
+      smtpFrom: 'sender@example.com',
+    },
+  })
+
+  const res = await req('POST', `/api/workspaces/${workspace.id}/encryption-verify`, bearer(user.id))
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  assert.equal(res.body.encrypted, false)
+  assert.ok(res.body.warning && res.body.warning.includes('SMTP password'))
+})
+
+test('isEncrypted() utility distinguishes encrypted blobs from plaintext', () => {
+  const plaintext = 'my-secret-password'
+  const encrypted = encryptSecret(plaintext)
+
+  assert.equal(isEncrypted(plaintext), false, 'plaintext is not detected as encrypted')
+  assert.equal(isEncrypted(encrypted), true, 'encrypted blob is detected as encrypted')
+  assert.ok(encrypted.match(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i), 'encrypted format is iv:tag:ct')
 })
