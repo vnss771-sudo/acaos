@@ -8,6 +8,7 @@ import { registerIcpRoutes } from './icp.js'
 import { registerComplianceRoutes } from './compliance.js'
 import { registerWarmupRoutes } from './warmup.js'
 import { registerAccessReviewRoutes } from './accessReview.js'
+import { registerRateLimitRoutes } from './rateLimits.js'
 
 export const workspaceRouter = Router()
 workspaceRouter.use(requireAuth)
@@ -30,3 +31,4 @@ registerApiKeyRoutes(workspaceRouter)
 registerComplianceRoutes(workspaceRouter)
 registerWarmupRoutes(workspaceRouter)
 registerAccessReviewRoutes(workspaceRouter)
+registerRateLimitRoutes(workspaceRouter)
