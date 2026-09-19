@@ -34,10 +34,13 @@ export async function rewrapAllSecrets(opts: { apply: boolean }): Promise<Rewrap
     if (!user.totpSecret) continue
     try {
       if (!needsReencryption(user.totpSecret)) continue
-      summary.usersRewrapped += 1
+      // Counted only after a real write succeeds (or immediately in dry-run,
+      // where nothing is written) — counting before the write let a failed
+      // update land in both usersRewrapped and errors for the same row.
       if (opts.apply) {
         await prisma.user.update({ where: { id: user.id }, data: { totpSecret: rewrapSecret(user.totpSecret) } })
       }
+      summary.usersRewrapped += 1
     } catch (err) {
       summary.errors.push({ model: 'User', id: user.id, error: err instanceof Error ? err.message : String(err) })
     }
@@ -49,15 +52,32 @@ export async function rewrapAllSecrets(opts: { apply: boolean }): Promise<Rewrap
   })
   for (const config of configs as Array<{ id: string; smtpPass: string | null; imapPass: string | null }>) {
     summary.workspaceEmailConfigsChecked += 1
+    // smtpPass and imapPass are independent columns: a corrupt/unparseable blob
+    // in one must not discard an already-computed valid rewrap of the other, so
+    // each is checked in its own try/catch rather than one for the whole row.
+    const data: { smtpPass?: string; imapPass?: string } = {}
+    if (config.smtpPass) {
+      try {
+        if (needsReencryption(config.smtpPass)) data.smtpPass = rewrapSecret(config.smtpPass)
+      } catch (err) {
+        summary.errors.push({ model: 'WorkspaceEmailConfig', id: config.id, error: `smtpPass: ${err instanceof Error ? err.message : String(err)}` })
+      }
+    }
+    if (config.imapPass) {
+      try {
+        if (needsReencryption(config.imapPass)) data.imapPass = rewrapSecret(config.imapPass)
+      } catch (err) {
+        summary.errors.push({ model: 'WorkspaceEmailConfig', id: config.id, error: `imapPass: ${err instanceof Error ? err.message : String(err)}` })
+      }
+    }
+    if (Object.keys(data).length === 0) continue
     try {
-      const data: { smtpPass?: string; imapPass?: string } = {}
-      if (config.smtpPass && needsReencryption(config.smtpPass)) data.smtpPass = rewrapSecret(config.smtpPass)
-      if (config.imapPass && needsReencryption(config.imapPass)) data.imapPass = rewrapSecret(config.imapPass)
-      if (Object.keys(data).length === 0) continue
-      summary.workspaceEmailConfigsRewrapped += 1
+      // Counted only after a real write succeeds (or immediately in dry-run) —
+      // see the identical comment in the User loop above.
       if (opts.apply) {
         await prisma.workspaceEmailConfig.update({ where: { id: config.id }, data })
       }
+      summary.workspaceEmailConfigsRewrapped += 1
     } catch (err) {
       summary.errors.push({ model: 'WorkspaceEmailConfig', id: config.id, error: err instanceof Error ? err.message : String(err) })
     }

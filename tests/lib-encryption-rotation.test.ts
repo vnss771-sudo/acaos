@@ -159,3 +159,60 @@ test('a decrypt/rewrap failure on one row is collected as an error and does not 
   assert.equal(summary.errors[0].model, 'User')
   assert.equal(summary.errors[0].id, 'u-bad')
 })
+
+test('apply: true, a failed User.update is reported ONLY as an error, never also counted rewrapped', async () => {
+  const legacy = legacyBlob('totp-secret-fails-write')
+  installPrisma(createFakePrisma({
+    user: {
+      findMany: async () => [{ id: 'u1', totpSecret: legacy }],
+      update: async () => { throw new Error('connection reset') },
+    },
+    workspaceEmailConfig: { findMany: async () => [], update: async () => ({}) },
+  }))
+
+  const summary = await rewrapAllSecrets({ apply: true })
+  assert.equal(summary.usersRewrapped, 0, 'a row whose write failed must not also be counted as rewrapped')
+  assert.equal(summary.errors.length, 1)
+  assert.equal(summary.errors[0].id, 'u1')
+})
+
+test('a bad imapPass does not discard an already-computed, valid smtpPass rewrap on the same row', async () => {
+  const smtp = legacyBlob('smtp-pass-still-good')
+  const updates: Array<{ id: string; data: Record<string, string> }> = []
+  installPrisma(createFakePrisma({
+    user: { findMany: async () => [], update: async () => ({}) },
+    workspaceEmailConfig: {
+      findMany: async () => [{ id: 'c1', smtpPass: smtp, imapPass: 'not-a-valid-blob' }],
+      update: async (args: { where: { id: string }; data: Record<string, string> }) => {
+        updates.push({ id: args.where.id, data: args.data })
+        return {}
+      },
+    },
+  }))
+
+  const summary = await rewrapAllSecrets({ apply: true })
+  // The good column still gets persisted...
+  assert.equal(updates.length, 1)
+  assert.deepEqual(Object.keys(updates[0].data), ['smtpPass'])
+  assert.equal(summary.workspaceEmailConfigsRewrapped, 1)
+  // ...and the bad column is still reported as an error, not silently dropped.
+  assert.equal(summary.errors.length, 1)
+  assert.equal(summary.errors[0].id, 'c1')
+  assert.match(summary.errors[0].error, /imapPass/)
+})
+
+test('apply: true, a failed WorkspaceEmailConfig.update is reported ONLY as an error, never also counted rewrapped', async () => {
+  const smtp = legacyBlob('smtp-pass-fails-write')
+  installPrisma(createFakePrisma({
+    user: { findMany: async () => [], update: async () => ({}) },
+    workspaceEmailConfig: {
+      findMany: async () => [{ id: 'c1', smtpPass: smtp, imapPass: null }],
+      update: async () => { throw new Error('connection reset') },
+    },
+  }))
+
+  const summary = await rewrapAllSecrets({ apply: true })
+  assert.equal(summary.workspaceEmailConfigsRewrapped, 0, 'a row whose write failed must not also be counted as rewrapped')
+  assert.equal(summary.errors.length, 1)
+  assert.equal(summary.errors[0].id, 'c1')
+})
