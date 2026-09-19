@@ -469,7 +469,7 @@ export const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] a
 
 export const PLAN_LABELS: Record<BillingPlan, string> = {
   free: 'Free',
-  starter: 'Starter',
+  starter: 'Inbox Assistant',
   growth: 'Growth'
 }
 
