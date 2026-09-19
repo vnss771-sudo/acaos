@@ -3,6 +3,7 @@ import { asyncHandler } from '../../lib/http.js'
 import { verifyDatabasePool, getQueryMetrics } from '../../lib/dbMonitor.js'
 import { getWorkspaceCacheStats } from '../../lib/workspaceCache.js'
 import { getWorkspaceQueryDistribution } from '../../lib/workspaceIsolation.js'
+import { getIncidentLog, getAbuseMetrics } from '../../lib/abuseDetection.js'
 
 // Multi-tenant performance metrics endpoint. Phase 4.1 operational visibility.
 // Aggregates database pool health, query performance, caching efficiency, and
@@ -140,6 +141,38 @@ performanceRouter.get(
       recommendation: hotspots.length > 0
         ? `Monitor hotspots — consider rate limiting or workspace-specific tuning`
         : 'Load distribution even across workspaces',
+    })
+  })
+)
+
+/**
+ * GET /api/ops/performance/abuse — Detected abuse incidents and metrics.
+ * Shows anomalous activity: rate limit spikes, auth bursts, high load patterns.
+ * Used by ops team to identify and respond to potential abuse.
+ */
+performanceRouter.get(
+  '/abuse',
+  asyncHandler(async (_req, res) => {
+    const incidents = getIncidentLog(1) // Last 1 hour
+    const metrics = getAbuseMetrics()
+
+    res.json({
+      metrics,
+      recentIncidents: incidents
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        .map((inc) => ({
+          workspaceId: inc.workspaceId,
+          type: inc.type,
+          severity: inc.severity,
+          evidence: inc.evidence,
+          timestamp: inc.timestamp.toISOString(),
+        }))
+        .slice(0, 20), // Last 20 incidents
+      recommendation: metrics.bySeverity.high > 0
+        ? 'HIGH severity incidents detected — review immediately'
+        : metrics.bySeverity.medium > 0
+          ? 'Medium severity incidents detected — monitor closely'
+          : 'No current abuse detected',
     })
   })
 )

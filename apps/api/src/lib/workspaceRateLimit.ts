@@ -1,5 +1,6 @@
 import { getRedis } from './redis.js'
 import { ApiError } from './http.js'
+import { checkForRateLimitSpike } from './abuseDetection.js'
 
 // Per-workspace rate limits at the HTTP edge, keyed by workspaceId instead of
 // (or in addition to) the caller's IP. The per-IP limiters in middleware/rateLimit.ts
@@ -66,6 +67,8 @@ function createWorkspaceRateLimit(opts: WorkspaceRateLimitOptions) {
     }
 
     if (count > max) {
+      // Phase 4.1: Record abuse signal when rate limits are hit
+      void checkForRateLimitSpike(workspaceId).catch(() => {})
       throw new ApiError(429, message)
     }
   }
