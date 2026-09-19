@@ -14,6 +14,7 @@ import { quotasRouter } from './quotas.js'
 import { phase45AlertsRouter } from './phase4-5-alerts.js'
 import { phase46NotificationsRouter } from './phase4-6-notifications.js'
 import { phase47AnalyticsRouter } from './phase4-7-analytics.js'
+import { phase48BudgetsRouter } from './phase4-8-budgets.js'
 
 // The Ops module: workspace-scoped field crew / job-site / shift / roster
 // management. Each concern is its own router (each already carries its own
@@ -30,6 +31,7 @@ import { phase47AnalyticsRouter } from './phase4-7-analytics.js'
 // Phase 4.5: Added alerts and cost forecasting endpoints for proactive recommendations.
 // Phase 4.6: Added notification and escalation management endpoints for automation.
 // Phase 4.7: Added analytics endpoints for anomaly detection and cost optimization.
+// Phase 4.8: Added budget management and cost enforcement endpoints.
 export const opsRouter = Router()
 
 opsRouter.use('/crew', crewRouter)
@@ -47,3 +49,4 @@ opsRouter.use('/quotas', quotasRouter)
 opsRouter.use('/alerts', phase45AlertsRouter)
 opsRouter.use('/notifications', phase46NotificationsRouter)
 opsRouter.use('/analytics', phase47AnalyticsRouter)
+opsRouter.use('/budgets', phase48BudgetsRouter)
