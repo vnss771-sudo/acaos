@@ -9,6 +9,7 @@ import { registerComplianceRoutes } from './compliance.js'
 import { registerWarmupRoutes } from './warmup.js'
 import { registerAccessReviewRoutes } from './accessReview.js'
 import { registerRateLimitRoutes } from './rateLimits.js'
+import { registerQuotaRoutes } from './quotas.js'
 
 export const workspaceRouter = Router()
 workspaceRouter.use(requireAuth)
@@ -32,3 +33,4 @@ registerComplianceRoutes(workspaceRouter)
 registerWarmupRoutes(workspaceRouter)
 registerAccessReviewRoutes(workspaceRouter)
 registerRateLimitRoutes(workspaceRouter)
+registerQuotaRoutes(workspaceRouter)
