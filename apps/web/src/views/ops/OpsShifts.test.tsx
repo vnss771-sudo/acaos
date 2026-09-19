@@ -73,14 +73,22 @@ describe('OpsShifts', () => {
     const api = apiFor({ clockedIn: false })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
-    expect(await screen.findByRole('button', { name: /Clock In/i })).toBeInTheDocument()
+    // The button only appears after a chained sequence of async effects
+    // (fetch crew list -> auto-select the first crew member -> fetch that
+    // crew member's clock status -> render). Testing Library's default
+    // findBy* timeout (1000ms) covers this comfortably on a normal machine
+    // but can be too tight on a loaded CI runner — seen flaking here in CI
+    // while passing reliably locally. A longer timeout targets that actual
+    // cause without changing what's being asserted.
+    expect(await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })).toBeInTheDocument()
   })
 
   test('shows a Clock Out button and "clocked in" text when the selected crew member is clocked in', async () => {
     const api = apiFor({ clockedIn: true, clockStatusShift: openShift })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
-    expect(await screen.findByRole('button', { name: /Clock Out/i })).toBeInTheDocument()
+    // See the timeout comment on the "Clock In" test above — same async chain.
+    expect(await screen.findByRole('button', { name: /Clock Out/i }, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/Clocked in at/i)).toBeInTheDocument()
   })
 
@@ -88,7 +96,8 @@ describe('OpsShifts', () => {
     const api = apiFor({ clockedIn: false })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
-    await screen.findByRole('button', { name: /Clock In/i })
+    // See the timeout comment on the "shows a Clock In button" test above.
+    await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })
     await userEvent.selectOptions(screen.getByLabelText('Job Site'), 'job1')
     await userEvent.click(screen.getByRole('button', { name: /Clock In/i }))
 
