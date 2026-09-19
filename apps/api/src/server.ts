@@ -53,6 +53,7 @@ import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js
 import { Redis as IORedis } from 'ioredis'
 import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
 import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
+import { logPoolHealth } from './lib/dbMonitor.js'
 
 validateConfig()
 
@@ -246,6 +247,16 @@ getRedis().connect().catch((err: Error) => {
 assertStripePricesConfigured().catch((err: Error) => {
   logger.error('stripe price boot check threw unexpectedly', { service: SERVICE, err: err.message, releaseId: metadata.releaseId })
 })
+
+// Phase 4.1: Boot-time database pool verification and periodic health monitoring.
+// Ensures the pool is responsive and within acceptable latency before serving traffic.
+void logPoolHealth()
+
+// Periodic pool health check every 60 seconds (fire-and-forget; errors are logged
+// but never crash the process, like Redis connection retries).
+const poolHealthCheckIntervalMs = 60 * 1000
+const poolHealthCheckTimer = setInterval(() => void logPoolHealth(), poolHealthCheckIntervalMs)
+if (poolHealthCheckTimer.unref) poolHealthCheckTimer.unref()
 
 void initErrorReporting()
 
