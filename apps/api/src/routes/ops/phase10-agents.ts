@@ -15,7 +15,7 @@ import {
   recordPerformance,
   getPerformance,
   clearAutonomousAgents,
-} from '../../../backend-core/src/lib/autonomousAgents.js'
+} from '@acaos/backend-core/lib/autonomousAgents.js'
 import {
   createOptimizationAction,
   getOptimizationActions,
@@ -27,7 +27,7 @@ import {
   analyzeWastage,
   getWastageAnalyses,
   clearCostOptimization,
-} from '../../../backend-core/src/lib/autonomousCostOptimization.js'
+} from '@acaos/backend-core/lib/autonomousCostOptimization.js'
 import {
   proposeSchedulingOptimization,
   getSchedulingOptimizations,
@@ -41,7 +41,7 @@ import {
   recordScheduleImpact,
   getScheduleImpactReports,
   clearAutonomousScheduling,
-} from '../../../backend-core/src/lib/autonomousScheduling.js'
+} from '@acaos/backend-core/lib/autonomousScheduling.js'
 import {
   createAnomalyIncident,
   getAnomalyIncidents,
@@ -57,7 +57,7 @@ import {
   recordResponseMetrics,
   getResponseMetrics,
   clearAnomalyResponse,
-} from '../../../backend-core/src/lib/autonomousAnomalyResponse.js'
+} from '@acaos/backend-core/lib/autonomousAnomalyResponse.js'
 
 export const phase10AgentsRouter = Router()
 

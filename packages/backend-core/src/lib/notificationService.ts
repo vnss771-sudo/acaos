@@ -90,8 +90,8 @@ Upgrade now: https://example.com/workspace/{{workspaceId}}/plan`,
     bodyTemplate: `Based on your usage patterns, upgrading to {{recommendedPlan}} would be more cost-effective.
 
 Current plan: {{currentPlan}}
-Current monthly cost: ${{currentMonthCost}}
-Estimated savings: ${{estimatedSavings}}
+Current monthly cost: {{currentMonthCost}}
+Estimated savings: {{estimatedSavings}}
 
 Upgrade now: https://example.com/workspace/{{workspaceId}}/upgrade`,
     channels: ['email', 'in_app'],
@@ -100,11 +100,11 @@ Upgrade now: https://example.com/workspace/{{workspaceId}}/upgrade`,
   cost_forecast: {
     type: 'cost_forecast',
     priority: 'medium',
-    subject: 'Monthly cost forecast: {{workspaceName}} projected at ${{projectedCost}}',
-    bodyTemplate: `Your {{workspaceName}} workspace is projected to cost ${{projectedCost}} this month.
+    subject: 'Monthly cost forecast: {{workspaceName}} projected at {{projectedCost}}',
+    bodyTemplate: `Your {{workspaceName}} workspace is projected to cost {{projectedCost}} this month.
 
-Current spending: ${{currentCost}}
-Projected overage: ${{projectedOverage}}
+Current spending: {{currentCost}}
+Projected overage: {{projectedOverage}}
 Confidence: {{confidence}}%
 
 Days remaining: {{daysRemaining}}

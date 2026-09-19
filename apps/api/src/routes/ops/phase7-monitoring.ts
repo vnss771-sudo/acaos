@@ -5,20 +5,20 @@ import {
   getActiveSpikes, resolveSpike, calculateBudgetPace, getBudgetPace, calculateCostChange,
   getCostChanges, updateLiveAggregate, getLiveAggregate, createAlert, getActiveAlerts,
   acknowledgeAlert, clearMonitoring,
-} from '../../../backend-core/src/lib/costMonitoring.js'
+} from '@acaos/backend-core/lib/costMonitoring.js'
 import {
   createAllocationRule, getAllocationRules, updateAllocationRule, generateShowbackStatement,
   getShowbackStatements, generateChargebackStatement, getChargebackStatements, issueChargebackStatement,
   markChargebackPaid, recordChargebackAllocation, getChargebackAllocations, createInternalInvoice,
   getInternalInvoices, sendInvoice, recordPayment, generateChargeReconciliation, getChargeReconciliations,
   clearChargeback,
-} from '../../../backend-core/src/lib/chargebackEngine.js'
+} from '@acaos/backend-core/lib/chargebackEngine.js'
 import {
   createDashboard, getUserDashboards, getDashboard, updateDashboardWidgets, createCostBreakdownView,
   getCostBreakdownView, createPortalAlert, getUserAlerts, dismissAlert, generateReport, getUserReports,
   createReportDownloadUrl, getUserPreferences, updateUserPreferences, recordActivity, getPortalAuditLogs,
   getUserAuditLogs, createBudgetStatusView, clearPortal,
-} from '../../../backend-core/src/lib/selfServicePortal.js'
+} from '@acaos/backend-core/lib/selfServicePortal.js'
 
 export const phase7MonitoringRouter = Router()
 

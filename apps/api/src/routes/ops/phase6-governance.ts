@@ -4,7 +4,7 @@ import {
   createRole, getRole, assignUserRole, getUserRole, hasPermission, canApproveAmount,
   getCostVisibilityScope, setCostVisibilityRule, logAuditEntry, getAuditLog, getResourceAuditLog,
   initializeDefaultRoles, clearRBAC,
-} from '../../../backend-core/src/lib/rbac.js'
+} from '@acaos/backend-core/lib/rbac.js'
 import {
   createOrganization, getOrganization, updateOrganizationBudget, createDepartment, getDepartment,
   getOrganizationDepartments, getSubdepartments, createTeam, getTeam, getDepartmentTeams,
@@ -12,18 +12,18 @@ import {
   calculateOrganizationBudgetRollup, calculateDepartmentBudgetRollup, delegateBudget,
   approveBudgetDelegation, rejectBudgetDelegation, getPendingDelegations, createCostView,
   getCostView, getOrganizationCostView, getDepartmentCostViews, clearOrganizationHierarchy,
-} from '../../../backend-core/src/lib/organizationalHierarchy.js'
+} from '@acaos/backend-core/lib/organizationalHierarchy.js'
 import {
   createPolicy, getPolicy, getWorkspacePolicies, updatePolicy, enablePolicy, disablePolicy,
   deletePolicy, enforcePolicies, getEnforcementHistory, recordAuditTrail, getPolicyAuditTrail,
   generateComplianceReport, getComplianceReports, clearGovernance,
-} from '../../../backend-core/src/lib/governanceEngine.js'
+} from '@acaos/backend-core/lib/governanceEngine.js'
 import {
   recordCostMetric, getEntityMetrics, setPerformanceKPI, getOrganizationKPIs, createBenchmark,
   getOrganizationBenchmarks, trackCostTrend, getCostTrend, createCostBreakdown, getCostBreakdown,
   calculateCostPerSeat, calculateCostPerTransaction, calculateCostPerUnit, getAnalyticsSummary,
   clearAnalytics,
-} from '../../../backend-core/src/lib/organizationalAnalytics.js'
+} from '@acaos/backend-core/lib/organizationalAnalytics.js'
 
 export const phase6GovernanceRouter = Router()
 

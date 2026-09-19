@@ -14,7 +14,7 @@ import {
   getPatterns,
   getCapacityPlans,
   clearAdvancedAnalytics,
-} from '../../../backend-core/src/lib/advancedAnalytics.js'
+} from '@acaos/backend-core/lib/advancedAnalytics.js'
 import {
   createModel,
   getModels,
@@ -31,7 +31,7 @@ import {
   getModelComparisons,
   deprecateModel,
   clearMLPipeline,
-} from '../../../backend-core/src/lib/mlPipeline.js'
+} from '@acaos/backend-core/lib/mlPipeline.js'
 import {
   generateRecommendation,
   getRecommendations,
@@ -49,7 +49,7 @@ import {
   getRecommendationGroups,
   getRecommendationsSummary,
   clearRecommendations,
-} from '../../../backend-core/src/lib/recommendationEngine.js'
+} from '@acaos/backend-core/lib/recommendationEngine.js'
 
 export const phase9AnalyticsRouter = Router()
 

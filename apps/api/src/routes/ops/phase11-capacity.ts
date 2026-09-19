@@ -18,7 +18,7 @@ import {
   getCapacityOptimizations,
   executeCapacityOptimization,
   clearCapacityPlanning,
-} from '../../../backend-core/src/lib/autonomousCapacityPlanning.js'
+} from '@acaos/backend-core/lib/autonomousCapacityPlanning.js'
 import {
   createCostForecast,
   getCostForecasts,
@@ -36,7 +36,7 @@ import {
   generateCostReport,
   getCostReports,
   clearCostForecasting,
-} from '../../../backend-core/src/lib/autonomousCostForecasting.js'
+} from '@acaos/backend-core/lib/autonomousCostForecasting.js'
 
 export const phase11CapacityRouter = Router()
 

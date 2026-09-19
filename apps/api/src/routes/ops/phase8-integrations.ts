@@ -18,7 +18,7 @@ import {
   getWebhookLogs,
   getWebhooksForEvent,
   clearWebhooks,
-} from '../../../backend-core/src/lib/webhookEngine.js'
+} from '@acaos/backend-core/lib/webhookEngine.js'
 import {
   createConnector,
   getConnectors,
@@ -34,7 +34,7 @@ import {
   getConnectorHealth,
   rotateConnectorSecret,
   clearConnectors,
-} from '../../../backend-core/src/lib/integrationConnectors.js'
+} from '@acaos/backend-core/lib/integrationConnectors.js'
 import {
   publishEvent,
   subscribeToEvents,
@@ -47,7 +47,7 @@ import {
   retryDeadLetterEvent,
   getEventStats,
   clearEventStreaming,
-} from '../../../backend-core/src/lib/eventStreaming.js'
+} from '@acaos/backend-core/lib/eventStreaming.js'
 import {
   createExportJob,
   getExportJobs,
@@ -65,7 +65,7 @@ import {
   recordExportDownload,
   getExportStats,
   clearExports,
-} from '../../../backend-core/src/lib/dataExport.js'
+} from '@acaos/backend-core/lib/dataExport.js'
 
 export const phase8IntegrationsRouter = Router()
 
