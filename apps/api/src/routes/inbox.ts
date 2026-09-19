@@ -4,11 +4,13 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { parseQuery, workspaceIdField } from '../lib/validate.js'
+import { parseQuery, parseBody, parseParams, workspaceIdField } from '../lib/validate.js'
+import { sendMail, isMailConfigured } from '../services/mail.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
-// Read-only; the raw inbound body is never stored, so only derived fields here.
+// POST /api/inbox/reply/:replyId/send — send an AI-suggested reply to the original sender
 export const inboxRouter = Router()
 inboxRouter.use(requireAuth)
 inboxRouter.use(requireVerifiedForMutation)
@@ -21,6 +23,16 @@ const inboxQuerySchema = z.object({
   workspaceId: workspaceIdField,
   // Optional filter by classification; 'all' (or omitted) returns everything.
   classification: z.enum(REPLY_CLASSIFICATIONS).optional(),
+})
+
+const replyParamsSchema = z.object({
+  replyId: z.string().uuid(),
+})
+
+const sendReplySchema = z.object({
+  workspaceId: workspaceIdField,
+  // Optional: use custom body instead of suggestion
+  customBody: z.string().max(5000).optional(),
 })
 
 inboxRouter.get(
@@ -73,5 +85,79 @@ inboxRouter.get(
     }
 
     res.json({ replies, counts, total })
+  })
+)
+
+// POST /api/inbox/reply/:replyId/send — send a reply to the original sender.
+// Accepts either the suggested reply (replySuggestedAction) or a custom body.
+// Creates audit trail. This is the Inbox Assistant core flow.
+// Returns: { success: true, sentAt: ISO string, message: string }
+inboxRouter.post(
+  '/reply/:replyId/send',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { replyId } = parseParams(replyParamsSchema, req)
+    const { workspaceId, customBody } = parseBody(sendReplySchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const reply = await prisma.outreachSent.findUnique({
+      where: { id: replyId },
+      select: {
+        id: true,
+        workspaceId: true,
+        toEmail: true,
+        subject: true,
+        replySuggestedAction: true,
+        repliedAt: true,
+        status: true,
+      },
+    })
+
+    if (!reply) throw new ApiError(404, 'Reply not found')
+    if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
+    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only reply to messages that have replies')
+
+    // Ensure mail is configured
+    if (!isMailConfigured()) {
+      throw new ApiError(503, 'Email service not configured for this workspace')
+    }
+
+    // Use custom body or fall back to suggestion
+    const replyBody = customBody || reply.replySuggestedAction || 'Thank you for your reply.'
+    const replySubject = reply.subject?.startsWith('Re:') ? reply.subject : `Re: ${reply.subject || '(no subject)'}`
+
+    // Send the reply email
+    try {
+      await sendMail(reply.toEmail, replySubject, replyBody)
+    } catch (err) {
+      throw new ApiError(
+        502,
+        `Failed to send reply: ${err instanceof Error ? err.message : 'Email service error'}`
+      )
+    }
+
+    const sentAt = new Date()
+
+    // Audit trail (for compliance + learning)
+    await recordAudit({
+      workspaceId,
+      actorUserId: user.id,
+      type: 'inbox.reply_sent',
+      entityType: 'outreachSent',
+      entityId: replyId,
+      metadata: {
+        toEmail: reply.toEmail,
+        hasCustomBody: !!customBody,
+        replyClassification: reply.replySuggestedAction ? 'suggested' : 'custom',
+      },
+    })
+
+    res.json({
+      success: true,
+      sentAt: sentAt.toISOString(),
+      message: `✓ Reply sent to ${reply.toEmail}`,
+    })
   })
 )
