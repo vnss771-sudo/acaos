@@ -32,7 +32,7 @@ const replyParamsSchema = z.object({
 const sendReplySchema = z.object({
   workspaceId: workspaceIdField,
   // Optional: use custom body instead of suggestion
-  customBody: z.string().max(5000).optional(),
+  customBody: z.string().min(1).max(5000).optional(),
 })
 
 inboxRouter.get(
@@ -112,12 +112,13 @@ inboxRouter.post(
         replySuggestedAction: true,
         repliedAt: true,
         status: true,
+        lead: { select: { id: true, businessName: true } },
       },
     })
 
     if (!reply) throw new ApiError(404, 'Reply not found')
     if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
-    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only reply to messages that have replies')
+    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only send replies to messages that have received a reply')
 
     // Ensure mail is configured
     if (!isMailConfigured()) {
@@ -132,10 +133,20 @@ inboxRouter.post(
     try {
       await sendMail(reply.toEmail, replySubject, replyBody)
     } catch (err) {
-      throw new ApiError(
-        502,
-        `Failed to send reply: ${err instanceof Error ? err.message : 'Email service error'}`
-      )
+      const errorMsg = err instanceof Error ? err.message : 'Email service error'
+      // Classify errors for better user messaging
+      let statusCode = 502
+      let userMessage = `Failed to send reply: ${errorMsg}`
+
+      if (errorMsg.includes('invalid email') || errorMsg.includes('malformed')) {
+        statusCode = 400
+        userMessage = `Invalid recipient email address: ${reply.toEmail}`
+      } else if (errorMsg.includes('timeout') || errorMsg.includes('ECONNREFUSED')) {
+        statusCode = 503
+        userMessage = 'Email service temporarily unavailable. Please try again.'
+      }
+
+      throw new ApiError(statusCode, userMessage)
     }
 
     const sentAt = new Date()
