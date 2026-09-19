@@ -67,6 +67,8 @@ export function InboxView({ api, workspace, toast }: Props) {
   const [sendingReplyId, setSendingReplyId] = useState<string | null>(null)
   const [editingReplyId, setEditingReplyId] = useState<string | null>(null)
   const [customBody, setCustomBody] = useState('')
+  const [feedbackReplyId, setFeedbackReplyId] = useState<string | null>(null)
+  const [feedbackSending, setFeedbackSending] = useState(false)
 
   const loadReqRef = useRef(0)
   const load = useCallback(() => {
@@ -112,6 +114,27 @@ export function InboxView({ api, workspace, toast }: Props) {
       setSendingReplyId(null)
     }
   }, [workspace?.id, customBody, api, toast, load])
+
+  const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect') => {
+    if (!workspace) return
+    setFeedbackSending(true)
+    try {
+      await api(`/api/inbox/reply/${replyId}/feedback`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          workspaceId: workspace.id,
+          feedback,
+        }),
+      })
+      toast.success(feedback === 'correct' ? '✓ Thanks for the feedback!' : '✓ Noted. We\'ll improve this.')
+      setFeedbackReplyId(null)
+      load()
+    } catch (err) {
+      toast.error('Failed to record feedback')
+    } finally {
+      setFeedbackSending(false)
+    }
+  }, [workspace?.id, api, toast, load])
 
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
@@ -174,7 +197,51 @@ export function InboxView({ api, workspace, toast }: Props) {
                 )}
                 {r.replyConfidence !== null && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
-                    <span style={{ color: colors.textFaint, fontSize: 11 }}>Classification confidence</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ color: colors.textFaint, fontSize: 11 }}>Classification confidence</span>
+                      {feedbackReplyId !== r.id && (
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            onClick={() => handleClassificationFeedback(r.id, 'correct')}
+                            disabled={feedbackSending || sendingReplyId === r.id}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              fontSize: 13,
+                              padding: '0 4px',
+                              color: colors.green,
+                              opacity: 0.6,
+                              transition: 'opacity 0.15s',
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                            onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+                            title="Mark as correct"
+                          >
+                            👍
+                          </button>
+                          <button
+                            onClick={() => handleClassificationFeedback(r.id, 'incorrect')}
+                            disabled={feedbackSending || sendingReplyId === r.id}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              fontSize: 13,
+                              padding: '0 4px',
+                              color: colors.red,
+                              opacity: 0.6,
+                              transition: 'opacity 0.15s',
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                            onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+                            title="Mark as incorrect"
+                          >
+                            👎
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <ConfidenceBar value={r.replyConfidence} />
                   </div>
                 )}
