@@ -54,6 +54,7 @@ import { Redis as IORedis } from 'ioredis'
 import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
 import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
 import { logPoolHealth } from './lib/dbMonitor.js'
+import { startCacheCleanup } from '@acaos/backend-core/lib/queryResultCache.js'
 
 validateConfig()
 
@@ -257,6 +258,10 @@ void logPoolHealth()
 const poolHealthCheckIntervalMs = 60 * 1000
 const poolHealthCheckTimer = setInterval(() => void logPoolHealth(), poolHealthCheckIntervalMs)
 if (poolHealthCheckTimer.unref) poolHealthCheckTimer.unref()
+
+// Phase 4.2: Start query result cache cleanup (remove expired entries every 5 min).
+const cacheCleanupTimer = startCacheCleanup()
+if (cacheCleanupTimer.unref) cacheCleanupTimer.unref()
 
 void initErrorReporting()
 

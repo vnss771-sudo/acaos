@@ -3,6 +3,7 @@ import { currentWorkspaceId } from './tenantContext.js'
 import { classifyTenantAccess, tenantGuardMode } from './tenantGuard.js'
 import { withDefaultConnectionLimit } from './databaseUrl.js'
 import { attachQueryInstrumentation } from './queryInstrumentation.js'
+import { getCachedQuery, cacheQueryResult, invalidateQueryCache } from './queryResultCache.js'
 
 declare global {
   // `var` is required here: ambient global augmentation can't use let/const.
