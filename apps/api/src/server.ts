@@ -24,6 +24,7 @@ import { prospectsRouter } from './routes/prospects.js'
 import { packsRouter } from './routes/packs.js'
 import { signalsRouter } from './routes/signals.js'
 import { intelligenceRouter } from './routes/intelligence.js'
+import { integrationsRouter } from './routes/integrations.js'
 import { adminRouter } from './routes/admin.js'
 import { unsubscribeRouter } from './routes/unsubscribe.js'
 import { legalRouter } from './routes/legal.js'
@@ -224,6 +225,7 @@ app.use('/api/prospects', prospectsRouter)
 app.use('/api/packs', packsRouter)
 app.use('/api/signals', signalsRouter)
 app.use('/api/intelligence', intelligenceRouter)
+app.use('/api/integrations', integrationsRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/unsubscribe', unsubscribeRouter)
 app.use('/api/legal', legalRouter)
