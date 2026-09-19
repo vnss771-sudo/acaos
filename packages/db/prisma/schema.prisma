@@ -500,6 +500,9 @@ model OutreachSent {
   // Standalone time index for the global retention purge (sentAt < cutoff), which
   // the workspace-first compound above can't serve.
   @@index([sentAt])
+  // Optimizes Inbox list query: GET /api/inbox filters by (workspaceId, status, repliedAt)
+  // and orders by repliedAt DESC. This compound index covers the full query.
+  @@index([workspaceId, status, repliedAt])
   // Outbox idempotency: at most one send row per (campaign, lead, sequenceStep) —
   // so a sequence can send to a lead more than once (step 1, 2, …) while each step
   // stays at-most-once. Postgres treats NULLs as distinct, so non-campaign/non-lead
