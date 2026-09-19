@@ -49,6 +49,7 @@ import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
+import { checkEncryptionKeyHealth } from '@acaos/backend-core/lib/encrypt.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
@@ -599,6 +600,11 @@ if (isAdaptiveConcurrencyEnabled()) {
 // Wire the error-capture seam to Sentry when SENTRY_DSN is set (no-op otherwise),
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
+
+// The API validates this at boot (server.ts, via checkEncryptionKeyHealth()); the
+// worker never did, despite being the process that actually decrypts SMTP/IMAP
+// credentials on every mail send/sync. Same non-fatal warn-only check.
+checkEncryptionKeyHealth()
 
 // Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
 // debugging, OTEL_CONSOLE_EXPORTER) is set — see backend-core/lib/tracing.ts.

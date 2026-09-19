@@ -8,6 +8,8 @@ import {
   decryptSecret,
   isEncrypted,
   activeKeyId,
+  activeKeyIsHealthy,
+  checkEncryptionKeyHealth,
   blobKeyId,
   needsReencryption,
   rewrapSecret,
@@ -142,6 +144,58 @@ test('an active key id absent from the keyring is rejected', () => {
 
 test('decryptSecret rejects a malformed blob', () => {
   assert.throws(() => decryptSecret('only-one-part'), /Invalid encrypted blob/)
+})
+
+test('activeKeyIsHealthy: true with no active key configured', () => {
+  withKeyEnv({ key: KEY_A }, () => {
+    assert.equal(activeKeyIsHealthy(), true)
+  })
+})
+
+test('activeKeyIsHealthy: true when the active key id resolves in the keyring', () => {
+  withKeyEnv({ key: KEY_A, keys: `2:${KEY_B}`, active: '2' }, () => {
+    assert.equal(activeKeyIsHealthy(), true)
+  })
+})
+
+test('activeKeyIsHealthy: false when the active key id is missing from the keyring', () => {
+  withKeyEnv({ key: KEY_A, keys: `1:${KEY_B}`, active: '9' }, () => {
+    assert.equal(activeKeyIsHealthy(), false)
+  })
+})
+
+function withWarnSpy(fn: () => void): string[] {
+  const warnings: string[] = []
+  const origWarn = console.warn
+  console.warn = (...a: unknown[]) => { warnings.push(a.join(' ')) }
+  try {
+    fn()
+  } finally {
+    console.warn = origWarn
+  }
+  return warnings
+}
+
+test('checkEncryptionKeyHealth: no warning when no active key id is configured', () => {
+  withKeyEnv({ key: KEY_A }, () => {
+    const warnings = withWarnSpy(() => checkEncryptionKeyHealth())
+    assert.deepEqual(warnings, [])
+  })
+})
+
+test('checkEncryptionKeyHealth: no warning when the active key id resolves in the keyring', () => {
+  withKeyEnv({ key: KEY_A, keys: `2:${KEY_B}`, active: '2' }, () => {
+    const warnings = withWarnSpy(() => checkEncryptionKeyHealth())
+    assert.deepEqual(warnings, [])
+  })
+})
+
+test('checkEncryptionKeyHealth: warns when the active key id is missing from the keyring', () => {
+  withKeyEnv({ key: KEY_A, keys: `1:${KEY_B}`, active: '9' }, () => {
+    const warnings = withWarnSpy(() => checkEncryptionKeyHealth())
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /EMAIL_ENCRYPTION_ACTIVE_KEY_ID "9" is not present in EMAIL_ENCRYPTION_KEYS/)
+  })
 })
 
 test('a configured hex key is honored and validated', () => {
