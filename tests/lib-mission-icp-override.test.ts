@@ -1,9 +1,10 @@
 // Unit tests for resolveEffectiveTargeting — the mission-override > workspace
 // ICP > playbook-pack fallback chain used by both GET /api/missions/:id/icp
-// and POST /api/prospects/discover.
+// and POST /api/prospects/discover — and buildDiscoveryQuery, which layers an
+// explicit POST /discover request field on top of that resolved chain.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveEffectiveTargeting } from '../apps/api/src/routes/prospects/helpers.ts'
+import { resolveEffectiveTargeting, buildDiscoveryQuery } from '../apps/api/src/routes/prospects/helpers.ts'
 import type { IndustryPack } from '../apps/api/src/lib/packs/types.ts'
 
 const PACK: IndustryPack = {
@@ -57,4 +58,46 @@ test('override alone, with no workspace ICP, falls through to the pack for unset
   assert.deepEqual(r.targetIndustries, ['Manufacturing'])
   assert.deepEqual(r.targetGeos, ['Brisbane'], 'falls all the way through to the pack')
   assert.equal(r.minEmployees, 5)
+})
+
+// --- buildDiscoveryQuery: an explicit POST /discover request field must beat
+// the already-resolved effective targeting, for every field, not just some.
+
+const EFFECTIVE = { targetIndustries: ['SaaS'], targetGeos: ['Remote'], minEmployees: 50, maxEmployees: 500 }
+
+test('an explicit request field wins over the resolved ICP/mission targeting', () => {
+  const q = buildDiscoveryQuery({ minEmployees: 5, maxEmployees: 20 }, EFFECTIVE)
+  assert.equal(q.minEmployees, 5, 'the request explicitly asked for smaller companies — it must not be silently overridden')
+  assert.equal(q.maxEmployees, 20)
+})
+
+test('a request field left unset falls through to the resolved targeting', () => {
+  const q = buildDiscoveryQuery({}, EFFECTIVE)
+  assert.equal(q.minEmployees, 50)
+  assert.equal(q.maxEmployees, 500)
+  assert.deepEqual(q.industries, ['SaaS'])
+  assert.deepEqual(q.locations, ['Remote'])
+})
+
+test('industries/locations/minEmployees/maxEmployees all use the same request-wins precedence', () => {
+  const q = buildDiscoveryQuery(
+    { industries: ['Manufacturing'], locations: ['Austin'], minEmployees: 1, maxEmployees: 10 },
+    EFFECTIVE,
+  )
+  assert.deepEqual(q.industries, ['Manufacturing'])
+  assert.deepEqual(q.locations, ['Austin'])
+  assert.equal(q.minEmployees, 1)
+  assert.equal(q.maxEmployees, 10)
+})
+
+test('limit defaults to 25 and keywords defaults to [] when the request omits them', () => {
+  const q = buildDiscoveryQuery({}, EFFECTIVE)
+  assert.equal(q.limit, 25)
+  assert.deepEqual(q.keywords, [])
+})
+
+test('an explicit limit and keywords list from the request are used as-is', () => {
+  const q = buildDiscoveryQuery({ limit: 10, keywords: ['crm'] }, EFFECTIVE)
+  assert.equal(q.limit, 10)
+  assert.deepEqual(q.keywords, ['crm'])
 })
