@@ -73,7 +73,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     // ICP → mission playbook preset.
     const pack = missionPlaybookId ? getPack(missionPlaybookId) : undefined
     const effective = resolveEffectiveTargeting(missionIcpOverride, icp, pack)
-    const query = buildDiscoveryQuery(body, effective) // limit bounded to 1..50 by discoverSchema
+    const query = buildDiscoveryQuery(body, effective)
 
     // Stable hash of (source + canonical query) for in-flight dedup. Sorting the
     // array fields + fixing key order makes the hash insensitive to request-order

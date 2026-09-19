@@ -102,7 +102,7 @@ export function buildDiscoveryQuery(
     keywords: body.keywords ?? [],
     minEmployees: body.minEmployees ?? effective.minEmployees,
     maxEmployees: body.maxEmployees ?? effective.maxEmployees,
-    limit: body.limit ?? 25,
+    limit: body.limit ?? 25, // bounded to 1..50 by discoverSchema
   }
 }
 
