@@ -5,6 +5,7 @@
 
 import { apolloSearchBreaker, googlePlacesBreaker } from './circuit.js'
 import { callProvider } from './providerClient.js'
+import { checkProviderQuota } from './providerQuota.js'
 
 export type ProspectSearchInput = {
   industries?: string[]
@@ -112,6 +113,11 @@ class ApolloSource implements ProspectSourceProvider {
       body.organization_num_employees_ranges = [`${min},${max}`]
     }
 
+    // Platform-wide backstop: every workspace shares the same Apollo contract, so
+    // this guards the aggregate call volume even when each workspace stays under
+    // its own per-workspace discovery quota (checkAndIncrementDiscoveryUsage).
+    await checkProviderQuota(this.name)
+
     // Transient failures (timeout/429/5xx) are retried then trip the breaker; a
     // terminal error propagates so the discover route records a FAILED run rather
     // than masking it as an empty result.
@@ -170,6 +176,9 @@ class GooglePlacesSource implements ProspectSourceProvider {
     const location = input.locations?.[0]  ?? ''
     const textQuery = [industry, location].filter(Boolean).join(' in ')
     if (!textQuery) return []
+
+    // Same platform-wide backstop as ApolloSource — see the comment there.
+    await checkProviderQuota(this.name)
 
     // Let failures propagate (the discover route records a FAILED DiscoveryRun and
     // returns a clear 502) rather than swallowing them into an empty result, which

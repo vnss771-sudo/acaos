@@ -49,6 +49,7 @@ import { captureError, setProviderCallObserver } from '@acaos/backend-core/lib/o
 import { incProviderCall } from './lib/metrics.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+import { attachProviderQuotaStore } from '@acaos/backend-core/lib/providerQuota.js'
 import { Redis as IORedis } from 'ioredis'
 import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
 import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
@@ -295,6 +296,7 @@ setProviderCallObserver(incProviderCall)
 
 if (process.env.REDIS_URL) {
   attachBreakerStore(createRedisBreakerStore(getRedis()))
+  attachProviderQuotaStore(getRedis())
 
   // Cross-pod ingestCache invalidation (see ingestCacheInvalidation.ts): a
   // dedicated subscriber connection, since ioredis puts a client that issues
