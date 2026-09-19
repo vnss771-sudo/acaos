@@ -11,6 +11,7 @@ import { performanceRouter } from './performance.js'
 import { optimizationRouter } from './optimization.js'
 import { tracingRouter } from './tracing.js'
 import { quotasRouter } from './quotas.js'
+import { phase45AlertsRouter } from './phase4-5-alerts.js'
 
 // The Ops module: workspace-scoped field crew / job-site / shift / roster
 // management. Each concern is its own router (each already carries its own
@@ -24,6 +25,7 @@ import { quotasRouter } from './quotas.js'
 // Phase 4.2: Added optimization/indexing endpoints for query and database tuning.
 // Phase 4.3: Added distributed tracing endpoints for end-to-end latency analysis.
 // Phase 4.4: Added quotas and billing endpoints for workspace cost attribution.
+// Phase 4.5: Added alerts and cost forecasting endpoints for proactive recommendations.
 export const opsRouter = Router()
 
 opsRouter.use('/crew', crewRouter)
@@ -38,3 +40,4 @@ opsRouter.use('/performance', performanceRouter)
 opsRouter.use('/optimization', optimizationRouter)
 opsRouter.use('/tracing', tracingRouter)
 opsRouter.use('/quotas', quotasRouter)
+opsRouter.use('/alerts', phase45AlertsRouter)
