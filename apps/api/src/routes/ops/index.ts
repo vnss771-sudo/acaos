@@ -22,6 +22,7 @@ import { phase7MonitoringRouter } from './phase7-monitoring.js'
 import { phase8IntegrationsRouter } from './phase8-integrations.js'
 import { phase9AnalyticsRouter } from './phase9-analytics.js'
 import { phase10AgentsRouter } from './phase10-agents.js'
+import { phase11CapacityRouter } from './phase11-capacity.js'
 
 // The Ops module: workspace-scoped field crew / job-site / shift / roster
 // management. Each concern is its own router (each already carries its own
@@ -46,6 +47,7 @@ import { phase10AgentsRouter } from './phase10-agents.js'
 // Phase 8: Added integration connectors, event streaming, webhook infrastructure, and data export endpoints.
 // Phase 9: Added advanced analytics, ML pipelines, forecasting, anomaly detection, and recommendation engine.
 // Phase 10: Added autonomous agents, self-executing cost optimization, intelligent scheduling, and autonomous anomaly response.
+// Phase 11: Added autonomous capacity planning, predictive infrastructure provisioning, and cost forecasting with budget governance.
 export const opsRouter = Router()
 
 opsRouter.use('/crew', crewRouter)
@@ -71,3 +73,4 @@ opsRouter.use('/monitoring', phase7MonitoringRouter)
 opsRouter.use('/integrations', phase8IntegrationsRouter)
 opsRouter.use('/analytics', phase9AnalyticsRouter)
 opsRouter.use('/agents', phase10AgentsRouter)
+opsRouter.use('/capacity', phase11CapacityRouter)
