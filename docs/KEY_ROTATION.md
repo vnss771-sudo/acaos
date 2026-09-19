@@ -55,13 +55,17 @@ Procedure:
    fresh id, e.g. `EMAIL_ENCRYPTION_KEYS=2:<newhex>`, and set
    `EMAIL_ENCRYPTION_ACTIVE_KEY_ID=2`. Leave `EMAIL_ENCRYPTION_KEY` in place. Deploy.
    New writes are now sealed under key `2`; all existing data still decrypts.
-2. Run a one-off migration that walks the encrypted columns and calls
-   `rewrapSecret(blob)` for every row where `needsReencryption(blob)` is true
-   (decrypt under the old key, re-encrypt under the active key). Idempotent and safe
-   to re-run.
-3. Once nothing reports `needsReencryption`, you may drop the retired key from
-   `EMAIL_ENCRYPTION_KEYS` (and stop relying on `EMAIL_ENCRYPTION_KEY` for reads if
-   all data is now versioned).
+   (The API and worker both warn at boot, non-fatally, if `EMAIL_ENCRYPTION_ACTIVE_KEY_ID`
+   doesn't resolve in `EMAIL_ENCRYPTION_KEYS` — a typo here surfaces immediately in
+   logs instead of silently failing on the first write.)
+2. Run `node scripts/rotate-encryption-key.mjs` — it walks the encrypted columns
+   and calls `rewrapSecret(blob)` for every row where `needsReencryption(blob)` is
+   true (decrypt under the old key, re-encrypt under the active key). Dry-run by
+   default (reports what would change); pass `--yes` to actually apply. Idempotent
+   and safe to re-run.
+3. Once a re-run of the script (dry-run) reports nothing pending, you may drop the
+   retired key from `EMAIL_ENCRYPTION_KEYS` (and stop relying on `EMAIL_ENCRYPTION_KEY`
+   for reads if all data is now versioned).
 
 #### Fallback (destructive)
 If you cannot run a migration, either clear stored credentials (require workspaces
