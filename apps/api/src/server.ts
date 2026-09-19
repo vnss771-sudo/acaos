@@ -12,6 +12,7 @@ import { workspaceRouter } from './routes/workspaces.js'
 import { campaignsRouter } from './routes/campaigns.js'
 import { missionsRouter } from './routes/missions.js'
 import { leadsRouter } from './routes/leads.js'
+import { leadScoringRouter } from './routes/lead-scoring.js'
 import { statsRouter } from './routes/stats.js'
 import { inboxRouter } from './routes/inbox.js'
 import { sendsRouter } from './routes/sends.js'
@@ -211,6 +212,7 @@ app.use('/api/workspaces', workspaceRouter)
 app.use('/api/campaigns', campaignsRouter)
 app.use('/api/missions', missionsRouter)
 app.use('/api/leads', leadsRouter)
+app.use('/api/lead-scoring', leadScoringRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/inbox', inboxRouter)
 app.use('/api/sends', sendsRouter)
