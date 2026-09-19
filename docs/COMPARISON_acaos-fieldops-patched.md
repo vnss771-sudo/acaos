@@ -136,3 +136,17 @@ recommend **splitting into separate PRs** rather than one bulk merge:
 No code was merged into this branch as part of this comparison — this document
 is the deliverable. Say the word if you want any of the four workstreams above
 actually applied to `master`.
+
+## 4. Status
+
+Workstream B (mission ICP overrides) and the `limits.ts` provider-quota and
+encryption-key-tooling items from workstream C have since been implemented and
+merged (PRs #268, #270, #269).
+
+**Deferred — Ops webhooks + CSV exports.** The 8 "stub routers" listed in
+section A under the Ops module (`branches`/`branding`/`currency`/`documents`/
+`integrations`/`notifications`/`portal`/`sso`/`webhooks`/`audit`) were stubs in
+the source archive itself, not existing functionality — there was nothing to
+port. Building real Ops webhook notifications or CSV report exports is
+therefore a new product feature to design, not outstanding merge/porting work.
+Revisit based on customer requirements.
