@@ -21,6 +21,9 @@ import { ApiError } from './errors.js'
 export interface RedisLike {
   incr(key: string): Promise<number>
   expire(key: string, seconds: number): Promise<number>
+  // Present on a real ioredis client; absent on a minimal test fake. Checked
+  // (when present) before issuing a command — see the comment on its use below.
+  status?: string
 }
 
 const WINDOW_MS = 60 * 60 * 1000 // 1 hour — matches workspaceRateLimit.ts's granularity
@@ -68,6 +71,16 @@ export async function checkProviderQuota(provider: string): Promise<void> {
   let count: number
   try {
     if (!redis) throw new Error('no shared store attached')
+    // Both server.ts's getRedis() and worker.ts's queue connection set
+    // maxRetriesPerRequest: null with a retryStrategy that never gives up (required
+    // by BullMQ) — ioredis queues commands issued while disconnected/reconnecting
+    // rather than rejecting them, so a plain `await redis.incr(key)` during a Redis
+    // outage would hang for the outage's duration instead of hitting this catch
+    // block's fallback. Checking readiness first (the same style of guard
+    // workspaceRateLimit.ts uses, adapted here since RedisLike's `status` is
+    // optional) makes the fallback actually reachable. Skipped for a test fake
+    // with no `status` at all — ioredis's own status is never an empty string.
+    if (redis.status && redis.status !== 'ready') throw new Error('Redis not ready')
     count = await redis.incr(key)
     if (count === 1) await redis.expire(key, Math.ceil(WINDOW_MS / 1000))
   } catch {

@@ -102,3 +102,18 @@ test('fail-open: a store error falls back to in-process enforcement rather than 
   await checkProviderQuota('apollo')
   await assert.rejects(() => checkProviderQuota('apollo'), (err: any) => err.statusCode === 429)
 })
+
+test('fail-open: a not-ready client is never called (a real ioredis client would hang, not throw, mid-command)', async () => {
+  process.env.PROVIDER_QUOTA_APOLLO_PER_HOUR = '1'
+  let incrCalls = 0
+  attachProviderQuotaStore({
+    status: 'connecting', // never 'ready' — mirrors a client mid-reconnect
+    async incr() { incrCalls++; return new Promise(() => {}) }, // would hang forever if ever called
+    async expire() { return 1 },
+  })
+
+  // Resolves promptly via the in-process fallback instead of hanging on incr().
+  await checkProviderQuota('apollo')
+  await assert.rejects(() => checkProviderQuota('apollo'), (err: any) => err.statusCode === 429)
+  assert.equal(incrCalls, 0, 'a not-ready client must never be sent a command')
+})
