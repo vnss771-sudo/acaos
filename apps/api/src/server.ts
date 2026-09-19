@@ -55,6 +55,7 @@ import { attachIngestCacheInvalidator } from './lib/ingestCache.js'
 import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
 import { logPoolHealth } from './lib/dbMonitor.js'
 import { startCacheCleanup } from '@acaos/backend-core/lib/queryResultCache.js'
+import { tracingMiddleware } from './middleware/tracingMiddleware.js'
 
 validateConfig()
 
@@ -84,6 +85,7 @@ app.use((_req, res, next) => {
 app.use(compression())
 app.use(securityHeaders)
 app.use(requestContext)
+app.use(tracingMiddleware)
 app.use(metricsMiddleware)
 
 app.use(cors({
