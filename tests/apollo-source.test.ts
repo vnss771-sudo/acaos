@@ -4,14 +4,19 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { getSource } from '../packages/backend-core/src/lib/prospectSources.ts'
+import { _resetProviderQuotaForTest } from '../packages/backend-core/src/lib/providerQuota.ts'
 
 const origFetch = globalThis.fetch
 const origKey = process.env.APOLLO_API_KEY
+const origQuotaEnv = process.env.PROVIDER_QUOTA_APOLLO_PER_HOUR
 
 afterEach(() => {
   globalThis.fetch = origFetch
   if (origKey === undefined) delete process.env.APOLLO_API_KEY
   else process.env.APOLLO_API_KEY = origKey
+  if (origQuotaEnv === undefined) delete process.env.PROVIDER_QUOTA_APOLLO_PER_HOUR
+  else process.env.PROVIDER_QUOTA_APOLLO_PER_HOUR = origQuotaEnv
+  _resetProviderQuotaForTest()
 })
 
 test('apollo maps organizations to candidates and drops nameless orgs', async () => {
@@ -48,4 +53,26 @@ test('apollo throws a descriptive error on a non-OK response', async () => {
   // callProvider surfaces a typed, descriptive ProviderError (provider + operation
   // + status + detail) after retrying the 429; the discover route records it FAILED.
   await assert.rejects(() => src.search({ limit: 10 }), /apollo mixed_companies\/search 429/)
+})
+
+test('apollo enforces the platform-wide provider quota before calling out', async () => {
+  process.env.APOLLO_API_KEY = 'k'
+  process.env.PROVIDER_QUOTA_APOLLO_PER_HOUR = '1'
+  let fetchCalls = 0
+  globalThis.fetch = (async () => {
+    fetchCalls++
+    return { ok: true, json: async () => ({ organizations: [] }) }
+  }) as unknown as typeof fetch
+
+  const src = getSource('apollo')!
+  await src.search({ limit: 10 }) // 1st call: under quota
+  await assert.rejects(
+    () => src.search({ limit: 10 }), // 2nd call: quota exhausted
+    (err: any) => {
+      assert.equal(err.statusCode, 429)
+      assert.match(err.message, /Platform-wide hourly quota for apollo reached/)
+      return true
+    },
+  )
+  assert.equal(fetchCalls, 1, 'the provider must not be called once the quota is exhausted')
 })

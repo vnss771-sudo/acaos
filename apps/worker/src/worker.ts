@@ -52,6 +52,7 @@ import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { checkEncryptionKeyHealth } from '@acaos/backend-core/lib/encrypt.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+import { attachProviderQuotaStore } from '@acaos/backend-core/lib/providerQuota.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
 import {
   createAdaptiveScaler,
@@ -614,6 +615,11 @@ initTracing(SERVICE)
 // connection) so a provider outage the worker trips also protects the API.
 // Fail-open: falls back to per-process state if Redis is unavailable.
 attachBreakerStore(createRedisBreakerStore(connection))
+
+// Share the platform-wide discovery-provider quota with the API the same way —
+// the worker runs discovery jobs too (see processors.ts), against the same
+// shared Apollo/Google Places contract.
+attachProviderQuotaStore(connection)
 
 // ── Liveness probe + metrics ─────────────────────────────────────────────────────
 // Bind to the platform-injected PORT when present (so Railway's healthcheck, which
