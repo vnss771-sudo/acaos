@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { currentWorkspaceId } from './tenantContext.js'
 import { classifyTenantAccess, tenantGuardMode } from './tenantGuard.js'
 import { withDefaultConnectionLimit } from './databaseUrl.js'
+import { attachQueryInstrumentation } from './queryInstrumentation.js'
 
 declare global {
   // `var` is required here: ambient global augmentation can't use let/const.
@@ -18,6 +19,10 @@ function createPrismaClient() {
     ...(rawUrl ? { datasourceUrl: withDefaultConnectionLimit(rawUrl) } : {}),
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error']
   })
+
+  // Phase 4.1: Attach query instrumentation for performance monitoring and
+  // tenant-model query tracking (abuse detection, load distribution).
+  attachQueryInstrumentation(base)
 
   // Defense-in-depth tenant guard. Inert (and not even installed) unless
   // TENANT_GUARD_MODE is observe/enforce, so production behaviour is unchanged by

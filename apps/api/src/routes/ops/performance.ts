@@ -4,6 +4,7 @@ import { verifyDatabasePool, getQueryMetrics } from '../../lib/dbMonitor.js'
 import { getWorkspaceCacheStats } from '../../lib/workspaceCache.js'
 import { getWorkspaceQueryDistribution } from '../../lib/workspaceIsolation.js'
 import { getIncidentLog, getAbuseMetrics } from '../../lib/abuseDetection.js'
+import { getSlowestQueries, getTenantQueryDistribution } from '@acaos/backend-core/lib/queryInstrumentation.js'
 
 // Multi-tenant performance metrics endpoint. Phase 4.1 operational visibility.
 // Aggregates database pool health, query performance, caching efficiency, and
@@ -81,13 +82,55 @@ performanceRouter.get(
       ? (metrics.slowQueries / metrics.totalQueries * 100).toFixed(1)
       : '0'
 
+    const slowestQueries = getSlowestQueries(10)
+
     res.json({
       metrics,
       slowQueryPercentage,
       slowQueryThresholdMs: 500,
+      slowestQueries: slowestQueries.map((q) => ({
+        model: q.model,
+        operation: q.operation,
+        maxDurationMs: q.maxDurationMs,
+        avgDurationMs: q.avgDurationMs,
+        count: q.count,
+        recommendation: q.maxDurationMs > 1000
+          ? `Add index on ${q.model} for faster ${q.operation}s`
+          : undefined,
+      })),
       recommendation: metrics.slowQueries > 5
-        ? 'Investigate slow queries — check logs for query names and consider indexing'
+        ? 'Investigate slow queries — check slowest list and consider indexing'
         : 'Query performance OK',
+    })
+  })
+)
+
+/**
+ * GET /api/ops/performance/queries/by-tenant — Tenant-model query distribution.
+ * Shows which workspaces are using which models most intensively.
+ * Useful for abuse detection and understanding load patterns.
+ */
+performanceRouter.get(
+  '/queries/by-tenant',
+  asyncHandler(async (_req, res) => {
+    const distribution = getTenantQueryDistribution()
+
+    // Sort workspaces by total query count
+    const topWorkspaces = Object.entries(distribution)
+      .map(([wsId, models]) => ({
+        workspaceId: wsId,
+        totalQueries: Object.values(models).reduce((sum, count) => sum + count, 0),
+        byModel: models,
+      }))
+      .sort((a, b) => b.totalQueries - a.totalQueries)
+      .slice(0, 20)
+
+    res.json({
+      topWorkspaces,
+      totalWorkspacesTracked: Object.keys(distribution).length,
+      recommendation: topWorkspaces.length > 0 && topWorkspaces[0].totalQueries > 1000
+        ? 'High query load detected — review top workspace for optimization or rate limiting'
+        : 'Tenant query load distributed normally',
     })
   })
 )

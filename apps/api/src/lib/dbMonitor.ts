@@ -4,6 +4,7 @@
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
+import { getSlowestQueries } from '@acaos/backend-core/lib/queryInstrumentation.js'
 
 export type PoolMetrics = {
   poolSize: number
@@ -20,16 +21,6 @@ export type QueryMetrics = {
   maxDurationMs: number
 }
 
-interface QueryLog {
-  timestamp: number
-  durationMs: number
-  query: string
-}
-
-// Per-service queryLog for slow-query tracking (one per deployment pod).
-// Kept small (100 entries max) to avoid memory bloat.
-const queryLog: QueryLog[] = []
-const QUERY_LOG_MAX = 100
 const SLOW_QUERY_THRESHOLD_MS = 500 // Queries >500ms are slow in multi-tenant
 
 /**
@@ -40,11 +31,8 @@ export async function verifyDatabasePool(): Promise<PoolMetrics> {
   try {
     // Simple query to verify connectivity and timing
     const start = Date.now()
-    const result = await prisma.$queryRaw<[{ now: Date }]>`SELECT NOW()`
+    await prisma.$queryRaw`SELECT NOW()`
     const durationMs = Date.now() - start
-
-    // Log query for monitoring
-    recordQuery('SELECT NOW()', durationMs)
 
     // Prisma doesn't expose detailed pool metrics directly, but we can estimate
     // utilization from the default connection limit and query duration.
@@ -70,36 +58,25 @@ export async function verifyDatabasePool(): Promise<PoolMetrics> {
 }
 
 /**
- * Record a query for slow-query analysis. Kept in-memory for performance;
- * production monitoring should hook into Prisma's middleware for detailed metrics.
- */
-function recordQuery(query: string, durationMs: number): void {
-  queryLog.push({ timestamp: Date.now(), durationMs, query })
-  if (queryLog.length > QUERY_LOG_MAX) queryLog.shift()
-
-  // Warn on slow queries; check the threshold
-  if (durationMs > SLOW_QUERY_THRESHOLD_MS) {
-    logger.warn('slow query detected', { query: query.slice(0, 100), durationMs })
-  }
-}
-
-/**
  * Get recent query performance metrics for this pod.
  * Useful for detecting local bottlenecks (high-contention queries, missing indexes).
+ * Uses data from Prisma's instrumentation middleware.
  */
 export function getQueryMetrics(): QueryMetrics {
-  if (queryLog.length === 0) {
+  const slowestQueries = getSlowestQueries(100)
+  if (slowestQueries.length === 0) {
     return { totalQueries: 0, slowQueries: 0, avgDurationMs: 0, maxDurationMs: 0 }
   }
 
-  const slowQueries = queryLog.filter((q) => q.durationMs > SLOW_QUERY_THRESHOLD_MS).length
-  const totalDuration = queryLog.reduce((sum, q) => sum + q.durationMs, 0)
-  const maxDuration = Math.max(...queryLog.map((q) => q.durationMs))
+  const totalQueries = slowestQueries.reduce((sum, q) => sum + q.count, 0)
+  const slowQueries = slowestQueries.filter((q) => q.maxDurationMs > SLOW_QUERY_THRESHOLD_MS).length
+  const totalDuration = slowestQueries.reduce((sum, q) => sum + q.avgDurationMs * q.count, 0)
+  const maxDuration = Math.max(...slowestQueries.map((q) => q.maxDurationMs))
 
   return {
-    totalQueries: queryLog.length,
+    totalQueries,
     slowQueries,
-    avgDurationMs: Math.round(totalDuration / queryLog.length),
+    avgDurationMs: totalQueries > 0 ? Math.round(totalDuration / totalQueries) : 0,
     maxDurationMs: maxDuration,
   }
 }
