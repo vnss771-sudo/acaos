@@ -203,10 +203,10 @@ function Step1({
     <div>
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <h1 style={{ color: colors.text, fontSize: 22, fontWeight: 700, margin: '0 0 10px' }}>
-          Welcome to ACAOS — let's set up your Acquisition Radar
+          Welcome to Inbox Assistant — set up in 3 minutes
         </h1>
         <p style={{ color: colors.textMuted, fontSize: 14, margin: 0 }}>
-          This takes 3 minutes. We'll configure your intelligence engine and show you live opportunities.
+          Let's configure your email intelligence engine. Select your playbook to get started.
         </p>
       </div>
 
@@ -286,7 +286,7 @@ function Step2({
         Configure your Ideal Customer Profile
       </h2>
       <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 24px' }}>
-        These settings tell ACAOS which signals to surface and who to prioritise.
+        These settings help Inbox Assistant understand your business and optimize email intelligence for your workflow.
       </p>
 
       <div style={{ ...s.stack, gap: 16 }}>
