@@ -76,10 +76,11 @@ export async function checkProviderQuota(provider: string): Promise<void> {
     // by BullMQ) — ioredis queues commands issued while disconnected/reconnecting
     // rather than rejecting them, so a plain `await redis.incr(key)` during a Redis
     // outage would hang for the outage's duration instead of hitting this catch
-    // block's fallback. Checking readiness first (mirroring
-    // workspaceRateLimit.ts's identical guard) makes the fallback actually
-    // reachable. Skipped for a test fake with no `status` at all.
-    if (redis.status !== undefined && redis.status !== 'ready') throw new Error('Redis not ready')
+    // block's fallback. Checking readiness first (the same style of guard
+    // workspaceRateLimit.ts uses, adapted here since RedisLike's `status` is
+    // optional) makes the fallback actually reachable. Skipped for a test fake
+    // with no `status` at all — ioredis's own status is never an empty string.
+    if (redis.status && redis.status !== 'ready') throw new Error('Redis not ready')
     count = await redis.incr(key)
     if (count === 1) await redis.expire(key, Math.ceil(WINDOW_MS / 1000))
   } catch {
