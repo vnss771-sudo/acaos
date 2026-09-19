@@ -35,6 +35,12 @@ const sendReplySchema = z.object({
   customBody: z.string().min(1).max(5000).optional(),
 })
 
+const classificationFeedbackSchema = z.object({
+  workspaceId: workspaceIdField,
+  feedback: z.enum(['correct', 'incorrect', 'unsure']),
+  correctedIntent: z.enum(REPLY_CLASSIFICATIONS).optional(),
+})
+
 inboxRouter.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -169,6 +175,64 @@ inboxRouter.post(
       success: true,
       sentAt: sentAt.toISOString(),
       message: `✓ Reply sent to ${reply.toEmail}`,
+    })
+  })
+)
+
+// PATCH /api/inbox/reply/:replyId/feedback — record user feedback on classification
+// This feeds the learning loop to improve future classifications.
+// Returns: { success: true, message: string }
+inboxRouter.patch(
+  '/reply/:replyId/feedback',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { replyId } = parseParams(replyParamsSchema, req)
+    const { workspaceId, feedback, correctedIntent } = parseBody(classificationFeedbackSchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const reply = await prisma.outreachSent.findUnique({
+      where: { id: replyId },
+      select: {
+        id: true,
+        workspaceId: true,
+        replyIntent: true,
+        replyConfidence: true,
+        status: true,
+      },
+    })
+
+    if (!reply) throw new ApiError(404, 'Reply not found')
+    if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
+    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only provide feedback on messages with replies')
+
+    // Record the feedback as metadata for the learning loop
+    const correctedIntentValue = feedback === 'incorrect' ? correctedIntent : null
+    const feedbackMessage = feedback === 'correct'
+      ? 'Classification marked as correct'
+      : feedback === 'incorrect'
+        ? `Classification corrected to ${correctedIntentValue || reply.replyIntent}`
+        : 'Classification marked as uncertain'
+
+    // Record audit trail for feedback
+    await recordAudit({
+      workspaceId,
+      actorUserId: user.id,
+      type: 'inbox.classification_feedback',
+      entityType: 'outreachSent',
+      entityId: replyId,
+      metadata: {
+        originalIntent: reply.replyIntent,
+        correctedIntent: correctedIntentValue,
+        feedback,
+        confidence: reply.replyConfidence,
+      },
+    })
+
+    res.json({
+      success: true,
+      message: feedbackMessage,
     })
   })
 )
