@@ -6,6 +6,7 @@ import { normalizeEmail, isValidEmail } from '../../lib/textNormalize.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
+import { isEncrypted } from '@acaos/backend-core/lib/encrypt.js'
 import {
   subprocessorDisclosure, dpaDisclosure, COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION, DPA_VERSION,
   LAWFUL_BASES, CONSENT_BASES, CONSENT_SOURCES,
@@ -117,6 +118,164 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
         entityType: 'consentRecord', entityId: row.id, metadata: { basis: body.basis, source: body.source },
       })
       res.status(201).json({ id: row.id, recordedAt: row.recordedAt.toISOString() })
+    })
+  )
+
+  // GET /:id/data-export — GDPR data export (Art. 15). Downloads all workspace
+  // data as JSON: members, prospects, campaigns, email logs, audit trail, consent
+  // records. Encrypted fields (SMTP/IMAP passwords, keys) are EXCLUDED from export
+  // to prevent accidental credential leaks. Any member can request export (GDPR
+  // does not require admin verification). Triggers audit trail.
+  workspaceRouter.get(
+    '/:id/data-export',
+    asyncHandler(async (req, res) => {
+      const user = requireUser(req)
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
+
+      // Verify access: any member of workspace may export
+      await assertMinimumWorkspaceRole(user.id, workspaceId, 'member')
+
+      const workspace = await prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { id: true, name: true, slug: true, createdAt: true, updatedAt: true }
+      })
+      if (!workspace) throw new ApiError(404, 'Workspace not found')
+
+      // Collect all workspace-scoped data in parallel
+      const [members, prospects, campaigns, sends, leads, auditEvents, consentRecords, emailConfig] = await Promise.all([
+        prisma.membership.findMany({
+          where: { workspaceId },
+          select: { userId: true, role: true, createdAt: true },
+        }),
+        prisma.prospect.findMany({
+          where: { workspaceId },
+          select: {
+            id: true, companyName: true, industry: true, location: true, employeeCount: true,
+            description: true, contactName: true, contactTitle: true, buyingStage: true,
+            createdAt: true,
+          },
+        }),
+        prisma.campaign.findMany({
+          where: { workspaceId },
+          select: {
+            id: true, name: true, description: true, goalType: true,
+            createdAt: true, updatedAt: true,
+          },
+        }),
+        prisma.outreachSent.findMany({
+          where: { workspaceId },
+          select: {
+            id: true, toEmail: true, subject: true, status: true, replyIntent: true,
+            replySummary: true, sentAt: true, repliedAt: true,
+          },
+        }),
+        prisma.lead.findMany({
+          where: { workspaceId },
+          select: { id: true, businessName: true, email: true, stage: true, createdAt: true },
+        }),
+        prisma.auditEvent.findMany({
+          where: { workspaceId },
+          select: {
+            id: true, type: true, entityType: true, entityId: true,
+            actorUserId: true, createdAt: true,
+          },
+        }),
+        prisma.consentRecord.findMany({
+          where: { workspaceId },
+          select: { id: true, emailKey: true, basis: true, source: true, recordedAt: true },
+        }),
+        prisma.workspaceEmailConfig.findUnique({
+          where: { workspaceId },
+          select: {
+            smtpHost: true, smtpPort: true, smtpSecure: true, smtpUser: true, smtpFrom: true,
+            imapHost: true, imapPort: true, imapSecure: true, imapUser: true,
+          },
+        }),
+      ])
+
+      // Build export with plaintext & metadata, no secrets
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        exportedBy: user.id,
+        exportVersion: '1.0',
+        workspace,
+        members,
+        prospects,
+        campaigns,
+        outreachSends: sends,
+        leads,
+        consentRecords,
+        auditLog: auditEvents,
+        emailConfig: emailConfig ? {
+          ...emailConfig,
+          smtpPasswordEncrypted: !!emailConfig ? 'REDACTED' : false,
+          imapPasswordEncrypted: !!emailConfig ? 'REDACTED' : false,
+        } : null,
+      }
+
+      // Audit the export request
+      void recordAudit({
+        workspaceId,
+        actorUserId: user.id,
+        type: 'gdpr.data_export',
+        entityType: 'workspace',
+        entityId: workspaceId,
+        metadata: { recordCount: prospects.length + campaigns.length + sends.length + leads.length },
+      })
+
+      // Return as attachment with ISO timestamp
+      res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Content-Disposition', `attachment; filename="workspace-export-${new Date().toISOString().split('T')[0]}.json"`)
+      res.json(exportData)
+    })
+  )
+
+  // POST /:id/encryption-verify — verify that email credentials are encrypted.
+  // Used for compliance audits to confirm no plaintext secrets are at rest.
+  // Returns: { encrypted: boolean, warning?: string } (true if all passwords
+  // are properly encrypted, false if any plaintext found).
+  workspaceRouter.post(
+    '/:id/encryption-verify',
+    asyncHandler(async (req, res) => {
+      const user = requireUser(req)
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
+
+      // Owner+ may verify encryption posture
+      await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+
+      const config = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+
+      let encrypted = true
+      const warnings: string[] = []
+
+      if (config?.smtpPass) {
+        if (!isEncrypted(config.smtpPass)) {
+          encrypted = false
+          warnings.push('SMTP password appears to be plaintext (should be encrypted)')
+        }
+      }
+
+      if (config?.imapPass) {
+        if (!isEncrypted(config.imapPass)) {
+          encrypted = false
+          warnings.push('IMAP password appears to be plaintext (should be encrypted)')
+        }
+      }
+
+      // Audit the encryption check
+      void recordAudit({
+        workspaceId,
+        actorUserId: user.id,
+        type: 'compliance.encryption_verify',
+        entityType: 'workspace',
+        entityId: workspaceId,
+        metadata: { encrypted, warningCount: warnings.length },
+      })
+
+      res.json({
+        encrypted,
+        ...(warnings.length > 0 && { warning: warnings.join('; ') }),
+      })
     })
   )
 }
