@@ -17,6 +17,7 @@ import { phase47AnalyticsRouter } from './phase4-7-analytics.js'
 import { phase48BudgetsRouter } from './phase4-8-budgets.js'
 import { phase49RateLimitRouter } from './phase4-9-ratelimit.js'
 import { phase5OptimizationRouter } from './phase5-optimization.js'
+import { phase6GovernanceRouter } from './phase6-governance.js'
 
 // The Ops module: workspace-scoped field crew / job-site / shift / roster
 // management. Each concern is its own router (each already carries its own
@@ -36,6 +37,7 @@ import { phase5OptimizationRouter } from './phase5-optimization.js'
 // Phase 4.8: Added budget management and cost enforcement endpoints.
 // Phase 4.9: Added dynamic rate limiting and feature access control endpoints.
 // Phase 5: Added advanced cost optimization and FinOps intelligence endpoints.
+// Phase 6: Added enterprise governance, RBAC, organizational hierarchy, and analytics endpoints.
 export const opsRouter = Router()
 
 opsRouter.use('/crew', crewRouter)
@@ -56,3 +58,4 @@ opsRouter.use('/analytics', phase47AnalyticsRouter)
 opsRouter.use('/budgets', phase48BudgetsRouter)
 opsRouter.use('/ratelimit', phase49RateLimitRouter)
 opsRouter.use('/optimization', phase5OptimizationRouter)
+opsRouter.use('/governance', phase6GovernanceRouter)
