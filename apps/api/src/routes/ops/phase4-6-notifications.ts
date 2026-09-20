@@ -6,7 +6,6 @@ import { asyncHandler } from '../../lib/http.js'
 import {
   setNotificationPreference,
   getNotificationPreferences,
-  queueNotification,
   getNotificationHistory,
   getNotificationStats,
   setQuietMode,
@@ -224,7 +223,7 @@ phase46NotificationsRouter.post(
     const { workspaceId } = req.params
     const { trigger, condition, actions, enabled, cooldownMinutes } = req.body
 
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
     const rule = createEscalationRule(workspaceId, {
       trigger,
       condition: condition || {},

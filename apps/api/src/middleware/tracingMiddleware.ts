@@ -29,7 +29,7 @@ export function tracingMiddleware(req: Request, res: Response, next: NextFunctio
 
   // Store span on request for child operations
   ;(req as any).span = span
-    // @ts-ignore
+    // @ts-expect-error assigning custom property to request
   ;(req as any).traceId = span.spanContext?.traceId || ''
 
   // Intercept response to record status and duration
@@ -44,9 +44,9 @@ export function tracingMiddleware(req: Request, res: Response, next: NextFunctio
 
     // Add span record to analytics
     recordSpan({
-    // @ts-ignore
+    // @ts-expect-error accessing optional chainable property
       traceId: span.spanContext?.traceId || '',
-    // @ts-ignore
+    // @ts-expect-error accessing optional chainable property
       spanId: span.spanContext?.spanId || '',
       spanName: `http.request`,
       serviceName: 'api',

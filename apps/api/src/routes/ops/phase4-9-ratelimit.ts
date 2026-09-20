@@ -19,14 +19,11 @@ import {
   clearRateLimits,
   type Priority,
   type TimeMultiplier,
-  type RateLimitBucket,
 } from '@acaos/backend-core/lib/rateLimiting.js'
 import {
-  registerFeature,
   getFeature,
   setPlanTierMatrix,
   getPlanTierMatrix,
-  isFeatureAvailable,
   enableFeature,
   disableFeature,
   getFeatureAccessList,
@@ -534,7 +531,6 @@ phase49RateLimitRouter.get(
 phase49RateLimitRouter.post(
   '/:workspaceId/plan-tiers',
   asyncHandler(async (req, res) => {
-    const { workspaceId } = req.params
     const { tier, monthlyPrice, features, rateLimit, storageGB, supportLevel } =
       req.body
 
@@ -618,7 +614,7 @@ phase49RateLimitRouter.post(
     const { usage } = req.body // Map of featureId -> requestCount
 
     const usageMap = new Map(Object.entries(usage))
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
     const breakdown = getFeatureCostBreakdown(workspaceId, usageMap)
 
     const totalCost = breakdown.reduce((sum, b) => sum + b.totalCost, 0)

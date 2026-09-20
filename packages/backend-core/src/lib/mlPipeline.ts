@@ -470,8 +470,8 @@ export function compareModels(organizationId: string, modelIds: string[]): Model
       rank: 0,
     }))
     .sort((a, b) => {
-      let scoreA = (a.accuracy * 0.4 + (100 - a.mape) * 0.4 + (100 - Math.min(a.rmse, 100)) * 0.2) / 100
-      let scoreB = (b.accuracy * 0.4 + (100 - b.mape) * 0.4 + (100 - Math.min(b.rmse, 100)) * 0.2) / 100
+      const scoreA = (a.accuracy * 0.4 + (100 - a.mape) * 0.4 + (100 - Math.min(a.rmse, 100)) * 0.2) / 100
+      const scoreB = (b.accuracy * 0.4 + (100 - b.mape) * 0.4 + (100 - Math.min(b.rmse, 100)) * 0.2) / 100
       return scoreB - scoreA
     })
     .map((m, idx) => ({ ...m, rank: idx + 1 }))

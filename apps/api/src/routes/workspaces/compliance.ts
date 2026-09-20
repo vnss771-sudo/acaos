@@ -208,8 +208,8 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
         auditLog: auditEvents,
         emailConfig: emailConfig ? {
           ...emailConfig,
-          smtpPasswordEncrypted: !!emailConfig ? 'REDACTED' : false,
-          imapPasswordEncrypted: !!emailConfig ? 'REDACTED' : false,
+          smtpPasswordEncrypted: emailConfig ? 'REDACTED' : false,
+          imapPasswordEncrypted: emailConfig ? 'REDACTED' : false,
         } : null,
       }
 

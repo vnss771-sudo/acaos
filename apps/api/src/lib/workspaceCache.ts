@@ -11,7 +11,7 @@
 import { getRedis } from './redis.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
-import type { Membership, Workspace } from '@prisma/client'
+import type { Membership } from '@prisma/client'
 
 interface WorkspaceConfig {
   id: string

@@ -14,7 +14,6 @@
 import { getRedis } from './redis.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
-import { ApiError } from './http.js'
 
 interface AbuseSignal {
   workspaceId: string

@@ -97,7 +97,7 @@ export function verifyWorkspaceScope(
   // In production, this is a defense-in-depth check; the where clause is the primary guard.
   if (Array.isArray(result) && result.length > 0) {
     const wsId = expectedWorkspaceId || context.workspaceId
-    // @ts-ignore
+    // @ts-expect-error result type is unknown, checking for workspaceId property
     const workspaceField = 'workspaceId' in result[0] ? result[0].workspaceId : null
 
     if (workspaceField && workspaceField !== wsId) {

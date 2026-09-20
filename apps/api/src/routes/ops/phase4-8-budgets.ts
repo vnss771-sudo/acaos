@@ -216,7 +216,7 @@ phase48BudgetsRouter.post(
     const { budgetId } = req.params
     const { teamId, allocatedAmount } = req.body
 
-    const allocation = allocateTeamBudget(budgetId, teamId, allocatedAmount)
+    allocateTeamBudget(budgetId, teamId, allocatedAmount)
 
     res.json({
       success: true,

@@ -190,7 +190,7 @@ phase47AnalyticsRouter.post(
     const { totalCost, usageByConsumer, recentTrends } = req.body
 
     const trendMap = new Map(Object.entries(recentTrends || {}))
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
     const attribution = calculateCostAttribution(workspaceId, totalCost, usageByConsumer, trendMap)
 
     res.json({
@@ -417,9 +417,9 @@ phase47AnalyticsRouter.get(
       : []
 
     const recommendations = getOptimizationRecommendations(
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
       workspaceId,
-    // @ts-ignore
+    // @ts-expect-error - type mismatch handled at runtime
       patternsList,
       consumersList,
       parseFloat(totalCost as string) || 0

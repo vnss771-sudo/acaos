@@ -151,7 +151,7 @@ export function createConnector(
   const secretKey = crypto.randomBytes(16).toString('hex')
 
   // Encrypt sensitive fields based on type
-  let configToStore = { ...config }
+  const configToStore = { ...config }
   let encryptedSecret = ''
 
   if (type === 'slack' && (config as unknown as SlackConfig).webhookUrl) {

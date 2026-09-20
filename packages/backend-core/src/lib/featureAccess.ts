@@ -194,8 +194,8 @@ export function getFeatureAccessList(workspaceId: string): FeatureStatusInfo[] {
     const a = access.find((x) => x.featureId === feature.id)
     const enabled = a ? a.enabled : false
 
-    let status: FeatureStatus = enabled ? 'available' : 'disabled'
-    let reason = enabled ? 'Feature enabled' : a?.disabledReason || 'Feature disabled'
+    const status: FeatureStatus = enabled ? 'available' : 'disabled'
+    const reason = enabled ? 'Feature enabled' : a?.disabledReason || 'Feature disabled'
 
     return {
       featureId: feature.id,

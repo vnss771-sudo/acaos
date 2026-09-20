@@ -125,7 +125,7 @@ phase8IntegrationsRouter.post('/webhook-events', requireAuth, (req: Request, res
 
 phase8IntegrationsRouter.get('/webhook-events/:organizationId', requireAuth, (req: Request, res: Response) => {
   const { eventType, hours = 24 } = req.query
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
   const events = getWebhookEvents(req.params.organizationId, eventType as string, Number(hours))
   res.json(events)
 })
@@ -160,9 +160,9 @@ phase8IntegrationsRouter.post('/connectors', requireAuth, (req: Request, res: Re
 })
 
 phase8IntegrationsRouter.get('/connectors/:organizationId', requireAuth, (req: Request, res: Response) => {
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
   const { type } = req.query
-    // @ts-ignore
+    // @ts-expect-error
   const connectors = getConnectors(req.params.organizationId, type as string)
   res.json(connectors)
 })
@@ -231,11 +231,11 @@ phase8IntegrationsRouter.post('/events/publish', requireAuth, (req: Request, res
   res.json(event)
 })
 
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
 phase8IntegrationsRouter.get('/events/stream/:organizationId', requireAuth, (req: Request, res: Response) => {
-    // @ts-ignore
+    // @ts-expect-error
   const { type, hours = 24 } = req.query
-    // @ts-ignore
+    // @ts-expect-error
   const events = getEventStream(req.params.organizationId, type as string, Number(hours))
   res.json(events)
 })
@@ -308,13 +308,13 @@ phase8IntegrationsRouter.post('/exports/templates', requireAuth, (req: Request, 
   const template = createExportTemplate(organizationId, name, type, description, format, dimensions, metrics, filters)
   res.json(template)
 })
-    // @ts-ignore - type mismatch handled at runtime
+    // @ts-expect-error - type mismatch handled at runtime
 
-    // @ts-ignore
+    // @ts-expect-error
 phase8IntegrationsRouter.get('/exports/templates/:organizationId', requireAuth, (req: Request, res: Response) => {
-    // @ts-ignore
+    // @ts-expect-error
   const { type } = req.query
-    // @ts-ignore
+    // @ts-expect-error
   const templates = getExportTemplates(req.params.organizationId, type as string)
   res.json(templates)
 })
