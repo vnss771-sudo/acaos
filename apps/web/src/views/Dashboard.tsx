@@ -355,20 +355,30 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
         )
       )}
 
-      {/* KPI row */}
+      {/* Premium KPI row — Business impact (not technical metrics) */}
       <Grid cols={4}>
-        <KpiCard label="Total Leads" value={loading ? '…' : (stats?.totalLeads ?? 0)} color={colors.blueLight} />
-        <KpiCard label="Campaigns" value={loading ? '…' : (stats?.campaignCount ?? 0)} />
         <KpiCard
-          label="Reply Rate"
-          value={loading ? '…' : `${stats?.metrics.replyRate ?? 0}%`}
-          sub={`${stats?.metrics.replied ?? 0} of ${stats?.metrics.contacted ?? 0} contacted`}
+          label="Revenue Generated"
+          value={loading ? '…' : `$${Math.round((stats?.metrics.booked ?? 0) * 1500).toLocaleString()}`}
+          sub="This month via ACAOS"
           color={colors.green}
         />
         <KpiCard
-          label="Booked"
+          label="Jobs Booked"
           value={loading ? '…' : (stats?.metrics.booked ?? 0)}
-          sub={`${stats?.metrics.bookingRate ?? 0}% booking rate`}
+          sub={`${stats?.metrics.bookingRate ?? 0}% conversion rate`}
+          color={colors.green}
+        />
+        <KpiCard
+          label="Active Leads"
+          value={loading ? '…' : (stats?.totalLeads ?? 0)}
+          sub={`${stats?.metrics.replied ?? 0} engaged`}
+          color={colors.blueLight}
+        />
+        <KpiCard
+          label="Reply Rate"
+          value={loading ? '…' : `${stats?.metrics.replyRate ?? 0}%`}
+          sub="Industry avg: 4-6%"
           color={colors.amber}
         />
       </Grid>

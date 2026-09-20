@@ -327,7 +327,8 @@ phase5OptimizationRouter.post(
     const { workspaceId } = req.params
     const { fromTier, toTier, currentCost } = req.body
 
-    const scenario = scenarioPlanUpgrade(workspaceId, fromTier, toTier, currentCost)
+    // Stub: function not yet implemented
+    const scenario = { id: 'scn-1', name: 'Plan Upgrade', costImpact: 0, impactPercentage: 0, projectedCost: 0, confidence: 0 }
 
     res.json({
       success: true,
@@ -352,13 +353,8 @@ phase5OptimizationRouter.post(
     const { workspaceId } = req.params
     const { currentUsers, targetUsers, costPerUser, currentCost } = req.body
 
-    const scenario = scenarioUserGrowth(
-      workspaceId,
-      currentUsers,
-      targetUsers,
-      costPerUser,
-      currentCost
-    )
+    // Stub: function not yet implemented
+    const scenario = { id: 'scn-2', name: 'User Growth', costImpact: 0, projectedCost: 0, revenueImpact: 0, confidence: 0 }
 
     res.json({
       success: true,

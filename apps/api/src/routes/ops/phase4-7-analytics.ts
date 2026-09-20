@@ -417,9 +417,8 @@ phase47AnalyticsRouter.get(
       : []
 
     const recommendations = getOptimizationRecommendations(
-    // @ts-expect-error - type mismatch handled at runtime
       workspaceId,
-    // @ts-expect-error - type mismatch handled at runtime
+      // @ts-expect-error - type mismatch handled at runtime
       patternsList,
       consumersList,
       parseFloat(totalCost as string) || 0

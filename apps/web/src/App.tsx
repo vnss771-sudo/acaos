@@ -9,6 +9,7 @@ import { Drawer } from './components/ui/Drawer.js'
 import { AuthScreen } from './components/AuthScreen.js'
 import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
+import { OnboardingROI } from './components/OnboardingROI.js'
 import { CommandPalette } from './components/CommandPalette.js'
 import { HubTabs } from './components/HubTabs.js'
 import { SkipLink } from './components/SkipLink.js'
@@ -93,6 +94,8 @@ export function App() {
   // Step-up: set when any authed API call returns 403 {code:"REAUTH_REQUIRED"}.
   // While true the ReauthModal is shown; on success the user can retry the action.
   const [reauthRequired, setReauthRequired] = useState(false)
+  // Show ROI calculator on first onboarding (before the wizard)
+  const [showRoiCalculator, setShowRoiCalculator] = useState(false)
 
   const { toasts, toast, removeToast } = useToast()
 
@@ -476,9 +479,16 @@ export function App() {
       {/* Global ⌘K / Ctrl+K / "/" command palette — jump to any screen. */}
       <CommandPalette setView={setView} isAdmin={isAdmin} />
 
+      {/* ROI Calculator — shown first on onboarding to prime expectations */}
+      {activeWorkspace && !activeWorkspace.onboardingCompleted && canManage && !showRoiCalculator && (
+        <OnboardingROI
+          onStart={() => setShowRoiCalculator(true)}
+        />
+      )}
+
       {/* Onboarding wizard — shown once per workspace until dismissed. Hidden for
           members: it performs workspace seed/ICP writes that require admin. */}
-      {activeWorkspace && !activeWorkspace.onboardingCompleted && canManage && (
+      {activeWorkspace && !activeWorkspace.onboardingCompleted && canManage && showRoiCalculator && (
         <OnboardingWizard
           workspace={activeWorkspace}
           api={api}
