@@ -120,7 +120,7 @@ phase7MonitoringRouter.get('/live-aggregate/:organizationId', requireAuth, (req:
 
 // Alerts
 phase7MonitoringRouter.post('/alerts', requireAuth, (req: Request, res: Response) => {
-  const { organizationId, type, severity, message, affectedServices } = req.body
+  const { organizationId, type, severity, message } = req.body
   const alert = createAlert(organizationId, type, severity, message)
   res.json(alert)
 })

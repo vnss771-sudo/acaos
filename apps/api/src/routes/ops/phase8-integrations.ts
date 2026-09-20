@@ -11,12 +11,8 @@ import {
   rotateWebhookSecret,
   createWebhookEvent,
   getWebhookEvents,
-  recordWebhookDelivery,
   getWebhookDeliveries,
   getDeliveryStats,
-  logWebhookAction,
-  getWebhookLogs,
-  getWebhooksForEvent,
   clearWebhooks,
 } from '@acaos/backend-core/lib/webhookEngine.js'
 import {
@@ -30,15 +26,12 @@ import {
   validateConnector,
   sendMessage,
   getConnectorMessages,
-  getCapabilities,
   getConnectorHealth,
   rotateConnectorSecret,
   clearConnectors,
 } from '@acaos/backend-core/lib/integrationConnectors.js'
 import {
   publishEvent,
-  subscribeToEvents,
-  unsubscribeFromEvents,
   getEventStream,
   requestEventReplay,
   getDeadLetterQueue,

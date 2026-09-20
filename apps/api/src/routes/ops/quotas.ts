@@ -9,7 +9,6 @@
 import { Router } from 'express'
 import { asyncHandler } from '../../lib/http.js'
 import {
-  checkQuota,
   getQuotaUsage,
   getWorkspaceQuotas,
   getQuotaLimitsForPlan,
