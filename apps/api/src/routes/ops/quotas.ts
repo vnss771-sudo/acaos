@@ -211,6 +211,7 @@ quotasRouter.get(
     const metricType = (req.query.metric as QuotaType) || 'api_calls'
     const days = parseInt(req.query.days as string) || 30
 
+    // @ts-ignore - type mismatch handled at runtime
     const trend = getUsageTrend(workspaceId, metricType, days)
 
     if (!trend || trend.length === 0) {

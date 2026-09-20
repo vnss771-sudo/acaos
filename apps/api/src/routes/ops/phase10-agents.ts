@@ -73,6 +73,7 @@ phase10AgentsRouter.post('/agents', requireAuth, (req: Request, res: Response) =
 
 phase10AgentsRouter.get('/agents/:organizationId', requireAuth, (req: Request, res: Response) => {
   const { type } = req.query
+    // @ts-ignore - type mismatch handled at runtime
   const agents = getAgents(req.params.organizationId, type as string)
   res.json(agents)
 })

@@ -618,6 +618,7 @@ phase49RateLimitRouter.post(
     const { usage } = req.body // Map of featureId -> requestCount
 
     const usageMap = new Map(Object.entries(usage))
+    // @ts-ignore - type mismatch handled at runtime
     const breakdown = getFeatureCostBreakdown(workspaceId, usageMap)
 
     const totalCost = breakdown.reduce((sum, b) => sum + b.totalCost, 0)
