@@ -391,7 +391,7 @@ export function calculateROI(
     paybackMonths,
     roi12Months,
     breakEvenDate,
-    nPV,
+    nPV: npv,
     createdAt: new Date(),
   }
 

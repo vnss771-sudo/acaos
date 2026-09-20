@@ -154,14 +154,14 @@ export function createConnector(
   let configToStore = { ...config }
   let encryptedSecret = ''
 
-  if (type === 'slack' && (config as SlackConfig).webhookUrl) {
-    encryptedSecret = encryptValue((config as SlackConfig).webhookUrl, secretKey)
-  } else if (type === 'email' && (config as EmailConfig).password) {
-    encryptedSecret = encryptValue((config as EmailConfig).password, secretKey)
-  } else if (type === 'datadog' && (config as DatadogConfig).apiKey) {
-    encryptedSecret = encryptValue((config as DatadogConfig).apiKey, secretKey)
-  } else if (type === 'webhook' && (config as WebhookConfig).authValue) {
-    encryptedSecret = encryptValue((config as WebhookConfig).authValue, secretKey)
+  if (type === 'slack' && (config as unknown as SlackConfig).webhookUrl) {
+    encryptedSecret = encryptValue((config as unknown as SlackConfig).webhookUrl, secretKey)
+  } else if (type === 'email' && (config as unknown as EmailConfig).password) {
+    encryptedSecret = encryptValue((config as unknown as EmailConfig).password || '', secretKey)
+  } else if (type === 'datadog' && (config as unknown as DatadogConfig).apiKey) {
+    encryptedSecret = encryptValue((config as unknown as DatadogConfig).apiKey, secretKey)
+  } else if (type === 'webhook' && (config as unknown as WebhookConfig).authValue) {
+    encryptedSecret = encryptValue((config as unknown as WebhookConfig).authValue || '', secretKey)
   }
 
   const connector: IntegrationConnector = {

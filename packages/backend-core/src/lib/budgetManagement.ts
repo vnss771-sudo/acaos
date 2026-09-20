@@ -24,7 +24,7 @@ export interface Budget {
   updatedAt: Date
 }
 
-export interface BudgetStatus {
+export interface BudgetStatusInfo {
   budgetId: string
   spent: number
   percentageUsed: number
@@ -170,7 +170,7 @@ export function deleteBudget(workspaceId: string, budgetId: string): boolean {
 /**
  * Get current budget status.
  */
-export function getBudgetStatus(budgetId: string, currentSpent: number): BudgetStatus {
+export function getBudgetStatus(budgetId: string, currentSpent: number): BudgetStatusInfo {
   // Find budget by ID across all workspaces
   let budget: Budget | undefined
   for (const list of budgets.values()) {

@@ -8,7 +8,7 @@
 // - Monitor tenant-model queries per workspace
 // - Correlate with rate limit hits and abuse patterns
 
-import type { Prisma } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 
 interface QueryStats {
   count: number
@@ -54,8 +54,8 @@ const TENANT_MODELS = new Set([
  * Instrument a Prisma client with query tracking middleware.
  * Call once on the singleton Prisma client.
  */
-export function attachQueryInstrumentation(client: Prisma.PrismaClient): void {
-  client.$use(async (params, next) => {
+export function attachQueryInstrumentation(client: PrismaClient): void {
+  client.$use(async (params: Prisma.MiddlewareParams, next: (params: Prisma.MiddlewareParams) => Promise<any>) => {
     const start = Date.now()
     try {
       const result = await next(params)
@@ -120,8 +120,8 @@ function recordQuery(
  * Get query statistics for all models since last reset.
  * Used by /api/ops/performance/queries endpoint.
  */
-export function getQueryStatistics(): Record<string, QueryStats> {
-  const stats: Record<string, QueryStats> = {}
+export function getQueryStatistics(): Record<string, QueryStats & { avgDurationMs: number }> {
+  const stats: Record<string, QueryStats & { avgDurationMs: number }> = {}
   for (const [key, value] of modelStats) {
     stats[key] = {
       ...value,

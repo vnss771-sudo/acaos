@@ -63,8 +63,8 @@ export interface CostBreakdown {
 const metrics = new Map<string, CostMetric[]>()
 const kpis = new Map<string, PerformanceKPI[]>()
 const benchmarks = new Map<string, Benchmark[]>()
-const trends = new Map<string, CostTrend[]>()
-const breakdowns = new Map<string, CostBreakdown[]>()
+const trends = new Map<string, CostTrend>()
+const breakdowns = new Map<string, CostBreakdown>()
 
 /**
  * Record cost metric.

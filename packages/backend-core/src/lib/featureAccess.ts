@@ -36,7 +36,7 @@ export interface PlanTierMatrix {
   supportLevel: 'email' | 'priority' | 'dedicated'
 }
 
-export interface FeatureStatus {
+export interface FeatureStatusInfo {
   featureId: string
   status: FeatureStatus
   available: boolean
@@ -187,7 +187,7 @@ export function disableFeature(
 /**
  * Get all features and their access status for workspace.
  */
-export function getFeatureAccessList(workspaceId: string): FeatureStatus[] {
+export function getFeatureAccessList(workspaceId: string): FeatureStatusInfo[] {
   const access = featureAccess.get(workspaceId) || []
 
   return Array.from(features.values()).map((feature) => {

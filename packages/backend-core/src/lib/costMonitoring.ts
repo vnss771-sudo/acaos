@@ -92,7 +92,7 @@ export interface CostAlert {
 const costDataPoints = new Map<string, CostDataPoint[]>()
 const costBaselines = new Map<string, CostBaseline[]>()
 const costSpikes = new Map<string, CostSpike[]>()
-const budgetPaces = new Map<string, BudgetPace[]>()
+const budgetPaces = new Map<string, BudgetPace>()
 const costChanges = new Map<string, CostChange[]>()
 const liveAggregates = new Map<string, LiveCostAggregate>()
 const costAlerts = new Map<string, CostAlert[]>()

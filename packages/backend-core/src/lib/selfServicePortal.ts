@@ -112,7 +112,7 @@ export interface PortalAuditLog {
 
 // Storage
 const dashboards = new Map<string, PortalDashboard[]>()
-const costViews = new Map<string, CostBreakdownView[]>()
+const costViews = new Map<string, CostBreakdownView>()
 const portalAlerts = new Map<string, PortalAlert[]>()
 const generatedReports = new Map<string, GeneratedReport[]>()
 const userPreferences = new Map<string, PortalPreferences>()

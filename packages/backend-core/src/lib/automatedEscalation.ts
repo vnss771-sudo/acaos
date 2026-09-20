@@ -30,7 +30,7 @@ export interface EscalationEvent {
   workspaceId: string
   trigger: EscalationTrigger
   status: EscalationStatus
-  actionResults: Record<EscalationAction, { success: boolean; message: string }>
+  actionResults: Partial<Record<EscalationAction, { success: boolean; message: string }>>
   createdAt: Date
   completedAt?: Date
 }

@@ -24,21 +24,21 @@ const inProcessCache = new Map<string, CacheEntry<unknown>>()
 const CACHE_CLEANUP_INTERVAL = 5 * 60 * 1000 // Clean every 5 minutes
 const MAX_IN_PROCESS_ENTRIES = 10000
 
-let redis: Redis | null = null
+let redis: any = null
 
-function getRedis(): Redis | null {
+function getRedis(): any {
   if (!redis) {
     const redisUrl = process.env.REDIS_URL
     if (!redisUrl) return null
 
     try {
-      redis = new Redis(redisUrl, {
-        retryStrategy: (times) => Math.min(times * 50, 2000),
+      redis = new (Redis as any)(redisUrl, {
+        retryStrategy: (times: number) => Math.min(times * 50, 2000),
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
         enableOfflineQueue: true,
       })
-      redis.on('error', (err) => logger.warn('redis cache error', { error: (err as Error).message }))
+      redis.on('error', (err: Error) => logger.warn('redis cache error', { error: err.message }))
     } catch (err) {
       logger.warn('redis connection failed', { error: (err as Error).message })
       return null

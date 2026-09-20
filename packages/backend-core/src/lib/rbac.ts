@@ -62,7 +62,7 @@ export interface AuditLogEntry {
 // Storage
 const roles = new Map<string, Role>()
 const userRoles = new Map<string, UserRole[]>()
-const costVisibilityRules = new Map<string, CostVisibilityRule>()
+const costVisibilityRules = new Map<string, CostVisibilityRule[]>()
 const auditLog = new Map<string, AuditLogEntry[]>()
 
 // Default roles

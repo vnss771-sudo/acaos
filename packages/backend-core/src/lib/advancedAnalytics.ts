@@ -313,14 +313,18 @@ export function detectAnomalies(
       deviation: Math.abs(d.value - mean) / stdDev,
     }))
     .filter((a) => a.deviation > threshold)
-    .map((a) => ({
-      timestamp: a.timestamp,
-      value: a.value,
-      anomalyScore: Math.min(a.deviation / (threshold * 2), 1),
-      severity: a.deviation > threshold * 2 ? 'critical' : a.deviation > threshold * 1.5 ? 'high' : 'medium' as const,
-      expectedValue: a.expectedValue,
-      deviation: a.deviation,
-    }))
+    .map((a) => {
+      const severity: 'low' | 'medium' | 'high' | 'critical' =
+        a.deviation > threshold * 2 ? 'critical' : a.deviation > threshold * 1.5 ? 'high' : 'medium'
+      return {
+        timestamp: a.timestamp,
+        value: a.value,
+        anomalyScore: Math.min(a.deviation / (threshold * 2), 1),
+        severity,
+        expectedValue: a.expectedValue,
+        deviation: a.deviation,
+      }
+    })
 
   const result: AnomalyDetectionResult = {
     id: `anom-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -610,11 +614,17 @@ export function planCapacity(
   currentCapacity: number,
   projectedDemand: Array<{ months: number; demand: number }>
 ): CapacityPlan {
-  const bottlenecks = projectedDemand
+  const projectedDemandWithUtil = projectedDemand.map((d) => ({
+    months: d.months,
+    demand: d.demand,
+    utilizationPercentage: (d.demand / currentCapacity) * 100,
+  }))
+
+  const bottlenecks = projectedDemandWithUtil
     .filter((d) => d.demand > currentCapacity * 0.7)
     .map((d) => ({
       entity: `Month ${d.months}`,
-      currentUtilization: (projectedDemand[0]?.demand / currentCapacity) * 100,
+      currentUtilization: d.utilizationPercentage,
       projectedCritical: d.demand > currentCapacity ? d.months : -1,
       recommendation: `Increase capacity by ${Math.ceil((d.demand / currentCapacity - 1) * 100)}% to handle projected demand`,
     }))
@@ -624,7 +634,7 @@ export function planCapacity(
     organizationId,
     metric,
     currentCapacity,
-    projectedDemand,
+    projectedDemand: projectedDemandWithUtil,
     bottlenecks,
     createdAt: new Date(),
   }
