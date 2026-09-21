@@ -86,7 +86,7 @@ function StepProgressBar({ current, total }: { current: number; total: number })
   return (
     <div style={{ marginBottom: 24 }}>
       <div style={{ fontSize: 12, color: colors.textMuted, marginBottom: 8 }}>
-        Step {current}/3: {steps[current - 1]?.label}
+        Step {current}/{total}: {steps[current - 1]?.label}
       </div>
       <div style={{
         height: 4,
@@ -205,7 +205,6 @@ export function OnboardingWizard({ workspace, api, toast, onComplete }: Props) {
         )}
         {step === 3 && selectedPlaybook && (
           <Step3
-            playbook={selectedPlaybook}
             onContinue={() => handleStep3Continue(false)}
             onSkip={() => handleStep3Continue(true)}
             saving={saving}
@@ -425,12 +424,10 @@ function Step2({
 }
 
 function Step3({
-  playbook,
   onContinue,
   onSkip,
   saving
 }: {
-  playbook: Playbook
   onContinue: () => void
   onSkip: () => void
   saving: boolean

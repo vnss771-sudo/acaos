@@ -8,6 +8,7 @@ import { Card } from '../components/ui/Card.js'
 import { Badge } from '../components/ui/Badge.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
+import { makeRouteApi } from '../lib/routeApi.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
 
@@ -69,6 +70,7 @@ export function InboxView({ api, workspace, toast }: Props) {
   const [customBody, setCustomBody] = useState('')
   const [feedbackReplyId, setFeedbackReplyId] = useState<string | null>(null)
   const [feedbackSending, setFeedbackSending] = useState(false)
+  const route = useMemo(() => makeRouteApi(api), [api])
 
   const loadReqRef = useRef(0)
   const load = useCallback(() => {
@@ -92,16 +94,13 @@ export function InboxView({ api, workspace, toast }: Props) {
     if (!workspace) return
     setSendingReplyId(replyId)
     try {
-      const response = await api<{ success: boolean; sentAt: string; message: string }>(
-        `/api/inbox/reply/${replyId}/send`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            workspaceId: workspace.id,
-            customBody: customBody || undefined,
-          }),
-        }
-      )
+      const response = await route('POST /api/inbox/reply/:replyId/send', {
+        params: { replyId },
+        body: {
+          workspaceId: workspace.id,
+          customBody: customBody || undefined,
+        },
+      })
       if (response.success) {
         toast.success(`✓ Reply sent! 🎉`)
         setCustomBody('')
@@ -113,28 +112,28 @@ export function InboxView({ api, workspace, toast }: Props) {
     } finally {
       setSendingReplyId(null)
     }
-  }, [workspace?.id, customBody, api, toast, load])
+  }, [workspace?.id, customBody, route, toast, load])
 
   const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect') => {
     if (!workspace) return
     setFeedbackSending(true)
     try {
-      await api(`/api/inbox/reply/${replyId}/feedback`, {
-        method: 'PATCH',
-        body: JSON.stringify({
+      await route('PATCH /api/inbox/reply/:replyId/feedback', {
+        params: { replyId },
+        body: {
           workspaceId: workspace.id,
           feedback,
-        }),
+        },
       })
       toast.success(feedback === 'correct' ? '✓ Thanks for the feedback!' : '✓ Noted. We\'ll improve this.')
       setFeedbackReplyId(null)
       load()
-    } catch (err) {
+    } catch {
       toast.error('Failed to record feedback')
     } finally {
       setFeedbackSending(false)
     }
-  }, [workspace?.id, api, toast, load])
+  }, [workspace?.id, route, toast, load])
 
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
