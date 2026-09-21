@@ -1,11 +1,12 @@
 import { ApiError } from '../../lib/http.js'
-import { prisma } from '../../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { centsToDollars } from '../../lib/money.js'
 import { workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
-import type { ICPConfig, SignalType } from '../../lib/signalEngine.js'
-import type { Assert, Extends, DiscoverProspectsRequest } from '@acaos/shared'
+import type { ICPConfig, SignalType } from '@acaos/backend-core/lib/signalEngine.js'
+import type { Assert, Extends, DiscoverProspectsRequest, MissionIcpOverrideFields } from '@acaos/shared'
+import type { IndustryPack } from '../../lib/packs/types.js'
 
 // Request contract for POST /discover, pinned to the shared type so they can't drift.
 export const discoverSchema = z.object({
@@ -50,6 +51,59 @@ export function withDollars<T extends Record<string, unknown>>(p: T): T {
   if ('expectedDealValue' in out) out.expectedDealValue = centsToDollars(out.expectedDealValue as number | null)
   if ('estimatedRevenue' in out) out.estimatedRevenue = centsToDollars(out.estimatedRevenue as number | null)
   return out as T
+}
+
+// Effective targeting for a mission: an explicit per-mission override takes
+// priority over the workspace ICP, which takes priority over the mission's
+// playbook preset (if any) — mirroring the request-time layering already used
+// in POST /prospects/discover (explicit request > workspace ICP > pack), just
+// with the mission override slotted in ahead of the workspace ICP. Any field
+// left unset/empty at one layer falls through to the next.
+export function resolveEffectiveTargeting(
+  override: MissionIcpOverrideFields | null | undefined,
+  icp: ICPConfig | undefined,
+  pack: IndustryPack | undefined,
+): { targetIndustries: string[]; targetGeos: string[]; minEmployees?: number; maxEmployees?: number } {
+  return {
+    targetIndustries: nonEmpty(override?.targetIndustries) ?? nonEmpty(icp?.targetIndustries) ?? pack?.icp.targetIndustries ?? [],
+    targetGeos: nonEmpty(override?.targetGeos) ?? nonEmpty(icp?.targetGeos) ?? pack?.icp.targetGeos ?? [],
+    minEmployees: override?.minEmployees ?? icp?.minEmployees ?? pack?.icp.minEmployees,
+    maxEmployees: override?.maxEmployees ?? icp?.maxEmployees ?? pack?.icp.maxEmployees,
+  }
+}
+
+export type DiscoveryQuery = {
+  industries: string[]
+  locations: string[]
+  keywords: string[]
+  minEmployees: number | undefined
+  maxEmployees: number | undefined
+  limit: number
+}
+
+/**
+ * Merge an explicit POST /discover request field over the resolved ICP
+ * fallback chain (resolveEffectiveTargeting's mission override > workspace ICP
+ * > pack preset) — the request's own value always wins when present, so a
+ * one-off "search smaller companies just this once" request actually takes
+ * effect instead of being silently overridden by the workspace/mission's own
+ * range. Extracted as its own function (rather than left inline in the route)
+ * specifically so this precedence contract has a direct unit test: the route
+ * itself can't be tested to this depth without a real Redis connection for its
+ * enqueueDiscoverProspects call.
+ */
+export function buildDiscoveryQuery(
+  body: { industries?: string[]; locations?: string[]; keywords?: string[]; minEmployees?: number; maxEmployees?: number; limit?: number },
+  effective: { targetIndustries: string[]; targetGeos: string[]; minEmployees?: number; maxEmployees?: number },
+): DiscoveryQuery {
+  return {
+    industries: body.industries ?? nonEmpty(effective.targetIndustries) ?? [],
+    locations: body.locations ?? nonEmpty(effective.targetGeos) ?? [],
+    keywords: body.keywords ?? [],
+    minEmployees: body.minEmployees ?? effective.minEmployees,
+    maxEmployees: body.maxEmployees ?? effective.maxEmployees,
+    limit: body.limit ?? 25, // bounded to 1..50 by discoverSchema
+  }
 }
 
 // Single canonical ICP loader — returns shaped ICPConfig or undefined

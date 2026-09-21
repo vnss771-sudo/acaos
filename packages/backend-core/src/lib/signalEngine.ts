@@ -102,14 +102,20 @@ function corroborationMultiplier(signals: RawSignal[]): number {
   return 1.0
 }
 
+// A single signal's contribution to the intent score, before the primary/bonus
+// split and corroboration multiplier are applied. Exported so callers (the
+// prospect detail API) can show users which signal is actually driving intent,
+// instead of re-deriving the math or exposing an unrelated field.
+export function signalIntentContribution(signal: RawSignal, signalWeights?: SignalWeights): number {
+  const ds = decayedStrength(signal)
+  const cap = signalWeights?.[signal.type] ?? EVENT_BASE_WEIGHTS[signal.type]
+  return Math.min(ds * (signal.sourceReliability / 100), cap)
+}
+
 // Intent score: how strongly this company is showing buying intent
 function calcIntentScore(signals: RawSignal[], signalWeights?: SignalWeights): number {
   if (signals.length === 0) return 0
-  const scores = signals.map(sig => {
-    const ds = decayedStrength(sig)
-    const cap = signalWeights?.[sig.type] ?? EVENT_BASE_WEIGHTS[sig.type]
-    return Math.min(ds * (sig.sourceReliability / 100), cap)
-  })
+  const scores = signals.map(sig => signalIntentContribution(sig, signalWeights))
   scores.sort((a, b) => b - a)
   const primary = scores[0]
   const bonus = scores.slice(1).reduce((acc, s) => acc + s * 0.25, 0)
@@ -190,6 +196,49 @@ function calcFitScore(meta: ProspectMeta, icp?: ICPConfig): number {
   if (meta.contactName) score += 5
   if (meta.domain) score += 5
   return Math.min(100, Math.max(0, score))
+}
+
+// Plain-language reasons behind the fit score — mirrors calcFitScore's factors
+// exactly (same industry list, same employee range, same email rule) so the
+// explanation can never drift from the number it explains. Surfaced to users
+// via the prospect detail API instead of leaving fitScore unexplained.
+export type FitReason = { text: string; positive: boolean }
+
+export function explainFitScore(meta: ProspectMeta, icp?: ICPConfig): FitReason[] {
+  const reasons: FitReason[] = []
+
+  if (meta.industry) {
+    const lower = meta.industry.toLowerCase()
+    const industryList = icp?.targetIndustries?.length ? icp.targetIndustries : ICP_INDUSTRIES
+    const matches = industryList.some(k => lower.includes(k.toLowerCase()))
+    reasons.push(matches
+      ? { text: `${meta.industry} is one of your target industries`, positive: true }
+      : { text: `${meta.industry} isn't in your target industry list`, positive: false })
+  } else {
+    reasons.push({ text: 'Industry unknown — this factor is scored neutrally', positive: false })
+  }
+
+  if (meta.employeeCount) {
+    const min = icp?.minEmployees ?? 10
+    const max = icp?.maxEmployees ?? 500
+    if (meta.employeeCount >= min && meta.employeeCount <= max) {
+      reasons.push({ text: `${meta.employeeCount} employees is within your target range (${min}–${max})`, positive: true })
+    } else if (meta.employeeCount > max) {
+      reasons.push({ text: `${meta.employeeCount} employees is above your target range (${min}–${max})`, positive: false })
+    } else {
+      reasons.push({ text: `${meta.employeeCount} employees is below your target range (${min}–${max})`, positive: false })
+    }
+  } else {
+    reasons.push({ text: 'Company size unknown — this factor is scored neutrally', positive: false })
+  }
+
+  if (meta.contactEmail) {
+    reasons.push({ text: 'Has a verified contact email on file', positive: true })
+  } else if (icp?.mustHaveEmail) {
+    reasons.push({ text: 'Missing a contact email — your ICP requires one', positive: false })
+  }
+
+  return reasons
 }
 
 export type OpportunityScores = {

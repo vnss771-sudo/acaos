@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { clampInt } from '../apps/api/src/lib/validation.ts'
+import { clampInt } from '../apps/api/src/lib/textNormalize.ts'
 
 const opts = { min: 1, max: 100, fallback: 25 }
 

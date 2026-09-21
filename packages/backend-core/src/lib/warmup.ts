@@ -63,3 +63,34 @@ export function applyWarmupCap(
   if (warmCap == null) return baseLimit
   return baseLimit == null ? warmCap : Math.min(baseLimit, warmCap)
 }
+
+export interface WarmupStatus {
+  active: boolean // a warmupStartedAt is set at all
+  startedAt: string | null // ISO timestamp, or null if never started
+  day: number | null // 1-based current ramp day while active and not yet complete; null otherwise
+  totalDays: number // length of the schedule (informational, always present)
+  cap: number | null // today's warmup-imposed cap; null once complete or inactive
+  complete: boolean // active, and the ramp has run its full length
+}
+
+/**
+ * Human/UI-facing warmup status for a workspace, derived from the same pure
+ * schedule logic `applyWarmupCap` uses. Read-only summary — never itself starts,
+ * stops, or otherwise mutates warmup state. Pure + clock-injectable.
+ */
+export function warmupStatus(
+  startedAt: Date | null | undefined,
+  now: Date = new Date(),
+  schedule: number[] = warmupSchedule(),
+): WarmupStatus {
+  const totalDays = schedule.length
+  if (!startedAt) {
+    return { active: false, startedAt: null, day: null, totalDays, cap: null, complete: false }
+  }
+  const cap = warmupDailyCap(startedAt, now, schedule)
+  if (cap == null) {
+    return { active: true, startedAt: startedAt.toISOString(), day: null, totalDays, cap: null, complete: true }
+  }
+  const dayIndex = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / (24 * 60 * 60 * 1000)))
+  return { active: true, startedAt: startedAt.toISOString(), day: dayIndex + 1, totalDays, cap, complete: false }
+}

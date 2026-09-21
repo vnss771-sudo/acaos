@@ -79,6 +79,24 @@ describe('computeLeadScore', () => {
     assert.ok(perfect >= 70, `Fully qualified lead should score ≥70, got ${perfect}`)
   })
 
+  it('scores the 10-50 sweet-spot team size higher than an unknown/default size', () => {
+    const unknown = computeLeadScore(lead())
+    const sweetSpot = computeLeadScore(lead({ estimatedTeamSize: '10-50' } as Parameters<typeof computeLeadScore>[0]))
+    assert.ok(sweetSpot > unknown, `sweetSpot ${sweetSpot} should beat unknown ${unknown}`)
+  })
+
+  it('scores an oversized team lower than an unknown/default size', () => {
+    const unknown = computeLeadScore(lead())
+    const tooBig = computeLeadScore(lead({ estimatedTeamSize: '500+' } as Parameters<typeof computeLeadScore>[0]))
+    assert.ok(tooBig < unknown, `tooBig ${tooBig} should be below unknown ${unknown}`)
+  })
+
+  it('falls back to the neutral default when estimatedTeamSize is missing', () => {
+    const noSize = computeLeadScore(lead())
+    const explicitNull = computeLeadScore(lead({ estimatedTeamSize: null } as Parameters<typeof computeLeadScore>[0]))
+    assert.equal(noSize, explicitNull)
+  })
+
   it('uses custom weights correctly', () => {
     const weights = { ...DEFAULT_SCORING_WEIGHTS, industry: 0, contact: 1.0, size: 0, hiring: 0, tech: 0, growth: 0, messageRelevance: 0, channelFit: 0, timingFit: 0, dataFreshness: 0 }
     const withEmail = computeLeadScore(lead({ email: 'a@b.com' }), weights)
@@ -152,6 +170,40 @@ describe('explainLeadScore', () => {
     const e = explainLeadScore(lead({ email: 'a@b.com' }), legacyWeights)
     assert.deepEqual(e.topReasons, [])
     assert.ok(Array.isArray(e.reasons))
+  })
+})
+
+describe('ICP-aware industry scoring (P0-6)', () => {
+  it('defaults to the built-in field-service ICP when no targets are configured', () => {
+    // Unchanged behavior: a field-service category beats a generic one with no ICP.
+    const plumbing = computeLeadScore(lead({ category: 'plumbing contractor' }))
+    const retail = computeLeadScore(lead({ category: 'retail' }))
+    assert.ok(plumbing > retail, `field-service ${plumbing} should beat generic ${retail} by default`)
+  })
+
+  it('scores against the workspace ICP targets when provided', () => {
+    const targets = ['software', 'saas']
+    // A software company is now in-ICP (high); a plumber is out-of-ICP (low) —
+    // the opposite of the default field-service ranking.
+    const software = computeLeadScore(lead({ category: 'B2B Software' }), DEFAULT_SCORING_WEIGHTS, targets)
+    const plumber = computeLeadScore(lead({ category: 'plumbing contractor' }), DEFAULT_SCORING_WEIGHTS, targets)
+    assert.ok(software > plumber, `in-ICP software ${software} should beat out-of-ICP plumber ${plumber}`)
+  })
+
+  it('a field-service lead is NOT auto-HOT for a non-field-service workspace', () => {
+    // Same plumbing lead: strong by default, weak once the workspace targets software.
+    const l = lead({ category: 'plumbing', email: 'owner@acme.com' })
+    const industryOf = (targets?: string[]) => explainLeadScore(l, DEFAULT_SCORING_WEIGHTS, targets).signals.industry
+    assert.equal(industryOf(), 1.00)                 // default field-service ICP → full match
+    assert.equal(industryOf(['software']), 0.25)     // software-targeting workspace → out of ICP
+  })
+
+  it('matches case-insensitively and on substrings in either direction', () => {
+    const industryOf = (category: string, targets: string[]) =>
+      explainLeadScore(lead({ category }), DEFAULT_SCORING_WEIGHTS, targets).signals.industry
+    assert.equal(industryOf('Commercial Real Estate', ['real estate']), 1.00) // target ⊂ category
+    assert.equal(industryOf('Fintech', ['Financial Technology and Fintech']), 1.00) // category ⊂ target
+    assert.equal(industryOf('Healthcare', ['software']), 0.25) // no overlap
   })
 })
 

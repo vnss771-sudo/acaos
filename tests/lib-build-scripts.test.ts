@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const ensureScript = join(root, 'scripts/ensure-prisma-client.mjs')
-const postinstallScript = join(root, 'scripts/postinstall.mjs')
 
 // Build an isolated root containing scripts/assert-real-prisma-client.mjs and a
 // generated-client dir in one of the layouts the script checks, optionally with
@@ -58,7 +57,12 @@ test('ensure-prisma-client hydrates the offline stub when the client is missing'
 })
 
 test('postinstall installs the offline stub when ACAOS_SKIP_PRISMA_POSTINSTALL=1', () => {
-  const r = run(postinstallScript, { env: { ACAOS_SKIP_PRISMA_POSTINSTALL: '1' } })
+  // postinstall.mjs resolves its own root from import.meta.url, not cwd — so
+  // only a copied, isolated script (not a `cwd` override) keeps this test from
+  // installing the offline stub into the REAL node_modules/.prisma/client,
+  // which would silently break every step that runs after this test in the
+  // same process (e.g. the `build` step of `npm run verify`).
+  const r = run(isolatedScript('postinstall.mjs'), { env: { ACAOS_SKIP_PRISMA_POSTINSTALL: '1' } })
   assert.equal(r.status, 0)
   assert.match(r.stdout, /Skipping Prisma generate during postinstall/)
 })

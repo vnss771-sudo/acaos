@@ -7,20 +7,13 @@ import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputati
 import { warmupDailyCap } from '@acaos/backend-core/lib/warmup.js'
 import { createCachedValue } from '@acaos/backend-core/lib/cachedValue.js'
 import { createRejectionTracker } from '@acaos/backend-core/lib/rejectionTracker.js'
-import { generateLeadResearch, generateOutreach, analyzeReply, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
-import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
+import { analyzeReply } from '@acaos/backend-core/services/openai.js'
 import { closeMailTransports } from '@acaos/backend-core/services/mail.js'
-import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
 import {
   parseAiJson,
-  parseLeadResearchJson,
-  OutreachDraftOutputSchema,
   ReplyAnalysisOutputSchema,
 } from '@acaos/backend-core/lib/aiSchemas.js'
-import { assertOutreachTone } from '@acaos/backend-core/lib/outreachTone.js'
-import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
-import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
-import { refundAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
 import {
   parseJobPayload,
   ResearchLeadPayloadSchema,
@@ -34,30 +27,46 @@ import {
   DiscoverProspectsPayloadSchema,
   RetentionPurgePayloadSchema,
   SendFollowupPayloadSchema,
+  DlqAutoRetryPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { explainLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft } from './processors.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
 import { captureError } from '@acaos/backend-core/lib/observability.js'
+import { initTracing, withConsumerSpan } from '@acaos/backend-core/lib/tracing.js'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
+import { checkEncryptionKeyHealth } from '@acaos/backend-core/lib/encrypt.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
+import { attachProviderQuotaStore } from '@acaos/backend-core/lib/providerQuota.js'
 import { isFinalAttempt } from './lib/failureReporting.js'
+import {
+  createAdaptiveScaler,
+  isAdaptiveConcurrencyEnabled,
+  adaptivePollIntervalMs,
+  loadAdaptiveConfigFromEnv,
+  type AdaptiveScaler,
+} from './lib/adaptiveConcurrency.js'
+import {
+  runAutoRetrySweep,
+  isDlqAutoRetryEnabled,
+  loadAutoRetryPolicyFromEnv,
+  dlqAutoRetryIntervalMs,
+} from './lib/dlqAutoRetry.js'
 
 const SERVICE = 'acaos-worker'
 const metadata = getRuntimeMetadata(SERVICE)
@@ -70,237 +79,52 @@ function log(queue: string, msg: string, requestId?: string) {
 // ── research-lead ─────────────────────────────────────────────────────────────
 const researchWorker = new Worker(
   'research-lead',
-  async (job) => {
+  async (job) => withConsumerSpan('research-lead', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { leadId, workspaceId } = parseJobPayload(ResearchLeadPayloadSchema, 'research-lead', job.data)
     if (!isFeatureEnabled('ai')) { log('research-lead', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('research-lead', `Processing leadId=${leadId}`)
-
-    // Tenant-scoped fetch: never act on a lead outside the job's workspace.
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
-    if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
-
-    await job.updateProgress(10)
-
-    // Frame the research prompt for the workspace's actual vertical, not the
-    // hardcoded field-service default — otherwise a SaaS/other-vertical workspace
-    // gets analysis framed around plumbing/HVAC/etc.
-    const wsIcp = await prisma.workspaceICP.findUnique({
-      where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true },
-    })
-
-    const raw = await generateLeadResearch({
-      businessName: lead.businessName,
-      website: lead.website ?? undefined,
-      category: lead.category ?? undefined,
-      city: lead.city ?? undefined,
-      notes: lead.notes ?? undefined,
-      icp: toIcpContext(wsIcp),
-    })
-
-    await job.updateProgress(60)
-
-    // Lenient: research is best-effort enrichment, so a malformed field is
-    // dropped (not fatal) and the scorer falls back to its computed score.
-    const parsed = parseLeadResearchJson(raw)
-
-    const enrichedLead = {
-      businessName: lead.businessName,
-      category: lead.category,
-      contactName: lead.contactName,
-      email: lead.email,
-      website: lead.website,
-      notes: lead.notes,
-      aiSummary: parsed.aiSummary ?? null,
-      outreachAngle: parsed.outreachAngle ?? null
-    }
-
-    const weights = await getWorkspaceWeights(lead.workspaceId)
-    // Deterministic score + its rationale (the "why 75"), so the breakdown is
-    // captured in the job result/log rather than thrown away.
-    const explanation = explainLeadScore(enrichedLead, weights)
-    const computedScore = explanation.score
-    const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
-      ? Math.round((parsed.icpScore + computedScore) / 2)
-      : computedScore
-
-    await job.updateProgress(80)
-
-    // Thin-research guard: lenient parsing can yield an empty result; never let that
-    // flow through as auto_draft (it would produce generic, ungrounded outreach).
-    const evidenceCount = parsed.evidence?.length ?? 0
-    const noResearchSubstance = !(Boolean(parsed.aiSummary?.trim()) || evidenceCount > 0)
-    const thinResearch = noResearchSubstance && parsed.recommendedAction !== 'skip'
-    const safeRecommendedAction = resolveResearchAction({
-      recommendedAction: parsed.recommendedAction,
-      aiSummary: parsed.aiSummary,
-      evidenceCount,
-    })
-
-    // Auditable intelligence snapshot persisted on the lead: the deterministic
-    // score rationale plus the model's provenance-labelled evidence. JSON-only
-    // values (no undefined) so it round-trips cleanly through the JSONB column.
-    const aiIntelligence = {
-      capturedAt: new Date().toISOString(),
-      finalScore,
-      computedScore,
-      tier: explanation.tier,
-      modelIcpScore: typeof parsed.icpScore === 'number' ? parsed.icpScore : null,
-      topReasons: explanation.topReasons,
-      signals: explanation.signals,
-      evidence: parsed.evidence ?? [],
-      riskFlags: thinResearch
-        ? [...(parsed.riskFlags ?? []), 'Research returned no summary or evidence — held for manual review rather than auto-draft.']
-        : (parsed.riskFlags ?? []),
-      recommendedAction: safeRecommendedAction,
-      confidence: parsed.confidence ?? null,
-      digitalMaturity: parsed.digitalMaturity ?? null,
-      estimatedTeamSize: parsed.estimatedTeamSize ?? null,
-      hiringSignals: parsed.hiringSignals ?? null,
-    }
-
-    // Atomic: persist the lead's intelligence snapshot AND replace its normalized
-    // evidence rows together, so a re-research can't leave stale evidence behind.
-    await prisma.$transaction(async (tx) => {
-      await tx.lead.update({
-        where: { id: leadId },
-        data: {
-          aiSummary: parsed.aiSummary ?? null,
-          outreachAngle: parsed.outreachAngle ?? null,
-          aiIntelligence,
-          score: finalScore,
-          stage: 'RESEARCHED'
-        }
-      })
-      await replaceLeadEvidence(tx, { workspaceId: lead.workspaceId, leadId, evidence: parsed.evidence })
-    })
-
-    await job.updateProgress(100)
-    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${finalScore} why=${explanation.topReasons.join('; ') || 'n/a'}`)
-    return {
-      leadId,
-      aiSummary: parsed.aiSummary,
-      outreachAngle: parsed.outreachAngle,
-      score: finalScore,
-      scoreReasons: explanation.topReasons,
-      signals: explanation.signals,
-      evidence: parsed.evidence,
-      riskFlags: parsed.riskFlags,
-      recommendedAction: parsed.recommendedAction,
-    }
-  },
+    const result = await runInWorkspaceContext(workspaceId, () => researchLead(leadId, workspaceId, (n) => job.updateProgress(n)))
+    log('research-lead', `Done leadId=${leadId} stage=RESEARCHED score=${result.score} why=${result.scoreReasons.join('; ') || 'n/a'}`)
+    return result
+  }),
   { connection, concurrency: 3 }
 )
 
 // ── generate-outreach ─────────────────────────────────────────────────────────
 const outreachWorker = new Worker(
   'generate-outreach',
-  async (job) => {
+  async (job) => withConsumerSpan('generate-outreach', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { leadId, workspaceId, override } = parseJobPayload(GenerateOutreachPayloadSchema, 'generate-outreach', job.data)
     if (!isFeatureEnabled('ai')) { log('generate-outreach', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('generate-outreach', `Processing leadId=${leadId}`)
-
-    // Tenant-scoped fetch: never act on a lead outside the job's workspace.
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId } })
-    if (!lead) throw new Error(`Lead ${leadId} not found in workspace ${workspaceId}`)
-
-    // Outreach gate: honour the research recommendedAction. A poor-fit ("skip")
-    // lead is suppressed (no model call) and marked for the review queue; a human
-    // can override, which generates a draft into POLICY_REVIEW. manual_review and
-    // override both force POLICY_REVIEW. auto_draft / none → normal DRAFTED flow.
-    const intel = (lead.aiIntelligence ?? null) as { recommendedAction?: string } | null
-    const gate = resolveOutreachGate({ recommendedAction: intel?.recommendedAction, override })
-
-    if (!gate.generate) {
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { outreachSkippedAt: new Date(), outreachSkipReason: gate.skipReason },
-      })
-      // No model call was made — free the AI_OUTREACH credit the API metered up front.
-      await refundAiUsage(lead.workspaceId, 'AI_OUTREACH')
-      await job.updateProgress(100)
-      log('generate-outreach', `suppressed leadId=${leadId}: ${gate.skipReason}`)
-      return { leadId, skipped: true, reason: gate.skipReason }
-    }
-
-    await job.updateProgress(10)
-
-    // Frame outreach for the workspace's vertical/tone (not the field-service
-    // default), mirroring the campaign send path.
-    const wsIcp = await prisma.workspaceICP.findUnique({
-      where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true },
-    })
-
-    const raw = await generateOutreach({
-      businessName: lead.businessName,
-      category: lead.category ?? undefined,
-      city: lead.city ?? undefined,
-      contactName: lead.contactName ?? undefined,
-      aiSummary: lead.aiSummary ?? undefined,
-      outreachAngle: lead.outreachAngle ?? undefined,
-      icp: toIcpContext(wsIcp),
-    })
-
-    await job.updateProgress(80)
-
-    // Strict: a draft missing subject/email is unusable. Fail closed — throwing
-    // here marks the job failed so BullMQ retries rather than persisting garbage.
-    const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
-
-    // Tone guardrail: reject "creepy", presumptuous copy that asserts private
-    // knowledge of the recipient's problems as fact (fail closed → BullMQ
-    // regenerates). Buzzword warnings are surfaced but do not block.
-    const toneWarnings = assertOutreachTone(parsed)
-    if (toneWarnings.length > 0) {
-      log('generate-outreach', `tone warnings leadId=${leadId}: ${toneWarnings.map((w) => w.match).join(', ')}`)
-    }
-
-    // Record generation provenance (model + prompt version) so the draft is
-    // auditable/reproducible. Best-effort — never blocks draft creation.
-    const promptVersionId = await resolvePromptVersionId({ workspaceId: lead.workspaceId, ...outreachGenerationMeta() })
-
-    await prisma.outreachDraft.create({
-      data: {
-        leadId: lead.id,
-        workspaceId: lead.workspaceId,
-        subject: parsed.subject,
-        emailBody: parsed.email,
-        followup: parsed.followup ?? null,
-        // Gated status: POLICY_REVIEW when research asked for manual review or a
-        // human overrode a skip (held for a human); otherwise the normal DRAFTED.
-        status: gate.draftStatus,
-        promptVersionId,
+    const result = await runInWorkspaceContext(workspaceId, () => generateOutreachDraft(leadId, workspaceId, override, (n) => job.updateProgress(n)))
+    if (result.skipped) {
+      log('generate-outreach', `suppressed leadId=${leadId}: ${result.reason}`)
+    } else {
+      if (result.toneWarnings && result.toneWarnings.length > 0) {
+        log('generate-outreach', `tone warnings leadId=${leadId}: ${result.toneWarnings.join(', ')}`)
       }
-    })
-
-    // A successful (over)ride generation clears any prior poor-fit suppression.
-    if (lead.outreachSkippedAt) {
-      await prisma.lead.update({ where: { id: lead.id }, data: { outreachSkippedAt: null, outreachSkipReason: null } })
+      log('generate-outreach', `Done leadId=${leadId}`)
     }
-
-    // Generating a draft is NOT a send. Do not advance the lead to
-    // OUTREACH_SENT here — sendCampaignBatch excludes that stage from the send
-    // selection, so marking it now would prevent the campaign from ever
-    // sending the draft. sendCampaignBatch sets OUTREACH_SENT only after SMTP
-    // delivery is recorded in OutreachSent.
-
-    await job.updateProgress(100)
-    log('generate-outreach', `Done leadId=${leadId}`)
-    return { leadId, subject: parsed.subject, email: parsed.email, followup: parsed.followup }
-  },
+    return result
+  }),
   { connection, concurrency: 3 }
 )
 
 // ── analyze-reply ─────────────────────────────────────────────────────────────
 const replyWorker = new Worker(
   'analyze-reply',
-  async (job) => {
-    const { replyBody, leadId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
+  async (job) => withConsumerSpan('analyze-reply', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
+    const { replyBody, leadId, workspaceId } = parseJobPayload(AnalyzeReplyPayloadSchema, 'analyze-reply', job.data)
     if (!isFeatureEnabled('ai')) { log('analyze-reply', 'skipped: FEATURE_AI disabled'); return { skipped: true, reason: 'FEATURE_AI disabled' } }
     log('analyze-reply', `Processing${leadId ? ` leadId=${leadId}` : ''}`)
 
     await job.updateProgress(10)
+    // Defense-in-depth re-check right before the model call — see the same
+    // comment in the research-lead worker above. workspaceId is the one payload
+    // field every enqueue site sets even though the schema allows it to be
+    // absent; without it there's no tenant to check quota against.
+    if (workspaceId) await assertAiUsageAllowed(workspaceId)
     const raw = await analyzeReply(replyBody)
     await job.updateProgress(70)
 
@@ -316,14 +140,14 @@ const replyWorker = new Worker(
     await job.updateProgress(100)
     log('analyze-reply', `Done classification=${parsed.classification} isAutoReply=${parsed.isAutoReply}`)
     return parsed
-  },
+  }),
   { connection, concurrency: 5 }
 )
 
 // ── sync-mailbox ──────────────────────────────────────────────────────────────
 const mailboxWorker = new Worker(
   'sync-mailbox',
-  async (job) => {
+  async (job) => withConsumerSpan('sync-mailbox', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId, autoSync } = parseJobPayload(SyncMailboxPayloadSchema, 'sync-mailbox', job.data)
     if (!isFeatureEnabled('mailboxSync')) { log('sync-mailbox', 'skipped: FEATURE_MAILBOX_SYNC disabled'); return { skipped: true, reason: 'FEATURE_MAILBOX_SYNC disabled' } }
     const { syncMailboxOnce, isMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
@@ -361,14 +185,14 @@ const mailboxWorker = new Worker(
     await job.updateProgress(100)
     log('sync-mailbox', `Done workspaceId=${workspaceId} inspected=${result.inspected} matched=${result.matched} queued=${result.queued} bounced=${result.bounced} complained=${result.complained}`)
     return result
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
 // ── score-prospects ────────────────────────────────────────────────────────────
 const scoreProspectsWorker = new Worker(
   'score-prospects',
-  async (job) => {
+  async (job) => withConsumerSpan('score-prospects', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId } = parseJobPayload(ScoreProspectsPayloadSchema, 'score-prospects', job.data)
     log('score-prospects', `Rescoring prospects for workspaceId=${workspaceId}`)
     const result = await runInWorkspaceContext(workspaceId, () => scoreProspects(workspaceId, (n) => job.updateProgress(n)))
@@ -381,7 +205,7 @@ const scoreProspectsWorker = new Worker(
         log('score-prospects', `enqueue recommendation failed for ${prospectId}: ${(e as Error).message}`))
     }
     return result
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
@@ -392,21 +216,21 @@ const scoreProspectsWorker = new Worker(
 // route checks. Low concurrency — provider calls are metered and rate-limited.
 const discoverWorker = new Worker(
   'discover-prospects',
-  async (job) => {
+  async (job) => withConsumerSpan('discover-prospects', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { runId, workspaceId } = parseJobPayload(DiscoverProspectsPayloadSchema, 'discover-prospects', job.data)
     if (!isFeatureEnabled('discovery')) { log('discover-prospects', 'skipped: FEATURE_DISCOVERY disabled'); return { skipped: true, reason: 'FEATURE_DISCOVERY disabled' } }
     log('discover-prospects', `Discovering run=${runId} workspace=${workspaceId}`)
     const result = await runInWorkspaceContext(workspaceId, () => discoverProspectsBatch(runId, workspaceId, (n) => job.updateProgress(n)))
     log('discover-prospects', `Done run=${runId} status=${result.status} imported=${result.imported} skipped=${result.skipped}`)
     return result
-  },
+  }),
   { connection, concurrency: 2 }
 )
 
 // ── generate-recommendations ──────────────────────────────────────────────────
 const recommendWorker = new Worker(
   'generate-recommendations',
-  async (job) => {
+  async (job) => withConsumerSpan('generate-recommendations', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { prospectId, workspaceId } = parseJobPayload(GenerateRecommendationsPayloadSchema, 'generate-recommendations', job.data)
     log('generate-recommendations', `Generating for prospectId=${prospectId}`)
 
@@ -476,14 +300,14 @@ const recommendWorker = new Worker(
     await job.updateProgress(100)
     log('generate-recommendations', `Done prospectId=${prospectId} channel=${rec.bestChannel} priority=${priority}`)
     return { prospectId, ...rec, priority }
-  },
+  }),
   { connection, concurrency: 3 }
 )
 
 // ── send-campaign ─────────────────────────────────────────────────────────────
 const sendCampaignWorker = new Worker(
   'send-campaign',
-  async (job) => {
+  async (job) => withConsumerSpan('send-campaign', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { campaignId, workspaceId, leadIds } = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', job.data)
     if (!isFeatureEnabled('send')) { log('send-campaign', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled', sent: 0, skipped_count: leadIds?.length ?? 0 } }
     log('send-campaign', `Sending campaign=${campaignId} workspace=${workspaceId}`)
@@ -493,7 +317,7 @@ const sendCampaignWorker = new Worker(
     const reasons = Object.entries(result.skippedByReason).filter(([, n]) => n > 0).map(([r, n]) => `${r}=${n}`).join(' ')
     log('send-campaign', `Done campaign=${campaignId} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}${reasons ? ` [${reasons}]` : ''}`)
     return result
-  },
+  }),
   { connection, concurrency: 2 }
 )
 
@@ -508,7 +332,7 @@ const sendCampaignWorker = new Worker(
 // that enqueues per-task children) and `{ taskId }` (dispatch one due step).
 const sendFollowupWorker = new Worker(
   'send-followup',
-  async (job) => {
+  async (job) => withConsumerSpan('send-followup', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { taskId, scan } = parseJobPayload(SendFollowupPayloadSchema, 'send-followup', job.data)
     if (!isFeatureEnabled('send')) { log('send-followup', 'skipped: FEATURE_SEND disabled'); return { skipped: true, reason: 'FEATURE_SEND disabled' } }
     if (!areFollowupsEnabled()) { log('send-followup', 'skipped: FOLLOWUPS_ENABLED off'); return { skipped: true, reason: 'FOLLOWUPS_ENABLED off' } }
@@ -521,14 +345,14 @@ const sendFollowupWorker = new Worker(
     const result = await sendFollowupTask(taskId!)
     log('send-followup', `Done task=${taskId} status=${result.status}${result.reason ? ` reason=${result.reason}` : ''}`)
     return result
-  },
+  }),
   { connection, concurrency: 2 }
 )
 
 // ── calibrate-scoring ─────────────────────────────────────────────────────────
 const calibrateWorker = new Worker(
   'calibrate-scoring',
-  async (job) => {
+  async (job) => withConsumerSpan('calibrate-scoring', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId } = parseJobPayload(CalibrateScoringPayloadSchema, 'calibrate-scoring', job.data)
     log('calibrate-scoring', `Calibrating workspace=${workspaceId}`)
     const stats = await runInWorkspaceContext(workspaceId, () => calibrateScoring(workspaceId, (n) => job.updateProgress(n)))
@@ -538,7 +362,7 @@ const calibrateWorker = new Worker(
       log('calibrate-scoring', `Done workspace=${workspaceId} winRate=${Math.round(stats.baselineWinRate * 100)}%`)
     }
     return stats
-  },
+  }),
   { connection, concurrency: 1 }
 )
 
@@ -547,7 +371,7 @@ const calibrateWorker = new Worker(
 // deleting rows past their window. Platform-wide, idempotent, runs daily.
 const retentionWorker = new Worker(
   'retention-purge',
-  async (job) => {
+  async (job) => withConsumerSpan('retention-purge', job.name, job.data?.traceparent, {}, async () => {
     parseJobPayload(RetentionPurgePayloadSchema, 'retention-purge', job.data)
     log('retention-purge', 'Starting retention sweep')
     const deleted = await purgeExpiredData()
@@ -567,6 +391,33 @@ const retentionWorker = new Worker(
     if (reconcile) log('retention-purge', `stats reconcile: checked=${reconcile.campaignsChecked} drift=${reconcile.drifted.length} rebuilt=${reconcile.workspacesRebuilt}`)
     log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
     return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0 }
+  }),
+  { connection, concurrency: 1 }
+)
+
+// ── dlq-auto-retry ────────────────────────────────────────────────────────────
+// Periodic sweep (see lib/dlqAutoRetry.ts): gives a few bonus retries to failed
+// jobs — across every other queue — whose error looks transient and haven't
+// already exhausted a small bonus-retry budget or gone stale. The manual,
+// operator-invoked counterpart is scripts/queue-drain.mjs. Default ON
+// (DLQ_AUTO_RETRY_ENABLED) — an operator can opt out if it ever misbehaves.
+// WORKER_QUEUES is defined below this worker but the closure only reads it once
+// a job actually runs, well after the module has finished initializing.
+const dlqAutoRetryWorker = new Worker(
+  'dlq-auto-retry',
+  async (job) => {
+    parseJobPayload(DlqAutoRetryPayloadSchema, 'dlq-auto-retry', job.data)
+    if (!isDlqAutoRetryEnabled()) { log('dlq-auto-retry', 'skipped: DLQ_AUTO_RETRY_ENABLED off'); return { skipped: true } }
+    const policy = loadAutoRetryPolicyFromEnv()
+    const targets = WORKER_QUEUES.map(([name]) => name).filter((name) => name !== 'dlq-auto-retry')
+    const results = await runAutoRetrySweep(targets, getQueue, policy)
+    const totalScanned = results.reduce((a, r) => a + r.scanned, 0)
+    const totalRetried = results.reduce((a, r) => a + r.retried, 0)
+    if (totalRetried > 0) {
+      const perQueue = results.filter((r) => r.retried > 0).map((r) => `${r.queue}=${r.retried}`).join(' ')
+      log('dlq-auto-retry', `Auto-retried ${totalRetried}/${totalScanned} scanned failed job(s) [${perQueue}]`)
+    }
+    return { scanned: totalScanned, retried: totalRetried, results }
   },
   { connection, concurrency: 1 }
 )
@@ -584,6 +435,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['send-followup',           sendFollowupWorker],
   ['discover-prospects',      discoverWorker],
   ['retention-purge',         retentionWorker],
+  ['dlq-auto-retry',          dlqAutoRetryWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
   worker.on('completed', (job) => {
@@ -696,6 +548,41 @@ const domainMetricsCache = createCachedValue(
   ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
 }
 
+// ── Repeatable DLQ auto-retry sweep (every 5 min by default) ─────────────────
+// Interval overridable via DLQ_AUTO_RETRY_INTERVAL_MS. Always registered
+// (idempotent), same as retention-purge/follow-up-scan above — the processor
+// itself checks DLQ_AUTO_RETRY_ENABLED and no-ops when an operator turns it off.
+{
+  const dlqQueue = new Queue('dlq-auto-retry', { connection })
+  const every = dlqAutoRetryIntervalMs()
+  dlqQueue.upsertJobScheduler(
+    'dlq-auto-retry-sweep',
+    { every },
+    { name: 'dlq-auto-retry-sweep', data: {}, opts: { attempts: 1, removeOnComplete: { count: 10 }, removeOnFail: { count: 20 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule DLQ auto-retry sweep:', err.message))
+}
+
+// ── Queue-depth-adaptive worker concurrency ───────────────────────────────────
+// Opt-in via WORKER_ADAPTIVE_CONCURRENCY_ENABLED — off by default, so this is a
+// pure addition: no worker's concurrency changes from its hardcoded value above
+// unless an operator explicitly turns it on. See lib/adaptiveConcurrency.ts.
+const adaptiveScalers: AdaptiveScaler[] = []
+if (isAdaptiveConcurrencyEnabled()) {
+  const pollIntervalMs = adaptivePollIntervalMs()
+  for (const [name, worker] of WORKER_QUEUES) {
+    const config = loadAdaptiveConfigFromEnv(name, worker.concurrency)
+    if (config.min >= config.max) continue // no room to scale (e.g. static concurrency is already 1)
+    adaptiveScalers.push(createAdaptiveScaler(name, getQueue(name), worker, {
+      pollIntervalMs,
+      config,
+      onChange: ({ queue, from, to, action, waiting }) =>
+        log(queue, `adaptive concurrency ${action}: ${from} -> ${to} (waiting=${waiting})`),
+      onError: (err) => log(name, `adaptive concurrency poll failed: ${err instanceof Error ? err.message : String(err)}`),
+    }))
+  }
+  console.log(`[worker] Adaptive concurrency enabled for ${adaptiveScalers.length}/${WORKER_QUEUES.length} queue(s), poll=${pollIntervalMs}ms`)
+}
+
 // ── Repeatable follow-up due-task scan (every 1 min by default) ───────────────
 // The scheduler is ALWAYS registered (idempotent), but every scan job no-ops
 // unless FOLLOWUPS_ENABLED is on (checked in the worker), so this stays dormant by
@@ -715,10 +602,24 @@ const domainMetricsCache = createCachedValue(
 // so background-job failures (worker.ts handlers) reach the same transport as API errors.
 void initErrorReporting()
 
+// The API validates this at boot (server.ts, via checkEncryptionKeyHealth()); the
+// worker never did, despite being the process that actually decrypts SMTP/IMAP
+// credentials on every mail send/sync. Same non-fatal warn-only check.
+checkEncryptionKeyHealth()
+
+// Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
+// debugging, OTEL_CONSOLE_EXPORTER) is set — see backend-core/lib/tracing.ts.
+initTracing(SERVICE)
+
 // Share circuit-breaker state with the API via Redis (reusing the BullMQ
 // connection) so a provider outage the worker trips also protects the API.
 // Fail-open: falls back to per-process state if Redis is unavailable.
 attachBreakerStore(createRedisBreakerStore(connection))
+
+// Share the platform-wide discovery-provider quota with the API the same way —
+// the worker runs discovery jobs too (see processors.ts), against the same
+// shared Apollo/Google Places contract.
+attachProviderQuotaStore(connection)
 
 // ── Liveness probe + metrics ─────────────────────────────────────────────────────
 // Bind to the platform-injected PORT when present (so Railway's healthcheck, which
@@ -749,6 +650,8 @@ async function shutdown(signal: string, exitCode = 0) {
   }, 10_000)
   forceExit.unref()
 
+  for (const scaler of adaptiveScalers) scaler.stop()
+
   await Promise.all([
     researchWorker.close(),
     outreachWorker.close(),
@@ -761,6 +664,7 @@ async function shutdown(signal: string, exitCode = 0) {
     sendFollowupWorker.close(),
     discoverWorker.close(),
     retentionWorker.close(),
+    dlqAutoRetryWorker.close(),
   ])
   closeMailTransports() // release pooled SMTP connections
   await prisma.$disconnect()

@@ -16,7 +16,12 @@
  * The evaluator (evaluateResearch) is exported and pure so its logic is unit
  * tested in tests/eval-research.test.ts without needing a key or the network.
  */
+import { execSync } from 'node:child_process'
 import { generateLeadResearch } from '../apps/api/src/services/openai.js'
+import { appendEvalRun, computeEvalScore, computeLift, formatLift } from './lib/evalHistory.js'
+import { appendStepSummary, readHistoryFile, writeHistoryFile } from './lib/evalHistoryStore.js'
+
+const HISTORY_PATH = new URL('../eval-results/research.json', import.meta.url).pathname
 
 type ResearchInput = Parameters<typeof generateLeadResearch>[0]
 
@@ -188,6 +193,28 @@ async function main() {
     for (const f of all) console.log(`  ${f.severity === 'FAIL' ? '❌' : '⚠️ '} [${f.case}] ${f.message}`)
   }
   console.log(`\nResult: ${fails.length} FAIL, ${warns.length} WARN across ${RESEARCH_CASES.length} cases.`)
+
+  // Record this run's quality score and report lift vs. the last recorded run,
+  // so quality is a visible trend over time in CI, not just current-run pass/fail.
+  // Persisted (and committed by the workflow) regardless of pass/fail, so a real
+  // regression shows up in the trend rather than being silently omitted.
+  const score = computeEvalScore(all)
+  const history = readHistoryFile(HISTORY_PATH)
+  const lift = computeLift(history, score)
+  console.log(formatLift(lift, score))
+  appendStepSummary(`### Research eval\n\n${formatLift(lift, score)}\n`)
+  let gitSha: string | undefined
+  try { gitSha = execSync('git rev-parse HEAD').toString().trim() } catch { /* not fatal */ }
+  writeHistoryFile(HISTORY_PATH, appendEvalRun(history, {
+    recordedAt: new Date().toISOString(),
+    gitSha,
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    score,
+    fails: fails.length,
+    warns: warns.length,
+    cases: RESEARCH_CASES.length,
+  }))
+
   process.exit(fails.length > 0 ? 1 : 0)
 }
 

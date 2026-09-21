@@ -45,14 +45,32 @@ afterEach(async () => { await server.close(); resetPrisma() })
 const json = (uid: string) => ({ Authorization: bearer(uid), 'Content-Type': 'application/json' })
 
 test('POST creates an endpoint and returns the full secret exactly once (admin)', async () => {
+  // A literal public IP (same "ordinary public" example as lib-ssrf.test.ts) keeps
+  // this hermetic — a hostname would need a real DNS lookup against resolvePublicMailHost.
   const res = await server.request('/api/webhooks', {
     method: 'POST', headers: json(ADMIN),
-    body: JSON.stringify({ workspaceId: OWNED, url: 'https://hook.test/x', eventTypes: ['reply.received', 'reply.received'] }),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'https://203.0.113.10/x', eventTypes: ['reply.received', 'reply.received'] }),
   })
   assert.equal(res.status, 201)
   assert.match(res.body.secret, /^whsec_[0-9a-f]+$/, 'full secret returned on create')
   assert.deepEqual(res.body.endpoint.eventTypes, ['reply.received'], 'duplicates collapsed')
   assert.match(res.body.endpoint.secretMasked, /…$/, 'endpoint object only carries a masked secret')
+})
+
+test('POST rejects a non-https endpoint URL', async () => {
+  const res = await server.request('/api/webhooks', {
+    method: 'POST', headers: json(ADMIN),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'http://203.0.113.10/x', eventTypes: ['reply.received'] }),
+  })
+  assert.equal(res.status, 400)
+})
+
+test('POST rejects an endpoint that resolves to a private/metadata address', async () => {
+  const res = await server.request('/api/webhooks', {
+    method: 'POST', headers: json(ADMIN),
+    body: JSON.stringify({ workspaceId: OWNED, url: 'https://169.254.169.254/x', eventTypes: ['reply.received'] }),
+  })
+  assert.equal(res.status, 400)
 })
 
 test('POST rejects an unsupported event type (400)', async () => {

@@ -31,6 +31,34 @@ export interface ReconcileReport {
 
 const FIELDS: CampaignStatField[] = ['sent', 'replied', 'interested', 'bounced', 'unsubscribed', 'failed']
 
+type FieldCounts = Record<CampaignStatField, number>
+const zeroCounts = (): FieldCounts => ({ sent: 0, replied: 0, interested: 0, bounced: 0, unsubscribed: 0, failed: 0 })
+
+/** Ledger-side buckets for one workspace: (campaignId, day) -> field counts. */
+async function ledgerBucketsForWorkspace(workspaceId: string, since: Date, until: Date): Promise<Map<string, { campaignId: string; counts: FieldCounts }>> {
+  // Scoped by workspaceId first — the same shape rebuildCampaignStats already
+  // uses, which hits the @@index([workspaceId, campaignId, occurredAt]) index
+  // instead of the unscoped, cross-tenant sequential scan this replaced.
+  const events = await prisma.contactEvent.findMany({
+    where: { workspaceId, campaignId: { not: null }, occurredAt: { gte: since, lt: until } },
+    select: { campaignId: true, type: true, occurredAt: true },
+  })
+  const ledger = new Map<string, { campaignId: string; counts: FieldCounts }>()
+  for (const e of events) {
+    const field = EVENT_FIELD[e.type]
+    if (!field || !e.campaignId) continue
+    const date = utcDayStart(e.occurredAt)
+    const key = `${e.campaignId}:${date.toISOString()}`
+    let b = ledger.get(key)
+    if (!b) {
+      b = { campaignId: e.campaignId, counts: zeroCounts() }
+      ledger.set(key, b)
+    }
+    b.counts[field]++
+  }
+  return ledger
+}
+
 /**
  * Compare the ledger aggregate against CampaignDailyStats over the trailing window.
  * Returns the drifts found; when `rebuild` is true, rebuilds each drifted
@@ -47,53 +75,61 @@ export async function reconcileCampaignStats(opts: { rebuild?: boolean; now?: Da
   const until = utcDayStart(now)
   const since = utcDayStart(new Date(now.getTime() - reconcileWindowDays() * 24 * 60 * 60 * 1000))
 
-  // Ledger side: events in the window, bucketed by (workspace, campaign, day, field).
-  const events = await prisma.contactEvent.findMany({
-    where: { campaignId: { not: null }, occurredAt: { gte: since, lt: until } },
-    select: { workspaceId: true, campaignId: true, type: true, occurredAt: true },
-  })
-  const ledger = new Map<string, { workspaceId: string; campaignId: string; date: Date; counts: Record<CampaignStatField, number> }>()
-  for (const e of events) {
-    const field = EVENT_FIELD[e.type]
-    if (!field || !e.campaignId) continue
-    const date = utcDayStart(e.occurredAt)
-    const key = `${e.campaignId}:${date.toISOString()}`
-    let b = ledger.get(key)
-    if (!b) {
-      b = { workspaceId: e.workspaceId, campaignId: e.campaignId, date, counts: { sent: 0, replied: 0, interested: 0, bounced: 0, unsubscribed: 0, failed: 0 } }
-      ledger.set(key, b)
-    }
-    b.counts[field]++
-  }
-
-  // Projection side: the stored rows over the same settled-day window.
-  const rows = await prisma.campaignDailyStats.findMany({ where: { date: { gte: since, lt: until } } })
-  const projection = new Map<string, Record<CampaignStatField, number>>()
-  for (const r of rows as Array<Record<string, unknown>>) {
-    const key = `${r.campaignId as string}:${(r.date as Date).toISOString()}`
-    projection.set(key, {
-      sent: r.sent as number, replied: r.replied as number, interested: r.interested as number,
-      bounced: r.bounced as number, unsubscribed: r.unsubscribed as number, failed: r.failed as number,
-    })
-  }
+  // Every query below is scoped to one workspace at a time — this sweep used to
+  // load every ContactEvent in the window across every tenant into one JS Map with
+  // no workspaceId filter and no supporting index, which at real send volume is
+  // both a full cross-tenant table scan and an OOM risk for the worker process
+  // that also runs every other queue. Two cheap `distinct` queries first find which
+  // workspaces have anything to check in the window (a workspace can show up via
+  // the ledger, the projection, or both — e.g. a lost live-projection write leaves
+  // ledger events with no matching row at all, which is exactly the drift case
+  // this sweep exists to catch).
+  const [ledgerWorkspaces, projectionWorkspaces] = await Promise.all([
+    prisma.contactEvent.findMany({
+      where: { campaignId: { not: null }, occurredAt: { gte: since, lt: until } },
+      distinct: ['workspaceId'],
+      select: { workspaceId: true },
+    }),
+    prisma.campaignDailyStats.findMany({
+      where: { date: { gte: since, lt: until } },
+      distinct: ['workspaceId'],
+      select: { workspaceId: true },
+    }),
+  ])
+  const workspaceIds = new Set<string>([
+    ...ledgerWorkspaces.map((w: { workspaceId: string }) => w.workspaceId),
+    ...projectionWorkspaces.map((w: { workspaceId: string }) => w.workspaceId),
+  ])
 
   const drifted: ReconcileReport['drifted'] = []
   const driftedWorkspaces = new Set<string>()
-  // Union of keys present in either side.
-  const allKeys = new Set<string>([...ledger.keys(), ...projection.keys()])
-  for (const key of allKeys) {
-    const b = ledger.get(key)
-    const proj = projection.get(key) ?? { sent: 0, replied: 0, interested: 0, bounced: 0, unsubscribed: 0, failed: 0 }
-    const counts = b?.counts ?? { sent: 0, replied: 0, interested: 0, bounced: 0, unsubscribed: 0, failed: 0 }
-    for (const field of FIELDS) {
-      if (counts[field] !== proj[field]) {
-        const [campaignId, dateIso] = key.split(/:(?=\d{4}-)/)
-        drifted.push({ campaignId, date: dateIso, field, ledger: counts[field], projection: proj[field] })
-        if (b) driftedWorkspaces.add(b.workspaceId)
-        else {
-          // Projection has a row the ledger window doesn't explain; capture workspace from the stored row.
-          const wsRow = (rows as Array<Record<string, unknown>>).find((r) => `${r.campaignId}:${(r.date as Date).toISOString()}` === key)
-          if (wsRow) driftedWorkspaces.add(wsRow.workspaceId as string)
+  let campaignsChecked = 0
+
+  for (const workspaceId of workspaceIds) {
+    const [ledger, rows] = await Promise.all([
+      ledgerBucketsForWorkspace(workspaceId, since, until),
+      prisma.campaignDailyStats.findMany({ where: { workspaceId, date: { gte: since, lt: until } } }),
+    ])
+    const projection = new Map<string, FieldCounts>()
+    for (const r of rows as Array<Record<string, unknown>>) {
+      const key = `${r.campaignId as string}:${(r.date as Date).toISOString()}`
+      projection.set(key, {
+        sent: r.sent as number, replied: r.replied as number, interested: r.interested as number,
+        bounced: r.bounced as number, unsubscribed: r.unsubscribed as number, failed: r.failed as number,
+      })
+    }
+
+    const allKeys = new Set<string>([...ledger.keys(), ...projection.keys()])
+    campaignsChecked += allKeys.size
+    for (const key of allKeys) {
+      const b = ledger.get(key)
+      const proj = projection.get(key) ?? zeroCounts()
+      const counts = b?.counts ?? zeroCounts()
+      for (const field of FIELDS) {
+        if (counts[field] !== proj[field]) {
+          const [campaignId, dateIso] = key.split(/:(?=\d{4}-)/)
+          drifted.push({ campaignId, date: dateIso, field, ledger: counts[field], projection: proj[field] })
+          driftedWorkspaces.add(workspaceId)
         }
       }
     }
@@ -109,5 +145,5 @@ export async function reconcileCampaignStats(opts: { rebuild?: boolean; now?: Da
     }
   }
 
-  return { campaignsChecked: allKeys.size, drifted, workspacesRebuilt }
+  return { campaignsChecked, drifted, workspacesRebuilt }
 }

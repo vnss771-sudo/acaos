@@ -226,6 +226,59 @@ test('idempotent: a step already in the outbox marks the task SENT without re-se
   assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id, leadId: lead.id, sequenceStep: 2 } }), 1)
 })
 
+test('BLOCKED: consent gate (gate ON + lawfulBasis=consent) blocks a follow-up with no ConsentRecord', async () => {
+  const saved = process.env.COMPLIANCE_GATE_ENABLED
+  process.env.COMPLIANCE_GATE_ENABLED = 'true'
+  try {
+    const { workspace } = await seedUserWithWorkspace()
+    await seedSmtp(workspace.id)
+    await prisma.workspace.update({ where: { id: workspace.id }, data: { lawfulBasis: 'consent' } })
+    const campaign = await seedCampaign(workspace.id, true)
+    await seedStep(campaign.id, 2, 3)
+    const lead = await seedLead(workspace.id, campaign.id, 'no-consent@buyer.test')
+    const task = await seedDueTask(workspace.id, campaign.id, lead.id, 2)
+
+    const mailer = recordingMailer()
+    const res = await sendFollowupTask(task.id, { sendMail: mailer.fn })
+
+    assert.equal(res.status, 'BLOCKED')
+    assert.equal(res.reason, 'CONSENT_REQUIRED')
+    assert.deepEqual(mailer.sent, [])
+    assert.equal(await prisma.outreachSent.count({ where: { leadId: lead.id } }), 0)
+    const audit = await prisma.auditEvent.findFirst({ where: { workspaceId: workspace.id, type: 'consent.enforcement.skipped', entityId: lead.id } })
+    assert.ok(audit, 'the blocked follow-up is audited')
+  } finally {
+    if (saved === undefined) delete process.env.COMPLIANCE_GATE_ENABLED
+    else process.env.COMPLIANCE_GATE_ENABLED = saved
+  }
+})
+
+test('SENT: consent gate ON but a matching ConsentRecord exists — the follow-up sends normally', async () => {
+  const saved = process.env.COMPLIANCE_GATE_ENABLED
+  process.env.COMPLIANCE_GATE_ENABLED = 'true'
+  try {
+    const { workspace } = await seedUserWithWorkspace()
+    await seedSmtp(workspace.id)
+    await prisma.workspace.update({ where: { id: workspace.id }, data: { lawfulBasis: 'consent' } })
+    const campaign = await seedCampaign(workspace.id, true)
+    await seedStep(campaign.id, 2, 3)
+    const lead = await seedLead(workspace.id, campaign.id, 'consented@buyer.test')
+    await prisma.consentRecord.create({
+      data: { workspaceId: workspace.id, emailKey: 'consented@buyer.test', basis: 'express_consent', source: 'manual' },
+    })
+    const task = await seedDueTask(workspace.id, campaign.id, lead.id, 2)
+
+    const mailer = recordingMailer()
+    const res = await sendFollowupTask(task.id, { sendMail: mailer.fn })
+
+    assert.equal(res.status, 'SENT')
+    assert.deepEqual(mailer.sent, ['consented@buyer.test'])
+  } finally {
+    if (saved === undefined) delete process.env.COMPLIANCE_GATE_ENABLED
+    else process.env.COMPLIANCE_GATE_ENABLED = saved
+  }
+})
+
 test('FAILED: an SMTP rejection records the failure in the outbox, ledger, and stats atomically', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)

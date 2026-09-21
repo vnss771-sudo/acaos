@@ -17,6 +17,7 @@ import {
   type FakePrisma,
   type TestServer,
 } from './helpers/integration.ts'
+import { setErrorReporter } from '../packages/backend-core/src/lib/observability.ts'
 
 const WS = 'ws1'
 const API_KEY = 'ingest-key-xyz'
@@ -67,6 +68,9 @@ function spec() {
         return null
       },
     },
+    // Default: audit writes succeed silently. Overridden per-test to throw and
+    // assert the failure is escalated (durability tests below).
+    auditEvent: { create: async () => ({ id: 'ae-1' }) },
   }
 }
 
@@ -81,6 +85,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.close()
   resetPrisma()
+  setErrorReporter(null)
 })
 
 function ingest(body: unknown, key: string | null = API_KEY) {
@@ -232,4 +237,44 @@ test('key deletion looks up the existing key (to evict it) and clears it', async
   // ...and the key is nulled out.
   const update = prisma.callsTo('workspace', 'update')[0]
   assert.equal((update.args[0] as any).data.ingestApiKey, null)
+})
+
+// ── Audit durability ────────────────────────────────────────────────────────
+//
+// This route performs the same credential rotation/revocation as
+// POST/DELETE /api/workspaces/:id/api-key — it must record a durable,
+// escalating audit event (`recordCriticalAudit`), not silently rotate/revoke a
+// workspace's ingest credential with no trail at all.
+test('key rotation escalates an audit-write failure to the error reporter', async () => {
+  const captured: Array<{ ctx?: Record<string, unknown> }> = []
+  setErrorReporter((_err, ctx) => { captured.push({ ctx }) })
+  installPrisma(createFakePrisma({
+    ...spec(),
+    auditEvent: { create: async () => { throw new Error('db down') } },
+  }))
+  const res = await server.request(`/api/ingest/keys/rotate?workspaceId=${WS}`, {
+    method: 'POST',
+    headers: { Authorization: bearer(OWNER) },
+  })
+  assert.equal(res.status, 200, 'rotation still succeeds even though the audit write failed')
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].ctx?.kind, 'critical-audit-failure')
+  assert.equal(captured[0].ctx?.auditType, 'workspace.api_key.rotate')
+})
+
+test('key deletion escalates an audit-write failure to the error reporter', async () => {
+  const captured: Array<{ ctx?: Record<string, unknown> }> = []
+  setErrorReporter((_err, ctx) => { captured.push({ ctx }) })
+  installPrisma(createFakePrisma({
+    ...spec(),
+    auditEvent: { create: async () => { throw new Error('db down') } },
+  }))
+  const res = await server.request(`/api/ingest/keys?workspaceId=${WS}`, {
+    method: 'DELETE',
+    headers: { Authorization: bearer(OWNER) },
+  })
+  assert.equal(res.status, 200, 'revocation still succeeds even though the audit write failed')
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].ctx?.kind, 'critical-audit-failure')
+  assert.equal(captured[0].ctx?.auditType, 'workspace.api_key.revoke')
 })

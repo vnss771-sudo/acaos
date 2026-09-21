@@ -208,7 +208,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "bullmq_queue_jobs{state=\"waiting\"}",
+          "expr": "max by (queue) (bullmq_queue_jobs{state=\"waiting\"})",
           "legendFormat": "{{queue}}"
         }
       ]
@@ -288,6 +288,92 @@
           "expr": "max(acaos_circuit_open) by (provider)",
           "legendFormat": "{{provider}}",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Sender bounce/complaint rate by workspace",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(acaos_sender_bounce_rate) by (workspace)",
+          "legendFormat": "bounce {{workspace}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(acaos_sender_complaint_rate) by (workspace)",
+          "legendFormat": "complaint {{workspace}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Sender reputation healthy by workspace",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "min(acaos_sender_reputation_healthy) by (workspace)",
+          "legendFormat": "{{workspace}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Warmup ramp day and daily cap by workspace",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(acaos_warmup_day) by (workspace)",
+          "legendFormat": "day {{workspace}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(acaos_warmup_cap) by (workspace)",
+          "legendFormat": "cap {{workspace}}",
+          "refId": "B"
         }
       ]
     }

@@ -1,13 +1,14 @@
 import { Router } from 'express'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { getMonthlyUsage } from '../lib/limits.js'
-import { getScoreTier } from '../lib/scoring.js'
+import { getMonthlyUsage } from '@acaos/backend-core/lib/limits.js'
+import { getScoreTier } from '@acaos/backend-core/lib/scoring.js'
 import { statsCache } from '../lib/statsCache.js'
 import { parseQuery, workspaceIdField } from '../lib/validate.js'
 import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
+import { warmupStatus } from '@acaos/backend-core/lib/warmup.js'
 import { getWorkspaceActivation } from '@acaos/backend-core/lib/analytics.js'
 import { reputationGuardMode } from '@acaos/backend-core/lib/launchControls.js'
 import { promptVersionQuality } from '@acaos/backend-core/lib/promptQuality.js'
@@ -50,9 +51,11 @@ statsRouter.get(
   })
 )
 
-// Sender-reputation snapshot: the trailing bounce/complaint rates the circuit
-// breaker reads, plus the current guard mode. Lets an operator SEE the numbers
-// observe-mode is logging and decide when to graduate to 'enforce'. Read-only.
+// Sender-reputation + warmup snapshot: the trailing bounce/complaint rates the
+// circuit breaker reads (plus the current guard mode), and the domain-warmup ramp
+// status. Lets an operator SEE the numbers observe-mode is logging and decide
+// when to graduate to 'enforce', and see at a glance whether/how a workspace is
+// warming up. Read-only.
 statsRouter.get(
   '/reputation',
   asyncHandler(async (req, res) => {
@@ -62,8 +65,11 @@ statsRouter.get(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
-    const verdict = await evaluateSenderReputation(workspaceId)
-    res.json({ guardMode: reputationGuardMode(), ...verdict })
+    const [verdict, icp] = await Promise.all([
+      evaluateSenderReputation(workspaceId),
+      prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { warmupStartedAt: true } }),
+    ])
+    res.json({ guardMode: reputationGuardMode(), ...verdict, warmup: warmupStatus(icp?.warmupStartedAt ?? null) })
   })
 )
 

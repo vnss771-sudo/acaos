@@ -1,5 +1,5 @@
 import { ApiError } from '../../lib/http.js'
-import type { SignalType } from '../../lib/signalEngine.js'
+import type { SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 
 // ── F-04: SSRF protection helpers ────────────────────────────────────────────
 // Host validation lives in lib/ssrf.ts (`assertPublicMailHost`), which resolves
@@ -100,4 +100,62 @@ export const EXAMPLE_SIGNALS: Record<string, ExampleSignalRow[]> = {
     { type: 'HIRING', strength: 70, sourceReliability: 75, industryRelevance: 75, title: '4 open positions detected', description: null, source: 'example', daysAgo: 5 },
     { type: 'EXPANSION', strength: 68, sourceReliability: 70, industryRelevance: 72, title: 'Team headcount growing', description: null, source: 'example', daysAgo: 20 },
   ],
+}
+
+// Example inbox replies to seed for trial users — shows the product in action
+export async function seedExampleReplies(workspaceId: string, prisma: any): Promise<void> {
+  const now = new Date()
+  const exampleReplies = [
+    {
+      workspaceId,
+      toEmail: 'contact@techstartup.example',
+      subject: 'Interested in scheduling software',
+      sentAt: new Date(now.getTime() - 259_200_000), // 3 days ago
+      repliedAt: new Date(now.getTime() - 172_800_000), // 2 days ago
+      status: 'REPLIED' as const,
+      replyIntent: 'INTERESTED',
+      replySummary: 'Prospect interested in demo, wants to see how it works with their workflow.',
+      replyKeyQuote: 'This sounds exactly like what we need. Can we schedule a 30-min demo?',
+      replySuggestedAction: 'Send them 3 available demo times this week.',
+      replyUrgency: 'this_week',
+      replyConfidence: 92,
+      replyIsAutoReply: false,
+    },
+    {
+      workspaceId,
+      toEmail: 'hello@midsize.example',
+      subject: 'Pricing question',
+      sentAt: new Date(now.getTime() - 432_000_000), // 5 days ago
+      repliedAt: new Date(now.getTime() - 345_600_000), // 4 days ago
+      status: 'REPLIED' as const,
+      replyIntent: 'NEEDS_MORE_INFO',
+      replySummary: 'Team curious but wants pricing before next steps.',
+      replyKeyQuote: 'What\'s the investment for a team of 5?',
+      replySuggestedAction: 'Share pricing and include ROI: "Save 10+ hours/week".',
+      replyUrgency: 'this_week',
+      replyConfidence: 78,
+      replyIsAutoReply: false,
+    },
+    {
+      workspaceId,
+      toEmail: 'ops@logistics.example',
+      subject: 'Team expansion project',
+      sentAt: new Date(now.getTime() - 604_800_000), // 7 days ago
+      repliedAt: new Date(now.getTime() - 518_400_000), // 6 days ago
+      status: 'REPLIED' as const,
+      replyIntent: 'NOT_NOW',
+      replySummary: 'Timing is off; budget locked for Q3. Check back next quarter.',
+      replyKeyQuote: 'Perfect timing for Q4. Follow up in September.',
+      replySuggestedAction: 'Add to nurture list, send Q4 check-in.',
+      replyUrgency: 'nurture',
+      replyConfidence: 85,
+      replyIsAutoReply: false,
+    },
+  ]
+
+  for (const reply of exampleReplies) {
+    await prisma.outreachSent.create({
+      data: reply,
+    })
+  }
 }

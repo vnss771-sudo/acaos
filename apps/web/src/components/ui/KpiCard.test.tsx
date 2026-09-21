@@ -9,4 +9,11 @@ describe('KpiCard', () => {
     expect(screen.getByText('142')).toBeInTheDocument()
     expect(screen.getByText('+12 this week')).toBeInTheDocument()
   })
+
+  test('renders 0 rather than a blank tile when value is undefined or null', () => {
+    const { rerender } = render(<KpiCard label="Open Alerts" value={undefined} />)
+    expect(screen.getByText('0')).toBeInTheDocument()
+    rerender(<KpiCard label="Open Alerts" value={null} />)
+    expect(screen.getByText('0')).toBeInTheDocument()
+  })
 })

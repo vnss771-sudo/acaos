@@ -2,7 +2,9 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { UpdateMissionRequest, DiscoverProspectsRequest } from '@acaos/shared'
 import type { Mission, MissionDetail, MissionStatus, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { Card } from '../components/ui/Card.js'
 import { useIsTablet } from '../hooks/useMediaQuery.js'
@@ -36,6 +38,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
   const route = useMemo(() => makeRouteApi(api), [api])
   const [missions, setMissions] = useState<Mission[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [showBuilder, setShowBuilder] = useState(false)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
 
@@ -46,9 +49,14 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
     if (!workspace) return
     const reqId = ++loadReqRef.current
     setLoading(true)
+    setLoadError(false)
     api<{ missions: Mission[] }>(`/api/missions?workspaceId=${workspace.id}`)
       .then(d => { if (reqId === loadReqRef.current) setMissions(d.missions || []) })
-      .catch(e => { if (reqId === loadReqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load missions') })
+      .catch(e => {
+        if (reqId !== loadReqRef.current) return
+        toast.error(e instanceof Error ? e.message : 'Failed to load missions')
+        setLoadError(true)
+      })
       .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
   }, [api, workspace?.id, toast])
 
@@ -86,6 +94,8 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
 
   return (
     <div>
+      {loadError && <div style={{ marginBottom: 20 }}><ErrorBanner message="Failed to load missions." onRetry={load} /></div>}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <p style={{ color: colors.textMuted, fontSize: 13, margin: 0 }}>
           A mission ties your target, offer, and outreach into one tracked workflow.
@@ -94,7 +104,11 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
       </div>
 
       {missions.length === 0 ? (
-        <EmptyState message="No missions yet — launch your first mission to start acquiring customers." />
+        <EmptyState
+          title="No missions yet"
+          description="Launch your first mission to start acquiring customers."
+          action={canManage ? <button style={s.btn} onClick={() => setShowBuilder(true)}>+ New Mission</button> : undefined}
+        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {missions.map(m => {
@@ -107,7 +121,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
                     <span style={{ color: colors.text, fontWeight: 700, fontSize: 15 }}>{m.name}</span>
                     <StatusBadge status={m.status} />
                   </div>
-                  <span style={{ color: colors.textMuted, fontSize: 12 }}>{m.goalType.replace(/_/g, ' ')}</span>
+                  <span style={{ color: colors.textMuted, fontSize: 12 }}>{(m.goalType ?? '').replace(/_/g, ' ')}</span>
                 </div>
                 {m.targetCustomer && (
                   <div style={{ color: colors.textMuted, fontSize: 13 }}>

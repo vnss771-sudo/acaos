@@ -3,7 +3,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { warmupDailyCap, warmupSchedule, applyWarmupCap } from '../packages/backend-core/src/lib/warmup.ts'
+import { warmupDailyCap, warmupSchedule, applyWarmupCap, warmupStatus } from '../packages/backend-core/src/lib/warmup.ts'
 
 const DAY = 24 * 60 * 60 * 1000
 const SCHED = [20, 40, 80, 150]
@@ -63,4 +63,32 @@ test('applyWarmupCap: returns the more restrictive of base vs warmup', () => {
 test('applyWarmupCap: a completed ramp defers to the base limit', () => {
   const start = new Date('2026-05-01T00:00:00Z') // long ago → ramp complete
   assert.equal(applyWarmupCap(50, start, new Date('2026-06-22T00:00:00Z')), 50)
+})
+
+test('warmupStatus: never started → inactive, no day/cap', () => {
+  const status = warmupStatus(null, new Date('2026-06-01T00:00:00Z'), SCHED)
+  assert.deepEqual(status, { active: false, startedAt: null, day: null, totalDays: 4, cap: null, complete: false })
+})
+
+test('warmupStatus: mid-ramp → active with the current day and cap', () => {
+  const start = new Date('2026-06-01T00:00:00Z')
+  const now = new Date(start.getTime() + 2 * DAY + 3_600_000) // day 3
+  const status = warmupStatus(start, now, SCHED)
+  assert.equal(status.active, true)
+  assert.equal(status.startedAt, start.toISOString())
+  assert.equal(status.day, 3)
+  assert.equal(status.totalDays, 4)
+  assert.equal(status.cap, 80)
+  assert.equal(status.complete, false)
+})
+
+test('warmupStatus: ramp complete → active, complete, no day/cap', () => {
+  const start = new Date('2026-06-01T00:00:00Z')
+  const now = new Date(start.getTime() + 30 * DAY)
+  const status = warmupStatus(start, now, SCHED)
+  assert.equal(status.active, true)
+  assert.equal(status.complete, true)
+  assert.equal(status.day, null)
+  assert.equal(status.cap, null)
+  assert.equal(status.totalDays, 4)
 })

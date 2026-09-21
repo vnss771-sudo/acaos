@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import type { User, Workspace, View } from './types.js'
 import { canManageWorkspace } from './types.js'
 import { useApi } from './hooks/useApi.js'
@@ -12,8 +12,10 @@ import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { CommandPalette } from './components/CommandPalette.js'
 import { HubTabs } from './components/HubTabs.js'
 import { SkipLink } from './components/SkipLink.js'
+import { ErrorBoundary } from './components/ErrorBoundary.js'
 import { isHubNavEnabled, hubForView } from './lib/hubs.js'
-import { isInvestorDemoRequested, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
+import { useViewRouter } from './lib/router.js'
+import { isInvestorDemoRequested, enableInvestorDemo, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
 import { makeDemoApi, DEMO_USER, DEMO_WORKSPACES } from './lib/demoApi.js'
 import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
@@ -35,6 +37,13 @@ const Intelligence = lazy(() => import('./views/Intelligence.js').then(m => ({ d
 const ProspectsView = lazy(() => import('./views/Prospects.js').then(m => ({ default: m.ProspectsView })))
 const AdminView = lazy(() => import('./views/Admin.js').then(m => ({ default: m.AdminView })))
 const InboxView = lazy(() => import('./views/Inbox.js').then(m => ({ default: m.InboxView })))
+const OpsDashboard = lazy(() => import('./views/ops/OpsDashboard.js').then(m => ({ default: m.OpsDashboard })))
+const OpsCrew = lazy(() => import('./views/ops/OpsCrew.js').then(m => ({ default: m.OpsCrew })))
+const OpsJobs = lazy(() => import('./views/ops/OpsJobs.js').then(m => ({ default: m.OpsJobs })))
+const OpsShifts = lazy(() => import('./views/ops/OpsShifts.js').then(m => ({ default: m.OpsShifts })))
+const OpsRoster = lazy(() => import('./views/ops/OpsRoster.js').then(m => ({ default: m.OpsRoster })))
+const OpsFatigue = lazy(() => import('./views/ops/OpsFatigue.js').then(m => ({ default: m.OpsFatigue })))
+const OpsAlerts = lazy(() => import('./views/ops/OpsAlerts.js').then(m => ({ default: m.OpsAlerts })))
 
 function ViewFallback() {
   return (
@@ -45,31 +54,6 @@ function ViewFallback() {
 }
 
 const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
-
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error?: Error }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props)
-    this.state = { hasError: false }
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error }
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: '40px', textAlign: 'center', color: '#ef4444' }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>⚠</div>
-          <div style={{ fontSize: 18, marginBottom: 8 }}>Something went wrong</div>
-          <div style={{ fontSize: 13, color: '#64748b', marginBottom: 24 }}>{this.state.error?.message}</div>
-          <button onClick={() => window.location.reload()} style={{ padding: '8px 20px', borderRadius: 6, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer' }}>
-            Reload
-          </button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
 
 // Security: reset/verify/invite tokens are delivered in the URL fragment (after
 // '#'), not the query string. Fragments are never sent to the server (no Referer
@@ -98,7 +82,7 @@ export function App() {
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
-  const [view, setView] = useState<View>('dashboard')
+  const [view, setView, replaceView] = useViewRouter('dashboard')
   // Resolved once per session — the hub-nav flag is static (env / localStorage).
   const [hubNav] = useState(isHubNavEnabled)
   const [booting, setBooting] = useState(true)
@@ -161,6 +145,11 @@ export function App() {
   // Demo mode: seed a session from fixtures and skip all auth round-trips.
   useEffect(() => {
     if (!demo) return
+    // Persist the flag to localStorage: navigating between views pushes a real
+    // URL for that view (see useViewRouter) which drops the ?demo=investor
+    // query string, so without this a reload after the very first click would
+    // land back on the sign-in screen instead of staying in the demo.
+    enableInvestorDemo()
     setUser(DEMO_USER)
     setWorkspaces(DEMO_WORKSPACES)
     setActiveWsId(DEMO_WORKSPACES[0].id)
@@ -197,6 +186,14 @@ export function App() {
   }, [token])
 
   const activeWorkspace = workspaces.find(w => w.id === activeWsId) ?? null
+
+  // A deep link (or a stale bookmark) to /admin for a non-admin lands here once
+  // /api/auth/me resolves — redirect rather than rendering the admin chrome
+  // over a blank panel. A replace, not a push: the user didn't ask for this
+  // navigation, so it shouldn't leave a Back stop.
+  useEffect(() => {
+    if (view === 'admin' && user && !user.isPlatformAdmin) replaceView('dashboard')
+  }, [view, user, replaceView])
 
   function handleWorkspaceUpdate(updated: Workspace) {
     setWorkspaces(prev => prev.map(w => w.id === updated.id ? { ...w, ...updated } : w))
@@ -244,7 +241,10 @@ export function App() {
     )
   }
 
-  if (!token || !user) {
+  // Demo mode never sets a real access token (there's no backend to issue
+  // one) — gating on it here would show the auth screen forever once `user`
+  // is seeded, even though the demo has nothing left to authenticate.
+  if (!demo && (!token || !user)) {
     return (
       <>
         <AuthScreen
@@ -255,6 +255,12 @@ export function App() {
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     )
+  }
+
+  if (!user) {
+    // Demo mode seeds `user` in the same effect that clears `booting`, so this
+    // is unreachable in practice — it only narrows the type below for TS.
+    return null
   }
 
   // Gate the admin UI on the backend's authoritative claim (from /api/auth/me),
@@ -273,7 +279,14 @@ export function App() {
     ai: 'AI Tools',
     billing: 'Billing',
     settings: 'Settings',
-    admin: 'Admin Panel'
+    admin: 'Admin Panel',
+    'ops-dashboard': 'Field Ops',
+    'ops-crew': 'Field Ops — Crew',
+    'ops-jobs': 'Field Ops — Job Sites',
+    'ops-shifts': 'Field Ops — Shifts',
+    'ops-roster': 'Field Ops — Roster',
+    'ops-fatigue': 'Field Ops — Fatigue',
+    'ops-alerts': 'Field Ops — Alerts',
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
@@ -415,7 +428,14 @@ export function App() {
         )}
 
         {/* Main content */}
-        <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%' }}>
+        {/* boxSizing: 'border-box' is required here: under the browser's default
+            content-box sizing, maxWidth caps the CONTENT box only, so the 24/28px
+            padding renders on top of it — a 1256px total footprint that overflows
+            this element's own flex parent (and clips content off the right edge)
+            at any viewport in roughly the 1024-1480px range, since nothing in this
+            app sets box-sizing: border-box globally. border-box makes maxWidth
+            cap the full rendered width, padding included. */}
+        <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%', boxSizing: 'border-box' }}>
           {/* Hub sub-tabs: switch between the pages within the active hub. Renders
               nothing for single-page hubs or when the hub nav is off. */}
           {hubNav && <HubTabs view={view} setView={setView} isAdmin={isAdmin} />}
@@ -441,6 +461,13 @@ export function App() {
               />
             )}
             {view === 'admin' && isAdmin && <AdminView api={api} toast={toast} />}
+            {view === 'ops-dashboard' && <OpsDashboard {...commonProps} setView={setView} />}
+            {view === 'ops-crew' && <OpsCrew {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-jobs' && <OpsJobs {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-shifts' && <OpsShifts {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-roster' && <OpsRoster {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-fatigue' && <OpsFatigue {...commonProps} setView={setView} />}
+            {view === 'ops-alerts' && <OpsAlerts {...commonProps} canManage={canManage} setView={setView} />}
             </Suspense>
           </ErrorBoundary>
         </main>

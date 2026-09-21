@@ -5,15 +5,15 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
-import { checkAndIncrementAiUsage } from '../lib/limits.js'
+import { checkAndIncrementAiUsage } from '@acaos/backend-core/lib/limits.js'
 import {
   enqueueResearchLead,
   enqueueGenerateOutreach,
   enqueueAnalyzeReply,
   getJobById
-} from '../lib/queues.js'
+} from '@acaos/backend-core/lib/queues.js'
 import { issueSseTicket, consumeSseTicket } from '../lib/sseTickets.js'
 import type { Job } from 'bullmq'
 

@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express'
-import { isProduction } from '../lib/config.js'
+import { isProduction } from '@acaos/backend-core/lib/config.js'
 
 // Conservative security headers appropriate for a JSON API. Hand-rolled to
 // avoid an extra dependency; covers the same ground as a default `helmet()`

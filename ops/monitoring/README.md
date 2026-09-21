@@ -9,8 +9,9 @@ Ready-to-use Prometheus + Grafana config for the metrics ACAOS exposes
 
 | File | Purpose |
 |---|---|
-| `prometheus.yml` | Scrape config for the API + worker targets (bearer-token auth) + blackbox uptime probes + Alertmanager wiring. |
-| `alerts.yml` | Alerting rules (5xx rate, p99 latency, saturation, send-campaign backlog, job failures, target down, external uptime, TLS expiry). Referenced by `prometheus.yml` via `rule_files`. |
+| `prometheus.yml` | Scrape config for the API + worker targets (bearer-token auth) + blackbox uptime probes + Alertmanager wiring. Documents how to scrape every replica in a multi-replica deployment. |
+| `alerts.yml` | Alerting rules (5xx rate, p99 latency, saturation, send-campaign backlog, job failures, target down, external uptime, TLS expiry). Replica-safe (see `recording_rules.yml`). Referenced by `prometheus.yml` via `rule_files`. |
+| `recording_rules.yml` | Canonical multi-replica aggregation for every exposed series (`sum(rate())` for per-process counters, `max()` for Redis/DB-shared gauges) — reuse the `job:*` series here instead of re-deriving the right aggregation function per dashboard/alert. See "Multi-replica metric aggregation" in [`../../docs/OPERATIONS.md`](../../docs/OPERATIONS.md). |
 | `alertmanager.yml` | Alert routing: severity-based → PagerDuty (critical) + Slack, with grouping & inhibition. Secrets via env expansion. |
 | `blackbox.yml` | blackbox_exporter modules for external uptime / synthetic checks of the API & web. |
 | `grafana-dashboard.json` | Importable "Service Overview" dashboard (request rate/latency/5xx/in-flight, worker job rate, queue depth, memory). |
@@ -21,8 +22,10 @@ See also [`../../docs/SLO.md`](../../docs/SLO.md) (targets + error budget) and
 ## Use
 
 1. Set `METRICS_TOKEN` in the API and worker, and export it where Prometheus runs.
-2. Point `prometheus.yml` `targets` at your API/worker hosts; start Prometheus with
-   `prometheus.yml` + `alerts.yml` mounted alongside.
+2. Point `prometheus.yml` `targets` at your API/worker hosts — **list every
+   replica individually** (or use service discovery) if you run more than one;
+   see the comment block at the top of `prometheus.yml`. Start Prometheus with
+   `prometheus.yml` + `alerts.yml` + `recording_rules.yml` mounted alongside.
 3. For uptime: run `blackbox_exporter --config.file=blackbox.yml` and set the
    `blackbox-*` job `targets` in `prometheus.yml` to your public URLs.
 4. For routing: run Alertmanager with `alertmanager.yml` (`--config.expand-env`),
@@ -32,4 +35,5 @@ See also [`../../docs/SLO.md`](../../docs/SLO.md) (targets + error budget) and
 
 Thresholds in `alerts.yml` are starting points — tune to your traffic and SLOs.
 Validate with `promtool check config prometheus.yml`, `promtool check rules
-alerts.yml`, and `amtool check-config alertmanager.yml` before rolling out.
+alerts.yml recording_rules.yml`, and `amtool check-config alertmanager.yml`
+before rolling out.

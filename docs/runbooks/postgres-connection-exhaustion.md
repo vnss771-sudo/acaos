@@ -32,8 +32,9 @@ some requests/jobs succeed, others time out waiting for a pool slot.
     WHERE state='idle in transaction' AND state_change < now() - interval '5 min';`
 3. **Reduce demand.** If a deploy raised pod count, the pooled connections
    multiply. Set/lower Prisma's pool via `DATABASE_URL` query params
-   (`?connection_limit=3&pool_timeout=20`, per `.env.example`) and redeploy, or
-   scale API replicas down temporarily.
+   (`?connection_limit=3&pool_timeout=20`, per `.env.example`) — or lower
+   `DB_POOL_SIZE` if `DATABASE_URL` doesn't set `connection_limit` explicitly —
+   and redeploy, or scale API replicas down temporarily.
 4. If the worker is hammering the DB (e.g. a large `score-prospects` or
    `send-campaign` batch), you can pause the noisy flow with a feature flag
    (`FEATURE_SEND=false` / `FEATURE_AI=false`) to shed load while you stabilize.

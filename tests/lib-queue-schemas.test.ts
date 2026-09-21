@@ -116,6 +116,19 @@ test('payload versioning: a payload with no version still validates (older produ
   assert.equal(out.schemaVersion, undefined)
 })
 
+test('payload versioning: accepts an optional traceparent alongside requestId', () => {
+  const out = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', {
+    campaignId: 'c1', workspaceId: 'ws_1', requestId: 'req_abc',
+    traceparent: '00-91c71f419ee8ce736978a8cc540e2d47-07860259369282a0-01',
+  })
+  assert.equal(out.traceparent, '00-91c71f419ee8ce736978a8cc540e2d47-07860259369282a0-01')
+})
+
+test('payload versioning: a payload with no traceparent still validates (older producer / no active trace)', () => {
+  const out = parseJobPayload(SendCampaignPayloadSchema, 'send-campaign', { campaignId: 'c1', workspaceId: 'ws_1' })
+  assert.equal(out.traceparent, undefined)
+})
+
 test('payload versioning: an unknown extra field is stripped, not rejected (newer producer)', () => {
   const out = parseJobPayload(ScoreProspectsPayloadSchema, 'score-prospects', {
     workspaceId: 'ws_1', schemaVersion: 2, somethingNew: 'ignored',

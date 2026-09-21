@@ -2,7 +2,7 @@
 // server.ts (which calls app.listen) so the probe logic is unit-testable, and so
 // /api/ready and /api/health share one implementation instead of duplicating the
 // DB round-trip.
-import { prisma } from './prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { getRedis } from './redis.js'
 
 export const PROBE_TIMEOUT_MS = 3000

@@ -55,6 +55,7 @@ export function AiTools({ api, workspace, toast }: Props) {
   const [result, setResult] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeJob, setActiveJob] = useState<JobStatus | null>(null)
+  const [copied, setCopied] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Persisted research (keyed by business name) so the Outreach tab can ground
@@ -171,6 +172,14 @@ export function AiTools({ api, workspace, toast }: Props) {
 
   function prettyResult(raw: string) {
     try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+  }
+
+  function copyResult(text: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success('Copied!')
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
   }
 
   const set = (f: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -316,8 +325,8 @@ export function AiTools({ api, workspace, toast }: Props) {
         <div style={s.card}>
           <div style={{ ...s.flexBetween, marginBottom: 12 }}>
             <div style={s.sectionHeader}>Result</div>
-            <button style={s.btnSm} onClick={() => navigator.clipboard.writeText(result).then(() => toast.success('Copied!'))}>
-              Copy
+            <button style={s.btnSm} onClick={() => copyResult(result)}>
+              {copied ? '✓ Copied' : 'Copy'}
             </button>
           </div>
           <pre style={{ color: '#e2e8f0', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: 1.6 }}>

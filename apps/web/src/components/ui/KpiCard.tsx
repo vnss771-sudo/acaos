@@ -20,7 +20,7 @@ export function KpiCard({ label, value, sub, trend, color = colors.text }: Props
       <div style={{ color: colors.textFaint, fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
         {label}
       </div>
-      <div style={{ color, fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{value}</div>
+      <div style={{ color, fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{value ?? 0}</div>
       {sub && <div style={{ color: colors.textMuted, fontSize: 12, marginTop: 6 }}>{sub}</div>}
       {trend && <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>{trend}</div>}
     </Card>

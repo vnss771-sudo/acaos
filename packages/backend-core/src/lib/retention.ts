@@ -32,6 +32,10 @@ export type RetentionWindows = {
   stripeEventDays: number
   /** Expired/used/revoked auth tokens are purged this long after creation. */
   authTokenDays: number
+  /** Ops shift records — labor/compliance-adjacent, kept longer like AuditEvent. */
+  opsShiftRecordDays: number
+  /** Ops alerts — operational signal, not a compliance record; shorter window. */
+  opsAlertDays: number
 }
 
 /** The default windows, mirroring docs/DATA_RETENTION.md, env-overridable. */
@@ -44,6 +48,8 @@ export function retentionWindows(): RetentionWindows {
     analyticsEventDays: days('RETENTION_ANALYTICS_EVENT_DAYS', 365), // 12 months (cohort analysis)
     stripeEventDays: days('RETENTION_STRIPE_EVENT_DAYS', 365),   // 12 months
     authTokenDays: days('RETENTION_AUTH_TOKEN_DAYS', 30),
+    opsShiftRecordDays: days('RETENTION_OPS_SHIFT_RECORD_DAYS', 730), // 24 months
+    opsAlertDays: days('RETENTION_OPS_ALERT_DAYS', 365),              // 12 months
   }
 }
 
@@ -57,6 +63,8 @@ export type PurgeCounts = {
   refreshToken: number
   emailVerificationToken: number
   passwordResetToken: number
+  opsShiftRecord: number
+  opsAlert: number
 }
 
 /**
@@ -86,6 +94,8 @@ export async function purgeExpiredData(
     refreshToken,
     emailVerificationToken,
     passwordResetToken,
+    opsShiftRecord,
+    opsAlert,
   ] = await Promise.all([
     prisma.processedEmail.deleteMany({ where: { processedAt: { lt: before(windows.processedEmailDays) } } }),
     prisma.outreachSent.deleteMany({ where: { sentAt: { lt: before(windows.outreachSentDays) } } }),
@@ -102,6 +112,8 @@ export async function purgeExpiredData(
     prisma.passwordResetToken.deleteMany({
       where: { createdAt: { lt: authCutoff }, OR: [{ expiresAt: { lt: now } }, { usedAt: { not: null } }] },
     }),
+    prisma.opsShiftRecord.deleteMany({ where: { shiftDate: { lt: before(windows.opsShiftRecordDays) } } }),
+    prisma.opsAlert.deleteMany({ where: { createdAt: { lt: before(windows.opsAlertDays) } } }),
   ])
 
   return {
@@ -114,5 +126,7 @@ export async function purgeExpiredData(
     refreshToken: refreshToken.count,
     emailVerificationToken: emailVerificationToken.count,
     passwordResetToken: passwordResetToken.count,
+    opsShiftRecord: opsShiftRecord.count,
+    opsAlert: opsAlert.count,
   }
 }

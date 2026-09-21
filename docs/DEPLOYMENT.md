@@ -62,14 +62,18 @@ Wire your platform's probes to:
 | Endpoint | Purpose | Probe |
 |---|---|---|
 | `GET /api/live` | process is up (no I/O) | liveness |
-| `GET /api/ready` | config valid + Postgres reachable (Redis reported, non-fatal) → 200/503 | readiness / LB gate |
-| `GET /api/ready/strict` | config valid + Postgres **and** Redis reachable → 200/503 | LB gate for Redis/BullMQ-dependent deployments |
+| `GET /api/ready` | config valid + Postgres reachable; Redis reported and **non-fatal only outside production** → 200/503 | readiness / LB gate |
+| `GET /api/ready/strict` | config valid + Postgres **and** Redis reachable, in every environment → 200/503 | LB gate for Redis/BullMQ-dependent deployments |
 | `GET /api/health` | DB + Redis status | dashboards |
 
-Use `/api/ready` when the service can tolerate a transient Redis outage (rate
-limiting degrades gracefully); use `/api/ready/strict` when critical flows are
-Redis/BullMQ-backed and serving traffic without Redis is worse than briefly
-shedding it.
+`/api/ready`'s Redis leniency only applies outside production: in
+`development`/`test` a Redis outage doesn't fail the probe (the rate limiter's
+in-process fallback is judged good enough), but **in production Redis DOES gate
+`/api/ready`** — the queue-backed flows (outreach, campaign send, mailbox sync)
+can't run without it, so a production Redis outage fails the probe (503) and
+pulls the pod out of rotation, same as `/api/ready/strict`. Use
+`/api/ready/strict` when you want that Redis-required behavior in every
+environment, not just production.
 
 Build/version metadata (commit SHA, build time, version) is exposed on `/metrics`
 and baked into the images via the `ACAOS_RELEASE_*` build args.
@@ -82,6 +86,12 @@ Deploy the worker with the same `DATABASE_URL`/`REDIS_URL` and
 `/metrics`. Scale workers horizontally; they coordinate through Redis/BullMQ.
 
 ## 6. Rollback
+
+An automated canary bake + rollback gate is available (`.github/workflows/release.yml`'s
+`canary_bake` job, backed by `scripts/rollout-gate.mjs`) once `CANARY_URL` and
+the optional `PROMOTE_WEBHOOK_URL`/`ROLLBACK_WEBHOOK_URL` hooks are configured
+for your platform — see [`DEPLOY_RUNBOOK.md`](./DEPLOY_RUNBOOK.md#canary--blue-green-bake-and-automatic-rollback).
+Until then, or for a manual rollback:
 
 1. Redeploy the previous image tag for `api`, `worker`, and `web`.
 2. **Migrations are forward-only.** A new release that added a migration is not
@@ -96,6 +106,7 @@ Deploy the worker with the same `DATABASE_URL`/`REDIS_URL` and
 
 - `GET /api/ready` → 200 on every API instance.
 - `post-deploy-smoke` workflow (`.github/workflows/post-deploy-smoke.yml`)
-  validates readiness after a release.
+  validates readiness after a release — auto-triggered by `release.yml` on
+  every published release, in addition to manual dispatch.
 - Watch the dashboards/alerts in [`ops/monitoring/`](../ops/monitoring/) and the
   SLOs in [`docs/SLO.md`](./SLO.md).

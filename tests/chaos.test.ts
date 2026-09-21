@@ -13,7 +13,7 @@ import {
   buildWorkspaceSlugSeed,
   buildWorkspaceName,
   appendSlugSuffix
-} from '../apps/api/src/lib/validation.ts'
+} from '../apps/api/src/lib/textNormalize.ts'
 import { signJwt, verifyJwt, hashRefreshToken, generateRefreshToken } from '../packages/backend-core/src/lib/jwt.ts'
 
 // ---------------------------------------------------------------------------
