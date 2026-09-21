@@ -41,6 +41,9 @@ jobs:
       contents: write
     environment:
       name: ${{ github.event_name == 'push' && 'production' || 'staging' }}
+    outputs:
+      publish: ${{ steps.release_target.outputs.publish }}
+      tag: ${{ steps.release_target.outputs.tag }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -51,7 +54,7 @@ jobs:
           ref: ${{ github.event_name == 'push' && github.ref || (inputs.publish && inputs.release_tag) || inputs.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -201,3 +204,89 @@ jobs:
               });
               core.info(`Uploaded release asset: ${asset.name}`);
             }
+
+  # Canary/blue-green bake + automatic-rollback-on-burn-rate gate. Inert
+  # (skips its own steps cleanly) until an operator sets CANARY_URL on the
+  # target GitHub Environment (staging/production) — this repo has no single
+  # deploy platform committed to it (see docs/DEPLOYMENT.md), so this job
+  # provides the platform-agnostic bake/gate mechanism and two optional
+  # webhook hand-offs (PROMOTE_WEBHOOK_URL, ROLLBACK_WEBHOOK_URL) for whatever
+  # platform-specific traffic-shift/redeploy the operator's canary or
+  # blue-green slot actually needs. See scripts/rollout-gate.mjs and
+  # docs/DEPLOYMENT.md for the full mechanism and how to configure it.
+  canary_bake:
+    name: Canary bake + auto-rollback gate
+    needs: package
+    if: needs.package.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    environment:
+      name: ${{ github.event_name == 'push' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Check whether a canary target is configured
+        id: check
+        shell: bash
+        env:
+          CANARY_URL: ${{ vars.CANARY_URL }}
+        run: |
+          if [[ -z "$CANARY_URL" ]]; then
+            echo "::notice::CANARY_URL is not set for this environment — skipping the canary bake. Configure it (and optionally PROMOTE_WEBHOOK_URL / ROLLBACK_WEBHOOK_URL) to enable canary/blue-green gating; see docs/DEPLOYMENT.md."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Bake the canary and gate on readiness + 5xx burn rate. A deploy
+      # pipeline is expected to have already deployed the new image to
+      # CANARY_URL as a separate slot/instance before this workflow reaches
+      # this step (a second Railway/Fly service, a k8s canary Deployment
+      # behind the same Service, an ALB target group, ...).
+      - name: Bake canary and gate on health/burn-rate
+        if: steps.check.outputs.configured == 'true'
+        env:
+          CANARY_URL: ${{ vars.CANARY_URL }}
+          BAKE_SECONDS: ${{ vars.CANARY_BAKE_SECONDS }}
+        run: node scripts/rollout-gate.mjs
+
+      # Promote: hand off to the platform's own traffic-shift mechanism. Only
+      # called when the gate above actually ran and passed.
+      - name: Promote canary to primary
+        if: steps.check.outputs.configured == 'true' && success() && vars.PROMOTE_WEBHOOK_URL != ''
+        env:
+          PROMOTE_WEBHOOK_URL: ${{ vars.PROMOTE_WEBHOOK_URL }}
+        run: curl -fsS -X POST "$PROMOTE_WEBHOOK_URL"
+
+      # Automatic rollback: fires only when the bake step above genuinely
+      # failed (unhealthy canary) — `failure()` does not trigger on a step
+      # skipped because no canary was configured. Hands off to the platform's
+      # own "redeploy the previous known-good tag" mechanism (the manual
+      # rollback step in docs/DEPLOYMENT.md, automated).
+      - name: Automatic rollback on a failed bake
+        if: steps.check.outputs.configured == 'true' && failure() && secrets.ROLLBACK_WEBHOOK_URL != ''
+        env:
+          ROLLBACK_WEBHOOK_URL: ${{ secrets.ROLLBACK_WEBHOOK_URL }}
+        run: curl -fsS -X POST "$ROLLBACK_WEBHOOK_URL"
+
+  # Auto-trigger the post-deploy smoke check on every published release,
+  # closing the "post-deploy smoke isn't auto-triggered by release" gap.
+  # Inert the same way canary_bake is: post-deploy-smoke.yml itself no-ops
+  # with a clear error if SMOKE_API_URL/SMOKE_WORKER_URL aren't configured on
+  # the target environment.
+  post_deploy_smoke:
+    name: Post-deploy smoke (auto-triggered)
+    needs: package
+    if: needs.package.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/post-deploy-smoke.yml
+    with:
+      environment: ${{ github.event_name == 'push' && 'production' || 'staging' }}
+    secrets: inherit

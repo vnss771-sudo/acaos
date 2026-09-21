@@ -46,6 +46,13 @@ const MIRRORED = [
   'BillingPlan',
   'LeadStage',
   'OutreachIntentStatus',
+  'OpsJobStatus',
+  'OpsRiskLevel',
+  'OpsShiftType',
+  'OpsRosterStatus',
+  'OpsAlertType',
+  'OpsAlertSeverity',
+  'OpsAlertStatus',
 ] as const
 
 for (const name of MIRRORED) {

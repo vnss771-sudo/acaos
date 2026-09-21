@@ -23,6 +23,22 @@ const PLAN_LIMITS = {
 
 type Plan = BillingPlan
 
+// Dollar-based hard ceiling on AI spend, independent of call count. `growth`'s
+// aiCallsPerMonth is Infinity, so the call-count check in checkAndIncrementAiUsage
+// has nothing to enforce against on that tier — this is the one backstop that
+// still applies regardless of plan or call count. Overridable per plan via
+// AI_SPEND_CEILING_CENTS_<PLAN> for ops to tune without a deploy.
+const DEFAULT_SPEND_CEILING_CENTS: Record<Plan, number> = {
+  free: 500,      // $5/month
+  starter: 5_000, // $50/month
+  growth: 50_000, // $500/month
+}
+
+function spendCeilingCents(plan: Plan): number {
+  const env = Number(process.env[`AI_SPEND_CEILING_CENTS_${plan.toUpperCase()}`])
+  return Number.isFinite(env) && env >= 0 ? env : DEFAULT_SPEND_CEILING_CENTS[plan]
+}
+
 function currentMonth(): string {
   // Use UTC so the monthly quota window rolls over at the same instant for every
   // workspace regardless of the server's local timezone (a tz change or a deploy
@@ -80,9 +96,49 @@ export async function assertSeatAvailable(workspaceId: string, client: Db = pris
   }
 }
 
-export async function checkAndIncrementAiUsage(workspaceId: string, action: UsageAction): Promise<void> {
-  const plan = await getWorkspacePlan(workspaceId)
+// Read-only quota check: call-count limit (when the plan has a finite one) AND
+// the dollar-based hard ceiling (every plan, including growth). Does NOT
+// increment anything, so it's safe to call as a defense-in-depth re-check at a
+// point that isn't the canonical metering call site — e.g. right before an AI
+// worker actually spends money on a provider call, in case the job reached the
+// queue through a path that never called checkAndIncrementAiUsage (an internal
+// bug, a leaked producer credential, a direct BullMQ enqueue).
+export async function assertAiUsageAllowed(workspaceId: string, client: Db = prisma): Promise<void> {
+  const plan = await getWorkspacePlan(workspaceId, client)
   const { aiCallsPerMonth } = PLAN_LIMITS[plan]
+  const month = currentMonth()
+
+  const records = await client.usageRecord.findMany({ where: { workspaceId, month, action: { in: AI_ACTIONS } } })
+  const callsByAction: Partial<Record<UsageAction, number>> = {}
+  let used = 0
+  for (const r of records as Array<{ action: string; count: number }>) {
+    used += r.count
+    if ((AI_ACTIONS as string[]).includes(r.action)) {
+      const action = r.action as UsageAction
+      callsByAction[action] = (callsByAction[action] ?? 0) + r.count
+    }
+  }
+
+  if (isFinite(aiCallsPerMonth) && used >= aiCallsPerMonth) {
+    throw new ApiError(
+      429,
+      `Monthly AI limit reached (${aiCallsPerMonth} calls/month on ${plan} plan). ` +
+      `Upgrade to unlock more.`
+    )
+  }
+
+  const ceilingCents = spendCeilingCents(plan)
+  const { totalCents } = estimateAiCost(callsByAction)
+  if (totalCents >= ceilingCents) {
+    throw new ApiError(
+      429,
+      `Monthly AI spend ceiling reached ($${(ceilingCents / 100).toFixed(2)} on the ${plan} plan). ` +
+      `Upgrade or contact support to raise this limit.`
+    )
+  }
+}
+
+export async function checkAndIncrementAiUsage(workspaceId: string, action: UsageAction): Promise<void> {
   const month = currentMonth()
 
   // Serialize the read-then-increment per workspace with a transaction-scoped
@@ -91,18 +147,7 @@ export async function checkAndIncrementAiUsage(workspaceId: string, action: Usag
   // race). The lock is released automatically when the transaction ends.
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`
-
-    if (isFinite(aiCallsPerMonth)) {
-      const records = await tx.usageRecord.findMany({ where: { workspaceId, month, action: { in: AI_ACTIONS } } })
-      const used = (records as Array<{ count: number }>).reduce((s: number, r: { count: number }) => s + r.count, 0)
-      if (used >= aiCallsPerMonth) {
-        throw new ApiError(
-          429,
-          `Monthly AI limit reached (${aiCallsPerMonth} calls/month on ${plan} plan). ` +
-          `Upgrade to unlock more.`
-        )
-      }
-    }
+    await assertAiUsageAllowed(workspaceId, tx)
 
     await tx.usageRecord.upsert({
       where: { workspaceId_month_action: { workspaceId, month, action } },
@@ -216,6 +261,32 @@ export async function reserveDailySendSlot(
     where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since } },
   })
   return used < dailyLimit
+}
+
+/**
+ * Atomically decide whether the workspace may send one more email to `domain`
+ * today without exceeding `perDomainCap`. MUST be called inside the SAME
+ * interactive transaction as the outbox claim insert, alongside
+ * reserveDailySendSlot. A per-(workspace, domain) advisory lock (namespaced
+ * `domain:` so it never contends with the send/AI/lead/discovery locks)
+ * serializes concurrent send jobs targeting the same domain — without it, two
+ * concurrent send-campaign/send-followup jobs can each pass an independent
+ * in-memory pre-check and collectively burst past the per-domain pacing cap.
+ * Counts today's delivered (SENT) plus in-flight (SENDING) claims for that
+ * domain, matching reserveDailySendSlot's semantics.
+ */
+export async function reserveDomainSendSlot(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  domain: string,
+  perDomainCap: number,
+  since: Date
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`domain:${workspaceId}:${domain}`}))`
+  const used = await tx.outreachSent.count({
+    where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since }, toEmailDomain: domain },
+  })
+  return used < perDomainCap
 }
 
 // Start of the current month in UTC — matches the UTC month window used by the

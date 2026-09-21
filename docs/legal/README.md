@@ -6,12 +6,15 @@
 > shown to customers or relied upon**, and before `COMPLIANCE_GATE_ENABLED` is turned on.
 
 These back the in-product compliance surface shipped in PR #224 (Settings → Compliance,
-the `/api/legal/*` disclosure endpoints, and the dormant send-readiness gate).
+the `/api/legal/*` disclosure endpoints, and the dormant send-readiness gate), plus the
+Phase 3 additions: an in-product DPA summary + acknowledgement (`GET /api/legal/dpa`,
+`dpaDisclosure()` in `lib/subprocessors.ts`) and a per-recipient consent enforcement gate
+in the send pipeline (see "Turning the gate on" below).
 
 | Document | Purpose | Who completes |
 |---|---|---|
 | [`subprocessors.md`](./subprocessors.md) | Public sub-processor disclosure (GDPR Art. 13–14). Factual — derived from `packages/backend-core/src/lib/subprocessors.ts`. | Eng keeps the list in sync; legal approves wording. |
-| [`acceptable-use-and-dpa.md`](./acceptable-use-and-dpa.md) | Acceptable-use terms customers accept + a Data Processing Addendum outline. | **Counsel** (binding terms). |
+| [`acceptable-use-and-dpa.md`](./acceptable-use-and-dpa.md) | Acceptable-use terms customers accept + a Data Processing Addendum outline. Part B is summarized in-product as `dpaDisclosure()` / `GET /api/legal/dpa`, acknowledged in Settings → Compliance the same way as the sub-processor list. | **Counsel** (binding terms). |
 | [`legitimate-interest-assessment.md`](./legitimate-interest-assessment.md) | LIA worksheet a customer fills in to document their GDPR Art. 6(1)(f) basis. | Customer; we provide the template. |
 
 ## Keeping versions in sync
@@ -35,7 +38,13 @@ The compliance checks ship **dormant**. To enforce them:
    workspaces is design item C5 — not yet built.)
 4. Set `COMPLIANCE_GATE_ENABLED=true`. From then on `getSendReadiness` requires a recorded
    lawful basis + accepted terms (+ CASL consent for Canada-targeting workspaces) before a
-   workspace can launch outreach.
+   workspace can launch outreach, AND the send pipeline (`sendCampaignBatch` /
+   `sendFollowupTask`) skips any individual recipient lacking an on-file `ConsentRecord`
+   when the workspace's basis is `consent` or it targets Canada — fail-closed, audited as
+   `consent.enforcement.skipped`. Existing workspaces relying on `consent`/`targetsCanada`
+   without per-recipient records will see sends drop until they backfill consent (e.g. via
+   the CSV import consent-date column, or `POST /api/workspaces/:id/consent`) — communicate
+   this before flipping the flag.
 5. Communicate to existing customers that they must complete Settings → Compliance.
 
 ## What the product does NOT do (your obligations, not ours)

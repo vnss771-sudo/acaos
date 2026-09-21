@@ -4,6 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import jwt from 'jsonwebtoken'
 import {
   signJwt, verifyJwt, generateRefreshToken, hashRefreshToken, refreshTokenExpiresAt, getJwtSecret,
 } from '../packages/backend-core/src/lib/jwt.ts'
@@ -15,6 +16,22 @@ test('signJwt / verifyJwt round-trips the payload', () => {
 
 test('verifyJwt rejects a malformed token', () => {
   assert.throws(() => verifyJwt('not.a.valid.jwt'))
+})
+
+// Algorithm-confusion: verifyJwt pins `algorithms: ['HS256']`, so a token whose
+// header claims a different algorithm must be rejected even if the payload and
+// secret would otherwise be "valid" — jsonwebtoken enforces this once the
+// caller passes an explicit allow-list, but silently trusts the header's `alg`
+// when the caller doesn't (the exact gap S3 closes).
+test('verifyJwt rejects a token signed with `alg: none`', () => {
+  const none = jwt.sign({ userId: 'user-123' }, '', { algorithm: 'none' })
+  assert.throws(() => verifyJwt(none))
+})
+
+test('verifyJwt rejects a token signed with a different algorithm (HS384)', () => {
+  const secret = getJwtSecret()
+  const wrongAlg = jwt.sign({ userId: 'user-123' }, secret, { algorithm: 'HS384' })
+  assert.throws(() => verifyJwt(wrongAlg))
 })
 
 test('generateRefreshToken returns 80 hex chars and is unique per call', () => {

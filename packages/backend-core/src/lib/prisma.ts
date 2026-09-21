@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import { currentWorkspaceId } from './tenantContext.js'
 import { classifyTenantAccess, tenantGuardMode } from './tenantGuard.js'
+import { withDefaultConnectionLimit } from './databaseUrl.js'
 
 declare global {
   // `var` is required here: ambient global augmentation can't use let/const.
@@ -8,7 +9,13 @@ declare global {
 }
 
 function createPrismaClient() {
+  // Pin a bounded connection_limit when the operator hasn't set one, instead of
+  // just warning (see R4 in server.ts). Built here, not written back to
+  // process.env.DATABASE_URL, so anything else reading that var directly (e.g.
+  // Prisma CLI/migrations) is unaffected.
+  const rawUrl = process.env.DATABASE_URL
   const base = new PrismaClient({
+    ...(rawUrl ? { datasourceUrl: withDefaultConnectionLimit(rawUrl) } : {}),
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error']
   })
 

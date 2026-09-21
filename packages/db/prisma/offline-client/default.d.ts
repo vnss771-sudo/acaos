@@ -1,6 +1,7 @@
 export namespace Prisma {
   export type JsonPrimitive = string | number | boolean | null
   export type InputJsonValue = JsonPrimitive | { [key: string]: InputJsonValue } | InputJsonValue[]
+  export type JsonValue = JsonPrimitive | { [key: string]: JsonValue } | JsonValue[]
   export interface TransactionClient {
     [key: string]: any
   }
@@ -13,6 +14,11 @@ export namespace Prisma {
   export type CampaignDailyStatsUpdateInput = Record<string, unknown>
   export type CampaignDailyStatsUpsertArgs = Record<string, unknown>
   export type FollowupTaskUpdateInput = Record<string, unknown>
+  // Sentinel for explicitly setting a nullable Json column to SQL NULL (as
+  // opposed to leaving it untouched) — the real client types this as a
+  // unique NullTypes.JsonNull instance; a plain symbol is enough for the
+  // offline stub since it never performs a real write.
+  export const JsonNull: unique symbol
   export const OfflineStub: true
   export function defineExtension<T>(extension: T): T
   export function getExtensionContext(): never

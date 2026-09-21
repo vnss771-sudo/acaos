@@ -67,6 +67,15 @@ export type OutreachIntentStatus =
   | 'LOST'
   | 'REJECTED'
 
+// Ops module (field crew / shift / job-site management).
+export type OpsJobStatus = 'ACTIVE' | 'ARCHIVED'
+export type OpsRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH'
+export type OpsShiftType = 'REGULAR' | 'OVERTIME' | 'CALLOUT' | 'ON_CALL'
+export type OpsRosterStatus = 'DRAFT' | 'PUBLISHED'
+export type OpsAlertType = 'MISSING_HEAT_CHECK' | 'FATIGUE_THRESHOLD' | 'MISSING_ALLOWANCE'
+export type OpsAlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+export type OpsAlertStatus = 'OPEN' | 'REVIEWED'
+
 // ── Auth handshake (POST /api/auth/*) ─────────────────────────────────────────
 // These run in AuthScreen via raw fetch — by design: there is no bearer token
 // yet, the flow must control credentials/CSRF, and a 401 means bad credentials,
@@ -139,6 +148,12 @@ export interface LeadInput {
   category?: string
   notes?: string
   sourceTag?: string
+  // Optional consent evidence carried by the import row itself (e.g. a CSV column
+  // recording when/how a recipient opted in). When present with a valid basis and
+  // an email, a ConsentRecord is created alongside the lead — see
+  // POST /api/leads and /api/leads/import.
+  consentBasis?: string
+  consentAt?: string
 }
 
 export interface CreateLeadRequest extends LeadInput {
@@ -213,12 +228,42 @@ export interface UpdateMissionRequest {
   status?: MissionStatus
 }
 
+// PATCH /api/missions/:id/icp — set (an object) or clear (null) a per-mission
+// targeting override. Any field left unset falls through to the workspace ICP,
+// then to the mission's playbook preset — see GET /api/missions/:id/icp.
+// Wrapped in a named field (rather than a bare nullable top-level body)
+// because the API's JSON body parser runs in strict mode, which rejects a
+// literal `null` top-level request body.
+export interface MissionIcpOverrideFields {
+  targetIndustries?: string[]
+  targetGeos?: string[]
+  minEmployees?: number
+  maxEmployees?: number
+}
+export interface UpdateMissionIcpOverrideRequest {
+  override: MissionIcpOverrideFields | null
+}
+
 // ── Approval queue / drafts ───────────────────────────────────────────────────
 // PATCH /api/leads/:id/drafts/:draftId — reviewer edits copy before approving.
 export interface UpdateDraftRequest {
   subject?: string
   emailBody?: string
   followup?: string | null
+}
+
+// ── Inbox ─────────────────────────────────────────────────────────────────────
+// POST /api/inbox/reply/:replyId/send
+export interface SendInboxReplyRequest {
+  workspaceId: string
+  customBody?: string
+}
+
+// PATCH /api/inbox/reply/:replyId/feedback
+export interface InboxClassificationFeedbackRequest {
+  workspaceId: string
+  feedback: 'correct' | 'incorrect' | 'unsure'
+  correctedIntent?: string
 }
 
 // ── Route contract map ────────────────────────────────────────────────────────
@@ -330,6 +375,7 @@ export interface ComplianceUpdateRequest {
   acceptTerms?: boolean
   acknowledgeSubprocessors?: boolean
   acknowledgeLia?: boolean
+  acknowledgeDpa?: boolean
 }
 /** Body for POST /api/workspaces/:id/consent (append a consent/basis record). */
 export interface ConsentRecordRequest {
@@ -359,6 +405,135 @@ export interface ProfileUpdateRequest {
 }
 export interface ApplyPackRequest { workspaceId: string }
 
+// ── Ops module (field crew / shift / job-site management) ──────────────────────
+
+export interface OpsCreateCrewRequest {
+  workspaceId: string
+  employeeCode: string
+  fullName: string
+  role: string
+  crewName?: string
+  baseRate?: number
+  allowanceProfile?: string
+  licenceNotes?: string
+  // Links this crew member to the app account they ARE, so they can clock
+  // themselves in/out (see OpsClockInRequest). Omit for crew with no login —
+  // their clock actions then require an 'ops:manage' supervisor override.
+  userId?: string | null
+}
+export interface OpsUpdateCrewRequest {
+  workspaceId: string
+  fullName?: string
+  role?: string
+  crewName?: string
+  baseRate?: number
+  allowanceProfile?: string
+  licenceNotes?: string
+  isActive?: boolean
+  userId?: string | null
+}
+export interface OpsCreateJobSiteRequest {
+  workspaceId: string
+  jobCode: string
+  siteName: string
+  location?: string
+  supervisor?: string
+  shiftType?: string
+  riskLevel?: OpsRiskLevel
+  lat?: number
+  lng?: number
+  radiusMeters?: number
+  notes?: string
+}
+export interface OpsUpdateJobSiteRequest {
+  workspaceId: string
+  siteName?: string
+  location?: string
+  supervisor?: string
+  shiftType?: string
+  riskLevel?: OpsRiskLevel
+  lat?: number
+  lng?: number
+  radiusMeters?: number
+  notes?: string
+}
+export interface OpsCreateShiftRequest {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  shiftDate: string
+  startTime: string
+  endTime?: string
+  breakMinutes?: number
+  allowanceTag?: string
+  outdoorHighRisk?: boolean
+  notes?: string
+}
+export interface OpsUpdateShiftRequest {
+  workspaceId: string
+  jobSiteId?: string
+  endTime?: string
+  breakMinutes?: number
+  allowanceTag?: string
+  outdoorHighRisk?: boolean
+  heatCheckCompleted?: boolean
+  fatigueConcern?: boolean
+  corRelated?: boolean
+  reviewed?: boolean
+  notes?: string
+}
+export interface OpsClockInRequest {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  lat?: number
+  lng?: number
+}
+export interface OpsClockOutRequest {
+  workspaceId: string
+  crewMemberId: string
+  lat?: number
+  lng?: number
+}
+export interface OpsCreateRosterEntryRequest {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  rosterDate: string
+  startTime: string
+  endTime: string
+  shiftType?: OpsShiftType
+  notes?: string
+}
+export interface OpsBulkRosterEntryInput {
+  crewMemberId: string
+  jobSiteId: string
+  rosterDate: string
+  startTime: string
+  endTime: string
+  shiftType?: OpsShiftType
+  notes?: string
+}
+export interface OpsBulkCreateRosterRequest {
+  workspaceId: string
+  entries: OpsBulkRosterEntryInput[]
+}
+export interface OpsUpdateRosterEntryRequest {
+  workspaceId: string
+  jobSiteId?: string
+  rosterDate?: string
+  startTime?: string
+  endTime?: string
+  shiftType?: OpsShiftType
+  notes?: string
+}
+export interface OpsPublishRosterRequest {
+  workspaceId: string
+  from: string
+  to: string
+}
+export interface OpsReviewAlertRequest { workspaceId: string }
+
 export interface RouteContracts {
   // Campaigns
   'POST /api/campaigns': { body: CreateCampaignRequest; response: { campaign: CampaignDTO } }
@@ -380,7 +555,7 @@ export interface RouteContracts {
   'POST /api/leads': { body: CreateLeadRequest; response: unknown }
   'PATCH /api/leads/:id': { params: { id: string }; body: UpdateLeadRequest; response: unknown }
   'DELETE /api/leads/:id': { params: { id: string }; response: unknown }
-  'POST /api/leads/import': { body: ImportLeadsRequest; response: { created: number } }
+  'POST /api/leads/import': { body: ImportLeadsRequest; response: { created: number; consentRecorded: number } }
   'POST /api/leads/bulk-delete': { body: BulkLeadIdsRequest; response: { deleted: number } }
   'POST /api/leads/bulk-stage': { body: BulkLeadStageRequest; response: { updated: number } }
 
@@ -400,6 +575,9 @@ export interface RouteContracts {
   'POST /api/prospects/:id/enrich': { params: { id: string }; response: { signalsCreated: number } }
   'POST /api/prospects/:id/outcome': { params: { id: string }; body: RecordProspectOutcomeRequest; response: unknown }
   'POST /api/prospects/:prospectId/intents/:intentId/:action': { params: { prospectId: string; intentId: string; action: string }; response: unknown }
+  // Creates a Lead from this Prospect's contact/company fields and links the two
+  // (Prospect.convertedLeadId) — see the Lead-vs-Prospect distinction fix.
+  'POST /api/prospects/:id/convert-to-lead': { params: { id: string }; response: unknown }
 
   // Signals
   'POST /api/signals': { body: CreateSignalRequest; response: unknown }
@@ -407,7 +585,12 @@ export interface RouteContracts {
   // Missions
   'POST /api/missions': { body: CreateMissionRequest; response: unknown }
   'PATCH /api/missions/:id': { params: { id: string }; body: UpdateMissionRequest; response: unknown }
+  'PATCH /api/missions/:id/icp': { params: { id: string }; body: UpdateMissionIcpOverrideRequest; response: unknown }
   'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
+
+  // Inbox
+  'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string } }
+  'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
 
   // Workspaces
   'PATCH /api/workspaces/:id': { params: { id: string }; body: UpdateWorkspaceRequest; response: unknown }
@@ -416,6 +599,7 @@ export interface RouteContracts {
   'PATCH /api/workspaces/:id/compliance': { params: { id: string }; body: ComplianceUpdateRequest; response: unknown }
   'POST /api/workspaces/:id/consent': { params: { id: string }; body: ConsentRecordRequest; response: { id: string; recordedAt: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
+  'POST /api/workspaces/:id/warmup/start': { params: { id: string }; response: { warmupStartedAt: string } }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }
   'POST /api/workspaces/:id/members': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }
@@ -433,6 +617,22 @@ export interface RouteContracts {
   'PATCH /api/auth/profile': { body: ProfileUpdateRequest; response: unknown }
   'POST /api/auth/resend-verification': { response: unknown }
   'POST /api/packs/fieldops/apply': { body: ApplyPackRequest; response: unknown }
+
+  // Ops module. DELETE endpoints take workspaceId as a query param (no body) and
+  // are called via the raw api() hook, not this typed client — see routeApi.ts.
+  'POST /api/ops/crew': { body: OpsCreateCrewRequest; response: unknown }
+  'PUT /api/ops/crew/:id': { params: { id: string }; body: OpsUpdateCrewRequest; response: unknown }
+  'POST /api/ops/jobs': { body: OpsCreateJobSiteRequest; response: unknown }
+  'PUT /api/ops/jobs/:id': { params: { id: string }; body: OpsUpdateJobSiteRequest; response: unknown }
+  'POST /api/ops/shifts': { body: OpsCreateShiftRequest; response: unknown }
+  'PUT /api/ops/shifts/:id': { params: { id: string }; body: OpsUpdateShiftRequest; response: unknown }
+  'POST /api/ops/clock/in': { body: OpsClockInRequest; response: unknown }
+  'POST /api/ops/clock/out': { body: OpsClockOutRequest; response: unknown }
+  'POST /api/ops/roster': { body: OpsCreateRosterEntryRequest; response: unknown }
+  'POST /api/ops/roster/bulk': { body: OpsBulkCreateRosterRequest; response: { created: number; requested: number } }
+  'PUT /api/ops/roster/:id': { params: { id: string }; body: OpsUpdateRosterEntryRequest; response: unknown }
+  'POST /api/ops/roster/publish': { body: OpsPublishRosterRequest; response: { published: number } }
+  'POST /api/ops/alerts/:id/review': { params: { id: string }; body: OpsReviewAlertRequest; response: unknown }
 }
 
 export type RouteKey = keyof RouteContracts

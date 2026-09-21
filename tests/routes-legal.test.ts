@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { legalRouter } from '../apps/api/src/routes/legal.ts'
-import { SUBPROCESSORS_VERSION, COMPLIANCE_TERMS_VERSION } from '../packages/backend-core/src/lib/subprocessors.ts'
+import { SUBPROCESSORS_VERSION, COMPLIANCE_TERMS_VERSION, DPA_VERSION } from '../packages/backend-core/src/lib/subprocessors.ts'
 import { startTestServer, type TestServer } from './helpers/integration.ts'
 
 let server: TestServer
@@ -20,4 +20,12 @@ test('GET /terms returns the current terms version (no auth required)', async ()
   const res = await server.request('/api/legal/terms')
   assert.equal(res.status, 200)
   assert.equal(res.body.termsVersion, COMPLIANCE_TERMS_VERSION)
+})
+
+test('GET /dpa is public and returns the versioned Data Processing Agreement clauses', async () => {
+  const res = await server.request('/api/legal/dpa')
+  assert.equal(res.status, 200)
+  assert.equal(res.body.version, DPA_VERSION)
+  assert.ok(Array.isArray(res.body.clauses) && res.body.clauses.length > 0)
+  assert.ok(res.body.clauses.some((c: { title: string }) => c.title === 'Roles'))
 })

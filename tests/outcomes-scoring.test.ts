@@ -1,90 +1,17 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import {
+  DEFAULT_SCORING_WEIGHTS as DEFAULT_WEIGHTS,
+  calculateOutcomeCorrelation as calculateCorrelation,
+  recomputeScoringWeights as recomputeWeights,
+  type ScoringWeights as Weights,
+  type ScoringOutcomeSample as Outcome,
+} from '../packages/backend-core/src/lib/scoring.ts'
 
-// ── inline the pure functions under test ────────────────────────────────────
-type Weights = {
-  industry: number; size: number; hiring: number; tech: number
-  growth: number; contact: number; messageRelevance: number
-  channelFit: number; timingFit: number; dataFreshness: number
-}
-type Metrics = {
-  totalScored: number; totalReplied: number; replyRate: number
-  avgScoreOfReplied: number; avgScoreOfNotReplied: number; correlationScore: number
-}
-type Outcome = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
-
-const DEFAULT_WEIGHTS: Weights = {
-  industry: 0.20, size: 0.18, hiring: 0.15, tech: 0.12,
-  growth: 0.12, contact: 0.08, messageRelevance: 0.08,
-  channelFit: 0.05, timingFit: 0.02, dataFreshness: 0.00
-}
-
-function calculateCorrelation(outcomes: Outcome[]): number {
-  const replied = outcomes.filter(o => o.replied)
-  const notReplied = outcomes.filter(o => !o.replied)
-  if (replied.length === 0 || notReplied.length === 0) return 0
-
-  const meanScore = outcomes.reduce((s, o) => s + o.score, 0) / outcomes.length
-  const meanReply = replied.length / outcomes.length
-
-  let numerator = 0, denomScore = 0, denomReply = 0
-  for (const o of outcomes) {
-    const sd = o.score - meanScore
-    const rd = (o.replied ? 1 : 0) - meanReply
-    numerator += sd * rd
-    denomScore += sd * sd
-    denomReply += rd * rd
-  }
-  if (denomScore === 0 || denomReply === 0) return 0
-  return numerator / Math.sqrt(denomScore * denomReply)
-}
-
-function recomputeWeights(outcomes: Outcome[], current: Weights): { weights: Weights; metrics: Metrics } {
-  const replied = outcomes.filter(o => o.replied)
-  const notReplied = outcomes.filter(o => !o.replied)
-
-  const avgReplied = replied.length > 0
-    ? replied.reduce((s, o) => s + o.score, 0) / replied.length : 0
-  const avgNotReplied = notReplied.length > 0
-    ? notReplied.reduce((s, o) => s + o.score, 0) / notReplied.length : 0
-
-  const correlation = calculateCorrelation(outcomes)
-  const replyRate = outcomes.length > 0 ? replied.length / outcomes.length : 0
-
-  const w = { ...current }
-  const lr = 0.1
-
-  if (correlation < 0.3) {
-    w.messageRelevance += lr * 0.02
-    w.channelFit += lr * 0.02
-    w.industry -= lr * 0.01
-  }
-
-  const msgImpact = replied.length > 0
-    ? replied.reduce((s, o) => s + o.messageRelevance, 0) / replied.length : 0
-  if (msgImpact > 0.7) w.messageRelevance += lr * 0.01
-
-  const emailReplies = replied.filter(o => o.channelUsed === 'EMAIL').length
-  const linkedinReplies = replied.filter(o => o.channelUsed === 'LINKEDIN').length
-  if (linkedinReplies > emailReplies * 1.5) w.channelFit += lr * 0.01
-
-  const weightKeys = Object.keys(DEFAULT_WEIGHTS) as (keyof Weights)[]
-  for (const k of weightKeys) w[k] = Math.max(0, w[k])
-  const total = weightKeys.reduce((s, k) => s + w[k], 0)
-  if (total > 0) for (const k of weightKeys) w[k] = w[k] / total
-
-  return {
-    weights: w,
-    metrics: {
-      totalScored: outcomes.length,
-      totalReplied: replied.length,
-      replyRate,
-      avgScoreOfReplied: avgReplied,
-      avgScoreOfNotReplied: avgNotReplied,
-      correlationScore: correlation
-    }
-  }
-}
+// These tests exercise the SAME functions the app uses (imported above, not
+// reimplemented here) — both the external FieldOps ingest endpoint
+// (POST /api/outcomes) and the product's own analyze-reply pipeline
+// (applyReplyAnalysis) retune weights through this one implementation.
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function makeOutcome(score: number, replied: boolean, messageRelevance = 0.5, channelUsed = 'EMAIL'): Outcome {

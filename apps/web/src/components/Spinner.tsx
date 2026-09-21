@@ -1,4 +1,5 @@
 import React from 'react'
+import { colors } from '../styles.js'
 
 export function Spinner({ size = 20, color = '#3b82f6', label = 'Loading' }: { size?: number; color?: string; label?: string }) {
   return (
@@ -14,18 +15,9 @@ export function Spinner({ size = 20, color = '#3b82f6', label = 'Loading' }: { s
 export function LoadingRow({ cols = 1 }: { cols?: number }) {
   return (
     <tr>
-      <td colSpan={cols} style={{ padding: '32px 16px', textAlign: 'center', color: '#475569' }}>
+      <td colSpan={cols} style={{ padding: '32px 16px', textAlign: 'center', color: colors.textFaint }}>
         <Spinner /> Loading…
       </td>
     </tr>
-  )
-}
-
-export function EmptyState({ message, icon = '◎' }: { message: string; icon?: string }) {
-  return (
-    <div style={{ textAlign: 'center', padding: '48px 20px', color: '#475569' }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>{icon}</div>
-      <div style={{ fontSize: 14 }}>{message}</div>
-    </div>
   )
 }

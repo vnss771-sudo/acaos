@@ -18,10 +18,30 @@ test('assessOutreachTone: flags "you\'re clearly overwhelmed" as block', () => {
   assert.ok(v.some((x) => x.kind === 'presumptuous_claim' && x.severity === 'block'))
 })
 
+test('assessOutreachTone: flags singular "your crew is clearly..." as block', () => {
+  const v = assessOutreachTone('Your crew is clearly struggling to keep up with demand.')
+  assert.ok(v.some((x) => x.kind === 'presumptuous_claim' && x.severity === 'block'))
+})
+
+test('assessOutreachTone: flags plural-subject "your crews are clearly losing jobs" as block', () => {
+  const v = assessOutreachTone('Your crews are clearly losing jobs to competitors who show up on time.')
+  assert.ok(v.some((x) => x.kind === 'presumptuous_claim' && x.severity === 'block'))
+})
+
+test('assessOutreachTone: flags plural "your teams are obviously overwhelmed" as block', () => {
+  const v = assessOutreachTone("Your teams are obviously overwhelmed by the backlog.")
+  assert.ok(v.some((x) => x.kind === 'presumptuous_claim' && x.severity === 'block'))
+})
+
 test('assessOutreachTone: does NOT flag question-framed, general copy', () => {
   const ok =
     'A lot of growing plumbing teams reach a point where dispatch starts eating admin time. ' +
     'How are you handling scheduling as you add crews?'
+  assert.deepEqual(assessOutreachTone(ok), [])
+})
+
+test('assessOutreachTone: does NOT flag legitimate plural-subject copy with no presumptuous claim', () => {
+  const ok = 'Our platform helps growing crews stay organized as your teams take on more jobs.'
   assert.deepEqual(assessOutreachTone(ok), [])
 })
 

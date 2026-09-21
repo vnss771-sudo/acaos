@@ -50,19 +50,21 @@ describe('hubs model', () => {
 describe('isHubNavEnabled', () => {
   afterEach(() => { localStorage.clear() })
 
-  test('defaults off when no override and no build flag', () => {
-    expect(isHubNavEnabled()).toBe(false)
+  test('defaults on when no override and no build flag', () => {
+    expect(isHubNavEnabled()).toBe(true)
   })
 
-  test('localStorage override turns it on', () => {
+  test('localStorage override turns it on explicitly', () => {
     localStorage.setItem('acaos_hub_nav', '1')
     expect(isHubNavEnabled()).toBe(true)
     localStorage.setItem('acaos_hub_nav', 'true')
     expect(isHubNavEnabled()).toBe(true)
   })
 
-  test('localStorage override can force it off', () => {
+  test('localStorage override can force it off (rollback path)', () => {
     localStorage.setItem('acaos_hub_nav', '0')
+    expect(isHubNavEnabled()).toBe(false)
+    localStorage.setItem('acaos_hub_nav', 'false')
     expect(isHubNavEnabled()).toBe(false)
   })
 })

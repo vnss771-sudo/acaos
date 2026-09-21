@@ -1,12 +1,15 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import type { Campaign, Workspace } from '../types.js'
 import { GOAL_TYPES } from '../types.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { AiQuickAction } from '../components/AiQuickAction.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { LaunchApprovalModal } from '../components/LaunchApprovalModal.js'
+import { Modal } from '../components/ui/Modal.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -49,6 +52,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [campaigns, setCampaigns]   = useState<Campaign[]>([])
   const [loading, setLoading]       = useState(false)
+  const [loadError, setLoadError]   = useState(false)
   const [adding, setAdding]         = useState(false)
   const [editing, setEditing]       = useState<Campaign | null>(null)
   const [form, setForm]             = useState({ name: '', goalType: 'BOOK_CALL', description: '' })
@@ -59,6 +63,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   const [outreach, setOutreach]     = useState<Record<string, OutreachRecord[]>>({})
   const [outreachLoading, setOutreachLoading] = useState(false)
   const [approvalPending, setApprovalPending] = useState<{ id: string; name: string; eligible: number } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Campaign | null>(null)
   const [showMissionBuilder, setShowMissionBuilder] = useState(false)
 
   const loadStats = useCallback(async (id: string) => {
@@ -68,21 +73,28 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
     } catch { /* non-fatal */ }
   }, [api])
 
-  useEffect(() => {
+  const loadReqRef = useRef(0)
+  const load = useCallback(() => {
     if (!workspace) return
-    let cancelled = false
+    const reqId = ++loadReqRef.current
     setLoading(true)
+    setLoadError(false)
     api<{ campaigns: Campaign[] }>(`/api/campaigns?workspaceId=${workspace.id}`)
       .then(d => {
-        if (cancelled) return
+        if (reqId !== loadReqRef.current) return
         const c = d.campaigns || []
         setCampaigns(c)
         c.forEach(camp => loadStats(camp.id))
       })
-      .catch(e => { if (!cancelled) toast.error(e.message) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [workspace?.id])
+      .catch(e => {
+        if (reqId !== loadReqRef.current) return
+        toast.error(e.message)
+        setLoadError(true)
+      })
+      .finally(() => { if (reqId === loadReqRef.current) setLoading(false) })
+  }, [workspace?.id, loadStats])
+
+  useEffect(() => { load() }, [load])
 
   async function create() {
     if (!form.name.trim() || !workspace) return
@@ -116,12 +128,12 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
   }
 
   async function deleteCampaign(id: string) {
-    if (!confirm('Delete this campaign and unlink its leads?')) return
     try {
       await route('DELETE /api/campaigns/:id', { params: { id } })
       setCampaigns(prev => prev.filter(c => c.id !== id))
       toast.success('Campaign deleted')
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
+    finally { setDeleteTarget(null) }
   }
 
   function requestLaunch(id: string, name: string, eligible: number) {
@@ -180,6 +192,8 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
 
   return (
     <div style={s.stack}>
+      {loadError && <ErrorBanner message="Failed to load campaigns." onRetry={load} />}
+
       {/* Approval modal — owns its own deliverability check */}
       {approvalPending && workspace && (
         <LaunchApprovalModal
@@ -205,6 +219,20 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
           onClose={() => setShowMissionBuilder(false)}
         />
       )}
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete campaign?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setDeleteTarget(null)}>Cancel</button>
+          <button style={s.btnDanger} onClick={() => deleteTarget && deleteCampaign(deleteTarget.id)}>Delete</button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          Delete {deleteTarget?.name} and unlink its leads? This cannot be undone.
+        </div>
+      </Modal>
 
       {/* Header */}
       <div style={{ ...s.flexBetween, alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
@@ -249,7 +277,13 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : campaigns.length === 0 ? (
-        <div style={s.card}><EmptyState message="No campaigns yet. Create your first campaign to start organizing leads." icon="◈" /></div>
+        <div style={s.card}>
+          <EmptyState
+            title="No campaigns yet"
+            description="Create your first campaign to start organizing leads."
+            action={canManage ? <button style={s.btn} onClick={() => setShowMissionBuilder(true)}>+ New Mission</button> : undefined}
+          />
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {campaigns.map(c => {
@@ -267,7 +301,7 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
                   <div style={{ color: colors.text, fontWeight: 600, fontSize: 15 }}>{c.name}</div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {canManage && <button style={s.btnSm} onClick={() => startEdit(c)}>Edit</button>}
-                    {canManage && <button style={s.btnDanger} aria-label={`Delete campaign ${c.name}`} onClick={() => deleteCampaign(c.id)}>✕</button>}
+                    {canManage && <button style={s.btnDanger} aria-label={`Delete campaign ${c.name}`} onClick={() => setDeleteTarget(c)}>✕</button>}
                   </div>
                 </div>
 

@@ -1,11 +1,12 @@
 import { Router } from 'express'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
-import { recordCriticalAudit } from '../lib/audit.js'
+import { recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { getActivationFunnel } from '@acaos/backend-core/lib/analytics.js'
-import { getQueueStats } from '../lib/queues.js'
+import { getQueueStats } from '@acaos/backend-core/lib/queues.js'
 import { parseQuery } from '../lib/validate.js'
+import { escCsv } from '../lib/csv.js'
 import { pingDatabase, pingRedis, withTimeout, PROBE_TIMEOUT_MS } from '../lib/health.js'
 import {
   launchControlsSnapshot,
@@ -216,5 +217,87 @@ adminRouter.get(
       take: limit,
     })
     res.json({ events })
+  })
+)
+
+// ── SOC2 access review (system-wide, platform-admin only) ──────────────────────
+// Every workspace membership across the platform, with the fields an access
+// review needs: who has access, at what role, since when, when they last
+// actually logged in, and whether MFA is on. The workspace-scoped version of
+// this report lives at GET /api/workspaces/:id/access-review for a workspace
+// owner/admin; this is the cross-tenant rollup for the platform operator.
+//
+// Bounded like /overview above — a full unbounded cross-tenant scan is a
+// self-inflicted DoS risk as the platform grows; `take` caps the row count and
+// the response tells the caller when it was truncated.
+const ACCESS_REVIEW_MAX_ROWS = 10_000
+
+type AccessReviewMembershipRow = {
+  workspaceId: string
+  role: string
+  createdAt: Date
+  workspace: { name: string }
+  user: { id: string; email: string; name: string | null; lastLoginAt: Date | null; totpEnabled: boolean }
+}
+
+async function loadPlatformAccessReview() {
+  const memberships = await prisma.membership.findMany({
+    include: {
+      workspace: { select: { name: true } },
+      user: { select: { id: true, email: true, name: true, lastLoginAt: true, totpEnabled: true } },
+    },
+    orderBy: [{ workspaceId: 'asc' }, { createdAt: 'asc' }],
+    take: ACCESS_REVIEW_MAX_ROWS + 1,
+  })
+  const truncated = memberships.length > ACCESS_REVIEW_MAX_ROWS
+  const rows = (truncated ? memberships.slice(0, ACCESS_REVIEW_MAX_ROWS) : memberships) as AccessReviewMembershipRow[]
+  return {
+    truncated,
+    rows: rows.map((m) => ({
+      workspaceId: m.workspaceId,
+      workspaceName: m.workspace.name,
+      userId: m.user.id,
+      email: m.user.email,
+      name: m.user.name,
+      role: m.role,
+      joinedAt: m.createdAt,
+      lastLoginAt: m.user.lastLoginAt,
+      mfaEnabled: m.user.totpEnabled,
+    })),
+  }
+}
+
+adminRouter.get(
+  '/access-review',
+  asyncHandler(async (_req, res) => {
+    const { rows, truncated } = await loadPlatformAccessReview()
+    res.json({ members: rows, truncated, generatedAt: new Date().toISOString() })
+  })
+)
+
+adminRouter.get(
+  '/access-review/export',
+  asyncHandler(async (_req, res) => {
+    const { rows } = await loadPlatformAccessReview()
+    res.setHeader('Content-Type', 'text/csv')
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="access-review-platform-${new Date().toISOString().slice(0, 10)}.csv"`
+    )
+    res.write(['workspaceId', 'workspaceName', 'userId', 'email', 'name', 'role', 'joinedAt', 'lastLoginAt', 'mfaEnabled'].join(',') + '\n')
+    for (const r of rows) {
+      res.write([
+        escCsv(r.workspaceId),
+        escCsv(r.workspaceName),
+        escCsv(r.userId),
+        escCsv(r.email),
+        escCsv(r.name ?? ''),
+        escCsv(r.role),
+        escCsv(r.joinedAt.toISOString()),
+        escCsv(r.lastLoginAt ? r.lastLoginAt.toISOString() : ''),
+        escCsv(r.mfaEnabled),
+      ].join(',') + '\n')
+    }
+    res.end()
   })
 )

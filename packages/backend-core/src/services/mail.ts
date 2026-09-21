@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer'
 import { ApiError } from '../lib/errors.js'
 import { prisma } from '../lib/prisma.js'
 import { enqueueAnalyzeReply } from '../lib/queues.js'
+import { checkAndIncrementAiUsage } from '../lib/limits.js'
 import { decryptSecret, isEncrypted } from '../lib/encrypt.js'
 import { resolvePublicMailHost, type PinnedHost } from '../lib/ssrf.js'
 import { suppress } from '../lib/suppressions.js'
@@ -671,6 +672,17 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       processedUids.push(msg.uid)
 
       if (advanced) {
+        // Meter before enqueueing — this is the only call site for reply
+        // analysis triggered by inbound mail rather than a user action, so
+        // without this check an unmetered mailbox (spam-flooded or otherwise)
+        // could generate unbounded AI spend regardless of plan. A quota-exceeded
+        // workspace just has this one reply's analysis skipped, not the sync.
+        try {
+          await checkAndIncrementAiUsage(workspaceId!, 'AI_REPLY')
+        } catch (err) {
+          if (err instanceof ApiError && err.statusCode === 429) continue
+          throw err
+        }
         // Enqueue only after the DB commit so a failed enqueue doesn't strand a
         // lead in REPLIED with no processed-row.
         await enqueueAnalyzeReply({ replyBody: msg.body, workspaceId, leadId: lead!.id })

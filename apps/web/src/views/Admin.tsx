@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { colors, s } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
+import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { PLAN_LABELS } from '../types.js'
@@ -63,6 +64,9 @@ export function AdminView({ api, toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [queues, setQueues] = useState<QueueStat[]>([])
   const [audit, setAudit] = useState<AuditEvent[]>([])
+  const [workspaceSort, setWorkspaceSort] = useState<SortState | undefined>()
+  const [queueSort, setQueueSort] = useState<SortState | undefined>()
+  const [auditSort, setAuditSort] = useState<SortState | undefined>()
 
   useEffect(() => {
     let cancelled = false
@@ -84,6 +88,112 @@ export function AdminView({ api, toast }: Props) {
 
   const { workspaces, totals } = data
 
+  const sortRows = <T,>(rows: T[], sort: SortState | undefined, val: (row: T, key: string) => string | number) => {
+    if (!sort) return rows
+    const dir = sort.dir === 'asc' ? 1 : -1
+    return [...rows].sort((a, b) => {
+      const av = val(a, sort.key), bv = val(b, sort.key)
+      return av < bv ? -dir : av > bv ? dir : 0
+    })
+  }
+
+  const sortedWorkspaces = sortRows(workspaces, workspaceSort, (w, key) => {
+    switch (key) {
+      case 'name': return w.name.toLowerCase()
+      case 'plan': return w.plan
+      case 'status': return w.subscriptionStatus ?? ''
+      case 'memberCount': return w.memberCount
+      case 'leadCount': return w.leadCount
+      case 'campaignCount': return w.campaignCount
+      case 'aiCallsThisMonth': return w.aiCallsThisMonth
+      case 'createdAt': return w.createdAt
+      default: return ''
+    }
+  })
+
+  const sortedQueues = sortRows(queues, queueSort, (q, key) => {
+    switch (key) {
+      case 'name': return q.name
+      case 'active': return q.active
+      case 'waiting': return q.waiting
+      case 'completed': return q.completed
+      case 'failed': return q.failed
+      default: return ''
+    }
+  })
+
+  const sortedAudit = sortRows(audit, auditSort, (e, key) => {
+    switch (key) {
+      case 'createdAt': return e.createdAt
+      case 'type': return e.type
+      case 'entityType': return e.entityType ?? ''
+      default: return ''
+    }
+  })
+
+  const workspaceColumns: Column<WorkspaceSummary>[] = [
+    {
+      key: 'name', header: 'Workspace', sortable: true,
+      render: ws => (
+        <>
+          <div style={{ color: colors.text, fontWeight: 500 }}>{ws.name}</div>
+          <div style={{ color: colors.textFaint, fontSize: 11 }}>{ws.slug}</div>
+        </>
+      ),
+    },
+    {
+      key: 'plan', header: 'Plan', sortable: true,
+      render: ws => (
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', color: planColor(ws.plan), textTransform: 'uppercase' }}>
+          {PLAN_LABELS[ws.plan] ?? ws.plan}
+        </span>
+      ),
+    },
+    {
+      key: 'status', header: 'Status', sortable: true,
+      render: ws => <span style={{ color: statusColor(ws.subscriptionStatus), fontSize: 12 }}>{ws.subscriptionStatus ?? 'free'}</span>,
+    },
+    { key: 'memberCount', header: 'Members', sortable: true, align: 'right', render: ws => <span style={{ color: colors.textMuted }}>{ws.memberCount}</span> },
+    { key: 'leadCount', header: 'Leads', sortable: true, align: 'right', render: ws => <span style={{ color: colors.textMuted }}>{ws.leadCount.toLocaleString()}</span> },
+    { key: 'campaignCount', header: 'Campaigns', sortable: true, align: 'right', render: ws => <span style={{ color: colors.textMuted }}>{ws.campaignCount}</span> },
+    {
+      key: 'aiCallsThisMonth', header: 'AI / Mo', sortable: true, align: 'right',
+      render: ws => <span style={{ color: ws.aiCallsThisMonth > 0 ? colors.blue : colors.textFaint }}>{ws.aiCallsThisMonth.toLocaleString()}</span>,
+    },
+    {
+      key: 'createdAt', header: 'Created', sortable: true,
+      render: ws => <span style={{ color: colors.textFaint, fontSize: 12 }}>{new Date(ws.createdAt).toLocaleDateString()}</span>,
+    },
+  ]
+
+  const queueColumns: Column<QueueStat>[] = [
+    { key: 'name', header: 'Queue', sortable: true, render: q => <span style={{ color: colors.text, fontFamily: 'monospace', fontSize: 12 }}>{q.name}</span> },
+    { key: 'active', header: 'Active', sortable: true, render: q => <span style={{ color: q.active > 0 ? colors.amber : colors.textFaint, fontWeight: q.active > 0 ? 700 : 400 }}>{q.active}</span> },
+    { key: 'waiting', header: 'Waiting', sortable: true, render: q => <span style={{ color: q.waiting > 0 ? colors.blue : colors.textFaint }}>{q.waiting}</span> },
+    { key: 'completed', header: 'Completed', sortable: true, render: q => <span style={{ color: colors.green }}>{q.completed.toLocaleString()}</span> },
+    { key: 'failed', header: 'Failed', sortable: true, render: q => <span style={{ color: q.failed > 0 ? colors.red : colors.textFaint, fontWeight: q.failed > 0 ? 700 : 400 }}>{q.failed}</span> },
+  ]
+
+  const auditColumns: Column<AuditEvent>[] = [
+    { key: 'createdAt', header: 'When', sortable: true, render: e => <span style={{ color: colors.textFaint, whiteSpace: 'nowrap' }}>{new Date(e.createdAt).toLocaleString()}</span> },
+    {
+      key: 'type', header: 'Event', sortable: true,
+      render: e => {
+        const isFailure = /fail|bounce/i.test(e.type)
+        return <span style={{ color: isFailure ? colors.red : colors.text, fontFamily: 'monospace', fontSize: 12, fontWeight: isFailure ? 700 : 400 }}>{e.type}</span>
+      },
+    },
+    { key: 'entityType', header: 'Entity', sortable: true, render: e => <span style={{ color: colors.textMuted, fontSize: 12 }}>{e.entityType ?? '—'}</span> },
+    {
+      key: 'detail', header: 'Detail',
+      render: e => (
+        <span style={{ color: colors.textFaint, fontSize: 12, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+          {e.metadata ? JSON.stringify(e.metadata) : '—'}
+        </span>
+      ),
+    },
+  ]
+
   return (
     <div style={{ maxWidth: 1100 }}>
       <div style={{ marginBottom: 24 }}>
@@ -104,133 +214,46 @@ export function AdminView({ api, toast }: Props) {
       {/* Workspace table */}
       <div style={s.card}>
         <div style={{ ...s.sectionHeader, marginBottom: 16 }}>All Workspaces</div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                {['Workspace', 'Plan', 'Status', 'Members', 'Leads', 'Campaigns', 'AI / Mo', 'Created'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: colors.textFaint, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {workspaces.map((ws, i) => (
-                <tr
-                  key={ws.id}
-                  style={{ borderBottom: `1px solid ${colors.border}`, background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}
-                >
-                  <td style={{ padding: '10px 12px' }}>
-                    <div style={{ color: colors.text, fontWeight: 500 }}>{ws.name}</div>
-                    <div style={{ color: colors.textFaint, fontSize: 11 }}>{ws.slug}</div>
-                  </td>
-                  <td style={{ padding: '10px 12px' }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 700, letterSpacing: '0.05em',
-                      color: planColor(ws.plan), textTransform: 'uppercase'
-                    }}>
-                      {PLAN_LABELS[ws.plan] ?? ws.plan}
-                    </span>
-                  </td>
-                  <td style={{ padding: '10px 12px' }}>
-                    <span style={{ color: statusColor(ws.subscriptionStatus), fontSize: 12 }}>
-                      {ws.subscriptionStatus ?? 'free'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '10px 12px', color: colors.textMuted, textAlign: 'right' }}>{ws.memberCount}</td>
-                  <td style={{ padding: '10px 12px', color: colors.textMuted, textAlign: 'right' }}>{ws.leadCount.toLocaleString()}</td>
-                  <td style={{ padding: '10px 12px', color: colors.textMuted, textAlign: 'right' }}>{ws.campaignCount}</td>
-                  <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                    <span style={{ color: ws.aiCallsThisMonth > 0 ? colors.blue : colors.textFaint }}>
-                      {ws.aiCallsThisMonth.toLocaleString()}
-                    </span>
-                  </td>
-                  <td style={{ padding: '10px 12px', color: colors.textFaint, fontSize: 12 }}>
-                    {new Date(ws.createdAt).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-              {workspaces.length === 0 && (
-                <tr>
-                  <td colSpan={8} style={{ padding: 24, textAlign: 'center', color: colors.textFaint }}>
-                    No workspaces yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <Table<WorkspaceSummary>
+          columns={workspaceColumns}
+          rows={sortedWorkspaces}
+          rowKey={ws => ws.id}
+          sort={workspaceSort}
+          onSortChange={setWorkspaceSort}
+          empty="No workspaces yet."
+        />
       </div>
 
       {/* Queue health panel */}
       {queues.length > 0 && (
         <div style={{ ...s.card, marginTop: 24 }}>
           <div style={{ ...s.sectionHeader, marginBottom: 16 }}>Worker Queue Health</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  {['Queue', 'Active', 'Waiting', 'Completed', 'Failed'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: colors.textFaint, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {queues.map((q, i) => (
-                  <tr key={q.name} style={{ borderBottom: `1px solid ${colors.border}`, background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                    <td style={{ padding: '8px 12px', color: colors.text, fontFamily: 'monospace', fontSize: 12 }}>{q.name}</td>
-                    <td style={{ padding: '8px 12px', color: q.active > 0 ? colors.amber : colors.textFaint, fontWeight: q.active > 0 ? 700 : 400 }}>{q.active}</td>
-                    <td style={{ padding: '8px 12px', color: q.waiting > 0 ? colors.blue : colors.textFaint }}>{q.waiting}</td>
-                    <td style={{ padding: '8px 12px', color: colors.green }}>{q.completed.toLocaleString()}</td>
-                    <td style={{ padding: '8px 12px', color: q.failed > 0 ? colors.red : colors.textFaint, fontWeight: q.failed > 0 ? 700 : 400 }}>{q.failed}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table<QueueStat>
+            columns={queueColumns}
+            rows={sortedQueues}
+            rowKey={q => q.name}
+            sort={queueSort}
+            onSortChange={setQueueSort}
+          />
         </div>
       )}
 
       {audit.length > 0 && (
         <div style={{ ...s.card, marginTop: 24 }}>
           <div style={{ ...s.sectionHeader, marginBottom: 16 }}>Recent Activity (Audit Log)</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  {['When', 'Event', 'Entity', 'Detail'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: colors.textFaint, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((e, i) => {
-                  const isFailure = /fail|bounce/i.test(e.type)
-                  return (
-                    <tr key={e.id} style={{ borderBottom: `1px solid ${colors.border}`, background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                      <td style={{ padding: '8px 12px', color: colors.textFaint, whiteSpace: 'nowrap' }}>{new Date(e.createdAt).toLocaleString()}</td>
-                      <td style={{ padding: '8px 12px', color: isFailure ? colors.red : colors.text, fontFamily: 'monospace', fontSize: 12, fontWeight: isFailure ? 700 : 400 }}>{e.type}</td>
-                      <td style={{ padding: '8px 12px', color: colors.textMuted, fontSize: 12 }}>{e.entityType ?? '—'}</td>
-                      <td style={{ padding: '8px 12px', color: colors.textFaint, fontSize: 12, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {e.metadata ? JSON.stringify(e.metadata) : '—'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <Table<AuditEvent>
+            columns={auditColumns}
+            rows={sortedAudit}
+            rowKey={e => e.id}
+            sort={auditSort}
+            onSortChange={setAuditSort}
+          />
         </div>
       )}
 
       <div style={{ marginTop: 16, color: colors.textFaint, fontSize: 12 }}>
-        Admin access is granted by the <code style={{ color: colors.amber }}>isPlatformAdmin</code> user flag (bootstrapped once via the <code style={{ color: colors.amber }}>ADMIN_EMAIL</code> env var on first admin request).
-        Use <code style={{ color: colors.amber }}>EMAIL_ENCRYPTION_KEY</code> (64 hex chars) in production for credential encryption.
+        This view spans every workspace on the platform — separate from any single workspace's own admin or owner role.
+        Workspace email credentials are encrypted before they're stored.
       </div>
     </div>
   )

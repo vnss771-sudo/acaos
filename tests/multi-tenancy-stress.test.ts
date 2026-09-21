@@ -177,6 +177,7 @@ describe('A. Lead data isolation', () => {
           return null
         },
       },
+      workspaceICP: { findUnique: async () => null },
       scoringModel: {
         findUnique: async () => null,
       },
@@ -821,6 +822,7 @@ describe('E. Scoring model isolation via leads route', () => {
           return null
         },
       },
+      workspaceICP: { findUnique: async () => null },
       scoringModel: {
         findUnique: async (args: any) => {
           const wsId = args?.where?.workspaceId
@@ -1044,6 +1046,7 @@ describe('G. Multi-tenant concurrent write stress', () => {
           return null
         },
       },
+      workspaceICP: { findUnique: async () => null },
       scoringModel: { findUnique: async () => null },
       lead: {
         create: async (args: any) => {

@@ -10,7 +10,12 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { adminRouter } from '../apps/api/src/routes/admin.ts'
-import { getRedisConnection } from '../packages/backend-core/src/lib/queues.ts'
+// admin.ts reaches the shared Redis singleton via apps/api/src/lib/queues.ts,
+// which re-exports the built @acaos/backend-core package — a different module
+// instance (and a different singleton) than importing the backend-core source
+// directly. Teardown must go through the same path admin.ts uses, or it resets
+// a singleton nobody else is holding and the real one keeps retrying forever.
+import { resetRedisConnectionForTests } from '@acaos/backend-core/lib/queues.js'
 import {
   createFakePrisma, installPrisma, resetPrisma, startTestServer, bearer,
   type FakePrisma, type TestServer,
@@ -38,7 +43,7 @@ afterEach(async () => {
   await server.close()
   resetPrisma()
   // Drop the shared Redis connection's reconnect timer so it can't outlive the test.
-  try { getRedisConnection().disconnect() } catch { /* never connected */ }
+  try { await resetRedisConnectionForTests() } catch { /* never connected */ }
 })
 
 const headers = { Authorization: bearer(USER) }

@@ -1,26 +1,47 @@
 # ACAOS — Agentic Client Acquisition OS
 
-An AI-powered outreach CRM for field-service businesses. Detects buying signals, scores prospects, generates personalised outreach, and learns from replies.
+**Inbox Assistant**: AI-powered email intelligence platform for agencies. Classify replies, auto-suggest responses, manage high-volume inboxes. Built on a modular OS supporting discovery, outreach, and operations.
 
-**Current status: controlled paid beta candidate. Not yet ready for broad public launch.**
+**Current status: Inbox Assistant controlled paid beta. Multi-module platform in active development.**
 
 ---
 
-## What it does
+## Product modules
+
+**Inbox Assistant** (primary entry offering)
+- AI-powered email classification and reply triage
+- Smart compose suggestions (human-in-the-loop)
+- Multi-inbox management for agencies
+- Built-in approval workflow for audit trails
+
+**Discover & Outreach** (growth/expansion)
+- Signal-based prospect discovery
+- Campaign-based outreach with AI generation
+- Reply tracking and learning feedback loop
+- ROI analytics per campaign
+
+**Operations** (enterprise)
+- Crew and job-site management
+- Shift tracking and fatigue monitoring
+- Alert and compliance management
+
+---
+
+## Core flow: Inbox Assistant
 
 ```
-Choose playbook → Configure ICP → Seed radar → Discover prospects
-→ Score signals → Get recommendations → Approve drafts → Send safely
-→ Track replies → Learn and improve
+Connect email → AI classification → Review replies → Suggest actions
+→ Approve responses → Send with audit trail → Learn from patterns
 ```
 
-- Multi-tenant workspaces with billing (Stripe), team invites, and role-based access
-- AI research and outreach generation (OpenAI) per prospect
-- IMAP reply tracking with AI classification
-- Per-workspace SMTP/IMAP configuration (credentials encrypted at rest)
-- Campaign send with daily limits, approval mode, and duplicate-send protection
-- Suppression/unsubscribe list with public token endpoint
-- Admin panel for founder visibility
+**Platform features across all modules:**
+- Multi-tenant workspaces with Stripe billing and role-based access control
+- Per-workspace email (SMTP/IMAP) configuration with encrypted credential storage
+- Human-in-the-loop AI: all generated content requires approval before sending
+- Full audit trails for compliance and transparency
+- Async job queue (Redis + BullMQ) for background processing
+- Admin dashboard for platform observability
+- Open API for integrations and custom workflows
 
 ---
 

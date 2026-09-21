@@ -40,6 +40,9 @@ function spec() {
     // For GET /reputation: 100 sends, 8 bounces (8% > 5% default) → unhealthy.
     contactEvent: { count: async (a: any) => (a?.where?.type === 'BOUNCED' ? 8 : a?.where?.type === 'SENT' ? 100 : 0) },
     unsubscribeEvent: { count: async () => 0 },
+    // For GET /reputation's warmup field: no warmup started (default — see the
+    // dedicated warmup-status test below for the active case).
+    workspaceICP: { findUnique: async () => null },
     // For GET /ai-prompts: one prompt version with 3 approved / 1 rejected.
     outreachDraft: {
       groupBy: async () => [
@@ -132,7 +135,7 @@ test('GET /campaigns aggregates per-campaign stats', async () => {
 test('GET /reputation denies a non-member workspace', async () => {
   assert.equal((await server.request(`/api/stats/reputation?workspaceId=${OTHER}`, { headers: auth() })).status, 403)
 })
-test('GET /reputation returns the trailing rates, verdict, and guard mode', async () => {
+test('GET /reputation returns the trailing rates, verdict, guard mode, and warmup status', async () => {
   const res = await server.request(`/api/stats/reputation?workspaceId=${OWNED}`, { headers: auth() })
   assert.equal(res.status, 200)
   assert.equal(res.body.totalSends, 100)
@@ -141,6 +144,21 @@ test('GET /reputation returns the trailing rates, verdict, and guard mode', asyn
   assert.equal(res.body.healthy, false)
   assert.equal(res.body.reason, 'BOUNCE_RATE_HIGH')
   assert.ok(['off', 'observe', 'enforce'].includes(res.body.guardMode))
+  assert.deepEqual(res.body.warmup, { active: false, startedAt: null, day: null, totalDays: 8, cap: null, complete: false })
+})
+
+test('GET /reputation reports an active warmup ramp', async () => {
+  prisma = createFakePrisma({
+    ...spec(),
+    workspaceICP: { findUnique: async () => ({ warmupStartedAt: new Date() }) },
+  })
+  installPrisma(prisma)
+  const res = await server.request(`/api/stats/reputation?workspaceId=${OWNED}`, { headers: auth() })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.warmup.active, true)
+  assert.equal(res.body.warmup.day, 1)
+  assert.equal(res.body.warmup.complete, false)
+  assert.ok(typeof res.body.warmup.cap === 'number')
 })
 
 test('GET /ai-prompts denies a non-member workspace', async () => {

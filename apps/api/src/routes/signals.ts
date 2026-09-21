@@ -3,11 +3,12 @@ import { z } from 'zod'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
-import { prisma } from '../lib/prisma.js'
-import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, MAX_SIGNALS_FOR_SCORING } from '../lib/signalEngine.js'
-import type { RawSignal, SignalType } from '../lib/signalEngine.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, MAX_SIGNALS_FOR_SCORING } from '@acaos/backend-core/lib/signalEngine.js'
+import type { RawSignal, SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
-import { ingestSignal } from '../lib/signalIngest.js'
+import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
+import { urlHostnameMatchesDomain } from '@acaos/backend-core/lib/normalize.js'
 import type { Assert, CreateSignalRequest, Extends } from '@acaos/shared'
 
 export const signalsRouter = Router()
@@ -65,7 +66,7 @@ const createSignalSchema = z.object({
   strength: z.coerce.number().min(0, 'strength must be 0-100').max(100, 'strength must be 0-100'),
   title: z.string().optional(),
   description: z.string().optional(),
-  sourceUrl: z.string().optional(),
+  sourceUrl: z.string().url('sourceUrl must be a well-formed URL').optional(),
   source: z.string().optional(),
   sourceReliability: z.coerce.number().optional(),
   industryRelevance: z.coerce.number().optional(),
@@ -73,7 +74,7 @@ const createSignalSchema = z.object({
   evidence: z.object({
     provider: z.string().optional(),
     sourceType: z.string().optional(),
-    sourceUrl: z.string().optional(),
+    sourceUrl: z.string().url('evidence.sourceUrl must be a well-formed URL').optional(),
     observedAt: z.union([z.string(), z.number()]).optional(),
     expiresAt: z.union([z.string(), z.number()]).optional(),
     confidence: z.coerce.number().optional(),
@@ -103,6 +104,14 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
   const resolvedSource = body.source ?? 'manual'
   const resolvedDetectedAt = body.detectedAt ? new Date(body.detectedAt) : new Date()
 
+  // A sourceUrl that's well-formed (checked above by zod) but points at a domain
+  // unrelated to this prospect's own domain is more likely a mis-pasted or
+  // hallucinated citation than real provenance about THIS prospect — drop it
+  // rather than let a mismatched link masquerade as evidence for this record.
+  const onDomain = (url: string | undefined): boolean =>
+    !url || !prospect.domain || urlHostnameMatchesDomain(url, prospect.domain)
+  const safeSourceUrl = onDomain(sourceUrl) ? sourceUrl : undefined
+
   // Optionally record provenance. When an `evidence` object is supplied, the
   // ingest service creates an EvidenceSource and links the signal to it.
   let evidenceInput
@@ -111,10 +120,11 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     const provider = evidence.provider?.trim() ?? ''
     const sourceType = evidence.sourceType?.trim() ?? ''
     if (!provider || !sourceType) throw new ApiError(400, 'evidence requires provider and sourceType')
+    const evidenceSourceUrl = onDomain(evidence.sourceUrl) ? evidence.sourceUrl : undefined
     evidenceInput = {
       provider,
       sourceType,
-      sourceUrl: evidence.sourceUrl ?? sourceUrl ?? null,
+      sourceUrl: evidenceSourceUrl ?? safeSourceUrl ?? null,
       observedAt: evidence.observedAt ? new Date(evidence.observedAt) : resolvedDetectedAt,
       expiresAt: evidence.expiresAt ? new Date(evidence.expiresAt) : null,
       confidence: evidence.confidence ?? NaN,
@@ -130,7 +140,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     source: resolvedSource,
     title: title ?? null,
     description: description ?? null,
-    sourceUrl: sourceUrl ?? null,
+    sourceUrl: safeSourceUrl ?? null,
     sourceReliability,
     industryRelevance,
     detectedAt: resolvedDetectedAt,
