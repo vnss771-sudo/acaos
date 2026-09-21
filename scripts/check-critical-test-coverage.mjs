@@ -145,6 +145,17 @@ function runOnce() {
     'npx',
     [
       'tsx', '--test', '--test-timeout=60000',
+      // Caps how many test FILES run as concurrent worker processes at once.
+      // Node's --test default is os.availableParallelism() (4 on both this
+      // sandbox and CI's runner), and coverage instrumentation multiplies each
+      // worker's memory footprint — raising maxBuffer (above) fixed output
+      // truncation but not this: CI's runner has less real headroom under that
+      // 4-way concurrent load than this sandbox does, and Node's test runner
+      // reports a crashed/OOM-killed worker as its file coming back `not ok`,
+      // not as a distinguishable crash. Untested combination: concurrency=1 was
+      // ruled out in isolation, before maxBuffer existed; 2 halves peak
+      // concurrent memory vs the default 4 while still running in parallel.
+      '--test-concurrency=2',
       '--experimental-test-coverage',
       '--test-coverage-exclude=tests/**',
       '--test-reporter=lcov',
