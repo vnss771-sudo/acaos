@@ -6,7 +6,7 @@ import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
-import { computeLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
+import { computeLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@acaos/backend-core/lib/scoring.js'
 import { normalizeEmailKey, normalizeEmail } from '@acaos/backend-core/lib/normalize.js'
 import { CONSENT_BASES } from '@acaos/backend-core/lib/subprocessors.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
@@ -179,8 +179,8 @@ leadsRouter.post(
 
     await assertCampaignInWorkspace(leadData.campaignId, workspaceId)
 
-    const weights = await getWorkspaceWeights(workspaceId)
-    const score = computeLeadScore(leadData, weights)
+    const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(workspaceId), getWorkspaceIcpTargets(workspaceId)])
+    const score = computeLeadScore(leadData, weights, icpTargets)
 
     const lead = await prisma.lead.create({ data: { ...leadData, score } })
     invalidateWorkspaceStats(workspaceId) // new lead changes totals/funnel/recent
@@ -220,7 +220,7 @@ leadsRouter.post(
 
     await assertWorkspacePermission(user.id, workspaceId, 'leads:import')
 
-    const weights = await getWorkspaceWeights(workspaceId)
+    const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(workspaceId), getWorkspaceIcpTargets(workspaceId)])
 
     const validConsentBases: readonly string[] = CONSENT_BASES
     const rows = leads
@@ -244,7 +244,7 @@ leadsRouter.post(
         // (email, basis) pair can seed a ConsentRecord after the leads insert.
         const consentBasis = typeof l.consentBasis === 'string' && validConsentBases.includes(l.consentBasis) ? l.consentBasis : null
         const consentAt = typeof l.consentAt === 'string' ? l.consentAt : null
-        return { ...row, score: computeLeadScore(row, weights), consentBasis, consentAt }
+        return { ...row, score: computeLeadScore(row, weights, icpTargets), consentBasis, consentAt }
       })
 
     const campaignIds = [...new Set(rows.map((r: any) => r.campaignId).filter(Boolean))]
@@ -422,8 +422,8 @@ leadsRouter.patch(
       // explicitly so an edit-triggered rescore still benefits from it.
       const estimatedTeamSize = (lead.aiIntelligence as { estimatedTeamSize?: string | null } | null)?.estimatedTeamSize ?? null
       const merged = { ...lead, estimatedTeamSize, ...updates }
-      const weights = await getWorkspaceWeights(lead.workspaceId)
-      updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights)
+      const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(lead.workspaceId), getWorkspaceIcpTargets(lead.workspaceId)])
+      updates.score = computeLeadScore(merged as Parameters<typeof computeLeadScore>[0], weights, icpTargets)
     } else if (typeof body.score === 'number') {
       // Allow manual override only if no auto-rescore
       updates.score = body.score

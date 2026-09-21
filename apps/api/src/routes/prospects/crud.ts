@@ -22,7 +22,7 @@ import { normalizeDomain, withDollars, getICP } from './helpers.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
-import { computeLeadScore, getWorkspaceWeights } from '@acaos/backend-core/lib/scoring.js'
+import { computeLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@acaos/backend-core/lib/scoring.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 import { checkLeadLimit } from '@acaos/backend-core/lib/limits.js'
 import { invalidateWorkspaceStats } from '../../lib/statsCache.js'
@@ -404,8 +404,8 @@ export function registerCrudRoutes(prospectsRouter: Router) {
       sourceTag:    prospect.sourceTag ?? 'prospect_conversion',
     }
 
-    const weights = await getWorkspaceWeights(prospect.workspaceId)
-    const score = computeLeadScore(leadData, weights)
+    const [weights, icpTargets] = await Promise.all([getWorkspaceWeights(prospect.workspaceId), getWorkspaceIcpTargets(prospect.workspaceId)])
+    const score = computeLeadScore(leadData, weights, icpTargets)
 
     const { lead, updatedProspect } = await prisma.$transaction(async (tx) => {
       const lead = await tx.lead.create({ data: { ...leadData, score } })
