@@ -52,7 +52,9 @@ export const EvidenceItemSchema = z.object({
   signal: z.string().min(1).max(500),
   type: z.enum(EVIDENCE_TYPES).catch('inferred'),
   confidence: z.enum(CONFIDENCE_LEVELS).catch('low'),
-  sourceUrl: z.string().max(2000).optional().catch(undefined),
+  // `.url()` rejects a malformed/hallucinated citation; `.catch(undefined)` drops
+  // just this field rather than the whole evidence item (lenient research path).
+  sourceUrl: z.string().max(2000).url().optional().catch(undefined),
 })
 export type EvidenceItem = z.infer<typeof EvidenceItemSchema>
 

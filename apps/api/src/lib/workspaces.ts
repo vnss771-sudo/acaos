@@ -1,5 +1,5 @@
-import { prisma } from './prisma.js'
-import { appendSlugSuffix, buildWorkspaceSlugSeed, sanitizeWorkspaceSlug } from './validation.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { appendSlugSuffix, buildWorkspaceSlugSeed, sanitizeWorkspaceSlug } from './textNormalize.js'
 import { ApiError } from './http.js'
 import { createTtlCache } from './ttlCache.js'
 import type { WorkspaceRole } from '@acaos/shared'

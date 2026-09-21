@@ -86,7 +86,13 @@ groups:
           description: "Prometheus cannot scrape the worker for >2m."
 
       - alert: SendCampaignBacklog
-        expr: bullmq_queue_jobs{queue="send-campaign",state="waiting"} > 100
+        # max(), not the bare gauge: bullmq_queue_jobs is read from Redis, which
+        # every worker replica sees identically — without max() a multi-replica
+        # deployment scrapes N duplicate series with the same value and no
+        # single-threshold check works, since `> 100` on N copies still fires
+        # once per copy instead of once for the real depth. See
+        # ops/monitoring/recording_rules.yml / docs/OPERATIONS.md.
+        expr: max(bullmq_queue_jobs{queue="send-campaign",state="waiting"}) > 100
         for: 10m
         labels: { severity: critical }
         annotations:
@@ -102,7 +108,9 @@ groups:
           description: "Jobs are failing after exhausting retries on {{ $labels.queue }}."
 
       - alert: QueueDeadLetterGrowing
-        expr: increase(bullmq_queue_jobs{state="failed"}[1h]) > 50
+        # max by (queue) de-dupes the Redis-shared gauge across worker replicas
+        # before measuring growth — see SendCampaignBacklog above.
+        expr: max by (queue) (increase(bullmq_queue_jobs{state="failed"}[1h])) > 50
         for: 5m
         labels: { severity: warning }
         annotations:
@@ -129,7 +137,10 @@ groups:
   - name: acaos-deliverability
     rules:
       - alert: FollowupBacklogGrowing
-        expr: acaos_followup_due_unsent > 200
+        # max(): this gauge is a DB-derived snapshot every worker replica
+        # computes identically (collectDomainMetrics in worker.ts) — de-dupe
+        # across replicas, same reasoning as SendCampaignBacklog above.
+        expr: max(acaos_followup_due_unsent) > 200
         for: 15m
         labels: { severity: warning }
         annotations:
@@ -137,7 +148,8 @@ groups:
           description: "More than 200 follow-up tasks are due but unsent for 15m — the due-scan may be stuck or send is disabled. Runbook: docs/RUNBOOKS.md#followupbackloggrowing"
 
       - alert: FollowupTasksStuck
-        expr: acaos_followup_tasks{status="PROCESSING"} > 50
+        # max(): same DB-snapshot de-dupe as FollowupBacklogGrowing above.
+        expr: max(acaos_followup_tasks{status="PROCESSING"}) > 50
         for: 15m
         labels: { severity: warning }
         annotations:
@@ -153,7 +165,8 @@ groups:
           description: "Sends are being halted by the reputation guard. Investigate the degraded workspace(s). Runbook: docs/RUNBOOKS.md#reputationenforceblocking"
 
       - alert: SenderReputationDegraded
-        expr: acaos_sender_workspaces_unhealthy > 0
+        # max(): same DB-snapshot de-dupe as FollowupBacklogGrowing above.
+        expr: max(acaos_sender_workspaces_unhealthy) > 0
         for: 10m
         labels: { severity: warning }
         annotations:
@@ -177,7 +190,11 @@ groups:
           description: "Trailing complaint rate is above the alarm threshold. Runbook: docs/RUNBOOKS.md#complaintratespike"
 
       - alert: WarmupStuck
-        expr: changes(acaos_warmup_day[24h]) == 0 and acaos_warmup_cap > 0
+        # max by (workspace), via subquery: same DB-snapshot de-dupe as the
+        # other worker-scrape gauges above, applied before the range function.
+        expr: |
+          changes((max by (workspace) (acaos_warmup_day))[24h:1h]) == 0
+          and max by (workspace) (acaos_warmup_cap) > 0
         for: 1h
         labels: { severity: warning }
         annotations:

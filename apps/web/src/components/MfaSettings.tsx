@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { s, colors } from '../styles.js'
 import { Spinner } from './Spinner.js'
+import { Modal } from './ui/Modal.js'
 import { authedPost, ReauthRequiredError, type ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
@@ -21,6 +22,7 @@ export function MfaSettings({ api, enabled, onEnabledChange, toast }: Props) {
   const [code, setCode] = useState('')
   const [working, setWorking] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [disableConfirmOpen, setDisableConfirmOpen] = useState(false)
 
   async function startSetup() {
     setWorking(true)
@@ -51,7 +53,6 @@ export function MfaSettings({ api, enabled, onEnabledChange, toast }: Props) {
   }
 
   async function disable() {
-    if (!confirm('Disable two-factor authentication? Your account will be less secure.')) return
     setWorking(true)
     try {
       await authedPost(api, '/api/auth/mfa/disable')
@@ -67,6 +68,7 @@ export function MfaSettings({ api, enabled, onEnabledChange, toast }: Props) {
       }
     } finally {
       setWorking(false)
+      setDisableConfirmOpen(false)
     }
   }
 
@@ -94,7 +96,7 @@ export function MfaSettings({ api, enabled, onEnabledChange, toast }: Props) {
           </span>
         </div>
         {enabled ? (
-          <button style={{ ...s.btnGhost, color: colors.red }} disabled={working} onClick={disable}>
+          <button style={{ ...s.btnGhost, color: colors.red }} disabled={working} onClick={() => setDisableConfirmOpen(true)}>
             {working ? <><Spinner size={13} /> Working…</> : 'Disable 2FA'}
           </button>
         ) : !setup ? (
@@ -178,6 +180,22 @@ export function MfaSettings({ api, enabled, onEnabledChange, toast }: Props) {
           </div>
         </div>
       )}
+
+      <Modal
+        open={disableConfirmOpen}
+        onClose={() => setDisableConfirmOpen(false)}
+        title="Disable two-factor authentication?"
+        footer={<>
+          <button style={s.btnSecondary} onClick={() => setDisableConfirmOpen(false)}>Cancel</button>
+          <button style={s.btnDanger} disabled={working} onClick={disable}>
+            {working ? <><Spinner size={13} /> Disabling…</> : 'Disable'}
+          </button>
+        </>}
+      >
+        <div style={{ color: colors.textMuted, fontSize: 14 }}>
+          Your account will be less secure without two-factor authentication.
+        </div>
+      </Modal>
     </div>
   )
 }

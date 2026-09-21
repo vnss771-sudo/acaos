@@ -2,25 +2,26 @@ import type { Router } from 'express'
 import { requireVerifiedEmail } from '../../middleware/auth.js'
 import { requireFeature } from '../../middleware/featureGate.js'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { recordAudit } from '../../lib/audit.js'
-import { checkAndIncrementDiscoveryUsage } from '../../lib/limits.js'
-import { prisma } from '../../lib/prisma.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { checkAndIncrementDiscoveryUsage } from '@acaos/backend-core/lib/limits.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
   calcWinProbability,
   type SignalType,
-} from '../../lib/signalEngine.js'
+} from '@acaos/backend-core/lib/signalEngine.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
-import { enqueueScoreProspects, enqueueDiscoverProspects } from '../../lib/queues.js'
-import { ingestSignal } from '../../lib/signalIngest.js'
-import { listSources, getSource } from '../../lib/prospectSources.js'
+import { enqueueScoreProspects, enqueueDiscoverProspects } from '@acaos/backend-core/lib/queues.js'
+import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
+import { listSources, getSource } from '@acaos/backend-core/lib/prospectSources.js'
 import { getPack } from '../../lib/packs/index.js'
 import { createHash } from 'node:crypto'
 import { dollarsToCents } from '../../lib/money.js'
 import { validate } from '../../lib/validate.js'
 import { z } from 'zod'
-import { discoverSchema, nonEmpty, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import { discoverSchema, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, resolveEffectiveTargeting, buildDiscoveryQuery, IMPORT_SIGNAL_TYPES } from './helpers.js'
+import type { MissionIcpOverrideFields } from '@acaos/shared'
 import { workspaceIdField } from '../../lib/validate.js'
 
 // POST /import body. Mirrors the prior checks: workspaceId required (400), rows a
@@ -47,10 +48,12 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     // discovered prospects + activity. The mission must belong to the same workspace.
     const missionId = typeof body.missionId === 'string' && body.missionId.trim() ? body.missionId.trim() : null
     let missionPlaybookId: string | null = null
+    let missionIcpOverride: MissionIcpOverrideFields | null = null
     if (missionId) {
-      const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true, playbookId: true } })
+      const mission = await prisma.mission.findUnique({ where: { id: missionId }, select: { workspaceId: true, playbookId: true, icpOverride: true } })
       if (!mission || mission.workspaceId !== workspaceId) throw new ApiError(404, 'Mission not found')
       missionPlaybookId = mission.playbookId
+      missionIcpOverride = (mission.icpOverride ?? null) as MissionIcpOverrideFields | null
     }
 
     const sourceName = String(body.source ?? 'apollo')
@@ -64,19 +67,13 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
       throw new ApiError(503, `${source.label} is not configured. ${hint}`)
     }
 
-    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId } })
-    const limit = body.limit ?? 25 // bounded to 1..50 by discoverSchema
+    const icp = await getICP(workspaceId)
 
-    // Layered targeting: explicit request → workspace ICP → mission playbook preset.
+    // Layered targeting: explicit request → mission ICP override → workspace
+    // ICP → mission playbook preset.
     const pack = missionPlaybookId ? getPack(missionPlaybookId) : undefined
-    const query = {
-      industries: body.industries ?? nonEmpty(icp?.targetIndustries) ?? pack?.icp.targetIndustries ?? [],
-      locations:  body.locations  ?? nonEmpty(icp?.targetGeos)       ?? pack?.icp.targetGeos       ?? [],
-      keywords:   body.keywords   ?? [],
-      minEmployees: icp?.minEmployees ?? body.minEmployees ?? pack?.icp.minEmployees,
-      maxEmployees: icp?.maxEmployees ?? body.maxEmployees ?? pack?.icp.maxEmployees,
-      limit,
-    }
+    const effective = resolveEffectiveTargeting(missionIcpOverride, icp, pack)
+    const query = buildDiscoveryQuery(body, effective)
 
     // Stable hash of (source + canonical query) for in-flight dedup. Sorting the
     // array fields + fixing key order makes the hash insensitive to request-order

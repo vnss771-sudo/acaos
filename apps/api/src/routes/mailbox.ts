@@ -2,12 +2,13 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedEmail, requireVerifiedForMutation } from '../middleware/auth.js'
 import { requireFeature } from '../middleware/featureGate.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
+import { enforceWorkspaceMailRate } from '../lib/workspaceRateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
-import { isValidEmail } from '../lib/validation.js'
+import { isValidEmail } from '../lib/textNormalize.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { promises as dns } from 'dns'
 
@@ -68,6 +69,9 @@ mailboxRouter.post(
 
     // Require owner or admin — test-send uses real SMTP credits
     await assertWorkspacePermission(user.id, workspaceId, 'mail:send_test')
+    // Per-workspace tier on top of mailRateLimit's per-IP window (see S1) — a
+    // workspace spraying sends across rotating IPs is still capped.
+    await enforceWorkspaceMailRate(workspaceId)
 
     const result = await sendMail(to, subject || 'Test', html || '<p>Hello</p>', emailCfg)
     res.json({ id: result.messageId })

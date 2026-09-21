@@ -1,6 +1,6 @@
 import type { View } from '../types.js'
 
-// ── Consolidated 5-hub navigation (Phase 1, behind the VITE_HUB_NAV flag) ────────
+// ── Consolidated 5-hub navigation (Phase 1, on by default) ──────────────────────
 // The product is one acquisition loop that had grown to 11 top-level pages. This
 // collapses them into five hubs, each hosting the existing page views as sub-tabs:
 //
@@ -23,6 +23,10 @@ export type Hub = { id: HubId; label: string; icon: string; tabs: HubTab[] }
 export const HUBS: Hub[] = [
   { id: 'home', label: 'Home', icon: '⬡', tabs: [
     { view: 'dashboard', label: 'Home' },
+    // 'Field Ops' is one HubTabs entry standing in for 7 view ids, exactly like
+    // the flat nav's single sidebar entry — its own always-visible OpsSubNav
+    // switches between them, not this hub-tab strip.
+    { view: 'ops-dashboard', label: 'Field Ops' },
   ] },
   { id: 'prospects', label: 'Prospects', icon: '◎', tabs: [
     { view: 'prospects', label: 'Prospects' },
@@ -64,9 +68,11 @@ export function defaultViewForHub(hub: Hub, isAdmin: boolean): View {
 }
 
 // Whether the consolidated hub nav is active. A runtime localStorage override wins
-// (so it can be dogfooded in a browser without a rebuild); otherwise the build-time
-// VITE_HUB_NAV flag decides. Defaults OFF — the flat grouped nav stays the default
-// until the hub nav is graduated.
+// (so it can be dogfooded — or rolled back — in a browser without a rebuild);
+// otherwise the build-time VITE_HUB_NAV flag decides. Defaults ON: the hub nav
+// resolves the Lead/Prospect and Missions/Campaigns groupings called out
+// separately (item 0.4), so VITE_HUB_NAV=false (or localStorage acaos_hub_nav=0)
+// is a rollback switch back to the old flat nav, not the normal path.
 export function isHubNavEnabled(): boolean {
   try {
     const override = localStorage.getItem('acaos_hub_nav')
@@ -74,5 +80,5 @@ export function isHubNavEnabled(): boolean {
     if (override === '0' || override === 'false') return false
   } catch { /* localStorage unavailable — fall through to the build-time flag */ }
   const flag = import.meta.env.VITE_HUB_NAV
-  return flag === 'true' || flag === '1'
+  return flag !== 'false' && flag !== '0'
 }

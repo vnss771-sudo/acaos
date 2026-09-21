@@ -20,6 +20,7 @@
     "build": "npm run build -w @acaos/api && npm run build -w @acaos/worker && npm --workspace @acaos/web run build",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:frontend-mutations": "node scripts/check-frontend-mutations.mjs",
+    "check:no-new-shim-imports": "node scripts/check-no-new-shim-imports.mjs",
     "check:workflow-pinning": "node scripts/check-workflow-pinning.mjs",
     "check:monitoring-assets": "node scripts/check-monitoring-assets.mjs",
     "check:rollout-contract": "node scripts/check-rollout-contract.mjs",
@@ -36,7 +37,7 @@
     "typecheck": "npm run typecheck:shared && npm run typecheck:backend-core && npm run typecheck:api && npm run typecheck:web && npm run typecheck:worker",
     "test": "NODE_OPTIONS=--conditions=acaos-src tsx --test --test-timeout=60000 tests/**/*.test.ts",
     "test:chaos": "NODE_OPTIONS=--conditions=acaos-src tsx --test --test-timeout=60000 tests/chaos.test.ts tests/signal-chaos-advanced.test.ts tests/operational-chaos-safety-gates.test.ts",
-    "test:coverage": "NODE_OPTIONS=--conditions=acaos-src tsx --test --test-timeout=60000 --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-lines=84 --test-coverage-branches=78 --test-coverage-functions=87 tests/**/*.test.ts",
+    "test:coverage": "NODE_OPTIONS=--conditions=acaos-src tsx --test --test-timeout=60000 --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-exclude='**/tmp/**' --test-coverage-lines=84 --test-coverage-branches=78 --test-coverage-functions=87 tests/**/*.test.ts",
     "test:db": "NODE_OPTIONS=--conditions=acaos-src tsx --test --test-timeout=120000 --experimental-test-coverage --test-coverage-exclude='tests-db/**' --test-coverage-exclude='tests/**' --test-coverage-lines=65 --test-coverage-branches=68 --test-coverage-functions=65 --test-concurrency=1 --test-force-exit tests-db/**/*.test.ts",
     "test:db:local": "bash scripts/test-db-local.sh",
     "test:redis": "NODE_OPTIONS=--conditions=acaos-src tsx --test --test-timeout=60000 --test-concurrency=1 --test-force-exit tests-redis/**/*.test.ts",
@@ -51,7 +52,7 @@
     "smoke:api": "node scripts/smoke-api-health.mjs",
     "release:smoke": "node scripts/smoke-deploy.mjs",
     "pack": "node scripts/make-zips.mjs",
-    "verify": "npm run prisma:generate && npm run check:boundaries && npm run check:frontend-mutations && npm run check:workflow-pinning && npm run check:monitoring-assets && npm run check:rollout-contract && npm run check:compose-hardening && npm run check:test-tiers && npm run check:critical-test-coverage && npm run check:offline-stub && npm run lint && npm run typecheck && npm test && npm run test:web && npm run build",
+    "verify": "npm run prisma:generate && npm run check:boundaries && npm run check:frontend-mutations && npm run check:no-new-shim-imports && npm run check:workflow-pinning && npm run check:monitoring-assets && npm run check:rollout-contract && npm run check:compose-hardening && npm run check:test-tiers && npm run check:critical-test-coverage && npm run check:offline-stub && npm run lint && npm run typecheck && npm test && npm run test:web && npm run build",
     "verify:services": "npm run test:db && npm run test:redis",
     "verify:clean": "bash scripts/verify-clean-build.sh",
     "postinstall": "node scripts/postinstall.mjs",
@@ -62,18 +63,19 @@
     "doctor": "node scripts/doctor.mjs"
   },
   "overrides": {
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.1.1",
     "imapflow": {
-      "nodemailer": "^9.0.1"
+      "nodemailer": "^9.1.1"
     },
-    "ioredis": "5.10.1"
+    "ioredis": "5.10.1",
+    "qs": "^6.16.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.60.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
-    "@types/express": "^5.0.1",
+    "@types/express": "^4.17.25",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.10.5",
     "@types/nodemailer": "^8.0.0",

@@ -2,7 +2,7 @@
 // to gate the campaign launch (server-side enforcement) and to power the
 // onboarding send-readiness panel (so an operator sees exactly what's missing
 // before they ever hit a 422).
-import { prisma } from './prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { isMailConfigured } from '../services/mail.js'
 import { isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
 

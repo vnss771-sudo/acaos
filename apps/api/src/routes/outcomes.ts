@@ -2,124 +2,21 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString } from '../lib/validate.js'
-import { prisma } from '../lib/prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { hashApiKey } from '../lib/apiKeys.js'
 import { apiKeyRateLimit } from '../middleware/rateLimit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
+import {
+  DEFAULT_SCORING_WEIGHTS as DEFAULT_WEIGHTS,
+  DEFAULT_SCORING_METRICS as DEFAULT_METRICS,
+  maybeRecomputeScoringWeights,
+  type ScoringWeights as Weights,
+} from '@acaos/backend-core/lib/scoring.js'
 
 export const outcomesRouter = Router()
-
-// ---------------------------------------------------------------------------
-// Default ScorerV2 weights — matches scorerv2.ts initial state
-// ---------------------------------------------------------------------------
-const DEFAULT_WEIGHTS = {
-  industry: 0.20,
-  size: 0.18,
-  hiring: 0.15,
-  tech: 0.12,
-  growth: 0.12,
-  contact: 0.08,
-  messageRelevance: 0.08,
-  channelFit: 0.05,
-  timingFit: 0.02,
-  dataFreshness: 0.00
-}
-
-const DEFAULT_METRICS = {
-  totalScored: 0,
-  totalReplied: 0,
-  replyRate: 0,
-  avgScoreOfReplied: 0,
-  avgScoreOfNotReplied: 0,
-  correlationScore: 0
-}
-
-// ---------------------------------------------------------------------------
-// Pure weight-update logic — ported from ScorerV2.updateWeights()
-// ---------------------------------------------------------------------------
-type Weights = typeof DEFAULT_WEIGHTS
-type Metrics = typeof DEFAULT_METRICS
-type Outcome = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
-
-function calculateCorrelation(outcomes: Outcome[]): number {
-  const replied = outcomes.filter(o => o.replied)
-  const notReplied = outcomes.filter(o => !o.replied)
-  if (replied.length === 0 || notReplied.length === 0) return 0
-
-  const meanScore = outcomes.reduce((s, o) => s + o.score, 0) / outcomes.length
-  const meanReply = replied.length / outcomes.length
-
-  let numerator = 0, denomScore = 0, denomReply = 0
-  for (const o of outcomes) {
-    const sd = o.score - meanScore
-    const rd = (o.replied ? 1 : 0) - meanReply
-    numerator += sd * rd
-    denomScore += sd * sd
-    denomReply += rd * rd
-  }
-  if (denomScore === 0 || denomReply === 0) return 0
-  return numerator / Math.sqrt(denomScore * denomReply)
-}
-
-function recomputeWeights(outcomes: Outcome[], current: Weights): { weights: Weights; metrics: Metrics } {
-  const replied = outcomes.filter(o => o.replied)
-  const notReplied = outcomes.filter(o => !o.replied)
-
-  const avgReplied = replied.length > 0
-    ? replied.reduce((s, o) => s + o.score, 0) / replied.length : 0
-  const avgNotReplied = notReplied.length > 0
-    ? notReplied.reduce((s, o) => s + o.score, 0) / notReplied.length : 0
-
-  const correlation = calculateCorrelation(outcomes)
-  const replyRate = outcomes.length > 0 ? replied.length / outcomes.length : 0
-
-  const w = { ...current }
-  const lr = 0.1
-
-  // Weak correlation → shift weight from ICP to message/channel fit
-  if (correlation < 0.3) {
-    w.messageRelevance += lr * 0.02
-    w.channelFit += lr * 0.02
-    w.industry -= lr * 0.01
-  }
-
-  // Message relevance impact
-  const msgImpact = replied.length > 0
-    ? replied.reduce((s, o) => s + o.messageRelevance, 0) / replied.length : 0
-  if (msgImpact > 0.7) w.messageRelevance += lr * 0.01
-
-  // Channel impact — if LinkedIn replies outpace email, boost channelFit
-  const emailReplies = replied.filter(o => o.channelUsed === 'EMAIL').length
-  const linkedinReplies = replied.filter(o => o.channelUsed === 'LINKEDIN').length
-  if (linkedinReplies > emailReplies * 1.5) w.channelFit += lr * 0.01
-
-  // Clamp all weights to ≥ 0, then normalize to sum = 1
-  const weightKeys = Object.keys(DEFAULT_WEIGHTS) as (keyof Weights)[]
-  for (const k of weightKeys) {
-    w[k] = Math.max(0, w[k])
-  }
-  const total = weightKeys.reduce((s, k) => s + w[k], 0)
-  if (total > 0) {
-    for (const k of weightKeys) {
-      w[k] = w[k] / total
-    }
-  }
-
-  return {
-    weights: w,
-    metrics: {
-      totalScored: outcomes.length,
-      totalReplied: replied.length,
-      replyRate,
-      avgScoreOfReplied: avgReplied,
-      avgScoreOfNotReplied: avgNotReplied,
-      correlationScore: correlation
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Upsert-or-get the scoring model for a workspace
@@ -159,7 +56,7 @@ async function requireIngestKeyOrAuth(
   // Fall back to JWT auth
   const auth = req.headers.authorization
   if (!auth?.startsWith('Bearer ')) { res.status(401).json({ error: 'Authentication required' }); return }
-  const { verifyJwt } = await import('../lib/jwt.js')
+  const { verifyJwt } = await import('@acaos/backend-core/lib/jwt.js')
   let payload: { userId: string }
   try { payload = verifyJwt(auth.slice(7)) } catch { res.status(401).json({ error: 'Unauthorized' }); return }
   const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { id: true, email: true, name: true, emailVerified: true, isPlatformAdmin: true } })
@@ -250,28 +147,10 @@ outcomesRouter.post(
       }
     })
 
-    // Count total outcomes and recalculate weights every 7
-    const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId: model.id } })
-    let weightsUpdated = false
-
-    if (totalOutcomes >= 7 && totalOutcomes % 7 === 0) {
-      const all = await prisma.scoringOutcome.findMany({
-        where: { scoringModelId: model.id },
-        select: { score: true, replied: true, messageRelevance: true, channelUsed: true }
-      })
-
-      const { weights, metrics } = recomputeWeights(all, model.weights as Weights)
-
-      await prisma.scoringModel.update({
-        where: { id: model.id },
-        data: {
-          weights,
-          performanceMetrics: metrics,
-          updateCount: { increment: 1 },
-          lastWeightUpdate: new Date()
-        }
-      })
-      weightsUpdated = true
+    // Every 7th outcome recomputes weights — the shared learning-loop path also
+    // used by the product's own analyze-reply -> applyReplyAnalysis pipeline.
+    const { updated: weightsUpdated, totalOutcomes } = await maybeRecomputeScoringWeights(model.id, model.weights as Weights)
+    if (weightsUpdated) {
       // Retuned weights change the scoringModel block in the dashboard summary.
       invalidateWorkspaceStats(workspaceId)
     }

@@ -3,7 +3,7 @@
 
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { isProduction, verboseErrors, enforceSendReadiness, getAllowedOrigins, isOriginAllowed, validateConfig } from '../packages/backend-core/src/lib/config.ts'
+import { isProduction, verboseErrors, enforceSendReadiness, getAllowedOrigins, isOriginAllowed, corsAllowsAnyOrigin, validateConfig } from '../packages/backend-core/src/lib/config.ts'
 import { securityHeaders } from '../apps/api/src/middleware/securityHeaders.ts'
 import type { Request, Response } from 'express'
 
@@ -70,6 +70,22 @@ test('origin allowlist falls back to WEB_URL', () => {
   assert.deepEqual(getAllowedOrigins(), ['https://only.acme.com'])
 })
 
+test('corsAllowsAnyOrigin is true only for explicit local development/test', () => {
+  setEnv({ NODE_ENV: 'development' })
+  assert.equal(corsAllowsAnyOrigin(), true)
+  setEnv({ NODE_ENV: 'test' })
+  assert.equal(corsAllowsAnyOrigin(), true)
+
+  // Staging/preview and an unset NODE_ENV must NOT get the permissive path —
+  // that combined with credentials:true would reflect-and-credential any origin.
+  setEnv({ NODE_ENV: 'staging' })
+  assert.equal(corsAllowsAnyOrigin(), false)
+  setEnv({ NODE_ENV: 'production' })
+  assert.equal(corsAllowsAnyOrigin(), false)
+  setEnv({ NODE_ENV: undefined })
+  assert.equal(corsAllowsAnyOrigin(), false)
+})
+
 // --- boot validation ---
 
 test('validateConfig passes in development with no special config', () => {
@@ -126,6 +142,17 @@ test('validateConfig passes when billing is enabled and both plan prices are map
 
 test('validateConfig ignores plan prices when billing is not enabled (no secret key)', () => {
   setEnv({ ...PROD_BASE, STRIPE_SECRET_KEY: undefined, STRIPE_PRICE_STARTER: undefined, STRIPE_PRICE_GROWTH: undefined })
+  assert.doesNotThrow(() => validateConfig())
+})
+
+test('validateConfig rejects RATE_LIMIT_DISABLED=true in production but allows it elsewhere', () => {
+  setEnv({ ...PROD_BASE, RATE_LIMIT_DISABLED: 'true' })
+  assert.throws(() => validateConfig(), /RATE_LIMIT_DISABLED=true is not allowed in production/)
+
+  setEnv({ ...PROD_BASE, RATE_LIMIT_DISABLED: 'false' })
+  assert.doesNotThrow(() => validateConfig())
+
+  setEnv({ NODE_ENV: 'development', RATE_LIMIT_DISABLED: 'true', JWT_SECRET: undefined })
   assert.doesNotThrow(() => validateConfig())
 })
 

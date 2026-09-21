@@ -10,6 +10,14 @@ export const AUTO_RECOMMEND_THRESHOLD = 70
 // contact now". Reaching it requires provable, fresh evidence (see below).
 export const HIGH_CONFIDENCE_PRIORITY = 70
 
+// The priority line above which a recommendation is WARM+ and already worth
+// surfacing (mirrors the Lead-scoring WARM boundary — scoring.ts's
+// getScoreTier — so both scoring tracks agree on where "warm" evidence
+// requirements start). Below HIGH_CONFIDENCE_PRIORITY a WARM claim is softer
+// than "contact now", but it still asserts a real "why now" and must be
+// backed by the same provable, fresh evidence — not just HOT claims.
+export const WARM_CONFIDENCE_PRIORITY = 48
+
 export type EvidenceCheckSignal = {
   type: RawSignal['type']
   detectedAt: Date
@@ -28,13 +36,17 @@ export function hasValidEvidence(signals: EvidenceCheckSignal[]): boolean {
 }
 
 /**
- * Cap a recommendation's priority below the high-confidence line unless there's
- * provable, fresh evidence. Prevents surfacing a confident "contact now" the
- * system can't actually back up — the core trust promise.
+ * Cap a recommendation's priority below the WARM line unless there's provable,
+ * fresh evidence. Prevents surfacing a confident "contact now" (or even a softer
+ * WARM "worth a look") the system can't actually back up — the core trust
+ * promise. A single check covers both tiers: since HIGH_CONFIDENCE_PRIORITY >=
+ * WARM_CONFIDENCE_PRIORITY, an unbacked HOT-range priority is also unbacked at
+ * WARM and falls all the way to COLD rather than merely landing at "high
+ * WARM" (69) as before.
  */
 export function evidenceGatedPriority(priority: number, signals: EvidenceCheckSignal[]): number {
-  if (priority >= HIGH_CONFIDENCE_PRIORITY && !hasValidEvidence(signals)) {
-    return HIGH_CONFIDENCE_PRIORITY - 1 // 69 — "enrich before treating as hot"
+  if (priority >= WARM_CONFIDENCE_PRIORITY && !hasValidEvidence(signals)) {
+    return WARM_CONFIDENCE_PRIORITY - 1 // 47 — "enrich before treating as warm+"
   }
   return priority
 }

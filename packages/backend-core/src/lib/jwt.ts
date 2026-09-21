@@ -1,4 +1,4 @@
-import jwt, { type SignOptions } from 'jsonwebtoken'
+import jwt, { type SignOptions, type VerifyOptions } from 'jsonwebtoken'
 import crypto from 'crypto'
 
 const PLACEHOLDER_SECRET = 'change-me'
@@ -50,8 +50,18 @@ export function signJwt(payload: JwtPayload): string {
   return jwt.sign(payload, getJwtSecret(), { expiresIn })
 }
 
+// algorithms: ['HS256'] is pinned explicitly on every verify call (both here and
+// in verifyMfaToken below) rather than left to jsonwebtoken's default inference
+// from the key type. Without it, a token whose header claims a different
+// algorithm (e.g. attacker-crafted `alg: none`, or a switch to an asymmetric
+// algorithm if this "secret" were ever exposed as a public key) could otherwise
+// be accepted — the classic algorithm-confusion attack. signJwt/signMfaToken
+// both sign with HS256 (jsonwebtoken's default for a string secret), so this
+// matches actual usage exactly, not a hypothetical broader allow-list.
+const VERIFY_OPTS: VerifyOptions = { algorithms: ['HS256'] }
+
 export function verifyJwt(token: string): JwtPayload {
-  const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload & { typ?: string }
+  const decoded = jwt.verify(token, getJwtSecret(), VERIFY_OPTS) as JwtPayload & { typ?: string }
   // A scoped token (e.g. the MFA-pending token below) must NEVER authenticate a
   // request. Access tokens carry no `typ`; reject anything that does.
   if (decoded.typ) throw new Error('Not an access token')
@@ -68,7 +78,7 @@ export function signMfaToken(userId: string): string {
 }
 
 export function verifyMfaToken(token: string): JwtPayload {
-  const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload & { typ?: string }
+  const decoded = jwt.verify(token, getJwtSecret(), VERIFY_OPTS) as JwtPayload & { typ?: string }
   if (decoded.typ !== 'mfa') throw new Error('Not an MFA token')
   return { userId: decoded.userId }
 }

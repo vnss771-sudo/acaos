@@ -6,6 +6,8 @@ import { registerApiKeyRoutes } from './apiKeys.js'
 import { registerEmailConfigRoutes } from './emailConfig.js'
 import { registerIcpRoutes } from './icp.js'
 import { registerComplianceRoutes } from './compliance.js'
+import { registerWarmupRoutes } from './warmup.js'
+import { registerAccessReviewRoutes } from './accessReview.js'
 
 export const workspaceRouter = Router()
 workspaceRouter.use(requireAuth)
@@ -26,3 +28,5 @@ registerEmailConfigRoutes(workspaceRouter)
 registerIcpRoutes(workspaceRouter)
 registerApiKeyRoutes(workspaceRouter)
 registerComplianceRoutes(workspaceRouter)
+registerWarmupRoutes(workspaceRouter)
+registerAccessReviewRoutes(workspaceRouter)

@@ -2,7 +2,9 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import type { UpdateDraftRequest } from '@acaos/shared'
 import type { OutreachDraft, Workspace } from '../types.js'
 import { s, colors } from '../styles.js'
-import { Spinner, EmptyState } from '../components/Spinner.js'
+import { Spinner } from '../components/Spinner.js'
+import { EmptyState } from '../components/ui/EmptyState.js'
+import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Card } from '../components/ui/Card.js'
 import { analyzeDraft } from '../lib/draftRisk.js'
 import { makeRouteApi } from '../lib/routeApi.js'
@@ -20,6 +22,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
   const route = useMemo(() => makeRouteApi(api), [api])
   const [drafts, setDrafts] = useState<PendingDraft[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [edits, setEdits] = useState<Record<string, { subject: string; emailBody: string }>>({})
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -28,9 +31,13 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
   const load = useCallback(() => {
     if (!workspace) return
     setLoading(true)
+    setLoadError(false)
     api<{ drafts: PendingDraft[] }>(`/api/leads/approvals/pending?workspaceId=${workspace.id}`)
       .then(d => setDrafts(d.drafts || []))
-      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load approvals'))
+      .catch(e => {
+        toast.error(e instanceof Error ? e.message : 'Failed to load approvals')
+        setLoadError(true)
+      })
       .finally(() => setLoading(false))
   }, [api, workspace?.id, toast])
 
@@ -123,13 +130,15 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
 
   return (
     <div>
+      {loadError && <div style={{ marginBottom: 20 }}><ErrorBanner message="Failed to load approvals." onRetry={load} /></div>}
+
       <p style={{ color: colors.textMuted, fontSize: 13, margin: '0 0 20px' }}>
         Review AI-drafted outreach before it sends. Edit the copy, then approve or reject.
         {drafts.length > 0 && <strong style={{ color: colors.text }}> · {drafts.length} pending</strong>}
       </p>
 
       {drafts.length === 0 ? (
-        <EmptyState message="No drafts awaiting review. Approved drafts send on the next campaign run." />
+        <EmptyState title="No drafts awaiting review" description="Approved drafts send on the next campaign run." />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {canManage && (
@@ -148,7 +157,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                 Reject selected
               </button>
               <button
-                style={{ ...s.btn, background: '#16a34a', opacity: selected.size === 0 || batchRunning ? 0.5 : 1 }}
+                style={{ ...s.btnSuccess, opacity: selected.size === 0 || batchRunning ? 0.5 : 1 }}
                 disabled={selected.size === 0 || batchRunning}
                 onClick={() => batchDecide('approve')}
               >
@@ -218,7 +227,7 @@ export function ApprovalsView({ api, workspace, toast, canManage = false }: Prop
                       <button style={s.btnSecondary} disabled={isBusy} onClick={() => save(d)}>Save edits</button>
                     )}
                     <button style={{ ...s.btnSm, background: '#7f1d1d' }} disabled={isBusy} onClick={() => decide(d, 'reject')}>Reject</button>
-                    <button style={{ ...s.btn, background: '#16a34a' }} disabled={isBusy} onClick={() => decide(d, 'approve')}>
+                    <button style={s.btnSuccess} disabled={isBusy} onClick={() => decide(d, 'approve')}>
                       {edited(d) ? 'Save & Approve' : 'Approve'}
                     </button>
                   </div>

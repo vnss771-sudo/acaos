@@ -45,7 +45,7 @@ describe('Billing', () => {
     render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
 
     expect(await screen.findByText('Upgrade your plan')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Upgrade to Starter/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Upgrade to Inbox Assistant/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Upgrade to Growth/i })).toBeInTheDocument()
     expect(api).toHaveBeenCalledWith('/api/billing/status?workspaceId=ws1')
   })
@@ -54,7 +54,7 @@ describe('Billing', () => {
     const api = apiFor({ plan: 'free', status: 'none', hasSubscription: false })
     render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
 
-    await userEvent.click(await screen.findByRole('button', { name: /Upgrade to Starter/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /Upgrade to Inbox Assistant/i }))
 
     expect(api).toHaveBeenCalledWith('/api/billing/checkout', expect.objectContaining({ method: 'POST' }))
     const checkoutCall = api.mock.calls.find(c => c[0] === '/api/billing/checkout')!

@@ -55,13 +55,17 @@ Procedure:
    fresh id, e.g. `EMAIL_ENCRYPTION_KEYS=2:<newhex>`, and set
    `EMAIL_ENCRYPTION_ACTIVE_KEY_ID=2`. Leave `EMAIL_ENCRYPTION_KEY` in place. Deploy.
    New writes are now sealed under key `2`; all existing data still decrypts.
-2. Run a one-off migration that walks the encrypted columns and calls
-   `rewrapSecret(blob)` for every row where `needsReencryption(blob)` is true
-   (decrypt under the old key, re-encrypt under the active key). Idempotent and safe
-   to re-run.
-3. Once nothing reports `needsReencryption`, you may drop the retired key from
-   `EMAIL_ENCRYPTION_KEYS` (and stop relying on `EMAIL_ENCRYPTION_KEY` for reads if
-   all data is now versioned).
+   (The API and worker both warn at boot, non-fatally, if `EMAIL_ENCRYPTION_ACTIVE_KEY_ID`
+   doesn't resolve in `EMAIL_ENCRYPTION_KEYS` — a typo here surfaces immediately in
+   logs instead of silently failing on the first write.)
+2. Run `node scripts/rotate-encryption-key.mjs` — it walks the encrypted columns
+   and calls `rewrapSecret(blob)` for every row where `needsReencryption(blob)` is
+   true (decrypt under the old key, re-encrypt under the active key). Dry-run by
+   default (reports what would change); pass `--yes` to actually apply. Idempotent
+   and safe to re-run.
+3. Once a re-run of the script (dry-run) reports nothing pending, you may drop the
+   retired key from `EMAIL_ENCRYPTION_KEYS` (and stop relying on `EMAIL_ENCRYPTION_KEY`
+   for reads if all data is now versioned).
 
 #### Fallback (destructive)
 If you cannot run a migration, either clear stored credentials (require workspaces
@@ -88,10 +92,16 @@ accept the breakage. Prefer the versioned rotation above.
 3. Verify with `POST /api/mailbox/send-test` and an IMAP sync.
 
 ### Per-workspace ingest API keys
-Self-service and owner-only — no env change:
-- Rotate: `POST /api/ingest/keys/rotate?workspaceId=…` (returns the new raw key
+Self-service — no env change. The Settings UI calls the workspace-scoped routes
+(any workspace admin/owner, gated by the `api_keys:manage` permission):
+- Rotate: `POST /api/workspaces/:id/api-key/rotate` (returns the new raw key
   once; the old hash is evicted from cache so it can't be replayed).
-- Revoke: `DELETE /api/ingest/keys?workspaceId=…`.
+- Revoke: `DELETE /api/workspaces/:id/api-key`.
+
+An equivalent owner-only API also exists at `POST /api/ingest/keys/rotate?workspaceId=…`
+and `DELETE /api/ingest/keys?workspaceId=…` (`apps/api/src/routes/ingest.ts`) for
+API consumers that don't go through the Settings UI. Both paths rotate/revoke the
+same `Workspace.ingestApiKey` and both now record a critical (durable) audit event.
 
 ## After any rotation
 - Confirm `/api/ready` is green and error rates are normal.

@@ -9,6 +9,7 @@ import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkAndIncrementAiUsage,
+  assertAiUsageAllowed,
   checkLeadLimit,
   getMonthlyUsage,
   getPlanInfo,
@@ -22,18 +23,23 @@ type WsRow = { plan: string; subscriptionStatus: string | null }
 function spec(opts: {
   workspace?: WsRow
   aiUsed?: number
+  // Per-action call counts, for tests that need to model a specific dollar
+  // spend (each action has a different per-call cost in aiCost.ts). Overrides
+  // aiUsed when given.
+  records?: Array<{ action: string; count: number }>
   leadCount?: number
 }) {
   const { workspace = { plan: 'free', subscriptionStatus: null }, aiUsed = 0, leadCount = 0 } = opts
   // Stateful AI usage so the increment-then-check-then-refund flow is modeled
   // realistically: upsert increments, findMany reflects it, update refunds.
   let count = aiUsed
+  const records = opts.records
   return {
     workspace: {
       findUnique: async () => workspace,
     },
     usageRecord: {
-      findMany: async () => (count > 0 ? [{ action: 'AI_RESEARCH', count }] : []),
+      findMany: async () => (records ?? (count > 0 ? [{ action: 'AI_RESEARCH', count }] : [])),
       upsert: async () => { count += 1; return { id: 'u1' } },
       update: async () => { count -= 1; return { id: 'u1' } },
     },
@@ -84,6 +90,69 @@ test('growth plan never enforces an AI cap', async () => {
   install(spec({ workspace: { plan: 'growth', subscriptionStatus: 'active' }, aiUsed: 10_000 }))
   await checkAndIncrementAiUsage('ws1', 'AI_OUTREACH')
   assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1)
+})
+
+// --- assertAiUsageAllowed: dollar-based spend ceiling (independent of call count) ---
+
+test('assertAiUsageAllowed is read-only — it never increments usage', async () => {
+  install(spec({ aiUsed: 5 }))
+  await assertAiUsageAllowed('ws1')
+  assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 0)
+})
+
+test('growth plan has no call-count cap but IS blocked by the dollar spend ceiling', async () => {
+  // AI_RESEARCH costs 0.1 cents/call by default; 500,000 calls = 50,000 cents,
+  // exactly the default growth ceiling ($500) — growth's aiCallsPerMonth is
+  // Infinity, so only the dollar ceiling can stop this.
+  install(spec({
+    workspace: { plan: 'growth', subscriptionStatus: 'active' },
+    records: [{ action: 'AI_RESEARCH', count: 500_000 }],
+  }))
+  await assert.rejects(
+    () => assertAiUsageAllowed('ws1'),
+    (err: any) => err.statusCode === 429 && /spend ceiling/i.test(err.message)
+  )
+})
+
+test('growth plan is allowed one cent below its dollar spend ceiling', async () => {
+  install(spec({
+    workspace: { plan: 'growth', subscriptionStatus: 'active' },
+    records: [{ action: 'AI_RESEARCH', count: 499_990 }], // 49,999.00 cents, just under $500
+  }))
+  await assertAiUsageAllowed('ws1') // should not throw
+})
+
+test('checkAndIncrementAiUsage also enforces the dollar ceiling, not just the read-only check', async () => {
+  install(spec({
+    workspace: { plan: 'growth', subscriptionStatus: 'active' },
+    records: [{ action: 'AI_RESEARCH', count: 500_000 }],
+  }))
+  await assert.rejects(
+    () => checkAndIncrementAiUsage('ws1', 'AI_OUTREACH'),
+    (err: any) => err.statusCode === 429
+  )
+  assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 0)
+})
+
+test('the per-plan dollar ceiling is overridable via AI_SPEND_CEILING_CENTS_<PLAN>', async () => {
+  const prev = process.env.AI_SPEND_CEILING_CENTS_GROWTH
+  process.env.AI_SPEND_CEILING_CENTS_GROWTH = '10' // 10 cents — trivially low
+  try {
+    install(spec({
+      workspace: { plan: 'growth', subscriptionStatus: 'active' },
+      records: [{ action: 'AI_RESEARCH', count: 1 }], // 0.1 cents, below the 10-cent override
+    }))
+    await assertAiUsageAllowed('ws1') // should not throw
+
+    install(spec({
+      workspace: { plan: 'growth', subscriptionStatus: 'active' },
+      records: [{ action: 'AI_RESEARCH', count: 200 }], // 20 cents — over the 10-cent override
+    }))
+    await assert.rejects(() => assertAiUsageAllowed('ws1'), (err: any) => err.statusCode === 429)
+  } finally {
+    if (prev === undefined) delete process.env.AI_SPEND_CEILING_CENTS_GROWTH
+    else process.env.AI_SPEND_CEILING_CENTS_GROWTH = prev
+  }
 })
 
 test('a lapsed subscription is downgraded to free limits (no plan bypass)', async () => {

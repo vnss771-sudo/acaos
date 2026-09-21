@@ -2,9 +2,9 @@
 // Enriches a prospect by domain/name → extracts HIRING, FUNDING, EXPANSION signals.
 
 import { ApiError } from '../lib/http.js'
-import { hasEnv } from '../lib/env.js'
-import { apolloBreaker } from '../lib/circuit.js'
-import { callProvider } from '../lib/providerClient.js'
+import { hasEnv } from '@acaos/backend-core/lib/env.js'
+import { apolloBreaker } from '@acaos/backend-core/lib/circuit.js'
+import { callProvider } from '@acaos/backend-core/lib/providerClient.js'
 
 export type EnrichmentSignal = {
   type: string

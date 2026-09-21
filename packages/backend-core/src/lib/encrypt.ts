@@ -82,6 +82,36 @@ function getActiveKey(): { id: string | null; key: Buffer } {
   return { id, key }
 }
 
+// True when the configured active key actually resolves (or none is configured
+// at all) — i.e. whether encryptSecret() would succeed right now. False means
+// EMAIL_ENCRYPTION_ACTIVE_KEY_ID points at an id missing from
+// EMAIL_ENCRYPTION_KEYS, which getActiveKey() would otherwise only surface as a
+// throw on the first write. Lets a boot-time health check catch the same typo
+// before it ever reaches a real encryption call.
+export function activeKeyIsHealthy(): boolean {
+  try {
+    getActiveKey()
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Warns (does not throw) when EMAIL_ENCRYPTION_ACTIVE_KEY_ID is set but doesn't
+// resolve in EMAIL_ENCRYPTION_KEYS — a config typo mid key-rotation that would
+// otherwise stay silent until the first encryptSecret() call throws deep in a
+// request/job. A no-op whenever no active key id is configured at all, which is
+// every deployment that hasn't started rotating — safe to call unconditionally,
+// in any environment. Called explicitly at boot (server.ts, worker.ts) rather
+// than from validateConfig() itself, so config.ts doesn't pull this module's
+// encryption-key parsing into every one of its many, unrelated consumers.
+export function checkEncryptionKeyHealth(): void {
+  const id = activeKeyId()
+  if (id && !activeKeyIsHealthy()) {
+    console.warn(`[encrypt] EMAIL_ENCRYPTION_ACTIVE_KEY_ID "${id}" is not present in EMAIL_ENCRYPTION_KEYS — new encryptions will throw until this is fixed.`)
+  }
+}
+
 function resolveDecryptKey(versionId: string | null): Buffer {
   if (!versionId) return getLegacyKey()
   const key = parseKeyring().get(versionId)

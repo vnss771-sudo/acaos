@@ -21,6 +21,8 @@ window (e.g. lifecycle-bound data) are noted in the Enforcement column.
 | Email-verification / password-reset tokens | `EmailVerificationToken`, `PasswordResetToken` | Until used or expired; purge after 30 days | Expiry + automated (daily purge job) |
 | Stripe event dedupe keys | `ProcessedStripeEvent` | 12 months | Automated (daily purge job) |
 | Mailbox credentials | `WorkspaceEmailConfig` | Until removed by the workspace | Encrypted at rest (`EMAIL_ENCRYPTION_KEY`) |
+| Ops crew shift records | `OpsShiftRecord` | 24 months (`RETENTION_OPS_SHIFT_RECORD_DAYS`; labor/compliance-adjacent, like AuditEvent) | Automated (daily purge job) |
+| Ops fatigue/compliance alerts | `OpsAlert` | 12 months (`RETENTION_OPS_ALERT_DAYS`) | Automated (daily purge job) |
 
 Prompts and raw model inputs/outputs are not persisted beyond the derived fields
 above (e.g. `aiSummary`, draft `subject`/`emailBody`). The OpenAI request itself

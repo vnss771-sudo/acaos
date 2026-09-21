@@ -1,89 +1,253 @@
 #!/usr/bin/env node
-// Safety-critical test-coverage floor.
+// Safety-critical test-coverage floor — enforced on REAL line/branch coverage,
+// not on whether a test file merely mentions the module.
 //
-// The suite's aggregate coverage gate (test:coverage lines/branches/functions)
-// is a whole-repo average — it stays green even if the *only* test for an
-// individual safety-critical module is deleted, because dozens of well-covered
-// files mask the regression. This guard closes that gap for a curated set of
-// modules where a silent loss of coverage is high-impact (send-eligibility,
-// reply attribution, auth cookies/CSRF, SSE tickets, suppressions, etc.): each
-// listed source file MUST be referenced by at least one test in tests/,
-// tests-db/, or tests-redis/. It does NOT measure line coverage — it pins the
-// existence of a test, so the floor can't quietly drop to zero.
+// The previous version of this gate only asserted that some test file under
+// tests/, tests-db/, or tests-redis/ contained the module's import path as a
+// substring. That catches a test file being deleted or the import renamed,
+// but it is silent to the actual regression this gate exists to prevent: a
+// guard function that still exists, is still imported, and is still called,
+// but now computes the wrong answer because its branches (the ones that
+// actually matter — the deny path, the cap check, the tone violation) went
+// uncovered and broke without anything failing.
 //
-// Adding a module here is a deliberate "this is load-bearing, keep it tested"
-// signal. Removing one should require justification in review.
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+// This version spawns the fast unit tier (tests/**/*.test.ts — the same tier
+// `npm test` runs, no live Postgres/Redis required) with Node's built-in
+// `--experimental-test-coverage` and its `lcov` test reporter, parses the
+// per-file line/branch totals, and enforces a minimum floor for each listed
+// module. A test file being deleted, a guard's branch going uncovered, or the
+// guard itself regressing all show up the same way here: coverage drops below
+// the floor and this script fails.
+//
+// Floors are picked with real headroom above the coverage recorded when each
+// module was added (all measured in the 90s–100% range for lines, 85%+ for
+// branches) — this is a regression floor, not a target to shave against.
+// Failing tests elsewhere in the suite are NOT this script's concern; `npm
+// test` (run separately in `npm run verify`) already gates on that.
+import { spawnSync } from 'node:child_process'
+import { readFileSync, existsSync, mkdtempSync, rmSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 
-// Safety-critical source modules (repo-relative paths) that must stay tested.
-const CRITICAL = [
-  // Outreach send-safety gates — a bug here sends mail it shouldn't.
-  'packages/backend-core/src/lib/sendPacing.ts',
-  'packages/backend-core/src/lib/sendWindow.ts',
-  'packages/backend-core/src/lib/policyCheck.ts',
-  'packages/backend-core/src/lib/replyGating.ts',
-  'packages/backend-core/src/lib/senderReputation.ts',
-  'packages/backend-core/src/lib/suppressions.ts',
-  // Inbound reply attribution — a wrong match flips the wrong send to REPLIED.
-  'packages/backend-core/src/lib/replyAttribution.ts',
-  // Auth/session/CSRF primitives.
-  'apps/api/src/lib/cookies.ts',
-  'apps/api/src/lib/sseTickets.ts',
-  'packages/backend-core/src/lib/jwt.ts',
-  'packages/backend-core/src/lib/totp.ts',
-  'packages/backend-core/src/lib/accountLockout.ts',
-  'packages/backend-core/src/lib/encrypt.ts',
-  'packages/backend-core/src/lib/ssrf.ts',
-  // Scoring / signal trust.
-  'packages/backend-core/src/lib/scoring.ts',
-  'packages/backend-core/src/lib/signalEngine.ts',
-]
-
-// Known-untested, load-bearing modules we have NOT yet covered. Listed here so
-// the gap is recorded in-repo rather than forgotten; promote them into CRITICAL
-// (above) once they have tests. Do NOT add covered modules here.
-//   (none — sendDecision.ts was removed as dead code; the canonical send-eligibility
-//    checks live inline in sendCampaignBatch / sendFollowupTask in processors.ts.)
-
-const TEST_DIRS = ['tests', 'tests-db', 'tests-redis']
-
-function walk(dir) {
+// Resolve the unit-tier file list ourselves rather than handing `tests/**/*.test.ts`
+// to `tsx --test` as a literal glob string: unlike `npm test` (defined with an
+// unquoted glob in package.json, so the SHELL expands it into explicit argv
+// before tsx ever sees it), this script spawns tsx directly — no shell — so an
+// unexpanded glob string here depends on Node's own `--test` glob resolution,
+// which has differed across Node patch versions in practice (confirmed: CI's
+// `node-version: 22` consistently under-collected coverage for several files
+// vs. an identical local run pinned to a specific 22.x patch). A plain
+// recursive walk using only stable fs APIs removes that dependency entirely.
+function findTestFiles(dir) {
   const out = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) out.push(...walk(full))
-    else if (/\.tsx?$/.test(entry)) out.push(full)
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...findTestFiles(full))
+    else if (entry.isFile() && entry.name.endsWith('.test.ts')) out.push(full)
   }
   return out
 }
+// Sorted for a deterministic run order matching `tests/**/*.test.ts` as the
+// SHELL expands it for `npm test`/`npm run test:coverage` (always
+// alphabetical) — `readdirSync`'s own order is filesystem-dependent, not
+// alphabetical, and can differ between environments for the identical file
+// set. See the TAP diagnostic below: this script's own file order (raw
+// readdirSync, unsorted) reproducibly fails ~90 of ~150 test files in CI
+// while the alphabetically-sorted glob `test:coverage` uses passes clean on
+// the exact same commit, which points at order-dependent state leaking
+// between test files rather than a coverage-instrumentation gap.
+const testFiles = findTestFiles(join(ROOT, 'tests')).map((f) => relative(ROOT, f)).sort()
 
-// Gather the text of every test file once.
-const testSources = TEST_DIRS.flatMap((d) => walk(join(ROOT, d))).map((f) => readFileSync(f, 'utf8'))
+// Safety-critical source modules (repo-relative paths) with their minimum
+// line/branch coverage in the unit tier. Adding a module here is a deliberate
+// "this is load-bearing, keep it tested" signal; removing one, or lowering a
+// floor, should require justification in review.
+const CRITICAL = [
+  // Outreach send-safety gates — a bug here sends mail it shouldn't.
+  { path: 'packages/backend-core/src/lib/sendPacing.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/sendWindow.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/policyCheck.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/replyGating.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/senderReputation.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/suppressions.ts', lines: 80, branches: 75 },
+  // Outreach tone/content policy guard — blocks presumptuous/creepy copy and
+  // fabricated claims from auto-sending.
+  { path: 'packages/backend-core/src/lib/outreachTone.ts', lines: 80, branches: 75 },
+  // AI spend limits — the monthly-call and dollar-ceiling guards.
+  { path: 'packages/backend-core/src/lib/limits.ts', lines: 80, branches: 75 },
+  // Inbound reply attribution — a wrong match flips the wrong send to REPLIED.
+  { path: 'packages/backend-core/src/lib/replyAttribution.ts', lines: 80, branches: 75 },
+  // Tenant isolation guard — the cross-tenant query classifier.
+  { path: 'packages/backend-core/src/lib/tenantGuard.ts', lines: 80, branches: 75 },
+  // Auth/session/CSRF/permission primitives.
+  { path: 'apps/api/src/lib/cookies.ts', lines: 80, branches: 75 },
+  { path: 'apps/api/src/lib/sseTickets.ts', lines: 80, branches: 75 },
+  { path: 'apps/api/src/middleware/auth.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/jwt.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/totp.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/accountLockout.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/encrypt.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/ssrf.ts', lines: 80, branches: 75 },
+  // Scoring / signal trust.
+  { path: 'packages/backend-core/src/lib/scoring.ts', lines: 80, branches: 75 },
+  { path: 'packages/backend-core/src/lib/signalEngine.ts', lines: 80, branches: 75 },
+]
 
-const errors = []
-for (const modulePath of CRITICAL) {
-  if (!existsSync(join(ROOT, modulePath))) {
-    errors.push(`listed module "${modulePath}" does not exist — fix or remove it from CRITICAL.`)
+for (const { path } of CRITICAL) {
+  if (!existsSync(join(ROOT, path))) {
+    console.error(`✗ listed module "${path}" does not exist — fix or remove it from CRITICAL.`)
+    process.exit(1)
+  }
+}
+
+// Runs the coverage-instrumented unit tier once and returns the violation
+// list against CRITICAL's floors (empty when everything clears).
+function runOnce() {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'acaos-critical-coverage-'))
+  const lcovPath = join(tmpDir, 'lcov.info')
+  // A second, parallel TAP reporter purely for diagnostics: --test-reporter=lcov
+  // replaces stdout's default TAP output entirely, so on a floor violation we'd
+  // otherwise have no way to tell "every test genuinely ran and this module is
+  // just undertested" apart from "some test file silently failed/crashed and its
+  // coverage never made it into the lcov report" (Node's --test isolates each
+  // test FILE into its own subprocess, and a subprocess that dies leaves its
+  // coverage simply missing, not reported as an error).
+  //
+  // This diagnostic is what finally found the real cause of this gate's
+  // CI-only floor violations: in CI (never locally), 90 of ~150 test files
+  // came back `not ok`, while the sibling `npm run test:coverage` job — the
+  // exact same coverage instrumentation over the exact same file set, on the
+  // exact same commit — completed all 1717 tests cleanly. Neither
+  // --test-concurrency=1 (an earlier commit's now-reverted attempt) nor
+  // unsorted file order (readdirSync vs. a sorted glob — tested by sorting
+  // testFiles above) explain it: removing concurrency=1 reproduced the exact
+  // same 90 failures, and the CI failure indices already lined up with sorted
+  // order before the sort was added.
+  //
+  // The remaining, and most likely, explanation: `spawnSync` defaults
+  // `maxBuffer` to 1MB. Every one of ~150 forked test-file subprocesses
+  // running under `--experimental-test-coverage` (an experimental API) emits
+  // Node's ExperimentalWarning to stderr once, and that — plus each file's
+  // own console output — funnels through this top-level tsx process's own
+  // stdout/stderr, which is exactly what `spawnSync` here buffers. Once
+  // combined output crosses 1MB, Node truncates it and terminates the
+  // process; a cascading block of "not ok" from a consistent point onward
+  // (rather than one bad test) is exactly what an output-volume ceiling hit
+  // partway through a large, alphabetically-run file list would look like,
+  // and it would only manifest wherever combined stderr/stdout volume is
+  // higher — plausibly CI's Node build vs. the local sandbox's. Raising
+  // maxBuffer removes that ceiling entirely.
+  const tapPath = join(tmpDir, 'tap.log')
+  const result = spawnSync(
+    'npx',
+    [
+      'tsx', '--test', '--test-timeout=60000',
+      '--experimental-test-coverage',
+      '--test-coverage-exclude=tests/**',
+      '--test-reporter=lcov',
+      `--test-reporter-destination=${lcovPath}`,
+      '--test-reporter=tap',
+      `--test-reporter-destination=${tapPath}`,
+      ...testFiles,
+    ],
+    {
+      cwd: ROOT,
+      env: { ...process.env, NODE_OPTIONS: '--conditions=acaos-src' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 200,
+    }
+  )
+  const tap = existsSync(tapPath) ? readFileSync(tapPath, 'utf8') : ''
+  const failedTests = tap.split('\n').filter((l) => /^not ok /.test(l))
+  const planMatch = tap.match(/^# tests (\d+)/m)
+  const testDiagnostic = planMatch
+    ? `${planMatch[1]} test(s) ran; ${failedTests.length} failed${failedTests.length ? ':\n' + failedTests.map((l) => `      ${l}`).join('\n') : ''}`
+    : `no TAP plan line found (process likely crashed or timed out before finishing)`
+
+  if (!existsSync(lcovPath)) {
+    rmSync(tmpDir, { recursive: true, force: true })
+    return { crashed: true, output: `${result.stdout || ''}${result.stderr || ''}\n\n[diagnostic] ${testDiagnostic}` }
+  }
+
+  // Parse LCOV, keyed by the repo-relative source path Node's lcov reporter
+  // already emits (relative to the cwd the tests ran from, i.e. ROOT).
+  const perFile = new Map()
+  let current = null
+  for (const line of readFileSync(lcovPath, 'utf8').split('\n')) {
+    if (line.startsWith('SF:')) { current = line.slice(3).trim(); perFile.set(current, {}) }
+    else if (current && line.startsWith('LF:')) perFile.get(current).linesFound = Number(line.slice(3))
+    else if (current && line.startsWith('LH:')) perFile.get(current).linesHit = Number(line.slice(3))
+    else if (current && line.startsWith('BRF:')) perFile.get(current).branchesFound = Number(line.slice(4))
+    else if (current && line.startsWith('BRH:')) perFile.get(current).branchesHit = Number(line.slice(4))
+  }
+  rmSync(tmpDir, { recursive: true, force: true })
+
+  const errors = []
+  for (const { path, lines: lineFloor, branches: branchFloor } of CRITICAL) {
+    const cov = perFile.get(path)
+    if (!cov || !cov.linesFound) {
+      errors.push(`${path}: not exercised by any test in the unit tier (0% coverage) — must clear ${lineFloor}% lines / ${branchFloor}% branches.`)
+      continue
+    }
+    const linePct = (100 * (cov.linesHit ?? 0)) / cov.linesFound
+    // A file with zero branches (e.g. a handful of straight-line statements)
+    // is vacuously 100% branch-covered rather than divide-by-zero failing it.
+    const branchPct = cov.branchesFound ? (100 * (cov.branchesHit ?? 0)) / cov.branchesFound : 100
+    if (linePct < lineFloor) errors.push(`${path}: line coverage ${linePct.toFixed(1)}% is below the ${lineFloor}% floor.`)
+    if (branchPct < branchFloor) errors.push(`${path}: branch coverage ${branchPct.toFixed(1)}% is below the ${branchFloor}% floor.`)
+  }
+  return { crashed: false, errors, testDiagnostic }
+}
+
+// This gate showed a real, consistent CI-only failure mode across several
+// earlier fix attempts (see PR discussion): floor violations against modules
+// that passed 100% clean under `npm test` and under this exact script run
+// locally, reproduced with a from-scratch `npm ci` and the exact CI-observed
+// Node patch version, ruling out file-selection, install staleness, and the
+// Node patch as the cause. The TAP diagnostic above found the actual shape of
+// the problem: ~90 of ~150 test files silently coming back `not ok` in CI's
+// runner specifically, starving the coverage report of real data for
+// whatever module happened to depend on a later-failing file — not a
+// coverage-instrumentation gap at all. Two further hypotheses for WHY
+// (--test-concurrency=1, unsorted file order) were tested and ruled out
+// in-place above; `maxBuffer` is the current leading explanation and fix.
+// `--experimental-test-coverage` is still, per its name, not a stable API, so
+// the retry-3x below is kept as a safety net against any remaining
+// instability; nothing is ever skipped, disabled, or weakened on a retry —
+// every attempt re-runs the identical unit tier, and a genuine regression
+// still fails identically every time.
+const MAX_ATTEMPTS = 3
+let lastErrors = []
+let lastCrashOutput = null
+let passed = false
+for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  console.log(`[check:critical-test-coverage] Running the unit test tier with coverage instrumentation (attempt ${attempt}/${MAX_ATTEMPTS}, mirrors \`npm test\` timing)…`)
+  const { crashed, output, errors, testDiagnostic } = runOnce()
+  if (crashed) {
+    lastCrashOutput = output
+    console.error(`  attempt ${attempt} crashed before producing a coverage report; ${attempt < MAX_ATTEMPTS ? 'retrying' : 'out of attempts'}.`)
     continue
   }
-  // Tests import source modules by their path (e.g. ../apps/api/src/lib/cookies.ts);
-  // the specifier may carry a .ts or a .js extension, so match either.
-  const base = modulePath.replace(/\.ts$/, '')
-  const referenced = testSources.some((src) => src.includes(base + '.ts') || src.includes(base + '.js'))
-  if (!referenced) {
-    errors.push(`no test in {${TEST_DIRS.join(', ')}}/ references "${modulePath}" — this safety-critical module must stay tested.`)
-  }
+  lastCrashOutput = null
+  if (errors.length === 0) { passed = true; break }
+  lastErrors = errors
+  console.error(`  attempt ${attempt}/${MAX_ATTEMPTS} found ${errors.length} floor violation(s)${attempt < MAX_ATTEMPTS ? ' — retrying once to rule out coverage-instrumentation flakiness' : ''}:`)
+  for (const e of errors) console.error(`    ${e}`)
+  console.error(`  [diagnostic] underlying test run: ${testDiagnostic}`)
 }
 
-if (errors.length) {
-  console.error('✗ Safety-critical test-coverage floor violated:')
-  for (const e of errors) console.error(`    ${e}`)
-  console.error('  See scripts/check-critical-test-coverage.mjs.')
+if (lastCrashOutput !== null) {
+  console.error('✗ No coverage report was produced in any attempt — the test run crashed before finishing:')
+  console.error(lastCrashOutput)
   process.exit(1)
 }
-console.log(`✓ All ${CRITICAL.length} safety-critical modules are referenced by a test.`)
+if (!passed) {
+  console.error(`✗ Safety-critical test-coverage floor violated on all ${MAX_ATTEMPTS} attempts (not a one-off — see scripts/check-critical-test-coverage.mjs):`)
+  for (const e of lastErrors) console.error(`    ${e}`)
+  process.exit(1)
+}
+console.log(`✓ All ${CRITICAL.length} safety-critical modules meet their line/branch coverage floor.`)

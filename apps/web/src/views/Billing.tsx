@@ -55,22 +55,23 @@ type BillingStatus = {
 const PLAN_FEATURES: Record<string, string[]> = {
   free: [
     '1 workspace',
-    'Basic pipeline management'
+    'Basic lead management'
   ],
   starter: [
-    'Async AI research & outreach',
-    'CSV bulk import',
-    'BullMQ job queue',
-    'Email & IMAP integration',
-    'Priority support'
+    'AI-powered email research',
+    'Smart compose & reply',
+    'Lead tagging and notes',
+    'Bulk import (CSV)',
+    'Async job queue',
+    'Email integration'
   ],
   growth: [
-    'Everything in Starter',
+    'Everything in Inbox Assistant',
     'Multiple workspaces',
-    'Team members',
-    'Advanced analytics',
-    'Dedicated onboarding',
-    'SLA support'
+    'Team collaboration (25 seats)',
+    'Advanced reporting',
+    'Dedicated success manager',
+    'Custom SLA and support'
   ]
 }
 
@@ -162,7 +163,7 @@ export function Billing({ api, workspace, toast }: Props) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[billingStatus.status] || colors.textFaint, display: 'inline-block' }} />
                   <span style={{ color: STATUS_COLOR[billingStatus.status] || colors.textFaint, fontSize: 13, textTransform: 'capitalize' }}>
-                    {billingStatus.status === 'none' ? 'No subscription' : billingStatus.status.replace(/_/g, ' ')}
+                    {!billingStatus.status || billingStatus.status === 'none' ? 'No subscription' : billingStatus.status.replace(/_/g, ' ')}
                   </span>
                 </div>
               )}
@@ -294,18 +295,18 @@ export function Billing({ api, workspace, toast }: Props) {
                 key={plan}
                 style={{
                   ...s.card,
-                  borderColor: plan === 'growth' ? colors.purple + '80' : colors.border,
+                  borderColor: plan === 'starter' ? colors.purple + '80' : colors.border,
                   position: 'relative'
                 }}
               >
-                {plan === 'growth' && (
+                {plan === 'starter' && (
                   <div style={{
                     position: 'absolute', top: -10, right: 16,
                     background: colors.purple, color: '#fff',
                     fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 99,
                     letterSpacing: '0.06em'
                   }}>
-                    MOST POPULAR
+                    RECOMMENDED
                   </div>
                 )}
 
@@ -314,7 +315,7 @@ export function Billing({ api, workspace, toast }: Props) {
                     {PLAN_LABELS[plan]}
                   </div>
                   <div style={{ color: colors.textFaint, fontSize: 13, marginTop: 4 }}>
-                    {plan === 'starter' ? 'Perfect for solo founders' : 'For growing teams'}
+                    {plan === 'starter' ? 'AI-powered email research for agencies' : 'Enterprise-scale with dedicated support'}
                   </div>
                 </div>
 
@@ -326,7 +327,7 @@ export function Billing({ api, workspace, toast }: Props) {
                   style={{
                     ...s.btn,
                     width: '100%',
-                    background: plan === 'growth' ? colors.purple : colors.blue,
+                    background: plan === 'starter' ? colors.purple : colors.blue,
                     opacity: checkoutLoading === plan ? 0.7 : 1
                   }}
                   disabled={!!checkoutLoading}

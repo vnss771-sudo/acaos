@@ -2,7 +2,7 @@
 // can dispatch — a Lead + an APPROVED OutreachDraft in a Campaign — and link it
 // back to the intent so the worker stamps provenance and flips it to SENT.
 // This closes the last manual seam between the intelligence track and sending.
-import { prisma } from './prisma.js'
+import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { ApiError } from '@acaos/backend-core/lib/errors.js'
 import { normalizeEmailKey } from '@acaos/backend-core/lib/normalize.js'
 
