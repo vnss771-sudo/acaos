@@ -90,7 +90,11 @@ export function InboxView({ api, workspace, toast }: Props) {
 
   useEffect(() => { load() }, [load])
 
-  const handleSendReply = useCallback(async (replyId: string) => {
+  // `overrideBody` is passed explicitly by the caller rather than read from the
+  // shared `customBody` state — that state is only meaningful while
+  // `editingReplyId === replyId`; "Send suggested" (no edit in progress) must
+  // never pick up leftover edited text left over from a different reply.
+  const handleSendReply = useCallback(async (replyId: string, overrideBody?: string) => {
     if (!workspace) return
     setSendingReplyId(replyId)
     try {
@@ -98,7 +102,7 @@ export function InboxView({ api, workspace, toast }: Props) {
         params: { replyId },
         body: {
           workspaceId: workspace.id,
-          customBody: customBody || undefined,
+          customBody: overrideBody || undefined,
         },
       })
       if (response.success) {
@@ -112,7 +116,7 @@ export function InboxView({ api, workspace, toast }: Props) {
     } finally {
       setSendingReplyId(null)
     }
-  }, [workspace?.id, customBody, route, toast, load])
+  }, [workspace?.id, route, toast, load])
 
   const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect') => {
     if (!workspace) return
@@ -126,7 +130,7 @@ export function InboxView({ api, workspace, toast }: Props) {
         },
       })
       toast.success(feedback === 'correct' ? '✓ Thanks for the feedback!' : '✓ Noted. We\'ll improve this.')
-      setFeedbackReplyId(null)
+      setFeedbackReplyId(replyId)
       load()
     } catch {
       toast.error('Failed to record feedback')
@@ -259,7 +263,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                     />
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
-                        onClick={() => handleSendReply(r.id)}
+                        onClick={() => handleSendReply(r.id, customBody)}
                         disabled={sendingReplyId === r.id}
                         style={{
                           flex: 1, padding: '8px 12px', borderRadius: 4, border: 'none',

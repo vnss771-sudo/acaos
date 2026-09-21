@@ -4,7 +4,7 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { parseQuery, parseBody, parseParams, workspaceIdField } from '../lib/validate.js'
+import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import { sendMail, isMailConfigured } from '../services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 
@@ -25,8 +25,10 @@ const inboxQuerySchema = z.object({
   classification: z.enum(REPLY_CLASSIFICATIONS).optional(),
 })
 
+// OutreachSent.id is a Prisma cuid(), not a UUID — idField (not .uuid()) is
+// what matches real ids here.
 const replyParamsSchema = z.object({
-  replyId: z.string().uuid(),
+  replyId: idField,
 })
 
 const sendReplySchema = z.object({
@@ -140,14 +142,19 @@ inboxRouter.post(
       await sendMail(reply.toEmail, replySubject, replyBody)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Email service error'
-      // Classify errors for better user messaging
+      // Classify by nodemailer's actual error shape (err.code / err.responseCode),
+      // not by guessing substrings of err.message — the SMTP server's own text
+      // ("Recipient address rejected", "550 User unknown", etc.) never contains
+      // literal words like "invalid email" or "malformed".
+      const code = (err as { code?: string })?.code
+      const responseCode = (err as { responseCode?: number })?.responseCode
       let statusCode = 502
       let userMessage = `Failed to send reply: ${errorMsg}`
 
-      if (errorMsg.includes('invalid email') || errorMsg.includes('malformed')) {
+      if (code === 'EENVELOPE' || (responseCode !== undefined && responseCode >= 550 && responseCode < 560)) {
         statusCode = 400
         userMessage = `Invalid recipient email address: ${reply.toEmail}`
-      } else if (errorMsg.includes('timeout') || errorMsg.includes('ECONNREFUSED')) {
+      } else if (code === 'ETIMEDOUT' || code === 'ECONNECTION' || (responseCode !== undefined && responseCode >= 400 && responseCode < 500)) {
         statusCode = 503
         userMessage = 'Email service temporarily unavailable. Please try again.'
       }
@@ -167,7 +174,7 @@ inboxRouter.post(
       metadata: {
         toEmail: reply.toEmail,
         hasCustomBody: !!customBody,
-        replyClassification: reply.replySuggestedAction ? 'suggested' : 'custom',
+        replyClassification: customBody ? 'custom' : 'suggested',
       },
     })
 
