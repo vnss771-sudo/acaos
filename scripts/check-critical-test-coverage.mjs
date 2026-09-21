@@ -127,19 +127,29 @@ function runOnce() {
   // same 90 failures, and the CI failure indices already lined up with sorted
   // order before the sort was added.
   //
-  // The remaining, and most likely, explanation: `spawnSync` defaults
-  // `maxBuffer` to 1MB. Every one of ~150 forked test-file subprocesses
-  // running under `--experimental-test-coverage` (an experimental API) emits
-  // Node's ExperimentalWarning to stderr once, and that — plus each file's
-  // own console output — funnels through this top-level tsx process's own
-  // stdout/stderr, which is exactly what `spawnSync` here buffers. Once
-  // combined output crosses 1MB, Node truncates it and terminates the
-  // process; a cascading block of "not ok" from a consistent point onward
-  // (rather than one bad test) is exactly what an output-volume ceiling hit
-  // partway through a large, alphabetically-run file list would look like,
-  // and it would only manifest wherever combined stderr/stdout volume is
-  // higher — plausibly CI's Node build vs. the local sandbox's. Raising
-  // maxBuffer removes that ceiling entirely.
+  // One explanation tried: `spawnSync` defaults `maxBuffer` to 1MB, and ~150
+  // forked test-file subprocesses under `--experimental-test-coverage` could
+  // plausibly cross that combined with stdout/stderr volume in CI. Raising
+  // maxBuffer to 200MB (below) removes that ceiling — but did NOT fix it.
+  //
+  // Next tried: `--test-concurrency=2` (below), on the theory that halving
+  // concurrent worker memory pressure vs. the default (os.availableParallelism(),
+  // 4 on CI's runner) would stop workers from being silently killed. This
+  // ALSO did not fix it — CI reproduced the identical ~90-file failure count
+  // on this exact combination (maxBuffer=200MB + concurrency=2). Combined
+  // with the earlier, separate finding that concurrency=1 alone (before
+  // maxBuffer existed) reproduced the same failures as default concurrency,
+  // concurrency is now ruled out as the causal variable across its full
+  // range (1, 2, and default) — this was a red herring, not a fix.
+  //
+  // The actual gap: every previous debugging pass stopped at the bare
+  // `not ok <file>` TAP line and discarded the indented YAML diagnostic block
+  // Node emits right after it (error/stack/signal) — the one thing that would
+  // distinguish "a real assertion failed" from "this subprocess was killed."
+  // The diagnostic extraction below finally captures it. Concurrency stays at
+  // 2 (still a reasonable conservative default, just not the fix), and the
+  // next CI-only failure should come back with an actual reason instead of a
+  // bare file list.
   const tapPath = join(tmpDir, 'tap.log')
   const result = spawnSync(
     'npx',
@@ -173,10 +183,31 @@ function runOnce() {
     }
   )
   const tap = existsSync(tapPath) ? readFileSync(tapPath, 'utf8') : ''
-  const failedTests = tap.split('\n').filter((l) => /^not ok /.test(l))
+  const tapLines = tap.split('\n')
+  const failedTests = tapLines.filter((l) => /^not ok /.test(l))
+  // Every prior debugging pass here stopped at the bare `not ok` line and never
+  // looked at what follows it: Node's TAP reporter emits an indented YAML
+  // diagnostic block (---/…/--- delimited) after each failing test with the
+  // actual error/stack/signal — exactly the detail needed to tell "a real
+  // assertion failed" from "this subprocess was killed" apart. Pull that block
+  // for the first few failures so a floor violation finally carries a reason
+  // instead of just a file list.
+  const SAMPLE_DIAGNOSTICS = 3
+  const diagnosticBlocks = []
+  for (let i = 0; i < tapLines.length && diagnosticBlocks.length < SAMPLE_DIAGNOSTICS; i++) {
+    if (!/^not ok /.test(tapLines[i])) continue
+    const block = [tapLines[i]]
+    let j = i + 1
+    while (j < tapLines.length && (tapLines[j] === '' || /^\s/.test(tapLines[j])) && !/^(ok |not ok )/.test(tapLines[j])) {
+      block.push(tapLines[j])
+      j++
+    }
+    diagnosticBlocks.push(block.join('\n'))
+  }
   const planMatch = tap.match(/^# tests (\d+)/m)
   const testDiagnostic = planMatch
-    ? `${planMatch[1]} test(s) ran; ${failedTests.length} failed${failedTests.length ? ':\n' + failedTests.map((l) => `      ${l}`).join('\n') : ''}`
+    ? `${planMatch[1]} test(s) ran; ${failedTests.length} failed${failedTests.length ? ':\n' + failedTests.map((l) => `      ${l}`).join('\n') : ''}` +
+      (diagnosticBlocks.length ? `\n\n  [diagnostic] first ${diagnosticBlocks.length} failure(s) in detail:\n${diagnosticBlocks.map((b) => b.split('\n').map((l) => `      ${l}`).join('\n')).join('\n\n')}` : '')
     : `no TAP plan line found (process likely crashed or timed out before finishing)`
 
   if (!existsSync(lcovPath)) {
