@@ -3,6 +3,7 @@
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { adminRouter } from '../apps/api/src/routes/ops/admin.ts'
+import { utcWeekRange } from '../apps/api/src/routes/ops/utils.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
 let server: TestServer
@@ -23,8 +24,15 @@ test('GET /overview aggregates crew, alerts, clocked-in state, and recent activi
 
   // An open (clocked-in) shift.
   await prisma.opsShiftRecord.create({ data: { workspaceId: workspace.id, crewMemberId: crew.id, jobSiteId: site.id, shiftDate: now, startTime: now, endTime: null } })
-  // A closed shift from earlier this week, contributing hours.
-  const earlier = new Date(now.getTime() - 3_600_000 * 4)
+  // A closed shift "earlier this week" — clamped to the current UTC week's
+  // own start rather than a bare `now - 4h`, which falls into the PREVIOUS
+  // UTC week (and drops out of thisWeekShiftHours) whenever the real clock is
+  // within 4 hours of the Monday-00:00-UTC rollover. Still clamped to <= now
+  // so it stays a valid (started-before-it-ended) closed shift even when
+  // `now` itself is within 4 hours of that rollover. Same class of fix as
+  // ops-roster.test.ts's week-boundary handling.
+  const { start: weekStart } = utcWeekRange(now)
+  const earlier = new Date(Math.max(weekStart.getTime(), now.getTime() - 3_600_000 * 4))
   await prisma.opsShiftRecord.create({ data: { workspaceId: workspace.id, crewMemberId: crew.id, jobSiteId: site.id, shiftDate: earlier, startTime: earlier, endTime: now, totalHours: 4 } })
   // Open + reviewed alerts.
   await prisma.opsAlert.create({ data: { workspaceId: workspace.id, alertType: 'MISSING_HEAT_CHECK', title: 'a', severity: 'HIGH' } })
