@@ -185,18 +185,38 @@ function runOnce() {
   const tap = existsSync(tapPath) ? readFileSync(tapPath, 'utf8') : ''
   const tapLines = tap.split('\n')
   const failedTests = tapLines.filter((l) => /^not ok /.test(l))
-  // Every prior debugging pass here stopped at the bare `not ok` line and never
-  // looked at what follows it: Node's TAP reporter emits an indented YAML
-  // diagnostic block (---/…/--- delimited) after each failing test with the
-  // actual error/stack/signal — exactly the detail needed to tell "a real
-  // assertion failed" from "this subprocess was killed" apart. Pull that block
-  // for the first few failures so a floor violation finally carries a reason
-  // instead of just a file list.
+  // The previous version of this diagnostic stopped at the bare `not ok` line
+  // and only looked at what follows it (the indented YAML block). That found
+  // `failureType: 'testCodeFailure'` / `error: 'test failed'` / `code:
+  // 'ERR_TEST_FAILURE'` with no further detail — which turned out to be the
+  // generic wrapper Node emits when a test FILE throws at import time,
+  // before any test() call ever registers (reproduced locally: a file that
+  // throws synchronously at the top level produces exactly this shape, with
+  // the *real* error and stack trace written as `#`-prefixed TAP comment
+  // lines immediately BEFORE that file's `# Subtest: <name>` header — i.e.
+  // BEFORE the `not ok` line, not after it). This finally pulls that
+  // preceding block too, for the first few failures, so a floor violation
+  // carries the actual root cause instead of a content-free wrapper.
   const SAMPLE_DIAGNOSTICS = 3
   const diagnosticBlocks = []
   for (let i = 0; i < tapLines.length && diagnosticBlocks.length < SAMPLE_DIAGNOSTICS; i++) {
     if (!/^not ok /.test(tapLines[i])) continue
-    const block = [tapLines[i]]
+    const nameMatch = tapLines[i].match(/^not ok \d+ - (.+)$/)
+    const name = nameMatch ? nameMatch[1] : null
+    // Walk backward for a `# Subtest: <name>` header matching this failure,
+    // then keep walking backward through the contiguous `#`-comment block
+    // above it (an import-time crash dump, if there is one).
+    const before = []
+    if (name) {
+      let k = i - 1
+      while (k >= 0 && tapLines[k] !== `# Subtest: ${name}`) k--
+      if (k >= 0) {
+        let start = k - 1
+        while (start >= 0 && tapLines[start].startsWith('# ')) start--
+        before.push(...tapLines.slice(start + 1, k + 1))
+      }
+    }
+    const block = [...before, tapLines[i]]
     let j = i + 1
     while (j < tapLines.length && (tapLines[j] === '' || /^\s/.test(tapLines[j])) && !/^(ok |not ok )/.test(tapLines[j])) {
       block.push(tapLines[j])
