@@ -4,7 +4,7 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { DEFAULT_SCORING_WEIGHTS, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
+import { DEFAULT_SCORING_WEIGHTS, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -252,10 +252,14 @@ export async function researchLead(
     estimatedTeamSize: parsed.estimatedTeamSize ?? null
   }
 
-  const weights = await getWorkspaceWeights(lead.workspaceId)
+  const [weights, icpTargets] = await Promise.all([
+    getWorkspaceWeights(lead.workspaceId),
+    getWorkspaceIcpTargets(lead.workspaceId),
+  ])
   // Deterministic score + its rationale (the "why 75"), so the breakdown is
-  // captured in the job result/log rather than thrown away.
-  const explanation = explainLeadScore(enrichedLead, weights)
+  // captured in the job result/log rather than thrown away. Industry sub-score is
+  // calibrated to the workspace's ICP (falls back to the default vertical if unset).
+  const explanation = explainLeadScore(enrichedLead, weights, icpTargets)
   const computedScore = explanation.score
   const finalScore = (typeof parsed.icpScore === 'number' && parsed.icpScore >= 0 && parsed.icpScore <= 100)
     ? Math.round((parsed.icpScore + computedScore) / 2)
