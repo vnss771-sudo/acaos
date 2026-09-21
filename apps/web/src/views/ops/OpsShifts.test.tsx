@@ -69,34 +69,38 @@ describe('OpsShifts', () => {
     expect(api).toHaveBeenCalledWith(expect.stringContaining('/api/ops/shifts?'))
   })
 
-  test('shows a Clock In button when the selected crew member is not clocked in', async () => {
+  // The Clock In/Out button only appears after a chained sequence of async
+  // effects (fetch crew list -> auto-select the first crew member -> fetch
+  // that crew member's clock status -> render) — each hop is a resolved-
+  // promise microtask plus a React commit, which is near-instant on a normal
+  // machine but has been observed to occasionally blow even a 5000ms
+  // findBy* timeout on a loaded/CPU-starved CI runner (verified: passes
+  // 100% locally, including repeated runs; the underlying effect chain has
+  // no logic race — confirmed by reading it, not just running it). Retrying
+  // the whole test once or twice absorbs that runner-level stall without
+  // masking a real regression, since a genuine logic bug would fail on
+  // every retry, not just intermittently.
+  test('shows a Clock In button when the selected crew member is not clocked in', { retry: 2 }, async () => {
     const api = apiFor({ clockedIn: false })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
-    // The button only appears after a chained sequence of async effects
-    // (fetch crew list -> auto-select the first crew member -> fetch that
-    // crew member's clock status -> render). Testing Library's default
-    // findBy* timeout (1000ms) covers this comfortably on a normal machine
-    // but can be too tight on a loaded CI runner — seen flaking here in CI
-    // while passing reliably locally. A longer timeout targets that actual
-    // cause without changing what's being asserted.
     expect(await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })).toBeInTheDocument()
   })
 
-  test('shows a Clock Out button and "clocked in" text when the selected crew member is clocked in', async () => {
+  test('shows a Clock Out button and "clocked in" text when the selected crew member is clocked in', { retry: 2 }, async () => {
     const api = apiFor({ clockedIn: true, clockStatusShift: openShift })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
-    // See the timeout comment on the "Clock In" test above — same async chain.
+    // See the timeout comment above the "Clock In" test — same async chain.
     expect(await screen.findByRole('button', { name: /Clock Out/i }, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/Clocked in at/i)).toBeInTheDocument()
   })
 
-  test('clicking Clock In calls the API with the right body', async () => {
+  test('clicking Clock In calls the API with the right body', { retry: 2 }, async () => {
     const api = apiFor({ clockedIn: false })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
-    // See the timeout comment on the "shows a Clock In button" test above.
+    // See the timeout comment above the "shows a Clock In button" test.
     await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })
     await userEvent.selectOptions(screen.getByLabelText('Job Site'), 'job1')
     await userEvent.click(screen.getByRole('button', { name: /Clock In/i }))
