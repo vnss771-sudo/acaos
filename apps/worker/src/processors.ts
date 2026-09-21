@@ -23,7 +23,7 @@ import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
 import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
 import { parseAiJson, parseLeadResearchJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
-import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, utcMonthStart, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
+import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
@@ -767,15 +767,19 @@ export function collectDraftViolations(
 
 type ClaimOutcome =
   | { claimed: true; claimId: string; release: () => Promise<void> }
-  | { claimed: false; reason: 'DAILY_CAP' | 'ALREADY_SENT' }
+  | { claimed: false; reason: 'DAILY_CAP' | 'DOMAIN_PACED' | 'ALREADY_SENT' }
 
 /**
- * Reserve the daily-cap slot and insert the unique outbox row in ONE
- * advisory-locked transaction, BEFORE any generation/send. The unique
- * (campaignId, leadId) constraint guarantees at-most-once delivery: a racing
- * attempt — or a retry after a post-send crash — gets a P2002 and is
- * reported as already claimed, having spent no AI. A `claimed: false,
- * reason: 'DAILY_CAP'` result means the live daily cap is now reached.
+ * Reserve the daily-cap (and, if configured, per-domain-cap) slot and insert
+ * the unique outbox row in ONE advisory-locked transaction, BEFORE any
+ * generation/send. The unique (campaignId, leadId) constraint guarantees
+ * at-most-once delivery: a racing attempt — or a retry after a post-send
+ * crash — gets a P2002 and is reported as already claimed, having spent no
+ * AI. The per-domain check happens here (not just as an in-memory
+ * pre-check by the caller) because concurrent send-campaign/send-followup
+ * jobs for the same workspace/domain would otherwise each pass an
+ * independent pre-check and collectively burst past the cap. A `claimed:
+ * false` result means the corresponding live cap is now reached.
  */
 async function claimOutboxSlot(params: {
   workspaceId: string
@@ -785,20 +789,26 @@ async function claimOutboxSlot(params: {
   body: string | null
   dailySendLimit: number | null
   startOfToday: Date
+  perDomainCap: number | null
   linkedIntent: { id: string; recommendationId: string | null; evidenceSnapshot: Prisma.JsonValue | null } | null
   unsubscribeToken: string
 }): Promise<ClaimOutcome> {
-  const { workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, linkedIntent, unsubscribeToken } = params
+  const { workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, perDomainCap, linkedIntent, unsubscribeToken } = params
+  const domain = emailDomain(lead.email)
   try {
     const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (dailySendLimit != null) {
         const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
-        if (!ok) return null
+        if (!ok) return 'DAILY_CAP' as const
+      }
+      if (perDomainCap != null && domain) {
+        const ok = await reserveDomainSendSlot(tx, workspaceId, domain, perDomainCap, startOfToday)
+        if (!ok) return 'DOMAIN_PACED' as const
       }
       return tx.outreachSent.create({
         data: {
           workspaceId, campaignId, leadId: lead.id,
-          toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body,
+          toEmail: lead.email!, toEmailDomain: domain, subject, body,
           unsubscribeToken, status: 'SENDING',
           ...(linkedIntent ? {
             outreachIntentId: linkedIntent.id,
@@ -809,7 +819,7 @@ async function claimOutboxSlot(params: {
         select: { id: true },
       })
     })
-    if (claim === null) return { claimed: false, reason: 'DAILY_CAP' }
+    if (claim === 'DAILY_CAP' || claim === 'DOMAIN_PACED') return { claimed: false, reason: claim }
     const claimId = claim.id
     // Release the claim on a pre-dispatch abort: nothing was sent, so delete the
     // row (freeing its reserved cap slot) and leave the lead eligible for a later run.
@@ -1313,10 +1323,13 @@ export async function sendCampaignBatch(
     const linkedIntent = linkedIntentByLeadId.get(lead.id) ?? null
     const unsubscribeToken = randomBytes(24).toString('hex')
 
-    // CLAIM FIRST: reserve the daily-cap slot and insert the unique outbox row
-    // before generating — see claimOutboxSlot's doc comment for why.
+    // CLAIM FIRST: reserve the daily-cap (and per-domain-cap) slot and insert
+    // the unique outbox row before generating — see claimOutboxSlot's doc
+    // comment for why. The in-memory domainCounts pre-check above is only a
+    // fast-path to skip obviously-paced leads before spending AI; this atomic
+    // recheck is the actual enforcement against concurrent batches/tasks.
     const claimOutcome = await claimOutboxSlot({
-      workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, linkedIntent, unsubscribeToken,
+      workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, perDomainCap, linkedIntent, unsubscribeToken,
     })
     if (!claimOutcome.claimed) {
       if (claimOutcome.reason === 'DAILY_CAP') {
@@ -1326,6 +1339,7 @@ export async function sendCampaignBatch(
         skip('DAILY_CAP', remaining)
         break pageLoop
       }
+      if (claimOutcome.reason === 'DOMAIN_PACED') { skip('DOMAIN_PACED'); continue }
       skip('ALREADY_SENT'); continue
     }
     const claimId = claimOutcome.claimId
@@ -1520,20 +1534,21 @@ export async function sendFollowupTask(
     }
   }
 
-  // Per-domain pacing (opt-in). If this recipient's domain already hit its daily
-  // ceiling, defer: park the task back at SCHEDULED to retry on a later scan rather
-  // than burst past the provider's tolerance.
+  // Per-domain pacing (opt-in). This in-memory pre-check is only a fast-path to
+  // defer obviously-paced tasks before opening a transaction; it does not by
+  // itself prevent a burst, since a concurrent send-campaign/send-followup job
+  // for the same domain could pass the same pre-check. The atomic recheck
+  // inside the claim transaction below (reserveDomainSendSlot) is the actual
+  // enforcement.
   const perDomainCap = perDomainDailyCap()
-  if (perDomainCap != null) {
-    const domain = emailDomain(lead.email)
-    if (domain) {
-      const domainToday = await prisma.outreachSent.count({
-        where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmailDomain: domain },
-      })
-      if (domainToday >= perDomainCap) {
-        await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
-        return { taskId, status: 'SKIPPED', reason: 'DOMAIN_PACED' }
-      }
+  const domain = emailDomain(lead.email)
+  if (perDomainCap != null && domain) {
+    const domainToday = await prisma.outreachSent.count({
+      where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: startOfToday }, toEmailDomain: domain },
+    })
+    if (domainToday >= perDomainCap) {
+      await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+      return { taskId, status: 'SKIPPED', reason: 'DOMAIN_PACED' }
     }
   }
 
@@ -1543,18 +1558,26 @@ export async function sendFollowupTask(
     const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (dailySendLimit != null) {
         const ok = await reserveDailySendSlot(tx, workspaceId, dailySendLimit, startOfToday)
-        if (!ok) return null
+        if (!ok) return 'DAILY_CAP' as const
+      }
+      if (perDomainCap != null && domain) {
+        const ok = await reserveDomainSendSlot(tx, workspaceId, domain, perDomainCap, startOfToday)
+        if (!ok) return 'DOMAIN_PACED' as const
       }
       return tx.outreachSent.create({
-        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, toEmailDomain: emailDomain(lead.email), subject, body, unsubscribeToken, status: 'SENDING' },
+        data: { workspaceId, campaignId, leadId, sequenceStep: stepNumber, toEmail: lead.email!, toEmailDomain: domain, subject, body, unsubscribeToken, status: 'SENDING' },
         select: { id: true },
       })
     })
-    if (claim === null) {
+    if (claim === 'DAILY_CAP') {
       // Daily cap reached — park the task back at SCHEDULED (not a terminal state,
       // so no cancelledReason) to retry on a later run.
       await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
       return { taskId, status: 'SKIPPED', reason: 'DAILY_CAP_EXCEEDED' }
+    }
+    if (claim === 'DOMAIN_PACED') {
+      await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+      return { taskId, status: 'SKIPPED', reason: 'DOMAIN_PACED' }
     }
     claimId = claim.id
   } catch (err) {

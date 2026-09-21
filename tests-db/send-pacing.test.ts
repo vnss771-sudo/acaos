@@ -81,6 +81,30 @@ test('claim persists toEmailDomain so pacing reads an indexed aggregate', async 
   assert.equal(send!.toEmailDomain, 'gmail.com', 'domain is extracted + lowercased at claim time')
 })
 
+test('per-domain cap holds under concurrency: two batches racing the same domain never collectively exceed it', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  setEnv('PER_DOMAIN_DAILY_CAP', '2')
+  // Two separate campaigns (e.g. one launched while a follow-up scan is mid-run)
+  // sending to the same recipient domain concurrently — the scenario the
+  // in-memory-only pre-check couldn't protect against; only the advisory-locked
+  // reserveDomainSendSlot inside the claim transaction can.
+  const campaignA = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'A', goalType: 'BOOK_MEETINGS' } })
+  const campaignB = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'B', goalType: 'BOOK_MEETINGS' } })
+  for (let i = 0; i < 3; i++) await seedLead(workspace.id, campaignA.id, `a${i}@gmail.com`)
+  for (let i = 0; i < 3; i++) await seedLead(workspace.id, campaignB.id, `b${i}@gmail.com`)
+
+  const mailer = recordingMailer()
+  const [resultA, resultB] = await Promise.all([
+    sendCampaignBatch(campaignA.id, workspace.id, undefined, undefined, { sendMail: mailer.fn }),
+    sendCampaignBatch(campaignB.id, workspace.id, undefined, undefined, { sendMail: mailer.fn }),
+  ])
+
+  assert.equal(resultA.sent + resultB.sent, 2, 'the two concurrent batches collectively respect the cap, not 2 each')
+  const totalGmailSent = await prisma.outreachSent.count({ where: { workspaceId: workspace.id, toEmailDomain: 'gmail.com', status: { in: ['SENT', 'SENDING'] } } })
+  assert.equal(totalGmailSent, 2)
+})
+
 test('disabled by default: no cap env → all send (unchanged behaviour)', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)
