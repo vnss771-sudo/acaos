@@ -1,0 +1,19 @@
+title = "acaos gitleaks config"
+
+[extend]
+useDefault = true
+
+# apps/worker/src/processors.ts has no LinkedIn integration anywhere in it.
+# The "linkedin-client-secret" rule false-positives on an ordinary camelCase
+# object-destructuring assignment whose last property before `}` happens to
+# have enough entropy to match the rule's secret regex — e.g.
+# `const { ..., perDomainCap, linkedIntent, unsubscribeToken } = params`
+# (verified false positive: commit 4d2b0ad, no real secret present; the same
+# rule/pattern also false-positived earlier in this repo's history on
+# apps/api/src/routes/prospects/crud.ts, unrelated destructuring). Scoped to
+# this one rule and this one file — every other rule, and this rule
+# everywhere else in the repo, is unaffected.
+[[rules]]
+  id = "linkedin-client-secret"
+  [rules.allowlist]
+    paths = ['''apps/worker/src/processors\.ts''']

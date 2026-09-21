@@ -793,7 +793,10 @@ async function claimOutboxSlot(params: {
   linkedIntent: { id: string; recommendationId: string | null; evidenceSnapshot: Prisma.JsonValue | null } | null
   unsubscribeToken: string
 }): Promise<ClaimOutcome> {
-  const { workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday, perDomainCap, linkedIntent, unsubscribeToken } = params
+  const {
+    workspaceId, campaignId, lead, subject, body, dailySendLimit, startOfToday,
+    perDomainCap, linkedIntent, unsubscribeToken,
+  } = params
   const domain = emailDomain(lead.email)
   try {
     const claim = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
