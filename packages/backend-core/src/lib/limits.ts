@@ -263,6 +263,32 @@ export async function reserveDailySendSlot(
   return used < dailyLimit
 }
 
+/**
+ * Atomically decide whether the workspace may send one more email to `domain`
+ * today without exceeding `perDomainCap`. MUST be called inside the SAME
+ * interactive transaction as the outbox claim insert, alongside
+ * reserveDailySendSlot. A per-(workspace, domain) advisory lock (namespaced
+ * `domain:` so it never contends with the send/AI/lead/discovery locks)
+ * serializes concurrent send jobs targeting the same domain — without it, two
+ * concurrent send-campaign/send-followup jobs can each pass an independent
+ * in-memory pre-check and collectively burst past the per-domain pacing cap.
+ * Counts today's delivered (SENT) plus in-flight (SENDING) claims for that
+ * domain, matching reserveDailySendSlot's semantics.
+ */
+export async function reserveDomainSendSlot(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  domain: string,
+  perDomainCap: number,
+  since: Date
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`domain:${workspaceId}:${domain}`}))`
+  const used = await tx.outreachSent.count({
+    where: { workspaceId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since }, toEmailDomain: domain },
+  })
+  return used < perDomainCap
+}
+
 // Start of the current month in UTC — matches the UTC month window used by the
 // usage counters so the discovery-cost view lines up with the quota period.
 function startOfMonthUtc(): Date {

@@ -22,8 +22,10 @@ env:
 
 jobs:
   # Repo governance: third-party Actions are pinned to full commit SHAs, and the
-  # observability assets (alerts/runbooks/SLO/dashboard) stay coherent. Cheap and
-  # dependency-light, so it runs first.
+  # observability assets (alerts/runbooks/SLO/dashboard) stay coherent. Most
+  # checks here are cheap and dependency-light; the safety-critical coverage
+  # gate is the one exception (it needs the real dependency tree — see its
+  # own step below).
   repo-hardening:
     name: Repo governance and observability assets
     runs-on: ubuntu-latest
@@ -49,6 +51,24 @@ jobs:
 
       - name: Check test-tier isolation
         run: npm run check:test-tiers
+
+      # Unlike the checks above (pure static/file-based, no dependency needed),
+      # this one spawns the real unit test tier against real application code —
+      # it needs the actual dependency tree and a generated Prisma client, same
+      # as the "Static and unit gates" job's own coverage-gated test step.
+      # Missing this install was the actual cause of this gate's long-standing
+      # CI-only failures: `check:critical-test-coverage.mjs` spawns tsx to run
+      # the app's real tests, which import real packages (express,
+      # jsonwebtoken, the generated Prisma client, …) that were never
+      # installed in this job — no `npm ci` step existed here at all. Every
+      # earlier investigation (test-file order, --test-concurrency, spawnSync's
+      # maxBuffer, then `npx tsx` resolving a differently-cached copy) found
+      # real, secondary effects of running with no node_modules, not the cause.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
 
       - name: Check safety-critical modules stay tested
         run: npm run check:critical-test-coverage

@@ -54,11 +54,10 @@ function findTestFiles(dir) {
 // SHELL expands it for `npm test`/`npm run test:coverage` (always
 // alphabetical) — `readdirSync`'s own order is filesystem-dependent, not
 // alphabetical, and can differ between environments for the identical file
-// set. See the TAP diagnostic below: this script's own file order (raw
-// readdirSync, unsorted) reproducibly fails ~90 of ~150 test files in CI
-// while the alphabetically-sorted glob `test:coverage` uses passes clean on
-// the exact same commit, which points at order-dependent state leaking
-// between test files rather than a coverage-instrumentation gap.
+// set. (File order was investigated as a possible cause of this gate's
+// CI-only floor violations and ruled out — see the tsx-resolution root
+// cause documented in runOnce() below — but sorting stays for its own sake:
+// deterministic output is worth having regardless.)
 const testFiles = findTestFiles(join(ROOT, 'tests')).map((f) => relative(ROOT, f)).sort()
 
 // Safety-critical source modules (repo-relative paths) with their minimum
@@ -111,40 +110,34 @@ function runOnce() {
   // A second, parallel TAP reporter purely for diagnostics: --test-reporter=lcov
   // replaces stdout's default TAP output entirely, so on a floor violation we'd
   // otherwise have no way to tell "every test genuinely ran and this module is
-  // just undertested" apart from "some test file silently failed/crashed and its
-  // coverage never made it into the lcov report" (Node's --test isolates each
-  // test FILE into its own subprocess, and a subprocess that dies leaves its
-  // coverage simply missing, not reported as an error).
+  // just undertested" apart from "some test file silently failed and its
+  // coverage never made it into the lcov report."
   //
-  // This diagnostic is what finally found the real cause of this gate's
-  // CI-only floor violations: in CI (never locally), 90 of ~150 test files
-  // came back `not ok`, while the sibling `npm run test:coverage` job — the
-  // exact same coverage instrumentation over the exact same file set, on the
-  // exact same commit — completed all 1717 tests cleanly. Neither
-  // --test-concurrency=1 (an earlier commit's now-reverted attempt) nor
-  // unsorted file order (readdirSync vs. a sorted glob — tested by sorting
-  // testFiles above) explain it: removing concurrency=1 reproduced the exact
-  // same 90 failures, and the CI failure indices already lined up with sorted
-  // order before the sort was added.
-  //
-  // The remaining, and most likely, explanation: `spawnSync` defaults
-  // `maxBuffer` to 1MB. Every one of ~150 forked test-file subprocesses
-  // running under `--experimental-test-coverage` (an experimental API) emits
-  // Node's ExperimentalWarning to stderr once, and that — plus each file's
-  // own console output — funnels through this top-level tsx process's own
-  // stdout/stderr, which is exactly what `spawnSync` here buffers. Once
-  // combined output crosses 1MB, Node truncates it and terminates the
-  // process; a cascading block of "not ok" from a consistent point onward
-  // (rather than one bad test) is exactly what an output-volume ceiling hit
-  // partway through a large, alphabetically-run file list would look like,
-  // and it would only manifest wherever combined stderr/stdout volume is
-  // higher — plausibly CI's Node build vs. the local sandbox's. Raising
-  // maxBuffer removes that ceiling entirely.
+  // That diagnostic (below) is what finally found this gate's long-standing
+  // CI-only floor violations' real cause, after several earlier hypotheses
+  // (test-file order, --test-concurrency, spawnSync's maxBuffer) were each
+  // tried and ruled out in turn without fixing it: this script ran tsx via
+  // `npx tsx`, and in CI (never locally) npx did not resolve the repo's own
+  // installed `node_modules/.bin/tsx` — it ran a separately npx-cached copy
+  // from `~/.npm/_npx/<hash>/node_modules/tsx` instead, whose module
+  // resolution hooks failed to find sibling workspace dependencies for
+  // whichever files it happened to touch (`Cannot find module 'express'`,
+  // `'jsonwebtoken'`, etc.), and Node's test runner reports that as the file
+  // simply coming back `not ok`. `npm test`'s own `tsx --test …` never hit
+  // this because `npm run` puts `node_modules/.bin` on PATH and resolves the
+  // local binary directly; invoking the local binary by path below (instead
+  // of through npx) does the same here.
   const tapPath = join(tmpDir, 'tap.log')
+  const tsxBin = join(ROOT, 'node_modules', '.bin', 'tsx')
   const result = spawnSync(
-    'npx',
+    tsxBin,
     [
-      'tsx', '--test', '--test-timeout=60000',
+      '--test', '--test-timeout=60000',
+      // Caps how many test FILES run as concurrent worker processes at once
+      // (default is os.availableParallelism()). Not load-bearing for the
+      // npx/module-resolution bug above — kept as a reasonable conservative
+      // default for a coverage-instrumented run, which is heavier per worker.
+      '--test-concurrency=2',
       '--experimental-test-coverage',
       '--test-coverage-exclude=tests/**',
       '--test-reporter=lcov',
@@ -162,10 +155,51 @@ function runOnce() {
     }
   )
   const tap = existsSync(tapPath) ? readFileSync(tapPath, 'utf8') : ''
-  const failedTests = tap.split('\n').filter((l) => /^not ok /.test(l))
+  const tapLines = tap.split('\n')
+  const failedTests = tapLines.filter((l) => /^not ok /.test(l))
+  // The previous version of this diagnostic stopped at the bare `not ok` line
+  // and only looked at what follows it (the indented YAML block). That found
+  // `failureType: 'testCodeFailure'` / `error: 'test failed'` / `code:
+  // 'ERR_TEST_FAILURE'` with no further detail — which turned out to be the
+  // generic wrapper Node emits when a test FILE throws at import time,
+  // before any test() call ever registers (reproduced locally: a file that
+  // throws synchronously at the top level produces exactly this shape, with
+  // the *real* error and stack trace written as `#`-prefixed TAP comment
+  // lines immediately BEFORE that file's `# Subtest: <name>` header — i.e.
+  // BEFORE the `not ok` line, not after it). This finally pulls that
+  // preceding block too, for the first few failures, so a floor violation
+  // carries the actual root cause instead of a content-free wrapper.
+  const SAMPLE_DIAGNOSTICS = 3
+  const diagnosticBlocks = []
+  for (let i = 0; i < tapLines.length && diagnosticBlocks.length < SAMPLE_DIAGNOSTICS; i++) {
+    if (!/^not ok /.test(tapLines[i])) continue
+    const nameMatch = tapLines[i].match(/^not ok \d+ - (.+)$/)
+    const name = nameMatch ? nameMatch[1] : null
+    // Walk backward for a `# Subtest: <name>` header matching this failure,
+    // then keep walking backward through the contiguous `#`-comment block
+    // above it (an import-time crash dump, if there is one).
+    const before = []
+    if (name) {
+      let k = i - 1
+      while (k >= 0 && tapLines[k] !== `# Subtest: ${name}`) k--
+      if (k >= 0) {
+        let start = k - 1
+        while (start >= 0 && tapLines[start].startsWith('# ')) start--
+        before.push(...tapLines.slice(start + 1, k + 1))
+      }
+    }
+    const block = [...before, tapLines[i]]
+    let j = i + 1
+    while (j < tapLines.length && (tapLines[j] === '' || /^\s/.test(tapLines[j])) && !/^(ok |not ok )/.test(tapLines[j])) {
+      block.push(tapLines[j])
+      j++
+    }
+    diagnosticBlocks.push(block.join('\n'))
+  }
   const planMatch = tap.match(/^# tests (\d+)/m)
   const testDiagnostic = planMatch
-    ? `${planMatch[1]} test(s) ran; ${failedTests.length} failed${failedTests.length ? ':\n' + failedTests.map((l) => `      ${l}`).join('\n') : ''}`
+    ? `${planMatch[1]} test(s) ran; ${failedTests.length} failed${failedTests.length ? ':\n' + failedTests.map((l) => `      ${l}`).join('\n') : ''}` +
+      (diagnosticBlocks.length ? `\n\n  [diagnostic] first ${diagnosticBlocks.length} failure(s) in detail:\n${diagnosticBlocks.map((b) => b.split('\n').map((l) => `      ${l}`).join('\n')).join('\n\n')}` : '')
     : `no TAP plan line found (process likely crashed or timed out before finishing)`
 
   if (!existsSync(lcovPath)) {
@@ -203,18 +237,13 @@ function runOnce() {
   return { crashed: false, errors, testDiagnostic }
 }
 
-// This gate showed a real, consistent CI-only failure mode across several
-// earlier fix attempts (see PR discussion): floor violations against modules
-// that passed 100% clean under `npm test` and under this exact script run
-// locally, reproduced with a from-scratch `npm ci` and the exact CI-observed
-// Node patch version, ruling out file-selection, install staleness, and the
-// Node patch as the cause. The TAP diagnostic above found the actual shape of
-// the problem: ~90 of ~150 test files silently coming back `not ok` in CI's
-// runner specifically, starving the coverage report of real data for
-// whatever module happened to depend on a later-failing file — not a
-// coverage-instrumentation gap at all. Two further hypotheses for WHY
-// (--test-concurrency=1, unsorted file order) were tested and ruled out
-// in-place above; `maxBuffer` is the current leading explanation and fix.
+// This gate showed a real, consistent CI-only failure mode (root-caused
+// above: `npx tsx` resolving a separately-cached, differently-behaving tsx
+// in CI) — floor violations against modules that passed 100% clean under
+// `npm test` and under this exact script run locally, because ~90 of ~150
+// test files were silently coming back `not ok` in CI specifically,
+// starving the coverage report of real data for whatever module happened to
+// depend on a failing file. Not a coverage-instrumentation gap at all.
 // `--experimental-test-coverage` is still, per its name, not a stable API, so
 // the retry-3x below is kept as a safety net against any remaining
 // instability; nothing is ever skipped, disabled, or weakened on a retry —

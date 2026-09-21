@@ -28,13 +28,13 @@ export async function signUp(page: Page, email: string, password = PASSWORD): Pr
   // Submit (last match = the form's submit button, not the mode toggle).
   await page.getByRole('button', { name: 'Create account' }).last().click()
   // Onboarding wizard is the first authenticated screen for a fresh account.
-  await expect(page.getByText('Welcome to ACAOS', { exact: false })).toBeVisible()
+  await expect(page.getByText('Welcome to Inbox Assistant', { exact: false })).toBeVisible()
 }
 
 /** Dismiss the onboarding wizard (sets onboardingCompleted, creates no ICP/examples). */
 export async function skipOnboarding(page: Page): Promise<void> {
   await page.getByRole('button', { name: /Skip setup/ }).click()
-  await expect(page.getByText('Welcome to ACAOS', { exact: false })).toBeHidden()
+  await expect(page.getByText('Welcome to Inbox Assistant', { exact: false })).toBeHidden()
 }
 
 /** Mark a user's email verified directly in the DB (the AI routes gate on it). */
