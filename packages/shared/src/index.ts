@@ -252,6 +252,20 @@ export interface UpdateDraftRequest {
   followup?: string | null
 }
 
+// ── Inbox ─────────────────────────────────────────────────────────────────────
+// POST /api/inbox/reply/:replyId/send
+export interface SendInboxReplyRequest {
+  workspaceId: string
+  customBody?: string
+}
+
+// PATCH /api/inbox/reply/:replyId/feedback
+export interface InboxClassificationFeedbackRequest {
+  workspaceId: string
+  feedback: 'correct' | 'incorrect' | 'unsure'
+  correctedIntent?: string
+}
+
 // ── Route contract map ────────────────────────────────────────────────────────
 // The single source of truth that binds METHOD + path → { params, query, body,
 // response }. The web client calls every mutation through a typed helper keyed by
@@ -573,6 +587,10 @@ export interface RouteContracts {
   'PATCH /api/missions/:id': { params: { id: string }; body: UpdateMissionRequest; response: unknown }
   'PATCH /api/missions/:id/icp': { params: { id: string }; body: UpdateMissionIcpOverrideRequest; response: unknown }
   'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
+
+  // Inbox
+  'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string } }
+  'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
 
   // Workspaces
   'PATCH /api/workspaces/:id': { params: { id: string }; body: UpdateWorkspaceRequest; response: unknown }
