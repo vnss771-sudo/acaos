@@ -54,11 +54,10 @@ function findTestFiles(dir) {
 // SHELL expands it for `npm test`/`npm run test:coverage` (always
 // alphabetical) — `readdirSync`'s own order is filesystem-dependent, not
 // alphabetical, and can differ between environments for the identical file
-// set. See the TAP diagnostic below: this script's own file order (raw
-// readdirSync, unsorted) reproducibly fails ~90 of ~150 test files in CI
-// while the alphabetically-sorted glob `test:coverage` uses passes clean on
-// the exact same commit, which points at order-dependent state leaking
-// between test files rather than a coverage-instrumentation gap.
+// set. (File order was investigated as a possible cause of this gate's
+// CI-only floor violations and ruled out — see the tsx-resolution root
+// cause documented in runOnce() below — but sorting stays for its own sake:
+// deterministic output is worth having regardless.)
 const testFiles = findTestFiles(join(ROOT, 'tests')).map((f) => relative(ROOT, f)).sort()
 
 // Safety-critical source modules (repo-relative paths) with their minimum
@@ -111,60 +110,33 @@ function runOnce() {
   // A second, parallel TAP reporter purely for diagnostics: --test-reporter=lcov
   // replaces stdout's default TAP output entirely, so on a floor violation we'd
   // otherwise have no way to tell "every test genuinely ran and this module is
-  // just undertested" apart from "some test file silently failed/crashed and its
-  // coverage never made it into the lcov report" (Node's --test isolates each
-  // test FILE into its own subprocess, and a subprocess that dies leaves its
-  // coverage simply missing, not reported as an error).
+  // just undertested" apart from "some test file silently failed and its
+  // coverage never made it into the lcov report."
   //
-  // This diagnostic is what finally found the real cause of this gate's
-  // CI-only floor violations: in CI (never locally), 90 of ~150 test files
-  // came back `not ok`, while the sibling `npm run test:coverage` job — the
-  // exact same coverage instrumentation over the exact same file set, on the
-  // exact same commit — completed all 1717 tests cleanly. Neither
-  // --test-concurrency=1 (an earlier commit's now-reverted attempt) nor
-  // unsorted file order (readdirSync vs. a sorted glob — tested by sorting
-  // testFiles above) explain it: removing concurrency=1 reproduced the exact
-  // same 90 failures, and the CI failure indices already lined up with sorted
-  // order before the sort was added.
-  //
-  // One explanation tried: `spawnSync` defaults `maxBuffer` to 1MB, and ~150
-  // forked test-file subprocesses under `--experimental-test-coverage` could
-  // plausibly cross that combined with stdout/stderr volume in CI. Raising
-  // maxBuffer to 200MB (below) removes that ceiling — but did NOT fix it.
-  //
-  // Next tried: `--test-concurrency=2` (below), on the theory that halving
-  // concurrent worker memory pressure vs. the default (os.availableParallelism(),
-  // 4 on CI's runner) would stop workers from being silently killed. This
-  // ALSO did not fix it — CI reproduced the identical ~90-file failure count
-  // on this exact combination (maxBuffer=200MB + concurrency=2). Combined
-  // with the earlier, separate finding that concurrency=1 alone (before
-  // maxBuffer existed) reproduced the same failures as default concurrency,
-  // concurrency is now ruled out as the causal variable across its full
-  // range (1, 2, and default) — this was a red herring, not a fix.
-  //
-  // The actual gap: every previous debugging pass stopped at the bare
-  // `not ok <file>` TAP line and discarded the indented YAML diagnostic block
-  // Node emits right after it (error/stack/signal) — the one thing that would
-  // distinguish "a real assertion failed" from "this subprocess was killed."
-  // The diagnostic extraction below finally captures it. Concurrency stays at
-  // 2 (still a reasonable conservative default, just not the fix), and the
-  // next CI-only failure should come back with an actual reason instead of a
-  // bare file list.
+  // That diagnostic (below) is what finally found this gate's long-standing
+  // CI-only floor violations' real cause, after several earlier hypotheses
+  // (test-file order, --test-concurrency, spawnSync's maxBuffer) were each
+  // tried and ruled out in turn without fixing it: this script ran tsx via
+  // `npx tsx`, and in CI (never locally) npx did not resolve the repo's own
+  // installed `node_modules/.bin/tsx` — it ran a separately npx-cached copy
+  // from `~/.npm/_npx/<hash>/node_modules/tsx` instead, whose module
+  // resolution hooks failed to find sibling workspace dependencies for
+  // whichever files it happened to touch (`Cannot find module 'express'`,
+  // `'jsonwebtoken'`, etc.), and Node's test runner reports that as the file
+  // simply coming back `not ok`. `npm test`'s own `tsx --test …` never hit
+  // this because `npm run` puts `node_modules/.bin` on PATH and resolves the
+  // local binary directly; invoking the local binary by path below (instead
+  // of through npx) does the same here.
   const tapPath = join(tmpDir, 'tap.log')
+  const tsxBin = join(ROOT, 'node_modules', '.bin', 'tsx')
   const result = spawnSync(
-    'npx',
+    tsxBin,
     [
-      'tsx', '--test', '--test-timeout=60000',
-      // Caps how many test FILES run as concurrent worker processes at once.
-      // Node's --test default is os.availableParallelism() (4 on both this
-      // sandbox and CI's runner), and coverage instrumentation multiplies each
-      // worker's memory footprint — raising maxBuffer (above) fixed output
-      // truncation but not this: CI's runner has less real headroom under that
-      // 4-way concurrent load than this sandbox does, and Node's test runner
-      // reports a crashed/OOM-killed worker as its file coming back `not ok`,
-      // not as a distinguishable crash. Untested combination: concurrency=1 was
-      // ruled out in isolation, before maxBuffer existed; 2 halves peak
-      // concurrent memory vs the default 4 while still running in parallel.
+      '--test', '--test-timeout=60000',
+      // Caps how many test FILES run as concurrent worker processes at once
+      // (default is os.availableParallelism()). Not load-bearing for the
+      // npx/module-resolution bug above — kept as a reasonable conservative
+      // default for a coverage-instrumented run, which is heavier per worker.
       '--test-concurrency=2',
       '--experimental-test-coverage',
       '--test-coverage-exclude=tests/**',
@@ -265,18 +237,13 @@ function runOnce() {
   return { crashed: false, errors, testDiagnostic }
 }
 
-// This gate showed a real, consistent CI-only failure mode across several
-// earlier fix attempts (see PR discussion): floor violations against modules
-// that passed 100% clean under `npm test` and under this exact script run
-// locally, reproduced with a from-scratch `npm ci` and the exact CI-observed
-// Node patch version, ruling out file-selection, install staleness, and the
-// Node patch as the cause. The TAP diagnostic above found the actual shape of
-// the problem: ~90 of ~150 test files silently coming back `not ok` in CI's
-// runner specifically, starving the coverage report of real data for
-// whatever module happened to depend on a later-failing file — not a
-// coverage-instrumentation gap at all. Two further hypotheses for WHY
-// (--test-concurrency=1, unsorted file order) were tested and ruled out
-// in-place above; `maxBuffer` is the current leading explanation and fix.
+// This gate showed a real, consistent CI-only failure mode (root-caused
+// above: `npx tsx` resolving a separately-cached, differently-behaving tsx
+// in CI) — floor violations against modules that passed 100% clean under
+// `npm test` and under this exact script run locally, because ~90 of ~150
+// test files were silently coming back `not ok` in CI specifically,
+// starving the coverage report of real data for whatever module happened to
+// depend on a failing file. Not a coverage-instrumentation gap at all.
 // `--experimental-test-coverage` is still, per its name, not a stable API, so
 // the retry-3x below is kept as a safety net against any remaining
 // instability; nothing is ever skipped, disabled, or weakened on a retry —
