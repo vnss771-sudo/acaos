@@ -11,6 +11,7 @@ import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
 import { ErrorBanner } from '../components/ui/ErrorBanner.js'
+import { AiQuickAction } from '../components/AiQuickAction.js'
 import { Table, type Column, type SortState } from '../components/ui/Table.js'
 import { ProspectBrief } from '../components/prospects/ProspectBrief.js'
 import type { ApiHook } from '../hooks/useApi.js'
@@ -619,6 +620,12 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
         Ready to reach out? Open a prospect and use <strong style={{ color: colors.textMuted }}>Convert to Lead</strong> to
         move it to the <strong style={{ color: colors.textMuted }}>Leads</strong> page for outreach.
       </div>
+
+      {/* Contextual AI: qualify any business with AI, before it's a saved lead. */}
+      <div>
+        <AiQuickAction kind="research" api={api} workspace={workspace} toast={toast} />
+      </div>
+
       {/* Header */}
       <div style={{ ...s.flexBetween, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>

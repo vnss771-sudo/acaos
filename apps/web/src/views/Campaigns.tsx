@@ -6,6 +6,7 @@ import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
 import { ErrorBanner } from '../components/ui/ErrorBanner.js'
+import { AiQuickAction } from '../components/AiQuickAction.js'
 import { MissionBuilder } from '../components/MissionBuilder.js'
 import { LaunchApprovalModal } from '../components/LaunchApprovalModal.js'
 import { Modal } from '../components/ui/Modal.js'
@@ -234,11 +235,13 @@ export function Campaigns({ api, workspace, toast, canManage = false }: Props) {
       </Modal>
 
       {/* Header */}
-      <div style={{ ...s.flexBetween }}>
+      <div style={{ ...s.flexBetween, alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 8 }}>
           {canManage && <button style={s.btn} onClick={() => setShowMissionBuilder(true)}>+ New Mission</button>}
           {canManage && <button style={{ ...s.btnSm, border: `1px solid ${colors.border}` }} onClick={startAdd} title="Advanced: create campaign manually">Advanced</button>}
         </div>
+        {/* Contextual AI: draft a cold email right where outreach is run. */}
+        <AiQuickAction kind="outreach" api={api} workspace={workspace} toast={toast} />
       </div>
 
       {/* Form */}
