@@ -36,3 +36,25 @@ test('RATE_LIMIT_DISABLED short-circuits (test/E2E escape hatch)', async () => {
   process.env.RATE_LIMIT_DISABLED = 'true'
   for (let i = 0; i < 5; i++) await assert.doesNotReject(() => enforceWorkspaceMailRate('ws-mail-eh'))
 })
+
+// degradedMax: mirrors tests/lib-workspace-ratelimit.test.ts's AI-limiter case.
+test('degradedMax (10) tightens the fallback ceiling in production', async () => {
+  const prevEnv = process.env.NODE_ENV
+  process.env.NODE_ENV = 'production'
+  process.env.WORKSPACE_MAIL_RATE_MAX = '50'
+  try {
+    const ws = 'ws-mail-degraded'
+    for (let i = 0; i < 10; i++) await enforceWorkspaceMailRate(ws)
+    await assert.rejects(() => enforceWorkspaceMailRate(ws), /Workspace mail rate limit/)
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prevEnv
+  }
+})
+
+test('degradedMax is ignored outside production (configured max applies)', async () => {
+  process.env.WORKSPACE_MAIL_RATE_MAX = '15'
+  const ws = 'ws-mail-not-degraded'
+  for (let i = 0; i < 15; i++) await enforceWorkspaceMailRate(ws)
+  await assert.rejects(() => enforceWorkspaceMailRate(ws), /Workspace mail rate limit/)
+})

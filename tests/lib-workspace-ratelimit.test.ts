@@ -36,3 +36,30 @@ test('RATE_LIMIT_DISABLED short-circuits (test/E2E escape hatch)', async () => {
   process.env.RATE_LIMIT_DISABLED = 'true'
   for (let i = 0; i < 5; i++) await assert.doesNotReject(() => enforceWorkspaceAiRate('ws-eh'))
 })
+
+// degradedMax: the unit tier has no Redis, so every call already takes the
+// in-process fallback path — exactly what a real outage degrades to. A
+// multi-pod deployment's real aggregate ceiling during an outage is
+// (pod count × max) since each pod counts independently, so production
+// tightens to degradedMax (30) instead of the configured max.
+test('degradedMax (30) tightens the fallback ceiling in production', async () => {
+  const prevEnv = process.env.NODE_ENV
+  process.env.NODE_ENV = 'production'
+  process.env.WORKSPACE_AI_RATE_MAX = '100'
+  try {
+    const ws = 'ws-degraded'
+    for (let i = 0; i < 30; i++) await enforceWorkspaceAiRate(ws)
+    await assert.rejects(() => enforceWorkspaceAiRate(ws), /Workspace AI rate limit/)
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prevEnv
+  }
+})
+
+test('degradedMax is ignored outside production (configured max applies)', async () => {
+  // NODE_ENV is unset/test here, so degradedMax must NOT apply.
+  process.env.WORKSPACE_AI_RATE_MAX = '35'
+  const ws = 'ws-not-degraded'
+  for (let i = 0; i < 35; i++) await enforceWorkspaceAiRate(ws)
+  await assert.rejects(() => enforceWorkspaceAiRate(ws), /Workspace AI rate limit/)
+})
