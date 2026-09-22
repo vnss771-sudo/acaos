@@ -4,8 +4,13 @@
 - DATABASE_URL
 - REDIS_URL
 - JWT_SECRET
-- WEB_URL
+- WEB_URL — also the CORS fallback when `ALLOWED_ORIGINS` is unset (see below).
 - VITE_API_BASE_URL
+- ALLOWED_ORIGINS — comma-separated exact CORS origin allowlist. Falls back to `WEB_URL` when unset. Provider wildcards (e.g. any `*.vercel.app`) are intentionally NOT honored. Strongly recommended in production: an unset value (and no `WEB_URL`) only logs a startup warning rather than failing boot, but every cross-origin request is then rejected.
+- APP_URL — base URL used to build links in transactional emails (invite, password reset) and the Stripe checkout success/cancel redirect. Falls back to `http://localhost:5173` when unset — that fallback silently ships broken links/redirects in production, so set this explicitly.
+- EMAIL_ENCRYPTION_KEY — 64 hex chars (32 bytes). Encrypts stored SMTP/IMAP credentials and TOTP secrets at rest. Required in any deployed environment (staging or production); an unset/invalid key throws at boot on both the API and worker. Only an unset `NODE_ENV`, or explicit `development`/`test`, may fall back to an insecure zeroed dev key.
+- EMAIL_ENCRYPTION_KEYS — optional comma-separated versioned keyring for key rotation, `<id>:<64 hex>,<id>:<64 hex>,…`. See `docs/KEY_ROTATION.md`.
+- EMAIL_ENCRYPTION_ACTIVE_KEY_ID — the key id (from `EMAIL_ENCRYPTION_KEYS`) used to seal NEW writes during rotation; unset means new writes still use the legacy `EMAIL_ENCRYPTION_KEY`.
 
 ## OpenAI
 - OPENAI_API_KEY
@@ -25,6 +30,7 @@
 - SMTP_USER
 - SMTP_PASS
 - SMTP_FROM
+- WORKSPACE_MAIL_RATE_MAX — per-workspace outbound mail sends allowed per hour at the HTTP edge (complements the per-IP `mailRateLimit`; stops a leaked workspace credential spraying test/relay sends). Default 30; set 0 to disable. Tightens to 10/hour automatically in production while Redis is unavailable (the counter falls back to a per-pod in-process one).
 
 ## Mailbox Sync
 - IMAP_HOST
@@ -35,6 +41,9 @@
 
 ## Security / Step-up
 - STEP_UP_MAX_AGE_MIN — step-up re-auth freshness window (minutes) for sensitive mutations (billing, admin promotion, MFA disable). Default 15. Required: no.
+- COOKIE_SECURE — `true`/`false` override for the refresh-token cookie's `Secure` attribute. Defaults to `true` in production (and whenever `COOKIE_SAMESITE=none`, since browsers reject `SameSite=None` without `Secure`), `false` otherwise. Setting `false` in production fails config validation at boot — the refresh cookie must never travel over non-TLS.
+- COOKIE_SAMESITE — `lax` | `strict` | `none`. Default `lax`, which requires the web app and API to be served from the same site (e.g. `acaos.app` + `api.acaos.app`) — a cross-origin API topology needs `none` (and therefore `Secure`). See the deployment note in `apps/api/src/lib/cookies.ts`.
+- RATE_LIMIT_DISABLED — `true` to disable ALL rate limiting (auth brute-force, mail, API-key throttling). Test/E2E escape hatch only — fails config validation at boot if set `true` in production.
 - TENANT_GUARD_MODE — `off` | `observe` | `enforce`. Default `off` (the cross-tenant query backstop is inert). Set `observe` in production to log any workspace-scoping miss with zero behavior change, then graduate to `enforce` once the observe window is clean. Strongly recommended `observe` at minimum for a multi-tenant deployment — and **required `enforce` before broad public self-serve signup** (untrusted strangers sharing infrastructure).
   - **Coverage:** worker jobs run inside the tenant context already; the API now establishes it too (via the `tenantContext` middleware) for every request carrying a `workspaceId` (query or body) — i.e. the bulk of workspace-scoped routes. Resource-id-only routes (e.g. `/campaigns/:id`, where the workspace is derived from the loaded resource) carry no request `workspaceId` and remain covered by the existing fetch-then-authorize control; wrapping those handlers explicitly is the next coverage step before flipping `enforce`.
   - **Graduation:** run `observe` in production, watch for `[tenant-guard]` warnings, fix any genuine scoping miss (false positives are legitimate FK-scoped queries — extend `TENANT_FOREIGN_KEYS` if needed), then set `enforce`. Consider Postgres RLS as the hard DB-level backstop for the public tier.
@@ -82,7 +91,7 @@ All read live from the environment — flipping any of these takes effect on the
 - REPLY_CLASSIFICATION_MIN_CONFIDENCE — minimum confidence (0–100) below which a `NOT_INTERESTED` reply is NOT acted on as an irreversible DEAD transition (downgraded to human review). Default 60. Set 0 to always act on the label.
 - SOFT_BOUNCE_SUPPRESS_THRESHOLD — number of repeated soft bounces before an address is suppressed (hard/unknown bounces suppress immediately). Default 3.
 - OPENAI_MAX_TOKENS_RESEARCH / OPENAI_MAX_TOKENS_OUTREACH / OPENAI_MAX_TOKENS_REPLY — per-task output-token ceilings. Defaults 1500 / 1200 / 700. A hard ceiling of 4000 is enforced so a fat-fingered override can't request a runaway completion.
-- WORKSPACE_AI_RATE_MAX — per-workspace AI requests allowed per hour at the HTTP edge (complements the per-IP `aiRateLimit` and the monthly plan meter; stops one workspace bursting the shared OpenAI key across rotating IPs). Default 120; set 0 to disable.
+- WORKSPACE_AI_RATE_MAX — per-workspace AI requests allowed per hour at the HTTP edge (complements the per-IP `aiRateLimit` and the monthly plan meter; stops one workspace bursting the shared OpenAI key across rotating IPs). Default 120; set 0 to disable. Tightens to 30/hour automatically in production while Redis is unavailable (the counter falls back to a per-pod in-process one).
 - AI_COST_CENTS_RESEARCH / AI_COST_CENTS_OUTREACH / AI_COST_CENTS_REPLY — estimated USD cents per AI call, used only for the cost-per-lead / AI-spend reporting in billing usage (never gates anything). Defaults 0.1 / 0.08 / 0.05 (gpt-4o-mini token profiles); tune for other model tiers.
 
 ## Observability
