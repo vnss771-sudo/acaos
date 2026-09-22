@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Settings } from './Settings.js'
 import type { User, Workspace } from '../types.js'
@@ -169,5 +169,33 @@ describe('Settings', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Revoke' }))
     expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/api-key', expect.objectContaining({ method: 'DELETE' }))
+  })
+
+  // Regression: all four fetches below previously failed silently (a bare
+  // `.catch(() => {})`) — a transient error made the section look genuinely
+  // empty (no members, no invites, no ICP/email config) with no indication
+  // anything had gone wrong.
+  test('surfaces a toast when loading team members fails', async () => {
+    const api = makeApi((path) => { if (path.includes('/members')) return Promise.reject(new Error('boom')) })
+    renderSettings(api)
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to load team members'))
+  })
+
+  test('surfaces a toast when loading pending invites fails', async () => {
+    const api = makeApi((path) => { if (path.includes('/invites')) return Promise.reject(new Error('boom')) })
+    renderSettings(api)
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to load pending invites'))
+  })
+
+  test('surfaces a toast when loading ICP settings fails', async () => {
+    const api = makeApi((path) => { if (path.includes('/icp')) return Promise.reject(new Error('boom')) })
+    renderSettings(api)
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to load ICP settings'))
+  })
+
+  test('surfaces a toast when loading email configuration fails', async () => {
+    const api = makeApi((path) => { if (path.includes('/email-config')) return Promise.reject(new Error('boom')) })
+    renderSettings(api)
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to load email configuration'))
   })
 })

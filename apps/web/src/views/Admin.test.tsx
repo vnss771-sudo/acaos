@@ -73,4 +73,31 @@ describe('AdminView', () => {
     render(<AdminView api={api as never} toast={errorToast as never} />)
     await waitFor(() => expect(errorToast.error).toHaveBeenCalledWith('Failed to load admin overview'))
   })
+
+  // Regression: queue-stats and audit previously failed silently (a bare
+  // `.catch(() => {})`) — a transient error looked identical to "no queues" /
+  // "no audit events" with no indication anything went wrong.
+  test('surfaces a toast when the queue-stats request fails', async () => {
+    const errorToast = { ...toast, error: vi.fn() }
+    const api = vi.fn((path: string) => {
+      if (path.includes('/overview')) return Promise.resolve(overview)
+      if (path.includes('/queue-stats')) return Promise.reject(new Error('boom'))
+      if (path.includes('/audit')) return Promise.resolve({ events: [] })
+      return Promise.resolve({})
+    })
+    render(<AdminView api={api as never} toast={errorToast as never} />)
+    await waitFor(() => expect(errorToast.error).toHaveBeenCalledWith('Failed to load queue stats'))
+  })
+
+  test('surfaces a toast when the audit log request fails', async () => {
+    const errorToast = { ...toast, error: vi.fn() }
+    const api = vi.fn((path: string) => {
+      if (path.includes('/overview')) return Promise.resolve(overview)
+      if (path.includes('/queue-stats')) return Promise.resolve({ queues: [] })
+      if (path.includes('/audit')) return Promise.reject(new Error('boom'))
+      return Promise.resolve({})
+    })
+    render(<AdminView api={api as never} toast={errorToast as never} />)
+    await waitFor(() => expect(errorToast.error).toHaveBeenCalledWith('Failed to load audit log'))
+  })
 })

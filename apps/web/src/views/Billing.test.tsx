@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Billing } from './Billing.js'
 import type { Workspace } from '../types.js'
@@ -81,5 +81,30 @@ describe('Billing', () => {
 
     expect(await screen.findByRole('button', { name: /Manage Subscription/i })).toBeInTheDocument()
     expect(screen.queryByText('Upgrade your plan')).not.toBeInTheDocument()
+  })
+
+  // Regression: both fetches below previously failed silently (a bare
+  // `.catch(() => {})`) — a transient error looked identical to a loading page
+  // with no indication anything went wrong.
+  test('surfaces a toast when the plan catalog request fails', async () => {
+    const errorToast = { ...toast, error: vi.fn() }
+    const api = vi.fn((path: string) => {
+      if (path === '/api/billing/plans') return Promise.reject(new Error('boom'))
+      if (path.startsWith('/api/billing/status')) return Promise.resolve({ plan: 'free', status: 'none', hasSubscription: false })
+      return Promise.resolve({})
+    })
+    render(<Billing api={api as never} workspace={workspace} toast={errorToast as never} />)
+    await waitFor(() => expect(errorToast.error).toHaveBeenCalledWith('Failed to load plan details'))
+  })
+
+  test('surfaces a toast when the billing status request fails', async () => {
+    const errorToast = { ...toast, error: vi.fn() }
+    const api = vi.fn((path: string) => {
+      if (path.startsWith('/api/billing/status')) return Promise.reject(new Error('boom'))
+      if (path === '/api/billing/plans') return Promise.resolve({ plans: PLAN_CATALOG })
+      return Promise.resolve({})
+    })
+    render(<Billing api={api as never} workspace={workspace} toast={errorToast as never} />)
+    await waitFor(() => expect(errorToast.error).toHaveBeenCalledWith('Failed to load billing status'))
   })
 })
