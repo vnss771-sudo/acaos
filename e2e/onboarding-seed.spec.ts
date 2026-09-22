@@ -20,7 +20,7 @@ test('signup → onboarding seeds example prospects that appear in the UI', asyn
   await page.getByRole('button', { name: /Looks good/ }).click()
 
   // Step 4: enter the app.
-  await page.getByRole('button', { name: /Open Acquisition Radar/ }).click()
+  await page.getByRole('button', { name: /Open Inbox Assistant/ }).click()
 
   // The seeded Industrial example company must be visible in the Prospects view.
   await page.getByRole('button', { name: /Prospects/ }).click()
