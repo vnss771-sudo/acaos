@@ -146,6 +146,7 @@ export const aiRateLimit = createRateLimiter({
   name: 'ai',
   windowMs: 60 * 60 * 1000,
   max: 60,
+  degradedMax: 15,
   message: 'AI rate limit reached. Please wait before making more AI requests.'
 })
 

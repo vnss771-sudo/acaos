@@ -20,6 +20,15 @@ type WorkspaceRateLimitOptions = {
   envVar: string
   defaultMax: number
   message: string
+  // Tighter ceiling enforced ONLY while Redis is unavailable AND NODE_ENV is
+  // 'production' — same "tighten on degrade" stance as createRateLimiter in
+  // middleware/rateLimit.ts. The in-process fallback below is per-pod, so a
+  // multi-pod deployment's real aggregate ceiling during an outage is
+  // (pod count × max) instead of the intended global max; dropping to
+  // degradedMax keeps a compromised workspace's burst capacity bounded
+  // instead of silently multiplying by fleet size. Defaults to `max` (no
+  // change) and never applies in dev/test.
+  degradedMax?: number
 }
 
 // Kept internal: every call site should go through the two enforce* wrappers
@@ -49,12 +58,17 @@ function createWorkspaceRateLimit(opts: WorkspaceRateLimitOptions) {
     const redisKey = `rl:${name}:${workspaceId}:${windowStart}`
 
     let count: number
+    // Effective ceiling for this request: the normal max while Redis is
+    // serving, or the tighter degradedMax while on the in-process fallback
+    // in production.
+    let effectiveMax = max
     try {
       const redis = getRedis()
       if (redis.status !== 'ready') throw new Error('Redis not ready')
       count = await redis.incr(redisKey)
       if (count === 1) await redis.expire(redisKey, Math.ceil(windowMs / 1000))
     } catch {
+      if (process.env.NODE_ENV === 'production') effectiveMax = Math.min(max, opts.degradedMax ?? max)
       const now = Date.now()
       let entry = fallback.get(workspaceId)
       if (!entry || entry.resetAt <= now) {
@@ -65,7 +79,7 @@ function createWorkspaceRateLimit(opts: WorkspaceRateLimitOptions) {
       count = entry.count
     }
 
-    if (count > max) {
+    if (count > effectiveMax) {
       throw new ApiError(429, message)
     }
   }
@@ -78,6 +92,7 @@ const aiLimiter = createWorkspaceRateLimit({
   windowMs: 60 * 60 * 1000,
   envVar: 'WORKSPACE_AI_RATE_MAX',
   defaultMax: 120,
+  degradedMax: 30,
   message: 'Workspace AI rate limit reached. Please wait before making more AI requests.',
 })
 
@@ -100,6 +115,7 @@ const mailLimiter = createWorkspaceRateLimit({
   windowMs: 60 * 60 * 1000,
   envVar: 'WORKSPACE_MAIL_RATE_MAX',
   defaultMax: 30,
+  degradedMax: 10,
   message: 'Workspace mail rate limit reached. Please wait before sending more email.',
 })
 
