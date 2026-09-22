@@ -31,4 +31,21 @@ describe('Modal', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  // Regression: Modal had no focus management at all — Tab could escape to
+  // whatever rendered behind the scrim, and opening it left focus on
+  // whatever the trigger button was, with no keyboard route into the dialog.
+  test('moves focus into the dialog when opened, and Tab wraps within it', () => {
+    render(
+      <Modal open onClose={() => {}} title="Are you sure?" footer={<button>Submit</button>}>
+        <button>Cancel</button>
+      </Modal>
+    )
+    // First focusable element (DOM order: children, then footer) gets focus.
+    expect(document.activeElement).toBe(screen.getByText('Cancel'))
+    // Tab from the last element wraps back to the first, never escaping the dialog.
+    screen.getByText('Submit').focus()
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(screen.getByText('Cancel'))
+  })
 })

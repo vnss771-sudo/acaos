@@ -15,4 +15,19 @@ describe('Drawer', () => {
     fireEvent.click(screen.getByRole('dialog').parentElement as HTMLElement)
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  // Regression: Drawer had no focus management — Tab could escape to the app
+  // shell rendered behind the scrim while the drawer was open.
+  test('moves focus into the panel when opened, and Tab wraps within it', () => {
+    render(
+      <Drawer open onClose={() => {}}>
+        <button>First link</button>
+        <button>Last link</button>
+      </Drawer>
+    )
+    expect(document.activeElement).toBe(screen.getByText('First link'))
+    screen.getByText('Last link').focus()
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(screen.getByText('First link'))
+  })
 })
