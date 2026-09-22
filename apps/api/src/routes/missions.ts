@@ -64,10 +64,14 @@ missionsRouter.get(
     if (!workspaceId) throw new ApiError(400, 'workspaceId required')
     if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
 
+    // Defensive ceiling on an otherwise-unbounded workspace-scoped list. Real
+    // workspaces stay well under this; it exists to bound worst-case query
+    // cost, not as a pagination UX.
     const missions = await prisma.mission.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
       include: { campaign: { include: { _count: { select: { leads: true } } } } },
+      take: 500,
     })
 
     // Per-mission discovery activity: how many runs sourced prospects for this

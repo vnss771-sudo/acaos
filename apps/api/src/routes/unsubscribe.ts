@@ -111,10 +111,20 @@ unsubscribeRouter.get(
     const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, workspaceId)) throw new ApiError(403, 'Access denied')
 
-    const suppressions = await prisma.suppression.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: 'desc' }
-    })
-    res.json({ suppressions })
+    // Suppression rows grow with every unsubscribe click from a prospect (not
+    // something the workspace owner controls the volume of), so an active
+    // sender's list can reach into the thousands over time — cap what's
+    // returned and report the true count separately rather than an unbounded
+    // findMany whose row count (and payload size) is fully attacker/prospect
+    // -driven.
+    const [suppressions, total] = await Promise.all([
+      prisma.suppression.findMany({
+        where: { workspaceId },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      }),
+      prisma.suppression.count({ where: { workspaceId } }),
+    ])
+    res.json({ suppressions, total })
   })
 )

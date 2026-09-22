@@ -167,8 +167,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   useEffect(() => {
     if (!workspace) return
     let cancelled = false
-    api<{ suppressions: { id: string }[] }>(`/api/unsubscribe?workspaceId=${workspace.id}`)
-      .then(d => { if (!cancelled) setSuppressionCount(d.suppressions?.length ?? 0) })
+    api<{ suppressions: { id: string }[]; total?: number }>(`/api/unsubscribe?workspaceId=${workspace.id}`)
+      .then(d => { if (!cancelled) setSuppressionCount(d.total ?? d.suppressions?.length ?? 0) })
       .catch(() => { if (!cancelled) setSuppressionCount(null) })
     return () => { cancelled = true }
   }, [api, workspace?.id])

@@ -66,6 +66,14 @@ test('GET lists campaigns with lead counts for a member', async () => {
   assert.equal(res.body.campaigns[0]._count.leads, 3)
 })
 
+// Regression: the list was an unbounded findMany (no `take`), so a workspace
+// with an unusually large campaign count could send an unbounded query/payload.
+test('GET caps the underlying query with a take limit', async () => {
+  await server.request(`/api/campaigns?workspaceId=${OWNED}`, { headers: auth() })
+  const call = prisma.callsTo('campaign', 'findMany').at(-1)
+  assert.equal((call?.args[0] as { take?: number })?.take, 500)
+})
+
 test('POST requires a name', async () => {
   const res = await server.request('/api/campaigns', { method: 'POST', headers: jsonAuth(), body: JSON.stringify({ workspaceId: OWNED }) })
   assert.equal(res.status, 400)

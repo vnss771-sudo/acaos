@@ -104,6 +104,14 @@ test('GET / returns missions with stats + discovery shape for a member', async (
   assert.ok(res.body.missions[0].stats)
 })
 
+// Regression: the list was an unbounded findMany (no `take`), so a workspace
+// with an unusually large mission count could send an unbounded query/payload.
+test('GET / caps the underlying query with a take limit', async () => {
+  await server.request(`/api/missions?workspaceId=${OWNED_WS}`, { headers: auth(MEMBER) })
+  const call = prisma.callsTo('mission', 'findMany').at(-1)
+  assert.equal((call?.args[0] as { take?: number })?.take, 500)
+})
+
 // --- GET /:id (control plane) ---
 
 test('GET /:id returns the enriched control plane for a member', async () => {
