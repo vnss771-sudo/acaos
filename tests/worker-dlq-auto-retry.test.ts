@@ -7,6 +7,8 @@ import assert from 'node:assert/strict'
 import {
   isTransientError,
   classifyAutoRetry,
+  buildAutoRetryTargets,
+  NEVER_AUTO_RETRY_QUEUES,
   DEFAULT_AUTO_RETRY_POLICY,
   type FailedJobLike,
 } from '../apps/worker/src/lib/dlqAutoRetry.ts'
@@ -102,4 +104,29 @@ test('classifyAutoRetry: falls back to job.timestamp when finishedOn is absent',
 test('classifyAutoRetry: missing opts.attempts defaults to 1 configured attempt', () => {
   const d = classifyAutoRetry(job({ opts: undefined, attemptsMade: 1 }), Date.now())
   assert.equal(d.retry, true, '0 bonus used (1 attemptsMade - 1 default configured)')
+})
+
+// discover-prospects calls a metered, paid provider (queues.ts sets attempts:1
+// specifically so a failed run is never silently re-hit) — classifyAutoRetry's
+// own bonus-retry logic has no idea which queue that is, so the exclusion has
+// to happen in the target list the sweep is given, not in the classifier.
+test('buildAutoRetryTargets: excludes discover-prospects (a paid-provider, never-auto-retry queue)', () => {
+  const all = ['research-lead', 'discover-prospects', 'send-campaign', 'dlq-auto-retry']
+  const targets = buildAutoRetryTargets(all)
+  assert.ok(!targets.includes('discover-prospects'), 'a re-billed provider call must never be auto-retried')
+  assert.deepEqual(targets.sort(), ['research-lead', 'send-campaign'])
+})
+
+test('buildAutoRetryTargets: excludes the sweep\'s own queue (self-exclusion)', () => {
+  const targets = buildAutoRetryTargets(['dlq-auto-retry', 'send-followup'])
+  assert.deepEqual(targets, ['send-followup'])
+})
+
+test('buildAutoRetryTargets: respects a custom self queue name', () => {
+  const targets = buildAutoRetryTargets(['my-sweep', 'research-lead'], 'my-sweep')
+  assert.deepEqual(targets, ['research-lead'])
+})
+
+test('NEVER_AUTO_RETRY_QUEUES contains exactly the queues with a real money/quota attempts:1 contract', () => {
+  assert.deepEqual([...NEVER_AUTO_RETRY_QUEUES], ['discover-prospects'])
 })

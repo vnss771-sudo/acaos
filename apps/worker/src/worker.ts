@@ -66,6 +66,7 @@ import {
   isDlqAutoRetryEnabled,
   loadAutoRetryPolicyFromEnv,
   dlqAutoRetryIntervalMs,
+  buildAutoRetryTargets,
 } from './lib/dlqAutoRetry.js'
 
 const SERVICE = 'acaos-worker'
@@ -409,7 +410,7 @@ const dlqAutoRetryWorker = new Worker(
     parseJobPayload(DlqAutoRetryPayloadSchema, 'dlq-auto-retry', job.data)
     if (!isDlqAutoRetryEnabled()) { log('dlq-auto-retry', 'skipped: DLQ_AUTO_RETRY_ENABLED off'); return { skipped: true } }
     const policy = loadAutoRetryPolicyFromEnv()
-    const targets = WORKER_QUEUES.map(([name]) => name).filter((name) => name !== 'dlq-auto-retry')
+    const targets = buildAutoRetryTargets(WORKER_QUEUES.map(([name]) => name))
     const results = await runAutoRetrySweep(targets, getQueue, policy)
     const totalScanned = results.reduce((a, r) => a + r.scanned, 0)
     const totalRetried = results.reduce((a, r) => a + r.retried, 0)
