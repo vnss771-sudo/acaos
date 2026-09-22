@@ -19,7 +19,7 @@ function spec() {
     user: { findUnique: async () => ({ id: USER, email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => member(a?.where?.userId, a?.where?.workspaceId) },
     workspace: { findUnique: async () => ({ plan: 'free', subscriptionStatus: null }) },
-    usageRecord: { findMany: async () => [], upsert: async () => ({ id: 'u' }) },
+    usageRecord: { findMany: async () => [], upsert: async () => ({ id: 'u' }), updateMany: async () => ({ count: 1 }) },
     workspaceICP: { findUnique: async () => null },
   }
 }
@@ -84,4 +84,31 @@ test('reply-analysis with a member workspace counts usage then hits the guard', 
 test('outreach denies a non-member workspace', async () => {
   const res = await post('/api/ai/outreach', { workspaceId: OTHER, businessName: 'Acme' })
   assert.equal(res.status, 403)
+})
+
+// A generation failure (here, the OpenAI-not-configured guard, which throws
+// from inside the same generate* call every other model-call failure would
+// throw from) must not leave the customer charged for AI they never got —
+// see refundAiUsage in processors.ts for the same pattern on the worker side.
+test('research refunds the AI credit when generation fails', async () => {
+  const res = await post('/api/ai/research', { workspaceId: OWNED, businessName: 'Acme' })
+  assert.equal(res.status, 503)
+  assert.equal(prisma.callsTo('usageRecord', 'upsert').length, 1, 'the call was metered up front')
+  const refunds = prisma.callsTo('usageRecord', 'updateMany')
+  assert.equal(refunds.length, 1, 'the failed call was refunded')
+  assert.equal((refunds[0].args[0] as { where: { action: string } }).where.action, 'AI_RESEARCH')
+})
+test('outreach refunds the AI credit when generation fails', async () => {
+  const res = await post('/api/ai/outreach', { workspaceId: OWNED, businessName: 'Acme' })
+  assert.equal(res.status, 503)
+  const refunds = prisma.callsTo('usageRecord', 'updateMany')
+  assert.equal(refunds.length, 1, 'the failed call was refunded')
+  assert.equal((refunds[0].args[0] as { where: { action: string } }).where.action, 'AI_OUTREACH')
+})
+test('reply-analysis refunds the AI credit when generation fails', async () => {
+  const res = await post('/api/ai/reply-analysis', { workspaceId: OWNED, replyBody: 'Interested!' })
+  assert.equal(res.status, 503)
+  const refunds = prisma.callsTo('usageRecord', 'updateMany')
+  assert.equal(refunds.length, 1, 'the failed call was refunded')
+  assert.equal((refunds[0].args[0] as { where: { action: string } }).where.action, 'AI_REPLY')
 })
