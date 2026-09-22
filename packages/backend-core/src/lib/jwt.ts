@@ -6,16 +6,28 @@ const MIN_SECRET_LENGTH = 16
 
 export type JwtPayload = { userId: string }
 
-function isProduction() {
-  return process.env.NODE_ENV === 'production'
+// Fail closed for any deployed environment, matching encrypt.ts's
+// getLegacyKey(): production always required a secret; staging (or any other
+// EXPLICIT non-dev NODE_ENV) must too — a mis-set staging box would otherwise
+// silently sign real session tokens with a secret that resets on every
+// restart (invalidating every session) and is never the operator's deliberate
+// choice. Only an unset NODE_ENV (local/test default) or an explicit
+// development/test may fall back to the ephemeral secret. Gating this on a
+// literal `NODE_ENV === 'production'` check alone (the old behavior) let any
+// non-"production" value — staging, "prod", a typo — silently take the
+// insecure path.
+export function allowsInsecureJwtFallback(): boolean {
+  const env = (process.env.NODE_ENV || '').trim()
+  return env === '' || env === 'development' || env === 'test'
 }
 
-// A strong, per-process random secret used only when JWT_SECRET is unset
-// outside production. This replaces the old hardcoded 'change-me' fallback so a
-// misconfigured non-prod deploy can never sign tokens with a publicly known
-// secret. Stored on globalThis so every module instance shares one value —
-// important under runtimes (e.g. tsx) that can load this module more than once
-// via dynamic import. Tokens do not survive a restart.
+// A strong, per-process random secret used only when JWT_SECRET is unset and
+// allowsInsecureJwtFallback() permits it. This replaces the old hardcoded
+// 'change-me' fallback so a misconfigured non-prod deploy can never sign
+// tokens with a publicly known secret. Stored on globalThis so every module
+// instance shares one value — important under runtimes (e.g. tsx) that can
+// load this module more than once via dynamic import. Tokens do not survive
+// a restart.
 function getEphemeralDevSecret(): string {
   const g = globalThis as { __acaosJwtDevSecret__?: string }
   if (!g.__acaosJwtDevSecret__) {
@@ -38,8 +50,9 @@ export function getJwtSecret() {
     return secret
   }
 
-  if (isProduction()) {
-    throw new Error('JWT_SECRET is required in production')
+  if (!allowsInsecureJwtFallback()) {
+    const env = (process.env.NODE_ENV || '').trim()
+    throw new Error(`JWT_SECRET is required when NODE_ENV="${env}" (only an unset NODE_ENV or development/test may use the ephemeral dev secret)`)
   }
 
   return getEphemeralDevSecret()

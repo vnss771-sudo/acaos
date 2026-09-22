@@ -109,6 +109,17 @@ test('validateConfig rejects a weak JWT secret even in development', () => {
   assert.throws(() => validateConfig(), /placeholder/)
 })
 
+// The eager JWT_SECRET check used to fire only `if (process.env.JWT_SECRET ||
+// isProduction())` — a "staging" deploy with no JWT_SECRET set skipped it
+// entirely and would only discover the missing secret lazily, on the first
+// authenticated request (jwt.ts's own getJwtSecret() gate, fixed alongside
+// this). Now the eager check matches jwt.ts's real gate (any explicit
+// non-dev/test NODE_ENV), so this fails at boot instead.
+test('validateConfig fails fast in staging (not just literal production) when JWT_SECRET is missing', () => {
+  setEnv({ NODE_ENV: 'staging', JWT_SECRET: undefined })
+  assert.throws(() => validateConfig(), /JWT_SECRET is required when NODE_ENV="staging"/)
+})
+
 test('validateConfig passes in production when fully configured', () => {
   setEnv({
     NODE_ENV: 'production',
