@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import { useEscapeKey } from '../../hooks/useEscapeKey.js'
+import { useFocusTrap } from '../../hooks/useFocusTrap.js'
 import { colors } from '../../styles.js'
 
 type Props = {
@@ -15,6 +16,8 @@ type Props = {
 // as Modal (click-outside + Escape).
 export function Drawer({ open, onClose, side = 'left', width = 248, children }: Props) {
   useEscapeKey(onClose, open)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  useFocusTrap(panelRef, open)
   if (!open) return null
   return (
     <div
@@ -22,8 +25,10 @@ export function Drawer({ open, onClose, side = 'left', width = 248, children }: 
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         onClick={e => e.stopPropagation()}
         style={{ background: colors.bgSurface, borderRight: side === 'left' ? `1px solid ${colors.border}` : undefined, borderLeft: side === 'right' ? `1px solid ${colors.border}` : undefined, width, maxWidth: '85vw', height: '100%', overflowY: 'auto' }}
       >

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { View } from '../types.js'
 import { colors } from '../styles.js'
+import { useFocusTrap } from '../hooks/useFocusTrap.js'
 
 // ⌘K / Ctrl+K / "/" command palette. Self-contained: owns its open state and the
 // global key listener, renders nothing until opened. Built on the app's JS tokens
@@ -35,6 +36,8 @@ export function CommandPalette({ setView, isAdmin = false }: { setView: (v: View
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  useFocusTrap(dialogRef, open)
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -102,6 +105,8 @@ export function CommandPalette({ setView, isAdmin = false }: { setView: (v: View
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         onClick={e => e.stopPropagation()}
         style={{
           width: 'min(640px, calc(100vw - 24px))', background: colors.bgCard,

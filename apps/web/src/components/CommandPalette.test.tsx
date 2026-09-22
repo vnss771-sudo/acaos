@@ -57,4 +57,15 @@ describe('CommandPalette', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(setView).toHaveBeenCalledWith('missions')
   })
+
+  // Regression: the palette had no Tab-trap — Tab could escape the overlay to
+  // the app shell rendered behind it while the palette was open.
+  test('Tab from the last command wraps back to the search input', () => {
+    render(<CommandPalette setView={vi.fn()} />)
+    openWithCtrlK()
+    const commandButtons = screen.getAllByRole('button')
+    commandButtons[commandButtons.length - 1]!.focus()
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(screen.getByLabelText('Search commands'))
+  })
 })
