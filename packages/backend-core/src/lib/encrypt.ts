@@ -112,6 +112,19 @@ export function checkEncryptionKeyHealth(): void {
   }
 }
 
+// Eagerly resolves the key encryptSecret() would actually use right now (the
+// active versioned key, or the legacy key when no rotation is configured) —
+// unlike checkEncryptionKeyHealth() above, which only warns on an active-key-id
+// typo and is a no-op for the common unrotated case. This is the counterpart
+// that actually validates EMAIL_ENCRYPTION_KEY's presence/format, so a missing
+// or malformed key fails loud at boot instead of on the first SMTP/IMAP
+// credential encryption deep inside a request or job. Call explicitly at boot
+// (server.ts, worker.ts) for the same reason checkEncryptionKeyHealth() is:
+// config.ts deliberately doesn't import this module.
+export function checkEmailEncryptionKeyConfigured(): void {
+  getActiveKey()
+}
+
 function resolveDecryptKey(versionId: string | null): Buffer {
   if (!versionId) return getLegacyKey()
   const key = parseKeyring().get(versionId)
