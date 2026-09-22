@@ -577,7 +577,7 @@ function Step4({
         style={{ ...s.btn, fontSize: 15, padding: '13px 28px', width: '100%' }}
         onClick={onComplete}
       >
-        Open Acquisition Radar →
+        Open Inbox Assistant →
       </button>
     </div>
   )
