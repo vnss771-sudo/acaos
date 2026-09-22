@@ -93,7 +93,7 @@ test('getJwtSecret requires a strong, non-placeholder secret', () => {
 
   process.env.NODE_ENV = 'production'
   delete process.env.JWT_SECRET
-  assert.throws(() => getJwtSecret(), /JWT_SECRET is required in production/)
+  assert.throws(() => getJwtSecret(), /JWT_SECRET is required/)
 
   // The known placeholder is rejected in every environment.
   process.env.JWT_SECRET = 'change-me'

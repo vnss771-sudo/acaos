@@ -7,7 +7,7 @@
 //  2. Fail fast at startup when required configuration is missing or weak,
 //     rather than surfacing it as a deep runtime 503 on the first request.
 
-import { getJwtSecret } from './jwt.js'
+import { getJwtSecret, allowsInsecureJwtFallback } from './jwt.js'
 
 export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production'
@@ -137,8 +137,13 @@ export function validateConfig(): void {
   }
 
   // Eagerly resolve the JWT secret so a weak/placeholder/missing value fails at
-  // boot rather than on the first authenticated request.
-  if (process.env.JWT_SECRET || isProduction()) {
+  // boot rather than on the first authenticated request. Checked whenever a
+  // secret is actually set, OR the environment wouldn't allow jwt.ts's
+  // ephemeral-secret fallback anyway (staging, "prod", or any other explicit
+  // non-dev/test NODE_ENV) — matching getJwtSecret()'s own gate, not just
+  // literal isProduction(), so a missing secret on a non-production deployed
+  // environment still fails at boot instead of first request.
+  if (process.env.JWT_SECRET || !allowsInsecureJwtFallback()) {
     try {
       getJwtSecret()
     } catch (err) {
