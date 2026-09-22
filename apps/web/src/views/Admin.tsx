@@ -76,10 +76,10 @@ export function AdminView({ api, toast }: Props) {
       .finally(() => { if (!cancelled) setLoading(false) })
     api<{ queues: QueueStat[] }>('/api/admin/queue-stats')
       .then(d => { if (!cancelled) setQueues(d.queues) })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) toast.error('Failed to load queue stats') })
     api<{ events: AuditEvent[] }>('/api/admin/audit?limit=50')
       .then(d => { if (!cancelled) setAudit(d.events) })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) toast.error('Failed to load audit log') })
     return () => { cancelled = true }
   }, [])
 

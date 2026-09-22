@@ -96,11 +96,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     setMembersLoading(true)
     api<{ members: WorkspaceMember[] }>(`/api/workspaces/${workspace.id}/members`)
       .then(d => { if (!cancelled) setMembers(d.members || []) })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) toast.error('Failed to load team members') })
       .finally(() => { if (!cancelled) setMembersLoading(false) })
     api<{ invites: typeof pendingInvites }>(`/api/workspaces/${workspace.id}/invites`)
       .then(d => { if (!cancelled) setPendingInvites(d.invites || []) })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) toast.error('Failed to load pending invites') })
     api<{ icp: IcpConfig | null }>(`/api/workspaces/${workspace.id}/icp`)
       .then(d => {
         if (d.icp && !cancelled) {
@@ -114,7 +114,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           })
         }
       })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) toast.error('Failed to load ICP settings') })
     api<{ config: Record<string, unknown> | null }>(`/api/workspaces/${workspace.id}/email-config`)
       .then(d => {
         if (d.config && !cancelled) {
@@ -135,7 +135,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           })
         }
       })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) toast.error('Failed to load email configuration') })
     return () => { cancelled = true }
   }, [workspace?.id])
 

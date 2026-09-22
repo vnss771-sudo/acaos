@@ -108,7 +108,7 @@ export function Billing({ api, workspace, toast }: Props) {
   useEffect(() => {
     api<{ plans: Record<string, PlanLimits> }>('/api/billing/plans')
       .then(d => setPlans(d.plans ?? null))
-      .catch(() => {})
+      .catch(() => toast.error('Failed to load plan details'))
   }, [api])
 
   useEffect(() => {
@@ -116,7 +116,7 @@ export function Billing({ api, workspace, toast }: Props) {
     setLoading(true)
     api<BillingStatus>(`/api/billing/status?workspaceId=${workspace.id}`)
       .then(setBillingStatus)
-      .catch(() => {})
+      .catch(() => toast.error('Failed to load billing status'))
       .finally(() => setLoading(false))
   }, [workspace?.id])
 
