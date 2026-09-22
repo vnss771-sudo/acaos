@@ -94,7 +94,21 @@ export function AiQuickAction({ kind, api, workspace, toast }: Props) {
     setRationale(null)
     try {
       const wsId = workspace.id
-      const asResult = (v: unknown): AnyResult | null => (v && typeof v === 'object' ? v as AnyResult : null)
+      // The API returns `result` as a JSON-encoded string (see chat() in
+      // services/openai.ts — the model's raw completion content, never
+      // parsed server-side; AiTools.tsx handles the same contract the same
+      // way). Parse it here; a malformed/truncated completion falls through
+      // to the "unexpected result" toast below instead of throwing.
+      const asResult = (v: unknown): AnyResult | null => {
+        if (v && typeof v === 'object') return v as AnyResult
+        if (typeof v !== 'string') return null
+        try {
+          const parsed: unknown = JSON.parse(v)
+          return parsed && typeof parsed === 'object' ? parsed as AnyResult : null
+        } catch {
+          return null
+        }
+      }
       // The shared route contract types these AI responses loosely (result as a
       // string, no scoreRationale) though the API returns richer objects — read
       // them through a permissive envelope, the same shape AiTools relied on.
