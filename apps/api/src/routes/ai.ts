@@ -5,7 +5,7 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
-import { checkAndIncrementAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
 import { explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@acaos/backend-core/lib/scoring.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
@@ -79,14 +79,22 @@ aiRouter.post(
     })
     if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
-    const data = await generateLeadResearch({
-      businessName,
-      website,
-      category,
-      city,
-      notes,
-      icp
-    })
+    let data: Awaited<ReturnType<typeof generateLeadResearch>>
+    try {
+      data = await generateLeadResearch({
+        businessName,
+        website,
+        category,
+        city,
+        notes,
+        icp
+      })
+    } catch (err) {
+      // Generation failed after reserving the AI call — refund it, mirroring
+      // the worker's same-failure-mode handling (processors.ts).
+      await refundAiUsage(workspaceId, 'AI_RESEARCH').catch(() => {})
+      throw err
+    }
 
     // Deterministic, model-independent rationale for the ICP score — the "why",
     // not just a number. Computed from the request inputs so it is auditable and
@@ -122,16 +130,22 @@ aiRouter.post(
     })
     if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
 
-    const data = await generateOutreach({
-      businessName,
-      category,
-      city,
-      contactName,
-      aiSummary,
-      outreachAngle,
-      notes,
-      icp
-    })
+    let data: Awaited<ReturnType<typeof generateOutreach>>
+    try {
+      data = await generateOutreach({
+        businessName,
+        category,
+        city,
+        contactName,
+        aiSummary,
+        outreachAngle,
+        notes,
+        icp
+      })
+    } catch (err) {
+      await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
+      throw err
+    }
 
     res.json({ result: data })
   })
@@ -149,7 +163,13 @@ aiRouter.post(
     await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
-    const data = await analyzeReply(replyBody)
+    let data: Awaited<ReturnType<typeof analyzeReply>>
+    try {
+      data = await analyzeReply(replyBody)
+    } catch (err) {
+      await refundAiUsage(workspaceId, 'AI_REPLY').catch(() => {})
+      throw err
+    }
     res.json({ result: data })
   })
 )
