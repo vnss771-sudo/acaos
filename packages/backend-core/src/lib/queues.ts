@@ -3,6 +3,7 @@ import { Queue, type Job, type JobsOptions } from 'bullmq'
 import { createHash } from 'node:crypto'
 import { CURRENT_PAYLOAD_VERSION } from './queueSchemas.js'
 import { withEnqueueSpan } from './tracing.js'
+import { ApiError } from './errors.js'
 
 let _connection: IORedis | null = null
 
@@ -57,6 +58,24 @@ export function getQueue(name: string): Queue {
 // lib/tracing.ts. Centralized here so the ~11 enqueue functions below don't
 // each hand-roll the same span/attribute wiring.
 async function addTraced(queueName: string, jobName: string, data: Record<string, unknown>, jobOpts: JobsOptions): Promise<Job> {
+  // maxRetriesPerRequest: null with a never-giving-up retryStrategy (required by
+  // BullMQ, set above in getRedisConnection) means ioredis QUEUES commands issued
+  // while disconnected/reconnecting rather than rejecting them — so a plain
+  // `.add()` during a Redis outage would hang for the outage's duration instead
+  // of failing fast. Same reasoning as providerQuota.ts's checkProviderQuota, but
+  // this connection is lazyConnect with no eager .connect() anywhere (unlike
+  // providerQuota's store), so its status starts at 'wait' on every cold start —
+  // a bare `!== 'ready'` check would wrongly reject every process's first enqueue
+  // before the lazy connection ever gets a chance to establish. Only 'reconnecting'
+  // (ioredis is actively retrying after a failure) or 'close'/'end' (connection
+  // down, not merely not-yet-started) are the states that actually mean "an
+  // .add() right now would hang" — 'wait'/'connecting'/'connect' all still resolve
+  // on the command itself. `status` is undefined for a test fake with no real
+  // ioredis connection.
+  const status = getConnection().status
+  if (status === 'reconnecting' || status === 'close' || status === 'end') {
+    throw new ApiError(503, 'Job queue temporarily unavailable — try again shortly')
+  }
   return withEnqueueSpan(
     queueName,
     jobName,
