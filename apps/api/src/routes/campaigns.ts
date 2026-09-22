@@ -81,10 +81,14 @@ campaignsRouter.get(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
 
+    // Defensive ceiling on an otherwise-unbounded workspace-scoped list. Real
+    // workspaces stay well under this; it exists to bound worst-case query
+    // cost, not as a pagination UX.
     const campaigns = await prisma.campaign.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { leads: true } } }
+      include: { _count: { select: { leads: true } } },
+      take: 500,
     })
 
     res.json({ campaigns })
