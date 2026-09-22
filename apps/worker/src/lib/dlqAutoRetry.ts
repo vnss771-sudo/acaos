@@ -219,3 +219,24 @@ export function loadAutoRetryPolicyFromEnv(): AutoRetryPolicy {
     maxAgeMs: Math.max(0, parseIntEnv(process.env.DLQ_AUTO_RETRY_MAX_AGE_MS, DEFAULT_AUTO_RETRY_POLICY.maxAgeMs)),
   }
 }
+
+// Queues whose failure semantics make an automatic retry unsafe regardless of
+// how transient the error looks. Currently just discover-prospects, whose
+// attempts:1 (queues.ts) is a "a failed run must never silently re-hit the
+// paid provider" contract — classifyAutoRetry's bonus-retry budget can't know
+// about that: it only sees job.attemptsMade vs. job.opts.attempts, not which
+// queue set attempts:1 as a real money/quota guarantee vs. just "no automatic
+// BullMQ retry." A transient-looking error on the run's own bookkeeping (not
+// the provider call itself — see discoverProspectsBatch in processors.ts)
+// would otherwise be enough to trigger a second, re-billed provider call via
+// job.retry().
+export const NEVER_AUTO_RETRY_QUEUES: ReadonlySet<string> = new Set(['discover-prospects'])
+
+/**
+ * Pure: the sweep's actual per-tick target list — every known queue except the
+ * sweep's own queue (self-exclusion, since it would otherwise retry its own
+ * past failures into itself) and anything in NEVER_AUTO_RETRY_QUEUES.
+ */
+export function buildAutoRetryTargets(allQueueNames: string[], selfQueueName = 'dlq-auto-retry'): string[] {
+  return allQueueNames.filter((name) => name !== selfQueueName && !NEVER_AUTO_RETRY_QUEUES.has(name))
+}
