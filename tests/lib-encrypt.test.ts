@@ -10,6 +10,7 @@ import {
   activeKeyId,
   activeKeyIsHealthy,
   checkEncryptionKeyHealth,
+  checkEmailEncryptionKeyConfigured,
   blobKeyId,
   needsReencryption,
   rewrapSecret,
@@ -196,6 +197,54 @@ test('checkEncryptionKeyHealth: warns when the active key id is missing from the
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /EMAIL_ENCRYPTION_ACTIVE_KEY_ID "9" is not present in EMAIL_ENCRYPTION_KEYS/)
   })
+})
+
+// checkEncryptionKeyHealth() above is a no-op for the common unrotated case (no
+// active key id at all) — it never actually checks whether EMAIL_ENCRYPTION_KEY
+// itself is configured. checkEmailEncryptionKeyConfigured() is the counterpart
+// that does, mirroring getJwtSecret()'s eager-boot-check semantics.
+test('checkEmailEncryptionKeyConfigured: does not throw when the legacy key is set', () => {
+  withKeyEnv({ key: KEY_A }, () => {
+    assert.doesNotThrow(() => checkEmailEncryptionKeyConfigured())
+  })
+})
+
+test('checkEmailEncryptionKeyConfigured: does not throw when an active versioned key resolves', () => {
+  withKeyEnv({ key: KEY_A, keys: `2:${KEY_B}`, active: '2' }, () => {
+    assert.doesNotThrow(() => checkEmailEncryptionKeyConfigured())
+  })
+})
+
+test('checkEmailEncryptionKeyConfigured: throws for a deployed NODE_ENV with no key set', () => {
+  const prevEnv = process.env.NODE_ENV
+  try {
+    process.env.NODE_ENV = 'production'
+    withKeyEnv({ key: undefined }, () => {
+      assert.throws(() => checkEmailEncryptionKeyConfigured(), /EMAIL_ENCRYPTION_KEY is required/)
+    })
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prevEnv
+  }
+})
+
+test('checkEmailEncryptionKeyConfigured: throws when the active key id is missing from the keyring', () => {
+  withKeyEnv({ key: KEY_A, keys: `1:${KEY_B}`, active: '9' }, () => {
+    assert.throws(() => checkEmailEncryptionKeyConfigured(), /EMAIL_ENCRYPTION_ACTIVE_KEY_ID "9" is not present/)
+  })
+})
+
+test('checkEmailEncryptionKeyConfigured: does not throw for an unset NODE_ENV even with no key (dev fallback)', () => {
+  const prevEnv = process.env.NODE_ENV
+  try {
+    delete process.env.NODE_ENV
+    withKeyEnv({ key: undefined }, () => {
+      assert.doesNotThrow(() => checkEmailEncryptionKeyConfigured())
+    })
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prevEnv
+  }
 })
 
 test('a configured hex key is honored and validated', () => {

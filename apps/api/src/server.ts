@@ -36,7 +36,7 @@ import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metr
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { isProduction, isOriginAllowed, corsAllowsAnyOrigin, validateConfig, getReadinessReport } from '@acaos/backend-core/lib/config.js'
-import { checkEncryptionKeyHealth } from '@acaos/backend-core/lib/encrypt.js'
+import { checkEncryptionKeyHealth, checkEmailEncryptionKeyConfigured } from '@acaos/backend-core/lib/encrypt.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
 import { parseTrustProxy } from './lib/trustProxy.js'
 import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
@@ -56,6 +56,7 @@ import { createIngestCacheInvalidator } from './lib/ingestCacheInvalidation.js'
 
 validateConfig()
 checkEncryptionKeyHealth()
+checkEmailEncryptionKeyConfigured()
 
 // Constant-time bearer-token check. Hashing both sides to a fixed-length digest
 // before comparing means timingSafeEqual never sees a length mismatch (it throws

@@ -49,7 +49,7 @@ import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
 import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
-import { checkEncryptionKeyHealth } from '@acaos/backend-core/lib/encrypt.js'
+import { checkEncryptionKeyHealth, checkEmailEncryptionKeyConfigured } from '@acaos/backend-core/lib/encrypt.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { attachProviderQuotaStore } from '@acaos/backend-core/lib/providerQuota.js'
@@ -607,6 +607,14 @@ void initErrorReporting()
 // worker never did, despite being the process that actually decrypts SMTP/IMAP
 // credentials on every mail send/sync. Same non-fatal warn-only check.
 checkEncryptionKeyHealth()
+
+// The worker never ran the API's REQUIRED_IN_PRODUCTION presence check either,
+// so a deployed worker with EMAIL_ENCRYPTION_KEY missing or malformed booted
+// clean and only discovered it deep inside a job the first time it tried to
+// decrypt an SMTP/IMAP credential — a mid-flight failure (and DLQ entry)
+// instead of a clear boot-time crash. Fails loud here for the same deployed
+// environments checkEncryptionKeyHealth() above leaves untouched.
+checkEmailEncryptionKeyConfigured()
 
 // Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
 // debugging, OTEL_CONSOLE_EXPORTER) is set — see backend-core/lib/tracing.ts.
