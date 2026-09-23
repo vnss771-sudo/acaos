@@ -47,6 +47,36 @@ test('isPrivateIp allows public IPv6 (incl. mapped public IPv4)', () => {
   assert.equal(isPrivateIp('::ffff:8.8.8.8'), false)
 })
 
+test('isPrivateIp unwraps IPv4 embedded in IPv6 in hex as well as dotted form', () => {
+  for (const ip of [
+    '::ffff:a9fe:a9fe',            // mapped metadata, hex (WHATWG URL normal form)
+    '::ffff:7f00:1',               // mapped loopback, hex
+    '0:0:0:0:0:ffff:0a00:0001',    // mapped private, fully expanded
+    '::ffff:0:a9fe:a9fe',          // SIIT-translated metadata
+    '::7f00:1', '::127.0.0.1',     // IPv4-compatible loopback
+    '64:ff9b::a9fe:a9fe',          // NAT64 metadata
+    '64:ff9b::10.0.0.1',           // NAT64 private, dotted
+    '64:ff9b:1::1',                // NAT64 local-use prefix
+    '2002:a9fe:a9fe::1',           // 6to4 wrapping metadata
+    '2001:0:4136:e378:8000:63bf:80ff:fffe', // Teredo client 127.0.0.1
+    'fec0::1',                     // site-local
+  ]) {
+    assert.equal(isPrivateIp(ip), true, `${ip} should be private`)
+  }
+})
+
+test('isPrivateIp allows public IPv4 embedded in IPv6', () => {
+  for (const ip of ['::ffff:808:808', '64:ff9b::808:808', '2002:808:808::1', '2001:4860:4860::8888']) {
+    assert.equal(isPrivateIp(ip), false, `${ip} should be public`)
+  }
+})
+
+test('a webhook URL naming the metadata IP through a mapped IPv6 literal is rejected', async () => {
+  const { hostname } = new URL('https://[::ffff:169.254.169.254]/hook')
+  assert.equal(hostname, '[::ffff:a9fe:a9fe]')
+  await assert.rejects(() => resolvePublicMailHost(hostname, 'webhook url'), /private or reserved/)
+})
+
 test('assertPublicMailHost rejects literal private IPs and localhost without DNS', async () => {
   await assert.rejects(() => assertPublicMailHost('127.0.0.1', 'smtpHost'), /private or reserved/)
   await assert.rejects(() => assertPublicMailHost('10.1.2.3'), /private or reserved/)

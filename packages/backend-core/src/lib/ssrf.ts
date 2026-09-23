@@ -36,9 +36,42 @@ function isPrivateIpv4(ip: string): boolean {
 }
 
 /**
+ * Expand an IPv6 literal into its eight 16-bit groups, or null if malformed.
+ * Handles `::` compression and a trailing dotted-IPv4 tail (::ffff:1.2.3.4).
+ */
+function ipv6Hextets(ip: string): number[] | null {
+  let s = ip
+  const tail = s.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
+  if (tail) {
+    const o = ipv4Octets(tail[1] as string)
+    if (!o) return null
+    const hi = ((o[0] << 8) | o[1]).toString(16)
+    const lo = ((o[2] << 8) | o[3]).toString(16)
+    s = `${s.slice(0, -(tail[1] as string).length)}${hi}:${lo}`
+  }
+  const halves = s.split('::')
+  if (halves.length > 2) return null
+  const parse = (part: string) => (part === '' ? [] : part.split(':').map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN)))
+  const head = parse(halves[0] as string)
+  const rest = halves.length === 2 ? parse(halves[1] as string) : []
+  const fill = 8 - head.length - rest.length
+  if (halves.length === 2 ? fill < 1 : fill !== 0) return null
+  const groups = [...head, ...new Array<number>(halves.length === 2 ? fill : 0).fill(0), ...rest]
+  return groups.some((g) => Number.isNaN(g)) ? null : groups
+}
+
+/** Dotted IPv4 from two 16-bit groups. */
+function hextetsToIpv4(hi: number, lo: number): string {
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+}
+
+/**
  * True for an IP literal (v4 or v6) that points at private, loopback,
- * link-local, unique-local, or metadata space. IPv4-mapped IPv6 addresses are
- * unwrapped and checked as IPv4.
+ * link-local, unique-local, or metadata space. IPv6 forms that carry an IPv4
+ * address (mapped, compatible, SIIT, NAT64, 6to4, Teredo) are unwrapped and the
+ * embedded IPv4 is checked, whether written dotted or in hex — WHATWG URL
+ * parsing normalizes `[::ffff:169.254.169.254]` to `[::ffff:a9fe:a9fe]`, so a
+ * dotted-only check would let a webhook URL reach the metadata endpoint.
  */
 export function isPrivateIp(addr: string): boolean {
   let ip = addr.trim().toLowerCase()
@@ -51,16 +84,29 @@ export function isPrivateIp(addr: string): boolean {
   if (kind === 4) return isPrivateIpv4(ip)
   if (kind !== 6) return false
 
-  // IPv4-mapped / -compatible IPv6: ::ffff:1.2.3.4 or ::ffff:0:1.2.3.4
-  const mapped = ip.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
-  if (mapped && (ip.startsWith('::ffff:') || ip.startsWith('::'))) {
-    return isPrivateIpv4(mapped[1] as string)
-  }
+  const h = ipv6Hextets(ip)
+  if (!h) return true // net.isIP accepted it but we can't classify it — fail closed
+  const zeroUpTo = (n: number) => h.slice(0, n).every((g) => g === 0)
 
-  if (ip === '::1' || ip === '::') return true // loopback / unspecified
-  if (ip.startsWith('fe80') || ip.startsWith('fe9') || ip.startsWith('fea') || ip.startsWith('feb')) return true // fe80::/10 link-local
-  if (ip.startsWith('fc') || ip.startsWith('fd')) return true // fc00::/7 unique-local
-  if (ip.startsWith('ff')) return true // ff00::/8 multicast
+  if (zeroUpTo(8)) return true // :: unspecified
+  if (zeroUpTo(7) && h[7] === 1) return true // ::1 loopback
+  // ::ffff:0:0/96 mapped, ::ffff:0:0:0/96 SIIT, ::/96 compatible (deprecated)
+  if (zeroUpTo(5) && h[5] === 0xffff) return isPrivateIpv4(hextetsToIpv4(h[6]!, h[7]!))
+  if (zeroUpTo(4) && h[4] === 0xffff && h[5] === 0) return isPrivateIpv4(hextetsToIpv4(h[6]!, h[7]!))
+  if (zeroUpTo(6)) return isPrivateIpv4(hextetsToIpv4(h[6]!, h[7]!))
+  // NAT64: 64:ff9b::/96 well-known prefix embeds IPv4; 64:ff9b:1::/48 is local-use
+  if (h[0] === 0x64 && h[1] === 0xff9b) {
+    if (h.slice(2, 6).every((g) => g === 0)) return isPrivateIpv4(hextetsToIpv4(h[6]!, h[7]!))
+    if (h[2] === 1) return true
+  }
+  if (h[0] === 0x2002) return isPrivateIpv4(hextetsToIpv4(h[1]!, h[2]!)) // 6to4 2002::/16
+  if (h[0] === 0x2001 && h[1] === 0) return isPrivateIpv4(hextetsToIpv4(h[6]! ^ 0xffff, h[7]! ^ 0xffff)) // Teredo client
+
+  const first = h[0]!
+  if ((first & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
+  if ((first & 0xffc0) === 0xfec0) return true // fec0::/10 site-local (deprecated)
+  if ((first & 0xfe00) === 0xfc00) return true // fc00::/7 unique-local
+  if ((first & 0xff00) === 0xff00) return true // ff00::/8 multicast
   return false
 }
 
