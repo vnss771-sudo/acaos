@@ -591,10 +591,12 @@ model UsageRecord {
 // to a prospect who answered a campaign send. Claim-first outbox, like
 // OutreachSent: the row is inserted SENDING before SMTP is dialled, keyed by a
 // client-generated idempotencyKey, so a double-click or network retry can't send
-// twice. A crash after dispatch leaves the row SENDING (fail-closed: never
-// auto-resend); a known SMTP rejection moves it to FAILED, which may be retried
-// with the same key. messageId is the SMTP Message-ID of our reply, so later
-// replies in the same thread can carry it in References.
+// twice. A known SMTP rejection moves it to FAILED, which may be retried with the
+// same key. A SENDING row older than the in-flight window means the outcome is
+// UNKNOWN (crash, or DB failure after the provider accepted the message): it
+// blocks every further reply on that thread — whatever key is used — until a
+// person resolves it (sent / not sent). Never auto-resent. messageId is the SMTP
+// Message-ID of our reply, so later replies can carry it in References.
 model InboxReplySend {
   id              String    @id @default(cuid())
   workspaceId     String
@@ -608,12 +610,17 @@ model InboxReplySend {
   messageId       String?
   lastError       String?
   createdAt       DateTime  @default(now())
+  // When the current attempt was claimed (reset when a FAILED row is retried).
+  // Drives the in-flight vs outcome-unknown split for SENDING rows.
+  attemptedAt     DateTime  @default(now())
   sentAt          DateTime?
+  resolvedByUserId String?
   workspace       Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   outreachSent    OutreachSent @relation(fields: [outreachSentId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, idempotencyKey])
   @@index([outreachSentId, createdAt])
+  @@index([outreachSentId, status])
 }
 
 model ProcessedEmail {

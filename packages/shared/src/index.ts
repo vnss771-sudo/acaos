@@ -263,6 +263,13 @@ export interface SendInboxReplyRequest {
   idempotencyKey: string
 }
 
+// POST /api/inbox/reply/:replyId/sends/:sendId/resolve — settle a reply whose
+// delivery outcome is unknown, after checking the mailbox's Sent folder.
+export interface ResolveInboxReplySendRequest {
+  workspaceId: string
+  outcome: 'sent' | 'not_sent'
+}
+
 // PATCH /api/inbox/reply/:replyId/feedback
 export interface InboxClassificationFeedbackRequest {
   workspaceId: string
@@ -594,6 +601,7 @@ export interface RouteContracts {
 
   // Inbox
   'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string; duplicate?: boolean } }
+  'POST /api/inbox/reply/:replyId/sends/:sendId/resolve': { params: { replyId: string; sendId: string }; body: ResolveInboxReplySendRequest; response: { success: boolean; status: 'SENT' | 'FAILED' } }
   'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
 
   // Workspaces

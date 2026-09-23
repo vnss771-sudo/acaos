@@ -13,7 +13,9 @@ CREATE TABLE "InboxReplySend" (
     "messageId" TEXT,
     "lastError" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "attemptedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "sentAt" TIMESTAMP(3),
+    "resolvedByUserId" TEXT,
 
     CONSTRAINT "InboxReplySend_pkey" PRIMARY KEY ("id")
 );
@@ -23,6 +25,9 @@ CREATE UNIQUE INDEX "InboxReplySend_workspaceId_idempotencyKey_key" ON "InboxRep
 
 -- CreateIndex
 CREATE INDEX "InboxReplySend_outreachSentId_createdAt_idx" ON "InboxReplySend"("outreachSentId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "InboxReplySend_outreachSentId_status_idx" ON "InboxReplySend"("outreachSentId", "status");
 
 -- AddForeignKey
 ALTER TABLE "InboxReplySend" ADD CONSTRAINT "InboxReplySend_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;

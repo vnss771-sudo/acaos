@@ -27,6 +27,9 @@ type Reply = {
   replyConfidence: number | null
   replyIsAutoReply: boolean | null
   lead: { id: string; businessName: string; stage: string } | null
+  // An Inbox reply on this thread that hasn't finished. outcomeUnknown: it may or
+  // may not have been delivered, and the user must say which before replying again.
+  pendingSend?: { id: string; attemptedAt: string; outcomeUnknown: boolean; bodyPreview: string } | null
 }
 
 type InboxResponse = { replies: Reply[]; counts: Record<string, number>; total: number }
@@ -123,10 +126,31 @@ export function InboxView({ api, workspace, toast }: Props) {
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to send reply')
+      // A 409 may mean an earlier reply on this thread is open/unknown — refresh
+      // so its status (and the resolve prompt) shows.
+      load()
     } finally {
       setSendingReplyId(null)
     }
   }, [workspace?.id, route, toast, load, data])
+
+  const [resolvingSendId, setResolvingSendId] = useState<string | null>(null)
+  const handleResolveSend = useCallback(async (replyId: string, sendId: string, outcome: 'sent' | 'not_sent') => {
+    if (!workspace) return
+    setResolvingSendId(sendId)
+    try {
+      await route('POST /api/inbox/reply/:replyId/sends/:sendId/resolve', {
+        params: { replyId, sendId },
+        body: { workspaceId: workspace.id, outcome },
+      })
+      toast.success(outcome === 'sent' ? 'Marked as sent' : 'Marked as not sent — you can reply again')
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update reply')
+    } finally {
+      setResolvingSendId(null)
+    }
+  }, [workspace?.id, route, toast, load])
 
   const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect') => {
     if (!workspace) return
@@ -160,7 +184,7 @@ export function InboxView({ api, workspace, toast }: Props) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <p style={{ color: colors.textMuted, fontSize: 13, margin: 0, flex: 1, minWidth: 220 }}>
-          Inbox Assistant classifies incoming replies by intent and suggests the best next action. Review, approve, and respond with AI-generated replies.
+          Inbox Assistant classifies incoming replies by intent and suggests the best next action. Write and send your reply from your own mailbox.
         </p>
         {/* Contextual AI: analyze an ad-hoc reply (paste-in) right where replies live. */}
         <AiQuickAction kind="reply" api={api} workspace={workspace} toast={toast} />
@@ -262,7 +286,37 @@ export function InboxView({ api, workspace, toast }: Props) {
                     <ConfidenceBar value={r.replyConfidence} />
                   </div>
                 )}
-                {editingReplyId === r.id ? (
+                {r.pendingSend ? (
+                  <div role="status" style={{ marginTop: 8, padding: 10, borderRadius: 4, border: `1px solid ${colors.amber}`, fontSize: 13, color: colors.text, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {r.pendingSend.outcomeUnknown ? (
+                      <>
+                        <span>
+                          We couldn't confirm whether your reply of {new Date(r.pendingSend.attemptedAt).toLocaleString()} was delivered.
+                          Check your mailbox's Sent folder, then tell us — replying is paused until you do, so it can't go out twice.
+                        </span>
+                        <span style={{ color: colors.textFaint, fontStyle: 'italic' }}>“{r.pendingSend.bodyPreview}”</span>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={() => handleResolveSend(r.id, r.pendingSend!.id, 'sent')}
+                            disabled={resolvingSendId === r.pendingSend.id}
+                            style={{ padding: '6px 12px', borderRadius: 4, border: 'none', background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 12 }}
+                          >
+                            It was sent
+                          </button>
+                          <button
+                            onClick={() => handleResolveSend(r.id, r.pendingSend!.id, 'not_sent')}
+                            disabled={resolvingSendId === r.pendingSend.id}
+                            style={{ padding: '6px 12px', borderRadius: 4, border: `1px solid ${colors.border}`, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 12 }}
+                          >
+                            It wasn't sent
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <span>Sending your reply…</span>
+                    )}
+                  </div>
+                ) : editingReplyId === r.id ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
                     <textarea
                       value={customBody}

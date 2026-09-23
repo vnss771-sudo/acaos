@@ -8,7 +8,7 @@ import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '.
 import { sendMail, isMailConfigured } from '../services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { isSuppressed } from '@acaos/backend-core/lib/suppressions.js'
-import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
+import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { escapeHtml } from '../lib/html.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
@@ -42,6 +42,16 @@ const sendReplySchema = z.object({
   // Client-generated per compose session (e.g. crypto.randomUUID()); a retry
   // with the same key never sends twice.
   idempotencyKey: z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/),
+})
+
+const resolveParamsSchema = z.object({
+  replyId: idField,
+  sendId: idField,
+})
+
+const resolveSendSchema = z.object({
+  workspaceId: workspaceIdField,
+  outcome: z.enum(['sent', 'not_sent']),
 })
 
 const classificationFeedbackSchema = z.object({
@@ -81,6 +91,14 @@ inboxRouter.get(
         replyConfidence: true,
         replyIsAutoReply: true,
         lead: { select: { id: true, businessName: true, stage: true } },
+        // An open (SENDING) Inbox reply on this thread, if any — the UI shows it
+        // as in flight or, past the window, asks the user to resolve it.
+        inboxReplySends: {
+          where: { workspaceId, status: 'SENDING' },
+          orderBy: { attemptedAt: 'desc' },
+          take: 1,
+          select: { id: true, attemptedAt: true, body: true },
+        },
       },
     })
 
@@ -99,7 +117,25 @@ inboxRouter.get(
       if (g.replyIntent) counts[g.replyIntent] = n
     }
 
-    res.json({ replies, counts, total })
+    const now = Date.now()
+    res.json({
+      replies: replies.map(({ inboxReplySends, ...r }) => {
+        const open = inboxReplySends[0]
+        return {
+          ...r,
+          pendingSend: open
+            ? {
+                id: open.id,
+                attemptedAt: open.attemptedAt.toISOString(),
+                outcomeUnknown: now - open.attemptedAt.getTime() >= INBOX_SEND_IN_FLIGHT_MS,
+                bodyPreview: open.body.slice(0, 200),
+              }
+            : null,
+        }
+      }),
+      counts,
+      total,
+    })
   })
 )
 
@@ -119,6 +155,10 @@ inboxRouter.get(
 //    operator-suspended workspaces;
 //  - claim-first on (workspaceId, idempotencyKey) so a double-click or network
 //    retry can't send twice;
+//  - at most one open (SENDING) reply per thread, whatever the key: claims are
+//    serialized on the OutreachSent row, and a SENDING row past the in-flight
+//    window is "outcome unknown" (the provider may have accepted it) and blocks
+//    further replies until a person resolves it — never auto-resent;
 //  - threads the reply (In-Reply-To / References) onto the prospect's message;
 //  - records a SENT ContactEvent in the contact ledger plus an audit event.
 // Returns: { success: true, sentAt: ISO string, message: string, duplicate?: true }
@@ -155,11 +195,11 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
     // retry after e.g. a later unsubscribe still reports what actually happened).
     const prior = await prisma.inboxReplySend.findUnique({
       where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey } },
-      select: { outreachSentId: true, status: true, sentAt: true },
+      select: { outreachSentId: true, status: true, sentAt: true, attemptedAt: true },
     })
     if (prior && prior.outreachSentId !== reply.id) throw new ApiError(409, 'Idempotency key already used for a different reply')
     if (prior?.status === 'SENT') return res.json(sentResponse(reply.toEmail, prior.sentAt, true))
-    if (prior?.status === 'SENDING') throw new ApiError(409, 'This reply is already being sent')
+    if (prior?.status === 'SENDING') throw openSendError(prior.attemptedAt)
 
     const [smtpCfg, workspace] = await Promise.all([
       prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
@@ -175,33 +215,49 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
       throw new ApiError(409, 'This recipient has unsubscribed or is suppressed — reply not sent')
     }
 
-    const replySubject = /^re:/i.test(reply.subject ?? '') ? reply.subject! : `Re: ${reply.subject || '(no subject)'}`
+    // Subject is folded to one line and length-capped: CR/LF must never reach a
+    // header, and RFC 5322 caps a line at 998 chars.
+    const baseSubject = (reply.subject ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 900)
+    const replySubject = /^re:/i.test(baseSubject) ? baseSubject : `Re: ${baseSubject || '(no subject)'}`
 
-    // Claim first. A FAILED prior attempt with the same key is re-claimed
-    // atomically; a concurrent duplicate loses on the unique key.
-    if (prior?.status === 'FAILED') {
-      const reclaimed = await prisma.inboxReplySend.updateMany({
-        where: { workspaceId, idempotencyKey, status: 'FAILED' },
-        data: { status: 'SENDING', body, subject: replySubject, actorUserId: user.id, lastError: null },
-      })
-      if (reclaimed.count === 0) throw new ApiError(409, 'This reply is already being sent')
-    } else {
-      try {
-        await prisma.inboxReplySend.create({
-          data: {
-            workspaceId,
-            outreachSentId: reply.id,
-            idempotencyKey,
-            actorUserId: user.id,
-            toEmail: reply.toEmail,
-            subject: replySubject,
-            body,
-          },
+    // Claim first, serialized per thread: lock the OutreachSent row so two
+    // requests with DIFFERENT keys can't both pass the open-send check. Any
+    // SENDING row on the thread blocks — in flight, or outcome unknown after a
+    // crash / post-acceptance DB failure — so a fresh key can never re-send a
+    // reply that may already have been delivered. A FAILED prior attempt with
+    // the same key is re-claimed.
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "OutreachSent" WHERE "id" = ${reply.id} FOR UPDATE`
+        const open = await tx.inboxReplySend.findFirst({
+          where: { workspaceId, outreachSentId: reply.id, status: 'SENDING' },
+          orderBy: { attemptedAt: 'desc' },
+          select: { attemptedAt: true },
         })
-      } catch (err) {
-        if ((err as { code?: string })?.code === 'P2002') throw new ApiError(409, 'This reply is already being sent')
-        throw err
-      }
+        if (open) throw openSendError(open.attemptedAt)
+        if (prior?.status === 'FAILED') {
+          const reclaimed = await tx.inboxReplySend.updateMany({
+            where: { workspaceId, idempotencyKey, status: 'FAILED' },
+            data: { status: 'SENDING', body, subject: replySubject, actorUserId: user.id, lastError: null, attemptedAt: new Date() },
+          })
+          if (reclaimed.count === 0) throw new ApiError(409, IN_FLIGHT_MESSAGE)
+        } else {
+          await tx.inboxReplySend.create({
+            data: {
+              workspaceId,
+              outreachSentId: reply.id,
+              idempotencyKey,
+              actorUserId: user.id,
+              toEmail: reply.toEmail,
+              subject: replySubject,
+              body,
+            },
+          })
+        }
+      })
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'P2002') throw new ApiError(409, IN_FLIGHT_MESSAGE)
+      throw err
     }
 
     const headers = await threadingHeaders(workspaceId, reply.id, reply.messageId)
@@ -238,28 +294,43 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
       throw new ApiError(statusCode, userMessage)
     }
 
+    // From here the provider has ACCEPTED the message: it is out, and nothing
+    // below may turn that into an error response (the user would retry and send
+    // it twice). Finalize atomically; if that fails, fall back to recording just
+    // the SENT status so the thread isn't blocked. If even that fails the row
+    // stays SENDING, becomes "outcome unknown", and blocks further replies on the
+    // thread until someone resolves it — fail-closed, never auto-resent.
     const sentAt = new Date()
     const msgId = (info as { messageId?: string } | undefined)?.messageId ?? null
-    await prisma.$transaction([
-      prisma.inboxReplySend.updateMany({
-        where: { workspaceId, idempotencyKey },
-        data: { status: 'SENT', sentAt, messageId: msgId },
-      }),
-      // campaignId stays off the ledger row: CampaignDailyStats rebuilds and the
-      // reconciliation sweep count every campaign-tagged SENT event as a campaign
-      // send, and a conversational reply isn't one. The link lives in metadata.
-      prisma.contactEvent.create({
-        data: contactEventData({
-          workspaceId,
-          email: reply.toEmail,
-          type: 'SENT',
-          leadId: reply.leadId,
-          outreachSentId: reply.id,
-          occurredAt: sentAt,
-          metadata: { source: 'inbox_reply', campaignId: reply.campaignId },
+    const ledgerEvent = {
+      workspaceId,
+      email: reply.toEmail,
+      type: 'SENT' as const,
+      leadId: reply.leadId,
+      outreachSentId: reply.id,
+      occurredAt: sentAt,
+      metadata: { source: 'inbox_reply', campaignId: reply.campaignId },
+    }
+    try {
+      await prisma.$transaction([
+        prisma.inboxReplySend.updateMany({
+          where: { workspaceId, idempotencyKey },
+          data: { status: 'SENT', sentAt, messageId: msgId },
         }),
-      }),
-    ])
+        // campaignId stays off the ledger row: CampaignDailyStats rebuilds and the
+        // reconciliation sweep count every campaign-tagged SENT event as a campaign
+        // send, and a conversational reply isn't one. The link lives in metadata.
+        prisma.contactEvent.create({ data: contactEventData(ledgerEvent) }),
+      ])
+    } catch (err) {
+      console.error(`[inbox] reply ${replyId} accepted by SMTP (${msgId ?? 'no message-id'}) but finalize failed: ${err instanceof Error ? err.message : err}`)
+      const marked = await prisma.inboxReplySend.updateMany({
+        where: { workspaceId, idempotencyKey, status: 'SENDING' },
+        data: { status: 'SENT', sentAt, messageId: msgId },
+      }).catch(() => null)
+      if (marked?.count) await recordContactEvent(ledgerEvent).catch(() => {})
+      else console.error(`[inbox] reply ${replyId} left SENDING after SMTP acceptance — needs resolution before the thread can be replied to again`)
+    }
 
     await recordAudit({
       workspaceId,
@@ -268,10 +339,24 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
       entityType: 'outreachSent',
       entityId: replyId,
       metadata: { toEmail: reply.toEmail, messageId: msgId },
-    })
+    }).catch(() => {})
 
     res.json(sentResponse(reply.toEmail, sentAt, false))
   })
+}
+
+// A SENDING claim younger than this is treated as a live request; older, its
+// outcome is unknown. Comfortably above the worst-case SMTP send (connection 15s
+// + greeting 10s + socket idle 20s per step, plus DNS pinning).
+export const INBOX_SEND_IN_FLIGHT_MS = 5 * 60_000
+const IN_FLIGHT_MESSAGE = 'A reply on this thread is already being sent'
+const OUTCOME_UNKNOWN_MESSAGE =
+  'A previous reply on this thread may already have been delivered. Check your mailbox\'s Sent folder, then mark it as sent or not sent before replying again.'
+
+function openSendError(attemptedAt: Date): ApiError {
+  return Date.now() - attemptedAt.getTime() < INBOX_SEND_IN_FLIGHT_MS
+    ? new ApiError(409, IN_FLIGHT_MESSAGE)
+    : new ApiError(409, OUTCOME_UNKNOWN_MESSAGE)
 }
 
 function sentResponse(toEmail: string, sentAt: Date | null, duplicate: boolean) {
@@ -336,6 +421,69 @@ function plainTextToHtml(text: string): string {
 }
 
 inboxRouter.post('/reply/:replyId/send', createInboxReplySendHandler())
+
+// POST /api/inbox/reply/:replyId/sends/:sendId/resolve — a person settles a reply
+// whose outcome is unknown (SENDING past the in-flight window: the process died,
+// or the DB failed after the provider accepted it). Only they can check the
+// mailbox's Sent folder. 'sent' records it as delivered (status + contact
+// ledger); 'not_sent' marks it FAILED. Either unblocks the thread. A claim still
+// inside the in-flight window can't be resolved (its request may yet finish).
+// Returns: { success: true, status: 'SENT' | 'FAILED' }
+inboxRouter.post(
+  '/reply/:replyId/sends/:sendId/resolve',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { replyId, sendId } = parseParams(resolveParamsSchema, req)
+    const { workspaceId, outcome } = parseBody(resolveSendSchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const send = await prisma.inboxReplySend.findFirst({
+      where: { id: sendId, workspaceId, outreachSentId: replyId },
+      select: { id: true, status: true, attemptedAt: true, toEmail: true, messageId: true, outreachSent: { select: { leadId: true, campaignId: true } } },
+    })
+    if (!send) throw new ApiError(404, 'Reply send not found')
+
+    const target = outcome === 'sent' ? 'SENT' : 'FAILED'
+    if (send.status === target) return res.json({ success: true, status: target })
+    if (send.status !== 'SENDING') throw new ApiError(409, `This reply is already marked ${send.status === 'SENT' ? 'sent' : 'not sent'}`)
+    if (Date.now() - send.attemptedAt.getTime() < INBOX_SEND_IN_FLIGHT_MS) throw new ApiError(409, IN_FLIGHT_MESSAGE)
+
+    const now = new Date()
+    const claim = prisma.inboxReplySend.updateMany({
+      where: { id: send.id, workspaceId, status: 'SENDING' },
+      data: outcome === 'sent'
+        ? { status: 'SENT', sentAt: now, resolvedByUserId: user.id }
+        : { status: 'FAILED', lastError: 'Resolved as not sent', resolvedByUserId: user.id },
+    })
+    const [updated] = outcome === 'sent'
+      ? await prisma.$transaction([claim, prisma.contactEvent.create({
+          data: contactEventData({
+            workspaceId,
+            email: send.toEmail,
+            type: 'SENT',
+            leadId: send.outreachSent.leadId,
+            outreachSentId: replyId,
+            occurredAt: send.attemptedAt,
+            metadata: { source: 'inbox_reply', campaignId: send.outreachSent.campaignId, resolved: true },
+          }),
+        })])
+      : await prisma.$transaction([claim])
+    if (updated.count === 0) throw new ApiError(409, 'This reply was resolved by someone else')
+
+    await recordAudit({
+      workspaceId,
+      actorUserId: user.id,
+      type: 'inbox.reply_send_resolved',
+      entityType: 'outreachSent',
+      entityId: replyId,
+      metadata: { sendId: send.id, outcome },
+    })
+
+    res.json({ success: true, status: target })
+  })
+)
 
 // PATCH /api/inbox/reply/:replyId/feedback — record user feedback on classification
 // This feeds the learning loop to improve future classifications.
