@@ -59,6 +59,11 @@ const URGENCY_LABEL: Record<string, string> = {
   immediate: 'Immediate', this_week: 'This week', this_month: 'This month', nurture: 'Nurture', never: 'No action',
 }
 
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
 const FILTERS = ['INTERESTED', 'NEEDS_MORE_INFO', 'NOT_NOW', 'REFERRAL', 'OUT_OF_OFFICE', 'NOT_INTERESTED'] as const
 
 export function InboxView({ api, workspace, toast }: Props) {
@@ -69,6 +74,9 @@ export function InboxView({ api, workspace, toast }: Props) {
   const [sendingReplyId, setSendingReplyId] = useState<string | null>(null)
   const [editingReplyId, setEditingReplyId] = useState<string | null>(null)
   const [customBody, setCustomBody] = useState('')
+  // One idempotency key per compose session: a double-click or a retry after a
+  // network error re-sends the same key, and the server never sends twice.
+  const [composeKey, setComposeKey] = useState('')
   const [feedbackReplyId, setFeedbackReplyId] = useState<string | null>(null)
   const [feedbackSending, setFeedbackSending] = useState(false)
   const route = useMemo(() => makeRouteApi(api), [api])
@@ -91,23 +99,24 @@ export function InboxView({ api, workspace, toast }: Props) {
 
   useEffect(() => { load() }, [load])
 
-  // `overrideBody` is passed explicitly by the caller rather than read from the
-  // shared `customBody` state — that state is only meaningful while
-  // `editingReplyId === replyId`; "Send suggested" (no edit in progress) must
-  // never pick up leftover edited text left over from a different reply.
-  const handleSendReply = useCallback(async (replyId: string, overrideBody?: string) => {
-    if (!workspace) return
+  const openComposer = useCallback((replyId: string) => {
+    setEditingReplyId(replyId)
+    setCustomBody('')
+    setComposeKey(newIdempotencyKey())
+  }, [])
+
+  // The body is always what the user typed. The AI's "suggested next step" is an
+  // internal note to the user, not prospect-facing copy, so it is never sent.
+  const handleSendReply = useCallback(async (replyId: string, body: string, idempotencyKey: string) => {
+    if (!workspace || !body.trim()) return
     setSendingReplyId(replyId)
     try {
       const response = await route('POST /api/inbox/reply/:replyId/send', {
         params: { replyId },
-        body: {
-          workspaceId: workspace.id,
-          customBody: overrideBody || undefined,
-        },
+        body: { workspaceId: workspace.id, body, idempotencyKey },
       })
       if (response.success) {
-        toast.success(`✓ Reply sent! 🎉`)
+        toast.success(`✓ Reply sent to ${data?.replies.find(r => r.id === replyId)?.toEmail ?? 'prospect'}`)
         setCustomBody('')
         setEditingReplyId(null)
         load()
@@ -117,7 +126,7 @@ export function InboxView({ api, workspace, toast }: Props) {
     } finally {
       setSendingReplyId(null)
     }
-  }, [workspace?.id, route, toast, load])
+  }, [workspace?.id, route, toast, load, data])
 
   const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect') => {
     if (!workspace) return
@@ -138,7 +147,7 @@ export function InboxView({ api, workspace, toast }: Props) {
     } finally {
       setFeedbackSending(false)
     }
-  }, [workspace?.id, route, toast, load])
+  }, [workspace?.id, route, toast, load, data])
 
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
@@ -200,7 +209,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                 )}
                 {r.replySuggestedAction && (
                   <div style={{ color: colors.blueLight, fontSize: 13 }}>
-                    <span style={{ color: colors.textFaint }}>Suggested: </span>{r.replySuggestedAction}
+                    <span style={{ color: colors.textFaint }}>Suggested next step: </span>{r.replySuggestedAction}
                   </div>
                 )}
                 {r.replyConfidence !== null && (
@@ -258,7 +267,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                     <textarea
                       value={customBody}
                       onChange={(e) => setCustomBody(e.target.value)}
-                      placeholder="Edit the reply text (or leave empty to use suggestion)..."
+                      placeholder={r.replySuggestedAction ? `Write your reply to ${r.toEmail}. Next step: ${r.replySuggestedAction}` : `Write your reply to ${r.toEmail}…`}
                       style={{
                         flex: 1, padding: 8, borderRadius: 4, border: `1px solid ${colors.border}`,
                         fontFamily: 'inherit', fontSize: 13, minHeight: 80, resize: 'vertical',
@@ -268,12 +277,12 @@ export function InboxView({ api, workspace, toast }: Props) {
                     />
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
-                        onClick={() => handleSendReply(r.id, customBody)}
-                        disabled={sendingReplyId === r.id}
+                        onClick={() => handleSendReply(r.id, customBody, composeKey)}
+                        disabled={sendingReplyId === r.id || !customBody.trim()}
                         style={{
                           flex: 1, padding: '8px 12px', borderRadius: 4, border: 'none',
                           background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer',
-                          fontSize: 13, opacity: sendingReplyId === r.id ? 0.6 : 1,
+                          fontSize: 13, opacity: sendingReplyId === r.id || !customBody.trim() ? 0.6 : 1,
                         }}
                       >
                         {sendingReplyId === r.id ? 'Sending...' : 'Send reply'}
@@ -291,28 +300,15 @@ export function InboxView({ api, workspace, toast }: Props) {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                    {r.replySuggestedAction && (
-                      <button
-                        onClick={() => handleSendReply(r.id)}
-                        disabled={sendingReplyId === r.id}
-                        style={{
-                          flex: 1, padding: '6px 12px', borderRadius: 4, border: 'none',
-                          background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer',
-                          fontSize: 12, opacity: sendingReplyId === r.id ? 0.6 : 1,
-                        }}
-                      >
-                        {sendingReplyId === r.id ? '...' : 'Send suggested'}
-                      </button>
-                    )}
                     <button
-                      onClick={() => { setEditingReplyId(r.id); setCustomBody(r.replySuggestedAction || ''); }}
+                      onClick={() => openComposer(r.id)}
                       disabled={sendingReplyId === r.id}
                       style={{
                         padding: '6px 12px', borderRadius: 4, border: `1px solid ${colors.border}`,
                         background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 12,
                       }}
                     >
-                      Edit & send
+                      Reply
                     </button>
                   </div>
                 )}
