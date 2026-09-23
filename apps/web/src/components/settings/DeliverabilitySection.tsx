@@ -2,7 +2,44 @@ import React from 'react'
 import { s, colors } from '../../styles.js'
 import { Spinner } from '../Spinner.js'
 
-export type DomainCheckResult = { hasSPF: boolean; hasDKIM: boolean } | null
+export type DomainIssue = { code: string; severity: 'critical' | 'warning' | 'info'; message: string }
+
+export type DomainCheckResult = {
+  hasSPF: boolean
+  hasDKIM: boolean
+  // Present when the API returns the full report (DMARC + blocklists).
+  dmarc?: { status: 'ok' | 'missing' | 'error'; policy: string | null }
+  blocklists?: Array<{ zone: string; status: 'listed' | 'clean' | 'error' }>
+  issues?: DomainIssue[]
+} | null
+
+/** When the scheduled daily check last ran for the workspace's sending domain. */
+export type DomainMonitor = { checkedAt: string | null; status: 'healthy' | 'warning' | 'critical' | 'unknown' | null }
+
+function Row({ label, ok, okText, badText, neutral }: { label: string; ok: boolean; okText: string; badText: string; neutral?: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <span style={{ color: colors.textMuted, fontSize: 13 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: neutral ? colors.textFaint : ok ? colors.green : colors.red }}>
+        {ok ? `✓ ${okText}` : neutral ? badText : `✗ ${badText}`}
+      </span>
+    </div>
+  )
+}
+
+function dmarcText(d: NonNullable<NonNullable<DomainCheckResult>['dmarc']>): { ok: boolean; neutral: boolean; text: string } {
+  if (d.status === 'error') return { ok: false, neutral: true, text: 'Lookup failed' }
+  if (d.status === 'missing') return { ok: false, neutral: false, text: 'Missing' }
+  return { ok: true, neutral: false, text: `Configured (p=${d.policy ?? '?'})` }
+}
+
+function blocklistRow(lists: NonNullable<NonNullable<DomainCheckResult>['blocklists']>): { ok: boolean; neutral: boolean; text: string } {
+  const listed = lists.filter((l) => l.status === 'listed').map((l) => l.zone)
+  if (listed.length) return { ok: false, neutral: false, text: `Listed on ${listed.join(', ')}` }
+  const failed = lists.filter((l) => l.status === 'error').length
+  if (failed === lists.length) return { ok: false, neutral: true, text: 'Lookup failed' }
+  return { ok: true, neutral: false, text: failed ? `Not listed (${failed} of ${lists.length} unavailable)` : 'Not listed' }
+}
 
 export type WarmupStatus = {
   active: boolean
@@ -38,7 +75,7 @@ function warmupHeadline(w: WarmupStatus): string {
 
 export function DeliverabilitySection({
   smtpFromConfigured, domainCheck, domainCheckLoading, suppressionCount,
-  dailySendLimit, approvalMode, warmup, reputation, canManage, startingWarmup, onStartWarmup,
+  dailySendLimit, approvalMode, warmup, reputation, canManage, startingWarmup, onStartWarmup, monitor,
 }: {
   smtpFromConfigured: boolean
   domainCheck: DomainCheckResult
@@ -51,6 +88,7 @@ export function DeliverabilitySection({
   canManage?: boolean
   startingWarmup?: boolean
   onStartWarmup?: () => void
+  monitor?: DomainMonitor | null
 }) {
   return (
     <div style={s.card}>
@@ -78,17 +116,25 @@ export function DeliverabilitySection({
               </div>
             ) : domainCheck ? (
               <div style={{ display: 'grid', gap: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.textMuted, fontSize: 13 }}>SPF record</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: domainCheck.hasSPF ? colors.green : colors.red }}>
-                    {domainCheck.hasSPF ? '✓ Configured' : '✗ Missing'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.textMuted, fontSize: 13 }}>DKIM signature</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: domainCheck.hasDKIM ? colors.green : colors.red }}>
-                    {domainCheck.hasDKIM ? '✓ Configured' : '✗ Missing'}
-                  </span>
+                <Row label="SPF record" ok={domainCheck.hasSPF} okText="Configured" badText="Missing" />
+                <Row label="DKIM signature" ok={domainCheck.hasDKIM} okText="Configured" badText="Missing" />
+                {domainCheck.dmarc && (() => {
+                  const d = dmarcText(domainCheck.dmarc)
+                  return <Row label="DMARC policy" ok={d.ok} neutral={d.neutral} okText={d.text} badText={d.text} />
+                })()}
+                {domainCheck.blocklists && domainCheck.blocklists.length > 0 && (() => {
+                  const b = blocklistRow(domainCheck.blocklists)
+                  return <Row label="Blocklists" ok={b.ok} neutral={b.neutral} okText={b.text} badText={b.text} />
+                })()}
+                {domainCheck.issues?.filter((i) => i.severity !== 'info').map((i) => (
+                  <div key={i.code} style={{ color: i.severity === 'critical' ? colors.red : colors.textMuted, fontSize: 12 }}>
+                    {i.message}
+                  </div>
+                ))}
+                <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>
+                  {monitor?.checkedAt
+                    ? `Checked automatically every day · last run ${new Date(monitor.checkedAt).toLocaleString()}`
+                    : 'Checked automatically every day · first scheduled run pending'}
                 </div>
               </div>
             ) : (

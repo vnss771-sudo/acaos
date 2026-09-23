@@ -28,8 +28,10 @@ import {
   RetentionPurgePayloadSchema,
   SendFollowupPayloadSchema,
   DlqAutoRetryPayloadSchema,
+  DomainHealthPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
+import { runDomainHealthSweep, isDomainHealthEnabled, domainHealthIntervalMs } from '@acaos/backend-core/lib/domainHealth.js'
 import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
@@ -423,6 +425,23 @@ const dlqAutoRetryWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── domain-health ─────────────────────────────────────────────────────────────
+// Daily sweep (see backend-core lib/domainHealth.ts): re-checks every workspace's
+// sending domain for SPF/DKIM/DMARC and blocklist listings, stores the latest
+// report, and alerts the workspace when a new problem appears. Default ON
+// (DOMAIN_HEALTH_ENABLED) — it only makes DNS lookups.
+const domainHealthWorker = new Worker(
+  'domain-health',
+  async (job) => withConsumerSpan('domain-health', job.name, job.data?.traceparent, {}, async () => {
+    parseJobPayload(DomainHealthPayloadSchema, 'domain-health', job.data)
+    if (!isDomainHealthEnabled()) { log('domain-health', 'skipped: DOMAIN_HEALTH_ENABLED off'); return { skipped: true } }
+    const r = await runDomainHealthSweep()
+    log('domain-health', `Checked ${r.domains} domain(s) for ${r.workspaces} workspace(s): ${r.degraded} degraded, ${r.unknown} undetermined`)
+    return r
+  }),
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers + job metrics ───────────────────────────────────────────────
 const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
@@ -437,6 +456,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['discover-prospects',      discoverWorker],
   ['retention-purge',         retentionWorker],
   ['dlq-auto-retry',          dlqAutoRetryWorker],
+  ['domain-health',           domainHealthWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
   worker.on('completed', (job) => {
@@ -563,6 +583,18 @@ const domainMetricsCache = createCachedValue(
   ).catch(err => console.warn('[worker] Failed to schedule DLQ auto-retry sweep:', err.message))
 }
 
+// ── Repeatable domain-health sweep (daily by default) ─────────────────────────
+// Interval overridable via DOMAIN_HEALTH_INTERVAL_MS. Always registered
+// (idempotent); the processor no-ops when DOMAIN_HEALTH_ENABLED is false.
+{
+  const domainHealthQueue = new Queue('domain-health', { connection })
+  domainHealthQueue.upsertJobScheduler(
+    'domain-health-sweep',
+    { every: domainHealthIntervalMs() },
+    { name: 'domain-health-sweep', data: {}, opts: { attempts: 1, removeOnComplete: { count: 7 }, removeOnFail: { count: 20 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule domain-health sweep:', err.message))
+}
+
 // ── Queue-depth-adaptive worker concurrency ───────────────────────────────────
 // Opt-in via WORKER_ADAPTIVE_CONCURRENCY_ENABLED — off by default, so this is a
 // pure addition: no worker's concurrency changes from its hardcoded value above
@@ -674,6 +706,7 @@ async function shutdown(signal: string, exitCode = 0) {
     discoverWorker.close(),
     retentionWorker.close(),
     dlqAutoRetryWorker.close(),
+    domainHealthWorker.close(),
   ])
   closeMailTransports() // release pooled SMTP connections
   await prisma.$disconnect()

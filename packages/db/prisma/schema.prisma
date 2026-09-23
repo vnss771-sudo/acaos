@@ -646,6 +646,11 @@ model WorkspaceEmailConfig {
   // cursor is stale and is reset so old UIDs don't make us skip new mail.
   lastSyncedUid   Int       @default(0)
   lastUidValidity Int?
+  // Latest conclusive sending-domain health report (SPF/DKIM/DMARC/blocklists) for
+  // the smtpFrom domain, written by the worker's domain-health sweep. See
+  // backend-core lib/domainHealth.ts for the shape.
+  domainHealth          Json?
+  domainHealthCheckedAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

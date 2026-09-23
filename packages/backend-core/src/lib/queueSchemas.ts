@@ -127,6 +127,11 @@ export type RetentionPurgePayload = z.infer<typeof RetentionPurgePayloadSchema>
 export const DlqAutoRetryPayloadSchema = z.object({}).passthrough()
 export type DlqAutoRetryPayload = z.infer<typeof DlqAutoRetryPayloadSchema>
 
+// The domain-health sweep is platform-wide (no workspace) and carries no
+// parameters, same rationale as RetentionPurgePayloadSchema above.
+export const DomainHealthPayloadSchema = z.object({}).passthrough()
+export type DomainHealthPayload = z.infer<typeof DomainHealthPayloadSchema>
+
 function formatIssues(error: z.ZodError): string {
   return error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
 }
