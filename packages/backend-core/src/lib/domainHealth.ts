@@ -3,8 +3,8 @@
 // Used two ways: on demand from GET /api/mailbox/check-domain, and by the worker's
 // scheduled domain-health sweep, which re-checks every workspace's sending domain
 // (the domain of WorkspaceEmailConfig.smtpFrom), stores the latest report, and
-// alerts the workspace (audit event + `domain.health_degraded` webhook) when a new
-// warning or critical issue appears.
+// alerts the workspace (audit event, `domain.health_degraded` webhook, and an
+// email to its owners/admins) when a new warning or critical issue appears.
 //
 // The DNS layer is injected (DomainHealthResolver) so the classification logic is
 // unit-tested without network access. Lookup failures other than "no such record"
@@ -17,6 +17,8 @@ import { prisma } from './prisma.js'
 import { recordAudit } from './audit.js'
 import { emitWebhookEvent } from './webhooks.js'
 import { logger } from './logger.js'
+import { escapeHtml } from './html.js'
+import { isMailConfigured, sendMail } from '../services/mail.js'
 
 export type DomainHealthResolver = {
   resolveTxt(name: string): Promise<string[][]>
@@ -288,4 +290,103 @@ async function alertDegraded(workspaceId: string, report: DomainHealthReport, pr
   const payload = { domain: report.domain, status: report.status, newIssues: problems, report }
   await recordAudit({ workspaceId, type: 'domain.health_degraded', entityType: 'sending_domain', entityId: report.domain, metadata: payload })
   await emitWebhookEvent(workspaceId, 'domain.health_degraded', payload)
+  await emailWorkspaceAdmins(workspaceId, report, problems)
+}
+
+export function areDomainHealthEmailsEnabled(): boolean {
+  return process.env.DOMAIN_HEALTH_EMAIL_ALERTS !== 'false'
+}
+
+const SEVERITY_LABEL: Record<IssueSeverity, string> = { critical: 'Critical', warning: 'Warning', info: 'Info' }
+
+/** Subject, HTML and plaintext for a domain-health alert. Every interpolated value is escaped. */
+export function buildDomainHealthEmail(input: {
+  workspaceName: string
+  report: DomainHealthReport
+  problems: DomainHealthIssue[]
+  settingsUrl: string
+}): { subject: string; html: string; text: string } {
+  const { report, problems, settingsUrl } = input
+  // Plain-text subject: strip line breaks so a workspace name can't inject headers.
+  const workspaceName = input.workspaceName.replace(/[\r\n]+/g, ' ').trim() || 'your workspace'
+  const critical = problems.some((p) => p.severity === 'critical')
+  const subject = `${critical ? 'Action required' : 'Heads up'}: sending domain ${report.domain} has ${problems.length === 1 ? 'a new problem' : `${problems.length} new problems`} (${workspaceName})`
+
+  const items = problems
+    .map((p) => `<li><strong>${SEVERITY_LABEL[p.severity]}:</strong> ${escapeHtml(p.message)}</li>`)
+    .join('')
+  const html =
+    `<p>The daily health check for <strong>${escapeHtml(report.domain)}</strong>, the sending domain of ` +
+    `<strong>${escapeHtml(workspaceName)}</strong>, found ${problems.length === 1 ? 'a new problem' : 'new problems'}:</p>` +
+    `<ul>${items}</ul>` +
+    (critical ? '<p>Until this is fixed, mail from this domain is likely to be rejected or sent to spam.</p>' : '') +
+    `<p><a href="${escapeHtml(settingsUrl)}">Review deliverability settings</a></p>` +
+    '<p>You are receiving this because you are an owner or admin of this workspace. ' +
+    'You will only be emailed again if another new problem appears.</p>'
+  const text = [
+    `The daily health check for ${report.domain}, the sending domain of ${workspaceName}, found ${problems.length === 1 ? 'a new problem' : 'new problems'}:`,
+    '',
+    ...problems.map((p) => `- ${SEVERITY_LABEL[p.severity]}: ${p.message}`),
+    '',
+    ...(critical ? ['Until this is fixed, mail from this domain is likely to be rejected or sent to spam.', ''] : []),
+    `Review deliverability settings: ${settingsUrl}`,
+    '',
+    'You are receiving this because you are an owner or admin of this workspace. You will only be emailed again if another new problem appears.',
+  ].join('\n')
+  return { subject, html, text }
+}
+
+type AdminEmailDb = {
+  workspace: { findUnique(args: { where: { id: string }; select: { name: true } }): Promise<{ name: string } | null> }
+  membership: {
+    findMany(args: {
+      where: { workspaceId: string; role: { in: string[] }; user: { emailVerified: true } }
+      select: { user: { select: { email: true } } }
+    }): Promise<Array<{ user: { email: string } }>>
+  }
+}
+
+/**
+ * Email a domain-health alert to the workspace's owners and admins with a verified
+ * address, one message each so recipients don't see each other. Sent through the
+ * platform's SMTP relay, never the workspace's own SMTP: the domain being reported
+ * on may be the reason the workspace's mail isn't arriving. Returns the number of
+ * emails sent. Never throws.
+ */
+export async function emailWorkspaceAdmins(
+  workspaceId: string,
+  report: DomainHealthReport,
+  problems: DomainHealthIssue[],
+  deps: { client?: AdminEmailDb; send?: typeof sendMail; mailConfigured?: () => boolean } = {},
+): Promise<number> {
+  if (!areDomainHealthEmailsEnabled()) return 0
+  if (!(deps.mailConfigured ?? (() => isMailConfigured()))()) return 0
+  const client = deps.client ?? (prisma as unknown as AdminEmailDb)
+  const send = deps.send ?? sendMail
+  try {
+    const [workspace, admins] = await Promise.all([
+      client.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } }),
+      client.membership.findMany({
+        where: { workspaceId, role: { in: ['owner', 'admin'] }, user: { emailVerified: true } },
+        select: { user: { select: { email: true } } },
+      }),
+    ])
+    const recipients = [...new Set(admins.map((m) => m.user.email))]
+    if (recipients.length === 0) return 0
+    const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '')
+    const email = buildDomainHealthEmail({ workspaceName: workspace?.name ?? '', report, problems, settingsUrl: `${appUrl}/settings` })
+    let sent = 0
+    for (const to of recipients) {
+      try {
+        await send(to, email.subject, email.html, null, { text: email.text })
+        sent++
+      } catch (err) {
+        logger.warn('domain health email failed', { workspaceId, error: (err as Error).message })
+      }
+    }
+    return sent
+  } catch (err) {
+    logger.warn('domain health email lookup failed', { workspaceId, error: (err as Error).message })
+    return 0
+  }
 }
