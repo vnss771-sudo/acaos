@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import {
   checkDomainHealth, classifyBlocklistAnswer, dmarcPolicy, sendingDomainOf, newProblems,
   runDomainHealthSweep, domainBlocklists, DEFAULT_DOMAIN_BLOCKLISTS,
+  buildDomainHealthEmail, emailWorkspaceAdmins,
   type DomainHealthResolver, type DomainHealthReport,
 } from '../packages/backend-core/src/lib/domainHealth.ts'
 
@@ -261,4 +262,84 @@ test('a failing alert does not abort the sweep', async () => {
   })
   assert.equal(updates.length, 2)
   assert.equal(r.degraded, 2)
+})
+
+test('the alert email escapes workspace-controlled values and names each new problem', () => {
+  const rep = report('acme.test', 'critical')
+  const problems = [
+    { code: 'spf_missing', severity: 'critical' as const, message: 'No SPF <record>.' },
+    { code: 'dmarc_missing', severity: 'warning' as const, message: 'No DMARC record.' },
+  ]
+  const e = buildDomainHealthEmail({
+    workspaceName: 'Evil <b>Co</b>\r\nBcc: x@y.test', report: rep, problems, settingsUrl: 'https://app.test/settings?a=1&b="2"',
+  })
+  assert.equal(e.subject, 'Action required: sending domain acme.test has 2 new problems (Evil <b>Co</b> Bcc: x@y.test)')
+  assert.ok(!/[\r\n]/.test(e.subject), 'subject has no line breaks')
+  assert.ok(e.html.includes('Evil &lt;b&gt;Co&lt;/b&gt;'))
+  assert.ok(!e.html.includes('<b>Co</b>'))
+  assert.ok(e.html.includes('<strong>Critical:</strong> No SPF &lt;record&gt;.'))
+  assert.ok(e.html.includes('href="https://app.test/settings?a=1&amp;b=&quot;2&quot;"'))
+  assert.ok(e.html.includes('likely to be rejected'))
+  assert.ok(e.text.includes('- Warning: No DMARC record.'))
+})
+
+test('a warning-only alert is not phrased as action required', () => {
+  const e = buildDomainHealthEmail({
+    workspaceName: 'Acme', report: report('acme.test', 'warning'),
+    problems: [{ code: 'dmarc_missing', severity: 'warning', message: 'No DMARC record.' }], settingsUrl: 'https://app.test/settings',
+  })
+  assert.equal(e.subject, 'Heads up: sending domain acme.test has a new problem (Acme)')
+  assert.ok(!e.html.includes('likely to be rejected'))
+})
+
+function adminDb(emails: string[]) {
+  const queries: any[] = []
+  return {
+    queries,
+    client: {
+      workspace: { findUnique: async () => ({ name: 'Acme' }) },
+      membership: { findMany: async (a: any) => { queries.push(a); return emails.map((email) => ({ user: { email } })) } },
+    },
+  }
+}
+const PROBLEM = [{ code: 'spf_missing', severity: 'critical' as const, message: 'No SPF record.' }]
+
+test('admin alerts go to each verified owner/admin once, through the platform relay', async () => {
+  const { client, queries } = adminDb(['a@acme.test', 'b@acme.test', 'a@acme.test'])
+  const sent: Array<{ to: string; cfg: unknown; text?: string }> = []
+  const n = await emailWorkspaceAdmins('w1', report('acme.test', 'critical'), PROBLEM, {
+    client, mailConfigured: () => true,
+    send: (async (to: string, _s: string, _h: string, cfg: unknown, opts?: { text?: string }) => { sent.push({ to, cfg, text: opts?.text }); return {} }) as any,
+  })
+  assert.equal(n, 2)
+  assert.deepEqual(sent.map((m) => m.to), ['a@acme.test', 'b@acme.test'])
+  assert.ok(sent.every((m) => m.cfg === null), 'never the workspace SMTP config')
+  assert.ok(sent[0]!.text?.includes('No SPF record.'))
+  assert.deepEqual(queries[0].where, { workspaceId: 'w1', role: { in: ['owner', 'admin'] }, user: { emailVerified: true } })
+})
+
+test('admin alerts are skipped when disabled or when platform mail is not configured', async () => {
+  const send = (async () => { throw new Error('should not send') }) as any
+  const prev = process.env.DOMAIN_HEALTH_EMAIL_ALERTS
+  try {
+    process.env.DOMAIN_HEALTH_EMAIL_ALERTS = 'false'
+    assert.equal(await emailWorkspaceAdmins('w1', report('a.test', 'critical'), PROBLEM, { client: adminDb(['a@a.test']).client, send, mailConfigured: () => true }), 0)
+    delete process.env.DOMAIN_HEALTH_EMAIL_ALERTS
+    assert.equal(await emailWorkspaceAdmins('w1', report('a.test', 'critical'), PROBLEM, { client: adminDb(['a@a.test']).client, send, mailConfigured: () => false }), 0)
+  } finally {
+    if (prev === undefined) delete process.env.DOMAIN_HEALTH_EMAIL_ALERTS
+    else process.env.DOMAIN_HEALTH_EMAIL_ALERTS = prev
+  }
+})
+
+test('one failed admin email does not stop the others, and nothing throws', async () => {
+  const sent: string[] = []
+  const n = await emailWorkspaceAdmins('w1', report('a.test', 'critical'), PROBLEM, {
+    client: adminDb(['bad@a.test', 'ok@a.test']).client, mailConfigured: () => true,
+    send: (async (to: string) => { if (to.startsWith('bad')) throw new Error('550'); sent.push(to); return {} }) as any,
+  })
+  assert.equal(n, 1)
+  assert.deepEqual(sent, ['ok@a.test'])
+  const broken = { workspace: { findUnique: async () => { throw new Error('db down') } }, membership: { findMany: async () => [] } } as any
+  assert.equal(await emailWorkspaceAdmins('w1', report('a.test', 'critical'), PROBLEM, { client: broken, mailConfigured: () => true }), 0)
 })
