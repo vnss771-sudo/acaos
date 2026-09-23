@@ -10,7 +10,10 @@ import { enforceWorkspaceMailRate } from '../lib/workspaceRateLimit.js'
 import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '../services/mail.js'
 import { isValidEmail } from '../lib/textNormalize.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
-import { promises as dns } from 'dns'
+import { userHasWorkspaceAccess } from '../lib/workspaces.js'
+import {
+  checkDomainHealth, dkimQueryName, isDkimRecord, sendingDomainOf, type DomainHealthReport,
+} from '@acaos/backend-core/lib/domainHealth.js'
 
 export const mailboxRouter = Router()
 mailboxRouter.use(requireAuth)
@@ -32,23 +35,14 @@ const syncSchema = z.object({ workspaceId: workspaceIdField })
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i
 const checkDomainSchema = z.object({
   domain: z.string().trim().regex(DOMAIN_RE, 'valid domain required'),
-  // Optional DKIM selector; if omitted we probe the common defaults below.
+  // Optional DKIM selector; if omitted we probe COMMON_DKIM_SELECTORS.
   selector: z.string().trim().regex(/^[A-Za-z0-9._-]{1,63}$/, 'invalid selector').optional(),
 })
 
-// DKIM keys live at <selector>._domainkey.<domain>, not the root domain. Without a
-// caller-supplied selector we probe the selectors the major providers use.
-const COMMON_DKIM_SELECTORS = ['google', 'default', 'selector1', 'selector2', 'k1', 'dkim', 'mail', 's1']
+// Re-exported for existing callers/tests; the checks live in backend-core.
+export { dkimQueryName, isDkimRecord }
 
-/** The DNS name a DKIM TXT record for `selector` lives at. */
-export function dkimQueryName(selector: string, domain: string): string {
-  return `${selector}._domainkey.${domain}`
-}
-
-/** True if the (possibly multi-chunk) TXT record is a DKIM key. */
-export function isDkimRecord(txtChunks: string[]): boolean {
-  return /v=DKIM1/i.test(txtChunks.join(''))
-}
+const domainHealthSchema = z.object({ workspaceId: workspaceIdField })
 
 mailboxRouter.post(
   '/send-test',
@@ -101,42 +95,45 @@ mailboxRouter.post(
   })
 )
 
-// Check domain DNS records for SPF/DKIM deliverability prerequisites
+// Check a domain's SPF/DKIM/DMARC records and blocklist status on demand. The
+// hasSPF/hasDKIM/dkimSelector/checkedSelectors/spfRecords fields predate the full
+// report and are kept for existing clients.
 mailboxRouter.get(
   '/check-domain',
   asyncHandler(async (req, res) => {
     const { domain, selector } = parseQuery(checkDomainSchema, req)
+    const report = await checkDomainHealth(domain, { dkimSelectors: selector ? [selector] : undefined })
+    res.json({
+      ...report,
+      hasSPF: report.spf.records.length > 0,
+      hasDKIM: report.dkim.status === 'ok',
+      dkimSelector: report.dkim.selector,
+      checkedSelectors: report.dkim.checkedSelectors,
+      spfRecords: report.spf.records,
+    })
+  })
+)
 
-    // SPF lives at the root domain TXT.
-    let rootTxt: string[] = []
-    try {
-      rootTxt = (await dns.resolveTxt(domain)).flat()
-    } catch {
-      // NXDOMAIN or SERVFAIL — domain has no TXT records
-    }
-    const spfRecords = rootTxt.filter(r => r.startsWith('v=spf1'))
-    const hasSPF = spfRecords.length > 0
+// The latest report stored by the worker's scheduled domain-health sweep for the
+// workspace's sending domain. `report` is null until the first sweep has run.
+mailboxRouter.get(
+  '/domain-health',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseQuery(domainHealthSchema, req)
+    if (!await userHasWorkspaceAccess(user.id, workspaceId)) throw new ApiError(403, 'Access denied')
 
-    // DKIM is NOT at the root — it lives at <selector>._domainkey.<domain>. Probe
-    // the caller's selector if given, else the common provider defaults, in
-    // parallel so latency is bounded by a single DNS timeout.
-    const selectors = selector ? [selector] : COMMON_DKIM_SELECTORS
-    const probes = await Promise.allSettled(
-      selectors.map(async sel => {
-        const chunks = (await dns.resolveTxt(dkimQueryName(sel, domain))).map(c => c.join(''))
-        return { sel, ok: isDkimRecord(chunks) }
-      })
-    )
-    const matched = probes.find((p): p is PromiseFulfilledResult<{ sel: string; ok: boolean }> => p.status === 'fulfilled' && p.value.ok)
-    const dkimSelector = matched ? matched.value.sel : null
-
+    const cfg = await prisma.workspaceEmailConfig.findUnique({
+      where: { workspaceId },
+      select: { smtpFrom: true, domainHealth: true, domainHealthCheckedAt: true },
+    })
+    const domain = sendingDomainOf(cfg?.smtpFrom)
+    const stored = cfg?.domainHealth as DomainHealthReport | null | undefined
     res.json({
       domain,
-      hasSPF,
-      hasDKIM: dkimSelector !== null,
-      dkimSelector,
-      checkedSelectors: selectors,
-      spfRecords,
+      // A report for a previous From domain is stale once the address changes.
+      report: stored && stored.domain === domain ? stored : null,
+      checkedAt: stored && stored.domain === domain ? cfg?.domainHealthCheckedAt ?? null : null,
     })
   })
 )

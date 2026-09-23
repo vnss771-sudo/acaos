@@ -87,3 +87,32 @@ test('sync denies non-member workspace', async () => {
   })
   assert.equal(res.status, 403)
 })
+
+test('domain-health denies a non-member workspace', async () => {
+  const res = await server.request('/api/mailbox/domain-health?workspaceId=ws-other', { headers: jsonAuth })
+  assert.equal(res.status, 403)
+})
+
+test('domain-health returns null before the first scheduled check', async () => {
+  const res = await server.request('/api/mailbox/domain-health?workspaceId=ws1', { headers: jsonAuth })
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body, { domain: null, report: null, checkedAt: null })
+})
+
+test('domain-health returns the stored report only for the current From domain', async () => {
+  const stored = { domain: 'acme.test', status: 'warning', issues: [] }
+  let smtpFrom = 'Acme <hi@acme.test>'
+  installPrisma(createFakePrisma({
+    user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null, emailVerified: true }) },
+    membership: { findFirst: async (a: any) => (a?.where?.userId === 'u1' && a?.where?.workspaceId === 'ws1' ? { id: 'm1', role: 'owner' } : null) },
+    workspaceEmailConfig: {
+      findUnique: async () => ({ smtpFrom, domainHealth: stored, domainHealthCheckedAt: new Date('2026-09-23T00:00:00Z') }),
+    },
+  }))
+  let res = await server.request('/api/mailbox/domain-health?workspaceId=ws1', { headers: jsonAuth })
+  assert.deepEqual(res.body, { domain: 'acme.test', report: stored, checkedAt: '2026-09-23T00:00:00.000Z' })
+
+  smtpFrom = 'hi@other.test'
+  res = await server.request('/api/mailbox/domain-health?workspaceId=ws1', { headers: jsonAuth })
+  assert.deepEqual(res.body, { domain: 'other.test', report: null, checkedAt: null })
+})

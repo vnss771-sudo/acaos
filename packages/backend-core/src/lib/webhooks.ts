@@ -20,7 +20,7 @@ type Db = PrismaClient | Prisma.TransactionClient
 
 // The event types a customer can subscribe an endpoint to. Keep in sync with the
 // emit sites; a closed set keeps validation simple and documents the contract.
-export const WEBHOOK_EVENT_TYPES = ['reply.received', 'campaign.sent', 'meeting.booked'] as const
+export const WEBHOOK_EVENT_TYPES = ['reply.received', 'campaign.sent', 'meeting.booked', 'domain.health_degraded'] as const
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number]
 
 export function isWebhookEventType(v: unknown): v is WebhookEventType {

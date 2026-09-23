@@ -14,7 +14,7 @@ import { WorkspaceSection, type WorkspaceForm } from '../components/settings/Wor
 import { TeamSection, type MemberForm, type PendingInvite } from '../components/settings/TeamSection.js'
 import { IcpSection, type IcpForm } from '../components/settings/IcpSection.js'
 import { EmailConfigSection, type EmailConfigForm } from '../components/settings/EmailConfigSection.js'
-import { DeliverabilitySection, type DomainCheckResult, type WarmupStatus, type ReputationVerdict } from '../components/settings/DeliverabilitySection.js'
+import { DeliverabilitySection, type DomainCheckResult, type DomainMonitor, type WarmupStatus, type ReputationVerdict } from '../components/settings/DeliverabilitySection.js'
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
 import { AccessReviewSection } from '../components/settings/AccessReviewSection.js'
@@ -79,6 +79,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   // Compliance & Deliverability
   const [domainCheck, setDomainCheck] = useState<DomainCheckResult>(null)
   const [domainCheckLoading, setDomainCheckLoading] = useState(false)
+  const [domainMonitor, setDomainMonitor] = useState<DomainMonitor | null>(null)
   const [suppressionCount, setSuppressionCount] = useState<number | null>(null)
   const [warmup, setWarmup] = useState<WarmupStatus | null>(null)
   const [reputation, setReputation] = useState<ReputationVerdict | null>(null)
@@ -155,14 +156,34 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     }
     let cancelled = false
     setDomainCheckLoading(true)
-    api<{ hasSPF: boolean; hasDKIM: boolean }>(
-      `/api/mailbox/check-domain?domain=${encodeURIComponent(domain)}&workspaceId=${encodeURIComponent(workspace.id)}`
-    )
-      .then(result => { if (!cancelled) setDomainCheck({ hasSPF: result.hasSPF, hasDKIM: result.hasDKIM }) })
-      .catch(() => { if (!cancelled) setDomainCheck(null) })
-      .finally(() => { if (!cancelled) setDomainCheckLoading(false) })
-    return () => { cancelled = true }
+    // Wait for typing to pause: each check makes ~15 DNS lookups, including
+    // rate-limited blocklist queries.
+    const timer = setTimeout(() => {
+      api<NonNullable<DomainCheckResult>>(
+        `/api/mailbox/check-domain?domain=${encodeURIComponent(domain)}&workspaceId=${encodeURIComponent(workspace.id)}`
+      )
+        .then(result => {
+          if (!cancelled) setDomainCheck({
+            hasSPF: result.hasSPF, hasDKIM: result.hasDKIM,
+            dmarc: result.dmarc, blocklists: result.blocklists, issues: result.issues,
+          })
+        })
+        .catch(() => { if (!cancelled) setDomainCheck(null) })
+        .finally(() => { if (!cancelled) setDomainCheckLoading(false) })
+    }, 600)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [api, workspace?.id, emailForm.smtpFrom])
+
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    api<{ checkedAt: string | null; report: { status: DomainMonitor['status'] } | null }>(
+      `/api/mailbox/domain-health?workspaceId=${encodeURIComponent(workspace.id)}`
+    )
+      .then(d => { if (!cancelled) setDomainMonitor({ checkedAt: d.checkedAt, status: d.report?.status ?? null }) })
+      .catch(() => { if (!cancelled) setDomainMonitor(null) })
+    return () => { cancelled = true }
+  }, [api, workspace?.id])
 
   useEffect(() => {
     if (!workspace) return
@@ -480,6 +501,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           smtpFromConfigured={!!emailForm.smtpFrom}
           domainCheck={domainCheck}
           domainCheckLoading={domainCheckLoading}
+          monitor={domainMonitor}
           suppressionCount={suppressionCount}
           dailySendLimit={icp?.dailySendLimit}
           approvalMode={icp?.approvalMode}
