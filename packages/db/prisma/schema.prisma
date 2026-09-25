@@ -181,6 +181,7 @@ model Workspace {
   campaignDailyStats   CampaignDailyStats[]
   followupTasks        FollowupTask[]
   processedEmails      ProcessedEmail[]
+  inboxReplySends      InboxReplySend[]
   discoveryRuns        DiscoveryRun[]
   missions             Mission[]
   evidenceSources      EvidenceSource[]
@@ -489,6 +490,7 @@ model OutreachSent {
   workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign         Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   lead             Lead?      @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  inboxReplySends  InboxReplySend[]
 
   @@index([workspaceId])
   @@index([campaignId])
@@ -585,6 +587,42 @@ model UsageRecord {
 
 // Deduplicate IMAP messages processed during mailbox sync.
 // UIDs are only unique within a single mailbox, so they must be scoped by workspace.
+// A human-written reply sent from the Inbox (POST /api/inbox/reply/:id/send) back
+// to a prospect who answered a campaign send. Claim-first outbox, like
+// OutreachSent: the row is inserted SENDING before SMTP is dialled, keyed by a
+// client-generated idempotencyKey, so a double-click or network retry can't send
+// twice. A known SMTP rejection moves it to FAILED, which may be retried with the
+// same key. A SENDING row older than the in-flight window means the outcome is
+// UNKNOWN (crash, or DB failure after the provider accepted the message): it
+// blocks every further reply on that thread — whatever key is used — until a
+// person resolves it (sent / not sent). Never auto-resent. messageId is the SMTP
+// Message-ID of our reply, so later replies can carry it in References.
+model InboxReplySend {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  outreachSentId  String
+  idempotencyKey  String
+  actorUserId     String?
+  toEmail         String
+  subject         String
+  body            String
+  status          String    @default("SENDING") // SENDING | SENT | FAILED
+  messageId       String?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  // When the current attempt was claimed (reset when a FAILED row is retried).
+  // Drives the in-flight vs outcome-unknown split for SENDING rows.
+  attemptedAt     DateTime  @default(now())
+  sentAt          DateTime?
+  resolvedByUserId String?
+  workspace       Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  outreachSent    OutreachSent @relation(fields: [outreachSentId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([outreachSentId, createdAt])
+  @@index([outreachSentId, status])
+}
+
 model ProcessedEmail {
   id          String    @id @default(cuid())
   workspaceId String

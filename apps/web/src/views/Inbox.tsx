@@ -27,6 +27,9 @@ type Reply = {
   replyConfidence: number | null
   replyIsAutoReply: boolean | null
   lead: { id: string; businessName: string; stage: string } | null
+  // An Inbox reply on this thread that hasn't finished. outcomeUnknown: it may or
+  // may not have been delivered, and the user must say which before replying again.
+  pendingSend?: { id: string; attemptedAt: string; outcomeUnknown: boolean; bodyPreview: string } | null
 }
 
 type InboxResponse = { replies: Reply[]; counts: Record<string, number>; total: number }
@@ -59,6 +62,11 @@ const URGENCY_LABEL: Record<string, string> = {
   immediate: 'Immediate', this_week: 'This week', this_month: 'This month', nurture: 'Nurture', never: 'No action',
 }
 
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
 const FILTERS = ['INTERESTED', 'NEEDS_MORE_INFO', 'NOT_NOW', 'REFERRAL', 'OUT_OF_OFFICE', 'NOT_INTERESTED'] as const
 
 export function InboxView({ api, workspace, toast }: Props) {
@@ -69,6 +77,9 @@ export function InboxView({ api, workspace, toast }: Props) {
   const [sendingReplyId, setSendingReplyId] = useState<string | null>(null)
   const [editingReplyId, setEditingReplyId] = useState<string | null>(null)
   const [customBody, setCustomBody] = useState('')
+  // One idempotency key per compose session: a double-click or a retry after a
+  // network error re-sends the same key, and the server never sends twice.
+  const [composeKey, setComposeKey] = useState('')
   const [feedbackReplyId, setFeedbackReplyId] = useState<string | null>(null)
   const [feedbackSending, setFeedbackSending] = useState(false)
   const route = useMemo(() => makeRouteApi(api), [api])
@@ -91,31 +102,53 @@ export function InboxView({ api, workspace, toast }: Props) {
 
   useEffect(() => { load() }, [load])
 
-  // `overrideBody` is passed explicitly by the caller rather than read from the
-  // shared `customBody` state — that state is only meaningful while
-  // `editingReplyId === replyId`; "Send suggested" (no edit in progress) must
-  // never pick up leftover edited text left over from a different reply.
-  const handleSendReply = useCallback(async (replyId: string, overrideBody?: string) => {
-    if (!workspace) return
+  const openComposer = useCallback((replyId: string) => {
+    setEditingReplyId(replyId)
+    setCustomBody('')
+    setComposeKey(newIdempotencyKey())
+  }, [])
+
+  // The body is always what the user typed. The AI's "suggested next step" is an
+  // internal note to the user, not prospect-facing copy, so it is never sent.
+  const handleSendReply = useCallback(async (replyId: string, body: string, idempotencyKey: string) => {
+    if (!workspace || !body.trim()) return
     setSendingReplyId(replyId)
     try {
       const response = await route('POST /api/inbox/reply/:replyId/send', {
         params: { replyId },
-        body: {
-          workspaceId: workspace.id,
-          customBody: overrideBody || undefined,
-        },
+        body: { workspaceId: workspace.id, body, idempotencyKey },
       })
       if (response.success) {
-        toast.success(`✓ Reply sent! 🎉`)
+        toast.success(`✓ Reply sent to ${data?.replies.find(r => r.id === replyId)?.toEmail ?? 'prospect'}`)
         setCustomBody('')
         setEditingReplyId(null)
         load()
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to send reply')
+      // A 409 may mean an earlier reply on this thread is open/unknown — refresh
+      // so its status (and the resolve prompt) shows.
+      load()
     } finally {
       setSendingReplyId(null)
+    }
+  }, [workspace?.id, route, toast, load, data])
+
+  const [resolvingSendId, setResolvingSendId] = useState<string | null>(null)
+  const handleResolveSend = useCallback(async (replyId: string, sendId: string, outcome: 'sent' | 'not_sent') => {
+    if (!workspace) return
+    setResolvingSendId(sendId)
+    try {
+      await route('POST /api/inbox/reply/:replyId/sends/:sendId/resolve', {
+        params: { replyId, sendId },
+        body: { workspaceId: workspace.id, outcome },
+      })
+      toast.success(outcome === 'sent' ? 'Marked as sent' : 'Marked as not sent — you can reply again')
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update reply')
+    } finally {
+      setResolvingSendId(null)
     }
   }, [workspace?.id, route, toast, load])
 
@@ -138,7 +171,7 @@ export function InboxView({ api, workspace, toast }: Props) {
     } finally {
       setFeedbackSending(false)
     }
-  }, [workspace?.id, route, toast, load])
+  }, [workspace?.id, route, toast, load, data])
 
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
@@ -151,7 +184,7 @@ export function InboxView({ api, workspace, toast }: Props) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <p style={{ color: colors.textMuted, fontSize: 13, margin: 0, flex: 1, minWidth: 220 }}>
-          Inbox Assistant classifies incoming replies by intent and suggests the best next action. Review, approve, and respond with AI-generated replies.
+          Inbox Assistant classifies incoming replies by intent and suggests the best next action. Write and send your reply from your own mailbox.
         </p>
         {/* Contextual AI: analyze an ad-hoc reply (paste-in) right where replies live. */}
         <AiQuickAction kind="reply" api={api} workspace={workspace} toast={toast} />
@@ -200,7 +233,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                 )}
                 {r.replySuggestedAction && (
                   <div style={{ color: colors.blueLight, fontSize: 13 }}>
-                    <span style={{ color: colors.textFaint }}>Suggested: </span>{r.replySuggestedAction}
+                    <span style={{ color: colors.textFaint }}>Suggested next step: </span>{r.replySuggestedAction}
                   </div>
                 )}
                 {r.replyConfidence !== null && (
@@ -253,12 +286,42 @@ export function InboxView({ api, workspace, toast }: Props) {
                     <ConfidenceBar value={r.replyConfidence} />
                   </div>
                 )}
-                {editingReplyId === r.id ? (
+                {r.pendingSend ? (
+                  <div role="status" style={{ marginTop: 8, padding: 10, borderRadius: 4, border: `1px solid ${colors.amber}`, fontSize: 13, color: colors.text, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {r.pendingSend.outcomeUnknown ? (
+                      <>
+                        <span>
+                          We couldn't confirm whether your reply of {new Date(r.pendingSend.attemptedAt).toLocaleString()} was delivered.
+                          Check your mailbox's Sent folder, then tell us — replying is paused until you do, so it can't go out twice.
+                        </span>
+                        <span style={{ color: colors.textFaint, fontStyle: 'italic' }}>“{r.pendingSend.bodyPreview}”</span>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={() => handleResolveSend(r.id, r.pendingSend!.id, 'sent')}
+                            disabled={resolvingSendId === r.pendingSend.id}
+                            style={{ padding: '6px 12px', borderRadius: 4, border: 'none', background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 12 }}
+                          >
+                            It was sent
+                          </button>
+                          <button
+                            onClick={() => handleResolveSend(r.id, r.pendingSend!.id, 'not_sent')}
+                            disabled={resolvingSendId === r.pendingSend.id}
+                            style={{ padding: '6px 12px', borderRadius: 4, border: `1px solid ${colors.border}`, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 12 }}
+                          >
+                            It wasn't sent
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <span>Sending your reply…</span>
+                    )}
+                  </div>
+                ) : editingReplyId === r.id ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
                     <textarea
                       value={customBody}
                       onChange={(e) => setCustomBody(e.target.value)}
-                      placeholder="Edit the reply text (or leave empty to use suggestion)..."
+                      placeholder={r.replySuggestedAction ? `Write your reply to ${r.toEmail}. Next step: ${r.replySuggestedAction}` : `Write your reply to ${r.toEmail}…`}
                       style={{
                         flex: 1, padding: 8, borderRadius: 4, border: `1px solid ${colors.border}`,
                         fontFamily: 'inherit', fontSize: 13, minHeight: 80, resize: 'vertical',
@@ -268,12 +331,12 @@ export function InboxView({ api, workspace, toast }: Props) {
                     />
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
-                        onClick={() => handleSendReply(r.id, customBody)}
-                        disabled={sendingReplyId === r.id}
+                        onClick={() => handleSendReply(r.id, customBody, composeKey)}
+                        disabled={sendingReplyId === r.id || !customBody.trim()}
                         style={{
                           flex: 1, padding: '8px 12px', borderRadius: 4, border: 'none',
                           background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer',
-                          fontSize: 13, opacity: sendingReplyId === r.id ? 0.6 : 1,
+                          fontSize: 13, opacity: sendingReplyId === r.id || !customBody.trim() ? 0.6 : 1,
                         }}
                       >
                         {sendingReplyId === r.id ? 'Sending...' : 'Send reply'}
@@ -291,28 +354,15 @@ export function InboxView({ api, workspace, toast }: Props) {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                    {r.replySuggestedAction && (
-                      <button
-                        onClick={() => handleSendReply(r.id)}
-                        disabled={sendingReplyId === r.id}
-                        style={{
-                          flex: 1, padding: '6px 12px', borderRadius: 4, border: 'none',
-                          background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer',
-                          fontSize: 12, opacity: sendingReplyId === r.id ? 0.6 : 1,
-                        }}
-                      >
-                        {sendingReplyId === r.id ? '...' : 'Send suggested'}
-                      </button>
-                    )}
                     <button
-                      onClick={() => { setEditingReplyId(r.id); setCustomBody(r.replySuggestedAction || ''); }}
+                      onClick={() => openComposer(r.id)}
                       disabled={sendingReplyId === r.id}
                       style={{
                         padding: '6px 12px', borderRadius: 4, border: `1px solid ${colors.border}`,
                         background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 12,
                       }}
                     >
-                      Edit & send
+                      Reply
                     </button>
                   </div>
                 )}
