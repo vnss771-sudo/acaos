@@ -27,6 +27,15 @@ const SOURCE_NAMES = OPPORTUNITY_SOURCES.map(s => s.name) as [string, ...string[
 
 const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
+type SourceStateRow = {
+  source: string
+  lastRunAt: Date | null
+  lastSuccessAt: Date | null
+  lastError: string | null
+  lastWarning: string | null
+  lastMatched: number
+}
+
 async function assertMember(userId: string, workspaceId: string) {
   if (!(await userBelongsToWorkspace(userId, workspaceId))) throw new ApiError(403, 'Access denied')
 }
@@ -40,10 +49,13 @@ opportunitiesRouter.get(
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
     await assertMember(user.id, workspaceId)
 
-    const [profile, states] = await Promise.all([
+    const [profile, stateRows] = await Promise.all([
       prisma.discoveryProfile.findUnique({ where: { workspaceId } }),
       prisma.discoverySourceState.findMany({ where: { workspaceId } }),
     ])
+    // Row type spelled out (not inferred) so the build also type-checks against
+    // the offline Prisma stub, whose query results are untyped.
+    const states = (stateRows as SourceStateRow[])
     res.json({
       profile,
       discoveryEnabled: isOpportunityDiscoveryEnabled(),
