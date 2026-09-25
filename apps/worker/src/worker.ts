@@ -29,9 +29,11 @@ import {
   SendFollowupPayloadSchema,
   DlqAutoRetryPayloadSchema,
   DomainHealthPayloadSchema,
+  DiscoverOpportunitiesPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { runDomainHealthSweep, isDomainHealthEnabled, domainHealthIntervalMs } from '@acaos/backend-core/lib/domainHealth.js'
+import { runOpportunitySweep, isOpportunityDiscoveryEnabled, opportunityDiscoveryIntervalMs } from '@acaos/backend-core/lib/opportunitySweep.js'
 import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
 import { reconcileEnabled, reconcileCampaignStats } from '@acaos/backend-core/lib/reconciliation.js'
 import { isFeatureEnabled, areFollowupsEnabled } from '@acaos/backend-core/lib/launchControls.js'
@@ -442,6 +444,26 @@ const domainHealthWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── discover-opportunities ────────────────────────────────────────────────────
+// Work discovery (backend-core lib/opportunitySweep.ts): reads each enabled
+// source from its cursor, matches against the workspace's DiscoveryProfile and
+// upserts Opportunities. Scheduled for every workspace, or on demand for one.
+// Opt-in (OPPORTUNITY_DISCOVERY_ENABLED) — it calls third-party APIs.
+const discoverOpportunitiesWorker = new Worker(
+  'discover-opportunities',
+  async (job) => withConsumerSpan('discover-opportunities', job.name, job.data?.traceparent, { 'acaos.workspace_id': job.data?.workspaceId }, async () => {
+    const { workspaceId } = parseJobPayload(DiscoverOpportunitiesPayloadSchema, 'discover-opportunities', job.data)
+    if (!isOpportunityDiscoveryEnabled()) { log('discover-opportunities', 'skipped: OPPORTUNITY_DISCOVERY_ENABLED off'); return { skipped: true } }
+    const r = await runOpportunitySweep(workspaceId ? { workspaceId } : {})
+    const ok = r.runs.filter(x => x.status === 'ok')
+    const failed = r.runs.filter(x => x.status === 'failed')
+    log('discover-opportunities', `Swept ${r.workspaces} workspace(s): ${ok.length} source run(s) ok, ${failed.length} failed, ${ok.reduce((n, x) => n + x.created, 0)} new opportunit(ies)`)
+    for (const f of failed) console.warn(`[discover-opportunities] ${f.source} failed for workspace ${f.workspaceId}: ${f.reason}`)
+    return { workspaces: r.workspaces, ok: ok.length, failed: failed.length }
+  }),
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers + job metrics ───────────────────────────────────────────────
 const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
@@ -457,6 +479,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['retention-purge',         retentionWorker],
   ['dlq-auto-retry',          dlqAutoRetryWorker],
   ['domain-health',           domainHealthWorker],
+  ['discover-opportunities',  discoverOpportunitiesWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
   worker.on('completed', (job) => {
@@ -595,6 +618,18 @@ const domainMetricsCache = createCachedValue(
   ).catch(err => console.warn('[worker] Failed to schedule domain-health sweep:', err.message))
 }
 
+// ── Repeatable work-discovery sweep (every 6h by default) ─────────────────────
+// Interval overridable via OPPORTUNITY_DISCOVERY_INTERVAL_MS. Always registered
+// (idempotent); the processor no-ops unless OPPORTUNITY_DISCOVERY_ENABLED=true.
+{
+  const discoverOpportunitiesQueue = new Queue('discover-opportunities', { connection })
+  discoverOpportunitiesQueue.upsertJobScheduler(
+    'discover-opportunities-sweep',
+    { every: opportunityDiscoveryIntervalMs() },
+    { name: 'discover-opportunities-sweep', data: {}, opts: { attempts: 1, removeOnComplete: { count: 10 }, removeOnFail: { count: 20 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule work-discovery sweep:', err.message))
+}
+
 // ── Queue-depth-adaptive worker concurrency ───────────────────────────────────
 // Opt-in via WORKER_ADAPTIVE_CONCURRENCY_ENABLED — off by default, so this is a
 // pure addition: no worker's concurrency changes from its hardcoded value above
@@ -707,6 +742,7 @@ async function shutdown(signal: string, exitCode = 0) {
     retentionWorker.close(),
     dlqAutoRetryWorker.close(),
     domainHealthWorker.close(),
+    discoverOpportunitiesWorker.close(),
   ])
   closeMailTransports() // release pooled SMTP connections
   await prisma.$disconnect()
