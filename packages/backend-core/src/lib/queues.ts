@@ -148,6 +148,19 @@ export async function enqueueDiscoverProspects(runId: string, workspaceId: strin
   })
 }
 
+// On-demand work-discovery sweep for one workspace ("Run now"). attempts:1 —
+// sources are third-party APIs and a failure is recorded on the source state;
+// the next scheduled sweep retries from the same cursor anyway. The jobId
+// collapses repeated clicks within a minute into one run.
+export async function enqueueDiscoverOpportunities(workspaceId: string, requestId?: string) {
+  const minute = Math.floor(Date.now() / 60_000)
+  return addTraced('discover-opportunities', 'discover-opportunities-now', { workspaceId, requestId }, {
+    attempts: 1,
+    jobId: `discover-opportunities-${workspaceId}-${minute}`,
+    ...jobRetention,
+  })
+}
+
 export async function enqueueGenerateRecommendations(prospectId: string, workspaceId: string, requestId?: string) {
   return addTraced('generate-recommendations', 'generate-recommendations', { prospectId, workspaceId, requestId }, defaultJobOpts)
 }
@@ -235,7 +248,8 @@ export async function enqueueRetentionPurge() {
 const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
-  'discover-prospects', 'retention-purge', 'send-followup', 'dlq-auto-retry', 'domain-health'
+  'discover-prospects', 'retention-purge', 'send-followup', 'dlq-auto-retry', 'domain-health',
+  'discover-opportunities',
 ]
 
 export async function getQueueStats() {

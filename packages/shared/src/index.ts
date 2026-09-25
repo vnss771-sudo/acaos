@@ -266,6 +266,35 @@ export interface InboxClassificationFeedbackRequest {
   correctedIntent?: string
 }
 
+// ── Work discovery ("Find work") ──────────────────────────────────────────────
+export type OpportunityStatus = 'NEW' | 'PURSUING' | 'WON' | 'LOST' | 'DISMISSED'
+
+// PUT /api/opportunities/profile
+export interface UpdateDiscoveryProfileRequest {
+  workspaceId: string
+  enabled?: boolean
+  trades: string[]
+  keywords?: string[]
+  baseLat?: number | null
+  baseLng?: number | null
+  radiusKm?: number
+  regions?: Array<'ACT' | 'NSW' | 'NT' | 'QLD' | 'SA' | 'TAS' | 'VIC' | 'WA'>
+  minValue?: number | null
+  sources: string[]
+}
+
+// PATCH /api/opportunities/:id/status
+export interface UpdateOpportunityStatusRequest {
+  workspaceId: string
+  status: OpportunityStatus
+}
+
+// POST /api/opportunities/:id/create-job
+export interface CreateJobFromOpportunityRequest {
+  workspaceId: string
+  jobCode?: string
+}
+
 // ── Route contract map ────────────────────────────────────────────────────────
 // The single source of truth that binds METHOD + path → { params, query, body,
 // response }. The web client calls every mutation through a typed helper keyed by
@@ -623,6 +652,10 @@ export interface RouteContracts {
   'POST /api/ops/crew': { body: OpsCreateCrewRequest; response: unknown }
   'PUT /api/ops/crew/:id': { params: { id: string }; body: OpsUpdateCrewRequest; response: unknown }
   'POST /api/ops/jobs': { body: OpsCreateJobSiteRequest; response: unknown }
+  'PUT /api/opportunities/profile': { body: UpdateDiscoveryProfileRequest; response: { profile: unknown } }
+  'PATCH /api/opportunities/:id/status': { params: { id: string }; body: UpdateOpportunityStatusRequest; response: { success: boolean; status: OpportunityStatus } }
+  'POST /api/opportunities/:id/create-job': { params: { id: string }; body: CreateJobFromOpportunityRequest; response: { jobSite: { id: string; jobCode: string } } }
+  'POST /api/opportunities/run': { body: { workspaceId: string }; response: { queued: boolean } }
   'PUT /api/ops/jobs/:id': { params: { id: string }; body: OpsUpdateJobSiteRequest; response: unknown }
   'POST /api/ops/shifts': { body: OpsCreateShiftRequest; response: unknown }
   'PUT /api/ops/shifts/:id': { params: { id: string }; body: OpsUpdateShiftRequest; response: unknown }

@@ -132,6 +132,14 @@ export type DlqAutoRetryPayload = z.infer<typeof DlqAutoRetryPayloadSchema>
 export const DomainHealthPayloadSchema = z.object({}).passthrough()
 export type DomainHealthPayload = z.infer<typeof DomainHealthPayloadSchema>
 
+// Work-discovery sweep (lib/opportunitySweep.ts). The scheduled sweep carries no
+// workspace and covers every enabled profile; an on-demand "run now" names one.
+export const DiscoverOpportunitiesPayloadSchema = z.object({
+  workspaceId: id.optional(),
+  ...meta,
+})
+export type DiscoverOpportunitiesPayload = z.infer<typeof DiscoverOpportunitiesPayloadSchema>
+
 function formatIssues(error: z.ZodError): string {
   return error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
 }

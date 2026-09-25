@@ -192,6 +192,9 @@ model Workspace {
   opsShiftRecords      OpsShiftRecord[]
   opsAlerts            OpsAlert[]
   opsRosterEntries     OpsRosterEntry[]
+  discoveryProfile     DiscoveryProfile?
+  discoverySourceStates DiscoverySourceState[]
+  opportunities        Opportunity[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -1293,6 +1296,7 @@ model OpsJobSite {
   updatedAt     DateTime     @updatedAt
   shifts        OpsShiftRecord[]
   rosterEntries OpsRosterEntry[]
+  opportunities Opportunity[]
 
   @@unique([workspaceId, jobCode])
   @@index([workspaceId, status])
@@ -1390,4 +1394,104 @@ model OpsRosterEntry {
   @@unique([workspaceId, crewMemberId, rosterDate, startTime])
   @@index([workspaceId, rosterDate])
   @@index([workspaceId, crewMemberId])
+}
+
+// ── Work discovery ("Find work") ────────────────────────────────────────────────
+// Automated discovery of JOBS for a trade business to win: a development
+// application at an address, a government contract a head contractor just won.
+// Project-centric (unlike Prospect, which is a company), fed by scheduled sweeps
+// of public sources (lib/opportunitySources.ts, lib/opportunitySweep.ts).
+
+// What a workspace wants found: its trades, where it works, and which sources to
+// sweep. One per workspace; no row (or enabled=false) means discovery is off.
+model DiscoveryProfile {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique
+  enabled     Boolean   @default(true)
+  // Trade ids from lib/opportunityTaxonomy.ts (electrical, plumbing, hvac, ...).
+  trades      String[]
+  // Extra words that mark an opportunity as relevant (e.g. "switchroom").
+  keywords    String[]
+  // Service area: a base point + radius, and/or state codes (QLD, NSW, ...).
+  baseLat     Float?
+  baseLng     Float?
+  radiusKm    Int       @default(50)
+  regions     String[]
+  // Contracts below this value (AUD, whole dollars) are ignored. Null = no floor.
+  minValue    Int?
+  // Source names from lib/opportunitySources.ts to sweep for this workspace.
+  sources     String[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// Per-(workspace, source) sweep cursor and health. The cursor only advances after
+// every fetched item has been persisted, so a failed run re-reads the same range.
+model DiscoverySourceState {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  source        String
+  cursor        String?
+  lastRunAt     DateTime?
+  lastSuccessAt DateTime?
+  lastError     String?
+  lastWarning   String?
+  lastFetched   Int       @default(0)
+  lastMatched   Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, source])
+}
+
+model Opportunity {
+  id                    String      @id @default(cuid())
+  workspaceId           String
+  source                String // austender | planningalerts | ...
+  externalId            String // the source's own id (idempotency key)
+  kind                  String // CONTRACT_AWARD | DEVELOPMENT_APPLICATION
+  title                 String
+  description           String?
+  address               String?
+  locality              String?
+  region                String? // state code, e.g. QLD
+  postcode              String?
+  lat                   Float?
+  lng                   Float?
+  distanceKm            Float?
+  valueAmount           Float?
+  currency              String?
+  publishedAt           DateTime? // when the source says the event happened
+  sourceUrl             String?
+  // Who to approach (e.g. the head contractor that won the contract) and who
+  // the work is for. Either may be unknown.
+  counterpartyName      String?
+  counterpartyAbn       String?
+  counterpartyEmail     String?
+  counterpartyPhone     String?
+  buyerName             String?
+  // Why it was surfaced: deterministic match output (lib/opportunityMatch.ts).
+  score                 Int
+  matchedTrades         String[]
+  reasons               Json // string[] — plain-language evidence
+  recommendedAction     String?
+  rawData               Json? // trimmed source payload, for provenance
+  contentHash           String // detects real changes on re-delivery
+  // Workflow: NEW -> PURSUING -> WON | LOST, or DISMISSED at any point.
+  status                String      @default("NEW")
+  statusChangedAt       DateTime?
+  statusChangedByUserId String?
+  // Set when a WON opportunity was turned into a Field Ops job site.
+  opsJobSiteId          String?
+  firstSeenAt           DateTime    @default(now())
+  lastSeenAt            DateTime    @default(now())
+  lastChangedAt         DateTime    @default(now())
+  workspace             Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opsJobSite            OpsJobSite? @relation(fields: [opsJobSiteId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, source, externalId])
+  @@index([workspaceId, status, score])
+  @@index([workspaceId, firstSeenAt])
 }
