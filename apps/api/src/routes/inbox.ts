@@ -34,6 +34,10 @@ const replyParamsSchema = z.object({
   replyId: idField,
 })
 
+type ReplyRow = Record<string, unknown> & {
+  inboxReplySends: Array<{ id: string; attemptedAt: Date; body: string }>
+}
+
 const sendReplySchema = z.object({
   workspaceId: workspaceIdField,
   // The reply text the user wrote or approved. Required: there is no server-side
@@ -119,7 +123,9 @@ inboxRouter.get(
 
     const now = Date.now()
     res.json({
-      replies: replies.map(({ inboxReplySends, ...r }) => {
+      // Row type spelled out (not inferred) so the build also type-checks against
+      // the offline Prisma stub, whose query results are untyped.
+      replies: (replies as ReplyRow[]).map(({ inboxReplySends, ...r }) => {
         const open = inboxReplySends[0]
         return {
           ...r,
@@ -400,9 +406,11 @@ async function threadingHeaders(
       take: 20,
     }),
   ])
+  const inboundRows = inbound as Array<{ messageId: string | null; processedAt: Date }>
+  const priorRows = priorReplies as Array<{ messageId: string | null; sentAt: Date | null }>
   const thread = [
-    ...inbound.map(m => ({ id: m.messageId, at: m.processedAt })),
-    ...priorReplies.map(m => ({ id: m.messageId, at: m.sentAt ?? new Date(0) })),
+    ...inboundRows.map(m => ({ id: m.messageId, at: m.processedAt })),
+    ...priorRows.map(m => ({ id: m.messageId, at: m.sentAt ?? new Date(0) })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime())
 
   const refs: string[] = []
@@ -411,7 +419,7 @@ async function threadingHeaders(
     if (n && !refs.includes(n)) refs.push(n)
   }
   if (refs.length === 0) return undefined
-  const latestInbound = normalizeMessageId(inbound.at(-1)?.messageId)
+  const latestInbound = normalizeMessageId(inboundRows.at(-1)?.messageId)
   return { 'In-Reply-To': latestInbound ?? refs[refs.length - 1], References: refs.join(' ') }
 }
 
