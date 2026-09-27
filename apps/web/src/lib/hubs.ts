@@ -23,7 +23,7 @@ export type Hub = { id: HubId; label: string; icon: string; tabs: HubTab[] }
 export const HUBS: Hub[] = [
   { id: 'home', label: 'Home', icon: '⬡', tabs: [
     { view: 'dashboard', label: 'Home' },
-    // 'Field Ops' is one HubTabs entry standing in for 7 view ids, exactly like
+    // 'Field Ops' is one HubTabs entry standing in for 8 view ids, exactly like
     // the flat nav's single sidebar entry — its own always-visible OpsSubNav
     // switches between them, not this hub-tab strip.
     { view: 'ops-dashboard', label: 'Field Ops' },

@@ -26,7 +26,8 @@
 export const TENANT_MODELS: ReadonlySet<string> = new Set([
   'AiPromptVersion', 'AnalyticsEvent', 'AuditEvent', 'Campaign', 'CampaignDailyStats', 'ConsentRecord',
   'ContactEvent',
-  'DiscoveryRun', 'EvidenceSource', 'FollowupTask', 'InboxReplySend', 'Lead', 'LeadEvidenceSource',
+  'DiscoveryProfile', 'DiscoveryRun', 'DiscoverySourceState', 'EvidenceSource', 'FollowupTask', 'InboxReplySend', 'Lead',
+  'LeadEvidenceSource', 'Opportunity',
   'Membership', 'Mission',
   'OutreachDraft', 'OutreachIntent', 'OutreachSent', 'ProcessedEmail', 'Prospect',
   'ProspectOutcome', 'Recommendation', 'ScoringModel', 'ScoringOutcome', 'Signal',

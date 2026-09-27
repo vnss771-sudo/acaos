@@ -25,6 +25,7 @@ const VIEW_PATHS: Record<View, string> = {
   'ops-roster': '/ops/roster',
   'ops-fatigue': '/ops/fatigue',
   'ops-alerts': '/ops/alerts',
+  'ops-find-work': '/ops/find-work',
 }
 
 const PATH_VIEWS = Object.fromEntries(

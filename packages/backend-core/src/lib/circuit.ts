@@ -140,7 +140,7 @@ export class CircuitBreaker {
 // Wire a shared store onto every singleton breaker. Called once at startup (api
 // and worker) when a Redis connection is available; no-op-safe to omit.
 export function attachBreakerStore(store: BreakerStore): void {
-  for (const b of [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, hunterBreaker, stripeBreaker]) {
+  for (const b of [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, hunterBreaker, austenderBreaker, planningAlertsBreaker, stripeBreaker]) {
     b.setStore(store)
   }
 }
@@ -151,12 +151,14 @@ export const apolloBreaker      = new CircuitBreaker('apollo-enrich',  5, 60_000
 export const apolloSearchBreaker = new CircuitBreaker('apollo-search', 5, 60_000)
 export const googlePlacesBreaker = new CircuitBreaker('google-places', 5, 60_000)
 export const hunterBreaker      = new CircuitBreaker('hunter',         5, 60_000)
+export const austenderBreaker   = new CircuitBreaker('austender',      5, 5 * 60_000)
+export const planningAlertsBreaker = new CircuitBreaker('planningalerts', 5, 5 * 60_000)
 export const stripeBreaker      = new CircuitBreaker('stripe',         5, 30_000)
 
 // Point-in-time snapshot of every singleton breaker for the /metrics scrape, so an
 // operator sees a provider degradation (OPEN circuit) as a gauge + alert rather than
 // only a WARN log line. Reads in-process local state only — no Redis round-trip.
 export function snapshotBreakerStates(): Array<{ provider: string; open: boolean }> {
-  return [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, hunterBreaker, stripeBreaker]
+  return [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, hunterBreaker, austenderBreaker, planningAlertsBreaker, stripeBreaker]
     .map((b) => ({ provider: b.name, open: b.isOpen }))
 }
