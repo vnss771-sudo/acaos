@@ -9,7 +9,7 @@ on:
       ref:
         description: Git ref (branch, tag, or SHA) to package
         required: true
-        default: main
+        default: master
         type: string
       publish:
         description: Publish or refresh the GitHub Release asset for an existing tag
@@ -224,6 +224,10 @@ jobs:
       contents: read
     environment:
       name: ${{ github.event_name == 'push' && 'production' || 'staging' }}
+    env:
+      # The secrets context isn't allowed in a step's `if:` (GitHub rejects the
+      # whole workflow file), so expose only whether the secret is set.
+      HAS_ROLLBACK_WEBHOOK: ${{ secrets.ROLLBACK_WEBHOOK_URL != '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -270,7 +274,7 @@ jobs:
       # own "redeploy the previous known-good tag" mechanism (the manual
       # rollback step in docs/DEPLOYMENT.md, automated).
       - name: Automatic rollback on a failed bake
-        if: steps.check.outputs.configured == 'true' && failure() && secrets.ROLLBACK_WEBHOOK_URL != ''
+        if: steps.check.outputs.configured == 'true' && failure() && env.HAS_ROLLBACK_WEBHOOK == 'true'
         env:
           ROLLBACK_WEBHOOK_URL: ${{ secrets.ROLLBACK_WEBHOOK_URL }}
         run: curl -fsS -X POST "$ROLLBACK_WEBHOOK_URL"
