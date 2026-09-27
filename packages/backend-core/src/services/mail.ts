@@ -467,7 +467,14 @@ export function computeMailboxFetchStart(opts: {
   return Math.max(1, top - recentWindow)
 }
 
-export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: string): Promise<{
+// `deps` is a test seam (mirrors the worker's sendMail injection): tests pass a
+// fake ImapFlow and/or a failing recordProcessedReply to exercise cursor
+// durability without an IMAP server.
+export async function syncMailboxOnce(
+  cfg?: ImapConfig | null,
+  workspaceId?: string,
+  deps: { ImapFlow?: unknown; recordProcessedReply?: typeof recordProcessedReply } = {},
+): Promise<{
   inspected: number
   matched: number
   queued: number
@@ -475,12 +482,15 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
   bounced: number
   complained: number
 }> {
-  let ImapFlow: any
-  try {
-    const mod = await import('imapflow')
-    ImapFlow = mod.ImapFlow
-  } catch {
-    throw new ApiError(503, 'IMAP support is not installed in this environment')
+  const recordProcessed = deps.recordProcessedReply ?? recordProcessedReply
+  let ImapFlow: any = deps.ImapFlow
+  if (!ImapFlow) {
+    try {
+      const mod = await import('imapflow')
+      ImapFlow = mod.ImapFlow
+    } catch {
+      throw new ApiError(503, 'IMAP support is not installed in this environment')
+    }
   }
 
   // Workspace-supplied IMAP hosts are an SSRF surface — resolve, reject private
@@ -587,10 +597,18 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients, bounceType, complaintRecipients })
     }
 
-    // Advance the persisted cursor to the highest UID we inspected. Best-effort: a
-    // persist failure must never fail the sync — worst case we re-inspect a bounded,
-    // ProcessedEmail-deduped window next time.
-    if (maxUid > cursor || validityChanged) {
+    // Advance the persisted cursor to the highest UID inspected — but ONLY once
+    // every message that needed durable state (ProcessedEmail row, bounce/complaint
+    // suppression, lead advance) has committed. It is called at the two successful
+    // exits below and nowhere else: if any persistence step throws, the sync
+    // aborts with the cursor where it was, and the next run re-fetches the same
+    // range. Messages that did commit are skipped then via the ProcessedEmail
+    // dedup (seenUids / seenMsgIds), so re-fetching is safe and nothing is lost.
+    // (Advancing before processing — as this used to — let a transient DB failure
+    // skip a real reply forever.) Best-effort itself: a failed cursor write only
+    // means a bounded, deduped re-scan next time.
+    const advanceCursor = async () => {
+      if (maxUid <= cursor && !validityChanged) return
       try {
         await prisma.workspaceEmailConfig.upsert({
           where: { workspaceId },
@@ -601,6 +619,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     }
 
     if (toProcess.length === 0) {
+      await advanceCursor()
       return { inspected, matched: 0, queued: 0, skipped: 0, bounced: 0, complained: 0 }
     }
 
@@ -616,7 +635,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     if (bounceMsgs.length > 0) {
       bounced = await applyBounces(workspaceId!, bounceMsgs.map(m => ({ recipients: m.bounceRecipients, bounceType: m.bounceType })))
       for (const m of bounceMsgs) {
-        await recordProcessedReply({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
+        await recordProcessed({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
         processedUids.push(m.uid)
       }
     }
@@ -630,7 +649,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
     if (complaintMsgs.length > 0) {
       complained = await applyComplaints(workspaceId!, complaintMsgs.flatMap(m => m.complaintRecipients))
       for (const m of complaintMsgs) {
-        await recordProcessedReply({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
+        await recordProcessed({ uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, fromAddress: m.fromAddress, workspaceId, lead: null })
         processedUids.push(m.uid)
       }
     }
@@ -661,7 +680,7 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
       // Record the processed email and advance the lead in one transaction, so a
       // crash can never leave a lead advanced without its processed-row (which
       // would reprocess the same email and double-spend AI on the next sync).
-      const { advanced } = await recordProcessedReply({
+      const { advanced } = await recordProcessed({
         uid: msg.uid,
         messageId: msg.messageId,
         inReplyTo: msg.inReplyTo,
@@ -689,6 +708,9 @@ export async function syncMailboxOnce(cfg?: ImapConfig | null, workspaceId?: str
         queued++
       }
     }
+
+    // Every message is durably recorded — only now is it safe to move the cursor.
+    await advanceCursor()
 
     // Mark processed messages as SEEN in IMAP (non-fatal — already persisted).
     if (processedUids.length > 0) {
