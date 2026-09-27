@@ -64,4 +64,55 @@ describe('InboxView', () => {
     expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  test('Reply sends only what the user typed — never the suggested next step', async () => {
+    const api = vi.fn().mockImplementation((path: string, init?: { method?: string }) =>
+      Promise.resolve(init?.method === 'POST' ? { success: true, sentAt: '2026-06-03T00:00:00Z', message: 'ok' } : payload),
+    )
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    await screen.findByText('Meridian Roofing')
+
+    // There is no one-click "send the suggestion" path any more.
+    expect(screen.queryByRole('button', { name: /Send suggested/i })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reply' }))
+    const send = screen.getByRole('button', { name: 'Send reply' })
+    // The composer starts empty (not pre-filled with the internal note), so Send is off.
+    expect(screen.getByRole('textbox')).toHaveValue('')
+    expect(send).toBeDisabled()
+
+    await userEvent.type(screen.getByRole('textbox'), 'Does Tuesday at 10 work?')
+    await userEvent.click(send)
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+    const post = api.mock.calls.find(([, init]) => (init as { method?: string } | undefined)?.method === 'POST')!
+    expect(post[0]).toBe('/api/inbox/reply/r1/send')
+    const body = JSON.parse((post[1] as { body: string }).body)
+    expect(body.body).toBe('Does Tuesday at 10 work?')
+    expect(body.workspaceId).toBe('ws1')
+    expect(typeof body.idempotencyKey).toBe('string')
+    expect(body.idempotencyKey.length).toBeGreaterThanOrEqual(8)
+    expect(JSON.stringify(body)).not.toContain('Propose three slots')
+  })
+
+  test('an outcome-unknown reply pauses replying and can be resolved', async () => {
+    const pending = {
+      ...payload,
+      replies: [{ ...payload.replies[0], pendingSend: { id: 's1', attemptedAt: '2026-06-03T00:00:00Z', outcomeUnknown: true, bodyPreview: 'Does Tuesday work?' } }],
+    }
+    const api = vi.fn().mockImplementation((path: string, init?: { method?: string }) =>
+      Promise.resolve(init?.method === 'POST' ? { success: true, status: 'SENT' } : pending),
+    )
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    expect(await screen.findByText(/couldn't confirm whether your reply/i)).toBeInTheDocument()
+    expect(screen.getByText(/Does Tuesday work\?/)).toBeInTheDocument()
+    // No way to write a second reply until it's resolved.
+    expect(screen.queryByRole('button', { name: 'Reply' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'It was sent' }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Marked as sent'))
+    const post = api.mock.calls.find(([, init]) => (init as { method?: string } | undefined)?.method === 'POST')!
+    expect(post[0]).toBe('/api/inbox/reply/r1/sends/s1/resolve')
+    expect(JSON.parse((post[1] as { body: string }).body)).toEqual({ workspaceId: 'ws1', outcome: 'sent' })
+  })
 })

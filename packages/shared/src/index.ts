@@ -256,7 +256,18 @@ export interface UpdateDraftRequest {
 // POST /api/inbox/reply/:replyId/send
 export interface SendInboxReplyRequest {
   workspaceId: string
-  customBody?: string
+  // The reply text the user wrote or approved — required; the server never
+  // substitutes the AI's suggested action (an internal note) as the body.
+  body: string
+  // Generated once per compose session; retries with the same key never re-send.
+  idempotencyKey: string
+}
+
+// POST /api/inbox/reply/:replyId/sends/:sendId/resolve — settle a reply whose
+// delivery outcome is unknown, after checking the mailbox's Sent folder.
+export interface ResolveInboxReplySendRequest {
+  workspaceId: string
+  outcome: 'sent' | 'not_sent'
 }
 
 // PATCH /api/inbox/reply/:replyId/feedback
@@ -589,7 +600,8 @@ export interface RouteContracts {
   'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
 
   // Inbox
-  'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string } }
+  'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string; duplicate?: boolean } }
+  'POST /api/inbox/reply/:replyId/sends/:sendId/resolve': { params: { replyId: string; sendId: string }; body: ResolveInboxReplySendRequest; response: { success: boolean; status: 'SENT' | 'FAILED' } }
   'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
 
   // Workspaces
