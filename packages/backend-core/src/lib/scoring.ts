@@ -3,6 +3,7 @@
 
 import { prisma } from './prisma.js'
 import { learningAdaptationMode, isLearnableFeature, MAX_WEIGHT_STEP } from './learningMode.js'
+import { computeTimingFit, DEFAULT_TIMING_FIT, type TimingEvidence } from './timingFit.js'
 
 export type ScoringWeights = {
   industry: number
@@ -158,6 +159,10 @@ type LeadInput = {
   aiSummary?: string | null
   outreachAngle?: string | null
   estimatedTeamSize?: string | null
+  // Dated buying-trigger evidence for timing fit, and the moment of scoring.
+  // Absent → timing is unknown and scores the neutral default.
+  timingEvidence?: TimingEvidence[]
+  scoredAt?: Date
 }
 
 export type ScoreSignals = Record<keyof ScoringWeights, number>
@@ -186,7 +191,8 @@ export type LeadScoreExplanation = {
 // richer enrichment fills them in), so they are excluded from the human-readable
 // topReasons — they would otherwise crowd out the signals that actually differ.
 // (`size` is evidence-derived from estimatedTeamSize, so it is not listed here.)
-const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['messageRelevance', 'timingFit'])
+// (`timingFit` is evidence-derived when dated triggers exist — see timingFit.ts.)
+const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['messageRelevance'])
 
 // Placeholder value the scorer assigns before a message exists. Exported so the
 // reply pipeline records the SAME pre-send value as the learning feature —
@@ -204,7 +210,7 @@ const SIGNAL_LABELS: Record<keyof ScoringWeights, (v: number) => string> = {
   contact: (v) => (v >= 0.9 ? 'Direct contact (name + email) available' : v >= 0.5 ? 'Partial contact details' : 'No contact details'),
   messageRelevance: () => 'Message relevance (default — needs enrichment)',
   channelFit: (v) => (v >= 0.9 ? 'Reachable by email' : v >= 0.6 ? 'Website-only channel' : 'Weak channel fit'),
-  timingFit: () => 'Timing fit (default — needs signal data)',
+  timingFit: (v) => (v >= 0.7 ? 'Recent buying trigger — good timing' : v > 0.5 ? 'Some recent buying activity' : v === 0.5 ? 'Timing unknown (no dated trigger)' : 'Buying triggers are stale'),
   dataFreshness: (v) => (v >= 0.8 ? 'Enriched with current research' : 'Limited research data'),
 }
 
@@ -221,7 +227,7 @@ function computeSignals(lead: LeadInput, icpTargets?: string[]): ScoreSignals {
     contact: scoreContact(lead.email, lead.contactName),
     messageRelevance: DEFAULT_MESSAGE_RELEVANCE,
     channelFit: scoreChannelFit(lead.email, lead.website),
-    timingFit: 0.50,
+    timingFit: lead.timingEvidence ? computeTimingFit(lead.timingEvidence, lead.scoredAt ?? new Date()).score : DEFAULT_TIMING_FIT,
     dataFreshness: scoreDataFreshness(lead.aiSummary),
   }
 }
@@ -297,7 +303,7 @@ export const DEFAULT_SCORING_METRICS: ScoringPerformanceMetrics = {
   correlationScore: 0,
 }
 
-export type ScoringOutcomeSample = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
+export type ScoringOutcomeSample = { score: number; replied: boolean; messageRelevance: number; channelUsed: string; timingFit?: number | null }
 
 /** Pearson correlation; 0 when either side has no variance. */
 export function pearson(xs: number[], ys: number[]): number {
@@ -341,11 +347,17 @@ export function recomputeScoringWeights(
   const adjustedFeatures: (keyof ScoringWeights)[] = []
   const repliedFlags = outcomes.map((o) => (o.replied ? 1 : 0))
 
-  const relevance = outcomes.map((o) => o.messageRelevance)
-  if (isLearnableFeature(relevance)) {
-    const step = Math.max(-1, Math.min(1, pearson(relevance, repliedFlags))) * MAX_WEIGHT_STEP
-    w.messageRelevance = w.messageRelevance * (1 + step)
-    adjustedFeatures.push('messageRelevance')
+  // Each per-outcome, pre-send feature is learned independently under the same
+  // guards: enough samples, real variance, bounded step.
+  const features: Array<[keyof ScoringWeights, number[]]> = [
+    ['messageRelevance', outcomes.map((o) => o.messageRelevance)],
+    ['timingFit', outcomes.map((o) => o.timingFit ?? DEFAULT_TIMING_FIT)],
+  ]
+  for (const [key, values] of features) {
+    if (!isLearnableFeature(values)) continue
+    const step = Math.max(-1, Math.min(1, pearson(values, repliedFlags))) * MAX_WEIGHT_STEP
+    w[key] = w[key] * (1 + step)
+    adjustedFeatures.push(key)
   }
 
   if (adjustedFeatures.length > 0) {
@@ -396,7 +408,7 @@ export async function maybeRecomputeScoringWeights(
 
   const all = await prisma.scoringOutcome.findMany({
     where: { scoringModelId },
-    select: { score: true, replied: true, messageRelevance: true, channelUsed: true },
+    select: { score: true, replied: true, messageRelevance: true, channelUsed: true, timingFit: true },
   })
 
   const { weights, metrics, adjustedFeatures } = recomputeScoringWeights(all, currentWeights)

@@ -2,7 +2,7 @@
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
-import { recordSendRelevance } from '../packages/backend-core/src/lib/messageRelevance.ts'
+import { recordPreSendFeatures } from '../packages/backend-core/src/lib/messageRelevance.ts'
 import { observeEngagementOutcomes } from '../packages/backend-core/src/lib/engagementObservation.ts'
 import { applyReplyAnalysis } from '../apps/worker/src/processors.ts'
 
@@ -22,12 +22,12 @@ async function seed(extra: Record<string, unknown> = {}) {
 
 test('scored once at send time; later research edits never rewrite it', async () => {
   const { lead, send } = await seed()
-  const first = await recordSendRelevance(send.id)
+  const first = await recordPreSendFeatures(send.id)
   assert.ok(first)
   await prisma.lead.update({ where: { id: lead.id }, data: { aiSummary: 'totally different research', category: 'Retail' } })
-  assert.equal(await recordSendRelevance(send.id), null, 'write-once')
+  assert.equal(await recordPreSendFeatures(send.id), null, 'write-once')
   const row = await prisma.outreachSent.findUniqueOrThrow({ where: { id: send.id } })
-  assert.equal(row.messageRelevanceScore, first!.score)
+  assert.equal(row.messageRelevanceScore, first!.relevance.score)
   assert.equal(row.messageRelevanceVersion, 1)
 })
 
@@ -56,8 +56,8 @@ test('sends from before relevance scoring fall back to the neutral default', asy
 test('the eventual reply cannot change the stored relevance: positive vs negative reply, identical score', async () => {
   const a = await seed()
   const b = await seed()
-  await recordSendRelevance(a.send.id)
-  await recordSendRelevance(b.send.id)
+  await recordPreSendFeatures(a.send.id)
+  await recordPreSendFeatures(b.send.id)
   const before = (id: string) => prisma.outreachSent.findUniqueOrThrow({ where: { id } }).then(r => r.messageRelevanceScore)
   const [sa, sb] = [await before(a.send.id), await before(b.send.id)]
   assert.equal(sa, sb, 'identical inputs → identical score')
@@ -66,11 +66,36 @@ test('the eventual reply cannot change the stored relevance: positive vs negativ
   await prisma.outreachSent.update({ where: { id: b.send.id }, data: { status: 'REPLIED', repliedAt: new Date() } })
   await applyReplyAnalysis(a.lead.id, { classification: 'INTERESTED', confidence: 95, isAutoReply: false })
   await applyReplyAnalysis(b.lead.id, { classification: 'NOT_INTERESTED', confidence: 95, isAutoReply: false })
-  await recordSendRelevance(a.send.id)
-  await recordSendRelevance(b.send.id)
+  await recordPreSendFeatures(a.send.id)
+  await recordPreSendFeatures(b.send.id)
 
   assert.equal(await before(a.send.id), sa)
   assert.equal(await before(b.send.id), sb)
   const samples = await prisma.scoringOutcome.findMany({ where: { leadId: { in: [a.lead.id, b.lead.id] } } })
   assert.equal(new Set(samples.map(x => x.messageRelevance)).size, 1, 'both learning samples carry the same pre-send value')
+})
+
+test('timing fit is frozen per send from the lead\'s dated evidence, at the send moment', async () => {
+  const { workspace, lead, send } = await seed()
+  const sendTime = new Date('2026-10-01T00:00:00Z')
+  await prisma.leadEvidenceSource.create({ data: { workspaceId: workspace.id, leadId: lead.id, signal: 'Awarded a council tender', observedAt: new Date('2026-09-26T00:00:00Z') } })
+  const out = await recordPreSendFeatures(send.id, sendTime)
+  const row = await prisma.outreachSent.findUniqueOrThrow({ where: { id: send.id } })
+  assert.equal(row.timingFitScore, out!.timing.score)
+  assert.equal(row.timingFitScore, 0.845, 'tender observed 5 days before the SEND moment: 0.5×0.891 + 0.3 + 0.1')
+  assert.equal(row.timingFitVersion, 1)
+  // Later evidence (or the passage of time) can't rewrite the send-time value.
+  await prisma.leadEvidenceSource.deleteMany({ where: { leadId: lead.id } })
+  await recordPreSendFeatures(send.id, new Date('2027-06-01T00:00:00Z'))
+  assert.equal((await prisma.outreachSent.findUniqueOrThrow({ where: { id: send.id } })).timingFitScore, row.timingFitScore)
+})
+
+test('both learning paths record the send\'s frozen timing fit', async () => {
+  const replied = await seed({ status: 'REPLIED', repliedAt: new Date(), timingFitScore: 0.81 })
+  await applyReplyAnalysis(replied.lead.id, { classification: 'INTERESTED', confidence: 90, isAutoReply: false })
+  assert.equal((await prisma.scoringOutcome.findFirstOrThrow({ where: { leadId: replied.lead.id } })).timingFit, 0.81)
+
+  const silent = await seed({ sentAt: new Date('2026-01-01T00:00:00Z'), timingFitScore: 0.33 })
+  await observeEngagementOutcomes(new Date('2026-02-01T00:00:00Z'))
+  assert.equal((await prisma.scoringOutcome.findFirstOrThrow({ where: { leadId: silent.lead.id } })).timingFit, 0.33)
 })

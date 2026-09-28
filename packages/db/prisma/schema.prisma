@@ -502,6 +502,10 @@ model OutreachSent {
   messageRelevanceScore   Float?
   messageRelevanceReasons Json?
   messageRelevanceVersion Int?
+  // Pre-send timing fit (lib/timingFit.ts), frozen with relevance.
+  timingFitScore          Float?
+  timingFitReasons        Json?
+  timingFitVersion        Int?
   engagementOutcome       String?
   observationWindowDays   Int?
   observationDueAt        DateTime?
@@ -564,6 +568,8 @@ model ScoringOutcome {
   replied          Boolean
   replyIntent      String?
   messageRelevance Float        @default(0.5)
+  // Pre-send timing fit of the outreach this outcome belongs to (null = unknown).
+  timingFit        Float?
   channelUsed      String       @default("EMAIL")
   scoringModelId   String
   scoringModel     ScoringModel @relation(fields: [scoringModelId], references: [id], onDelete: Cascade)

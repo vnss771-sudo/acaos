@@ -17,6 +17,8 @@
 // learned weights are never compared across incompatible definitions.
 
 import { prisma } from './prisma.js'
+import { BUYING_SIGNAL_PATTERNS } from './buyingSignals.js'
+import { computeTimingFit, type TimingFitResult } from './timingFit.js'
 
 export const MESSAGE_RELEVANCE_VERSION = 1
 
@@ -51,16 +53,8 @@ const STOPWORDS = new Set([
   'with', 'from', 'that', 'this', 'your', 'have', 'will', 'into', 'more', 'than', 'they', 'what', 'when',
 ])
 
-// Buying signals: [label, pattern]. A signal "aligns" when the research shows
-// it AND the message references it.
-const SIGNALS: Array<[string, RegExp]> = [
-  ['hiring', /\b(hiring|recruit\w*|job openings?|open (roles|positions))\b/],
-  ['expansion', /\b(expand\w*|expansion|new (site|location|office|branch|depot)|opened|opening)\b/],
-  ['funding', /\b(funding|raised|investment|series [a-d])\b/],
-  ['tender', /\b(tender|contract (win|awarded)|won (a|the) contract|awarded)\b/],
-  ['launch', /\b(launch\w*|new (product|service|website))\b/],
-  ['leadership', /\b(new (ceo|director|manager|owner)|appointed)\b/],
-]
+// Buying signals come from the shared vocabulary (lib/buyingSignals.ts).
+const SIGNALS = BUYING_SIGNAL_PATTERNS
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase()
 
@@ -133,18 +127,22 @@ export function computeMessageRelevance(input: RelevanceInput): RelevanceResult 
 }
 
 /**
- * Score a message once, BEFORE it is dispatched, and store it on the send. Write-once (only
+ * Pre-send features for one outreach attempt — message relevance AND timing
+ * fit — scored once, BEFORE dispatch, and stored on the send. Write-once (only
  * when unset) so a later recompute — after research or ICP edits — can never
  * rewrite the value that was true at send time. Best-effort: callers must
  * not let a failure here affect the send.
  */
-export async function recordSendRelevance(outreachSentId: string): Promise<RelevanceResult | null> {
+export async function recordPreSendFeatures(
+  outreachSentId: string,
+  now: Date = new Date(),
+): Promise<{ relevance: RelevanceResult; timing: TimingFitResult } | null> {
   const send = await prisma.outreachSent.findUnique({
     where: { id: outreachSentId },
     select: { workspaceId: true, leadId: true, subject: true, body: true, messageRelevanceScore: true },
   })
   if (!send || !send.leadId || send.messageRelevanceScore !== null) return null
-  const [lead, icp] = await Promise.all([
+  const [lead, icp, evidence] = await Promise.all([
     prisma.lead.findUnique({
       where: { id: send.leadId },
       select: { businessName: true, category: true, city: true, aiSummary: true, outreachAngle: true, notes: true },
@@ -153,12 +151,17 @@ export async function recordSendRelevance(outreachSentId: string): Promise<Relev
       where: { workspaceId: send.workspaceId },
       select: { targetIndustries: true, businessType: true, businessContext: true },
     }),
+    prisma.leadEvidenceSource.findMany({ where: { leadId: send.leadId }, select: { signal: true, observedAt: true } }),
   ])
   if (!lead) return null
-  const result = computeMessageRelevance({ subject: send.subject, body: send.body, lead, icp })
+  const relevance = computeMessageRelevance({ subject: send.subject, body: send.body, lead, icp })
+  const timing = computeTimingFit(evidence.map(e => ({ text: e.signal, observedAt: e.observedAt })), now)
   await prisma.outreachSent.updateMany({
     where: { id: outreachSentId, messageRelevanceScore: null },
-    data: { messageRelevanceScore: result.score, messageRelevanceReasons: result.reasons, messageRelevanceVersion: result.version },
+    data: {
+      messageRelevanceScore: relevance.score, messageRelevanceReasons: relevance.reasons, messageRelevanceVersion: relevance.version,
+      timingFitScore: timing.score, timingFitReasons: timing.reasons, timingFitVersion: timing.version,
+    },
   })
-  return result
+  return { relevance, timing }
 }

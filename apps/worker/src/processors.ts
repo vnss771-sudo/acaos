@@ -15,7 +15,7 @@ import {
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
 import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-core/lib/learningLoop.js'
 import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
-import { recordSendRelevance } from '@acaos/backend-core/lib/messageRelevance.js'
+import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -242,6 +242,7 @@ export async function researchLead(
   // dropped (not fatal) and the scorer falls back to its computed score.
   const parsed = parseLeadResearchJson(raw)
 
+  const researchedAt = new Date()
   const enrichedLead = {
     businessName: lead.businessName,
     category: lead.category,
@@ -251,7 +252,10 @@ export async function researchLead(
     notes: lead.notes,
     aiSummary: parsed.aiSummary ?? null,
     outreachAngle: parsed.outreachAngle ?? null,
-    estimatedTeamSize: parsed.estimatedTeamSize ?? null
+    estimatedTeamSize: parsed.estimatedTeamSize ?? null,
+    // Evidence found by this research run, observed now → timing fit ("why now").
+    timingEvidence: (parsed.evidence ?? []).map((e) => ({ text: e.signal, observedAt: researchedAt })),
+    scoredAt: researchedAt,
   }
 
   const [weights, icpTargets] = await Promise.all([
@@ -1014,7 +1018,7 @@ async function dispatchOutreachEmail(p: {
     // handler. Major mailbox providers require these for bulk senders.
     // Score relevance BEFORE dispatch: final copy, no outcome can exist yet.
     // Best-effort — a scoring failure never blocks the send.
-    await recordSendRelevance(p.claimId).catch(() => {})
+    await recordPreSendFeatures(p.claimId).catch(() => {})
     const info = await p.sendMailFn(p.lead.email!, p.subject, htmlBody, p.smtpCfg, {
       text: textBody,
       headers: {
@@ -1624,7 +1628,7 @@ export async function sendFollowupTask(
   }
 
   try {
-    await recordSendRelevance(claimId).catch(() => {}) // before dispatch (see dispatchOutreachEmail)
+    await recordPreSendFeatures(claimId).catch(() => {}) // before dispatch (see dispatchOutreachEmail)
     const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
       text: textBody,
       headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
@@ -1812,7 +1816,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   const target = await prisma.outreachSent.findFirst({
     where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
     orderBy: { repliedAt: 'desc' },
-    select: { id: true, messageRelevanceScore: true },
+    select: { id: true, messageRelevanceScore: true, timingFitScore: true },
   })
   if (target) {
     await prisma.outreachSent.update({
@@ -1887,6 +1891,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       // never derived from the reply (that would leak the outcome into its own
       // predictor). Sends from before relevance scoring fall back to the default.
       messageRelevance: target?.messageRelevanceScore ?? DEFAULT_MESSAGE_RELEVANCE,
+      timingFit: target?.timingFitScore ?? null,
       channelUsed: 'EMAIL',
       scoringModelId: model.id,
     },

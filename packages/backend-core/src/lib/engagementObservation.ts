@@ -75,7 +75,7 @@ export async function observeEngagementOutcomes(
       where: { status: { in: ['SENT', 'REPLIED', 'BOUNCED'] }, engagementOutcome: null, sentAt: { lte: cutoff } },
       orderBy: { sentAt: 'asc' },
       take: batchSize,
-      select: { id: true, workspaceId: true, leadId: true, toEmail: true, sentAt: true, repliedAt: true, status: true, messageRelevanceScore: true },
+      select: { id: true, workspaceId: true, leadId: true, toEmail: true, sentAt: true, repliedAt: true, status: true, messageRelevanceScore: true, timingFitScore: true },
     })
     if (rows.length === 0) break
 
@@ -116,7 +116,7 @@ export async function observeEngagementOutcomes(
           data: {
             workspaceId: row.workspaceId, leadId: row.leadId, prospectId: null,
             score: lead.score, replied: false, replyIntent: outcome,
-            messageRelevance: row.messageRelevanceScore ?? DEFAULT_MESSAGE_RELEVANCE, channelUsed: 'EMAIL', scoringModelId: model.id,
+            messageRelevance: row.messageRelevanceScore ?? DEFAULT_MESSAGE_RELEVANCE, timingFit: row.timingFitScore, channelUsed: 'EMAIL', scoringModelId: model.id,
           },
         })
         // Same guarded loop as replies (mode-gated; retunes on every Nth
