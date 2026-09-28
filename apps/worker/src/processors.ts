@@ -15,6 +15,7 @@ import {
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
 import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-core/lib/learningLoop.js'
 import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
+import { recordSendRelevance } from '@acaos/backend-core/lib/messageRelevance.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -1039,6 +1040,8 @@ async function dispatchOutreachEmail(p: {
       // Advance the linked intent to SENT in the same transaction as the send.
       ...(p.linkedIntent ? [prisma.outreachIntent.update({ where: { id: p.linkedIntent.id }, data: { status: 'SENT' } })] : []),
     ])
+    // Pre-send relevance of the message just delivered (best-effort; never blocks the send).
+    await recordSendRelevance(p.claimId).catch(() => {})
 
     // Schedule the next sequence step (best-effort; no-op unless the campaign
     // opted into auto-followups and an active next step exists).
@@ -1632,6 +1635,7 @@ export async function sendFollowupTask(
       prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'sent' })),
       prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SENT', outreachSentId: claimId } }),
     ])
+    await recordSendRelevance(claimId).catch(() => {})
     // Schedule the next step in the sequence. Awaited (so it's attempted before
     // the job completes) but best-effort: the send already committed, so a
     // scheduling hiccup must never fail it — the periodic scan re-drives anything
@@ -1807,7 +1811,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   const target = await prisma.outreachSent.findFirst({
     where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
     orderBy: { repliedAt: 'desc' },
-    select: { id: true },
+    select: { id: true, messageRelevanceScore: true },
   })
   if (target) {
     await prisma.outreachSent.update({
@@ -1878,9 +1882,10 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       score: lead.score,
       replied,
       replyIntent: replyIntentMap[effectiveClassification] ?? null,
-      // The pre-send value the scorer used — never derived from the reply
-      // (that would leak the outcome into its own predictor).
-      messageRelevance: DEFAULT_MESSAGE_RELEVANCE,
+      // The replied-to message's relevance, scored and frozen at SEND time —
+      // never derived from the reply (that would leak the outcome into its own
+      // predictor). Sends from before relevance scoring fall back to the default.
+      messageRelevance: target?.messageRelevanceScore ?? DEFAULT_MESSAGE_RELEVANCE,
       channelUsed: 'EMAIL',
       scoringModelId: model.id,
     },

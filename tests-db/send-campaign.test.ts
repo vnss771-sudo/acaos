@@ -74,6 +74,10 @@ test('skips suppressed addresses — never dispatches, never records a send', as
   assert.equal(await prisma.outreachSent.count({ where: { leadId: blocked.id } }), 0)
   const goodSend = await prisma.outreachSent.findFirst({ where: { leadId: good.id } })
   assert.equal(goodSend!.status, 'SENT')
+  // Every delivered message is scored for relevance at send time (pre-outcome).
+  assert.equal(typeof goodSend!.messageRelevanceScore, 'number')
+  assert.equal(goodSend!.messageRelevanceVersion, 1)
+  assert.ok(Array.isArray(goodSend!.messageRelevanceReasons))
   const goodLead = await prisma.lead.findUnique({ where: { id: good.id } })
   assert.equal(goodLead!.stage, 'OUTREACH_SENT')
 })
