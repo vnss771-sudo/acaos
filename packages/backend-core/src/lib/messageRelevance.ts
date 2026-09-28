@@ -78,7 +78,7 @@ const GENERIC_OPENERS = /\b(dear sir|dear madam|to whom it may concern|dear busi
 export function computeMessageRelevance(input: RelevanceInput): RelevanceResult {
   const message = norm(`${input.subject ?? ''} ${input.body ?? ''}`)
   const research = norm([input.lead.aiSummary, input.lead.outreachAngle, input.lead.notes].filter(Boolean).join(' '))
-  const reasons: string[] = []
+  const why: Record<keyof typeof RELEVANCE_WEIGHTS, string[]> = { industry: [], offer: [], signal: [], evidence: [], context: [] }
 
   // Industry match
   let industry = 0.5
@@ -86,8 +86,8 @@ export function computeMessageRelevance(input: RelevanceInput): RelevanceResult 
   const category = norm(input.lead.category)
   if (targets.length > 0 && category) {
     industry = targets.some(t => category.includes(t) || t.includes(category)) ? 1 : 0
-    reasons.push(industry ? `Industry "${input.lead.category}" is a target industry` : `Industry "${input.lead.category}" is outside the target industries`)
-  } else reasons.push('Industry fit unknown (no ICP industries or lead category)')
+    why.industry.push(industry ? `Industry "${input.lead.category}" is a target industry` : `Industry "${input.lead.category}" is outside the target industries`)
+  } else why.industry.push('Industry fit unknown (no ICP industries or lead category)')
 
   // Offer match
   let offer = 0.5
@@ -95,8 +95,8 @@ export function computeMessageRelevance(input: RelevanceInput): RelevanceResult 
   if (offerTerms.length > 0) {
     const hits = offerTerms.filter(t => message.includes(t)).length
     offer = Math.min(1, hits / 2)
-    reasons.push(hits > 0 ? `Mentions the offer (${hits} offer term${hits === 1 ? '' : 's'})` : 'Does not mention what you offer')
-  } else reasons.push('Offer unknown (no business type/context set)')
+    why.offer.push(hits > 0 ? `Mentions the offer (${hits} offer term${hits === 1 ? '' : 's'})` : 'Does not mention what you offer')
+  } else why.offer.push('Offer unknown (no business type/context set)')
 
   // Signal alignment
   let signal = 0.5
@@ -104,32 +104,36 @@ export function computeMessageRelevance(input: RelevanceInput): RelevanceResult 
   if (found.length > 0) {
     const referenced = found.filter(([, re]) => re.test(message))
     signal = referenced.length > 0 ? 1 : 0.25
-    reasons.push(referenced.length > 0
+    why.signal.push(referenced.length > 0
       ? `References a buying signal (${referenced.map(([l]) => l).join(', ')})`
       : `Ignores known buying signal (${found.map(([l]) => l).join(', ')})`)
-  } else reasons.push('No buying signal in the research to reference')
+  } else why.signal.push('No buying signal in the research to reference')
 
   // Evidence relevance
   const facts = [norm(input.lead.businessName), norm(input.lead.city), ...keywords(`${input.lead.aiSummary ?? ''} ${input.lead.outreachAngle ?? ''}`, 6, 25)]
     .filter(f => f.length >= 3)
   const factHits = new Set(facts.filter(f => message.includes(f))).size
   const evidence = factHits >= 3 ? 1 : factHits === 2 ? 0.8 : factHits === 1 ? 0.5 : 0
-  reasons.push(factHits > 0 ? `Cites ${factHits} prospect-specific detail${factHits === 1 ? '' : 's'}` : 'No prospect-specific details')
+  why.evidence.push(factHits > 0 ? `Cites ${factHits} prospect-specific detail${factHits === 1 ? '' : 's'}` : 'No prospect-specific details')
 
   // Context relevance
   let context = 1
-  if (GENERIC_OPENERS.test(message)) { context -= 0.6; reasons.push('Generic template opener') }
-  if (input.lead.businessName && !message.includes(norm(input.lead.businessName))) { context -= 0.4; reasons.push('Does not name the prospect') }
+  if (GENERIC_OPENERS.test(message)) { context -= 0.6; why.context.push('Generic template opener') }
+  if (input.lead.businessName && !message.includes(norm(input.lead.businessName))) { context -= 0.4; why.context.push('Does not name the prospect') }
   context = Math.max(0, context)
 
   const components = { industry, offer, signal, evidence, context }
   const score = (Object.keys(RELEVANCE_WEIGHTS) as (keyof typeof RELEVANCE_WEIGHTS)[])
     .reduce((s, k) => s + RELEVANCE_WEIGHTS[k] * components[k], 0)
+  // Each reason carries its points out of 100, e.g. "+30 Industry … is a target industry".
+  if (why.context.length === 0) why.context.push('Personalised to the prospect')
+  const reasons = (Object.keys(RELEVANCE_WEIGHTS) as (keyof typeof RELEVANCE_WEIGHTS)[])
+    .map(k => `+${Math.round(RELEVANCE_WEIGHTS[k] * components[k] * 100)} ${why[k].join('; ')}`)
   return { score: Math.round(score * 1000) / 1000, components, reasons, version: MESSAGE_RELEVANCE_VERSION }
 }
 
 /**
- * Score a just-sent message once and store it on the send. Write-once (only
+ * Score a message once, BEFORE it is dispatched, and store it on the send. Write-once (only
  * when unset) so a later recompute — after research or ICP edits — can never
  * rewrite the value that was true at send time. Best-effort: callers must
  * not let a failure here affect the send.

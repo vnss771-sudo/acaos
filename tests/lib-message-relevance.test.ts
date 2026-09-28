@@ -23,7 +23,12 @@ test('a tailored, on-offer, signal-aware message scores high; a generic template
   assert.equal(hi.components.signal, 1)
   assert.equal(hi.components.industry, 1)
   assert.equal(lo.components.signal, 0.25, 'a known signal that the message ignores is penalised')
-  assert.ok(lo.reasons.includes('Generic template opener'))
+  assert.ok(lo.reasons.some(r => r.includes('Generic template opener')))
+  // Every reason carries its points; the points sum to the score (±rounding).
+  assert.ok(hi.reasons.every(r => /^\+\d+ /.test(r)))
+  const pts = hi.reasons.reduce((sum, r) => sum + Number(r.match(/^\+(\d+)/)![1]), 0)
+  assert.ok(Math.abs(pts - hi.score * 100) <= 3, `points=${pts} score=${hi.score}`)
+  assert.equal(hi.reasons[0], '+30 Industry "Engineering" is a target industry')
   // Exact component values, so each rule is individually pinned.
   assert.equal(hi.components.evidence, 1, 'cites the name, city and research specifics')
   assert.equal(lo.components.evidence, 0, 'cites nothing about the prospect')

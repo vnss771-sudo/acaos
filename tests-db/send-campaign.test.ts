@@ -258,6 +258,8 @@ test('fail-closed: an SMTP rejection marks the claim FAILED and does not advance
   const claim = await prisma.outreachSent.findFirst({ where: { leadId: lead.id } })
   assert.equal(claim!.status, 'FAILED')
   assert.match(claim!.lastError ?? '', /mailbox unavailable/)
+  // Relevance is scored BEFORE dispatch, so even a send SMTP rejected carries it.
+  assert.equal(typeof claim!.messageRelevanceScore, 'number')
   // The lead is NOT advanced — it stays eligible for a deliberate retry.
   const after = await prisma.lead.findUnique({ where: { id: lead.id } })
   assert.equal(after!.stage, 'RESEARCHED')

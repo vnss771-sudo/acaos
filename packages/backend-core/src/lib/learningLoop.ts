@@ -235,6 +235,14 @@ export function sameJson(a: unknown, b: unknown): boolean {
   return JSON.stringify(canon(a)) === JSON.stringify(canon(b))
 }
 
+/** Version of the calibration method; bump when calibrate()'s maths changes. */
+export const CALIBRATION_VERSION = 1
+
+/** Sample-size confidence label for customer-facing evidence. */
+export function confidenceLabel(sampleSize: number): 'Low' | 'Medium' | 'High' {
+  return sampleSize >= 100 ? 'High' : sampleSize >= 30 ? 'Medium' : 'Low'
+}
+
 export type RecommendationDraft = {
   type: 'ICP_INDUSTRY' | 'ICP_SIZE' | 'SIGNAL_WEIGHT'
   currentValue: unknown
@@ -259,7 +267,14 @@ export function buildRecommendationDrafts(
 ): RecommendationDraft[] {
   if (!result.stats.calibrated) return []
   const { totalOutcomes, baselineWinRate } = result.stats
-  const base = { totalOutcomes, baselineWinRate }
+  // Stored with the proposal, so the evidence a customer sees is exactly the
+  // data and method that generated it.
+  const base = {
+    totalOutcomes, baselineWinRate,
+    confidence: confidenceLabel(totalOutcomes),
+    recencyHalfLifeDays: learningLoopRecencyHalfLifeDays(),
+    calibrationVersion: CALIBRATION_VERSION,
+  }
   const drafts: RecommendationDraft[] = []
   const same = sameJson
 

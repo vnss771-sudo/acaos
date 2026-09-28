@@ -9,11 +9,12 @@
 //     applied proposedValue. Otherwise 409 — a human edit is never clobbered.
 //   - Expiring: proposals older than the TTL can't be approved (evidence ages).
 //   - Validated: stored values are re-validated before they touch config.
-//   - Audited: every decision is a durable audit event with before/after.
+//   - Atomic + audited: the status change, the config change and the audit
+//     event commit in ONE transaction — all succeed or nothing changes.
 
 import { z } from 'zod'
 import { prisma } from './prisma.js'
-import { recordCriticalAudit } from './audit.js'
+import { auditCreateData } from './audit.js'
 import { sameJson } from './learningLoop.js'
 import { DEFAULT_SCORING_WEIGHTS, DEFAULT_SCORING_METRICS } from './scoring.js'
 
@@ -92,7 +93,7 @@ export async function decideRecommendation(input: {
   const { workspaceId, recommendationId, actorUserId, action } = input
   const now = input.now ?? new Date()
 
-  const { rec, before, after } = await prisma.$transaction(async (tx) => {
+  const { rec } = await prisma.$transaction(async (tx) => {
     const rec = await tx.learningRecommendation.findFirst({ where: { id: recommendationId, workspaceId } })
     if (!rec) throw new DecisionError(404, 'Recommendation not found')
     const type = rec.type as RecType
@@ -107,8 +108,18 @@ export async function decideRecommendation(input: {
       if (claimed.count === 0) throw new DecisionError(409, 'This recommendation was already decided')
     }
 
+    const audit = (before: unknown, after: unknown) => tx.auditEvent.create({
+      data: auditCreateData({
+        workspaceId, actorUserId,
+        type: `learning.recommendation.${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'reverted'}`,
+        entityType: 'LearningRecommendation', entityId: rec.id,
+        metadata: { recommendationType: rec.type, before, after, sampleSize: rec.sampleSize, mode: rec.mode } as Record<string, unknown>,
+      }),
+    })
+
     if (action === 'reject') {
       await transition(['PENDING'], 'REJECTED')
+      await audit(null, null)
       return { rec, before: null, after: null }
     }
 
@@ -124,6 +135,7 @@ export async function decideRecommendation(input: {
       }
       await transition(['PENDING'], 'APPROVED')
       await writeLive(tx, workspaceId, type, rec.proposedValue)
+      await audit(live, rec.proposedValue)
       return { rec, before: live, after: rec.proposedValue }
     }
 
@@ -133,17 +145,11 @@ export async function decideRecommendation(input: {
     }
     await transition(['APPROVED', 'APPLIED_AUTOMATICALLY'], 'REVERTED')
     await writeLive(tx, workspaceId, type, rec.currentValue ?? (type === 'SIGNAL_WEIGHT' ? {} : type === 'ICP_INDUSTRY' ? [] : { minEmployees: null, maxEmployees: null }))
+    await audit(live, rec.currentValue)
     return { rec, before: live, after: rec.currentValue }
   })
 
   if (!rec) throw new DecisionError(410, 'This recommendation expired — its evidence is out of date')
-
-  await recordCriticalAudit({
-    workspaceId, actorUserId,
-    type: `learning.recommendation.${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'reverted'}`,
-    entityType: 'LearningRecommendation', entityId: rec.id,
-    metadata: { recommendationType: rec.type, before, after, sampleSize: rec.sampleSize, mode: rec.mode },
-  })
 
   return prisma.learningRecommendation.findUniqueOrThrow({ where: { id: rec.id } })
 }

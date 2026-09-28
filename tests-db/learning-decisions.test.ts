@@ -132,3 +132,28 @@ test('an invalid stored value is never applied', async () => {
   assert.deepEqual((await icpOf(workspace.id)).targetIndustries, ['HVAC', 'Plumbing'])
   assert.equal((await prisma.learningRecommendation.findUniqueOrThrow({ where: { id: rec.id } })).status, 'PENDING')
 })
+
+test('atomic: if the audit write fails, neither the config change nor the status change persists', async () => {
+  const { user, workspace, rec } = await setup()
+  await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION acaos_test_fail_audit() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$ LANGUAGE plpgsql`)
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER acaos_test_fail_audit BEFORE INSERT ON "AuditEvent" FOR EACH ROW EXECUTE FUNCTION acaos_test_fail_audit()`)
+  try {
+    await assert.rejects(decide(workspace, rec, user, 'approve'), /audit unavailable/)
+  } finally {
+    await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS acaos_test_fail_audit ON "AuditEvent"`)
+    await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS acaos_test_fail_audit()`)
+  }
+  assert.deepEqual((await icpOf(workspace.id)).targetIndustries, ['HVAC', 'Plumbing'], 'config unchanged')
+  assert.equal((await prisma.learningRecommendation.findUniqueOrThrow({ where: { id: rec.id } })).status, 'PENDING', 'status unchanged')
+})
+
+test('undo restores the exact stored previous value (not a recomputed one), and is audited in the same transaction', async () => {
+  const { user, workspace, rec } = await setup({ type: 'ICP_SIZE', currentValue: { minEmployees: 7, maxEmployees: 333 }, proposedValue: { minEmployees: 20, maxEmployees: 80 } })
+  await prisma.workspaceICP.update({ where: { workspaceId: workspace.id }, data: { minEmployees: 7, maxEmployees: 333 } })
+  await decide(workspace, rec, user, 'approve')
+  await decide(workspace, rec, user, 'revert')
+  const icp = await icpOf(workspace.id)
+  assert.deepEqual([icp.minEmployees, icp.maxEmployees], [7, 333])
+  const undo = await prisma.auditEvent.findFirstOrThrow({ where: { type: 'learning.recommendation.reverted' } })
+  assert.deepEqual((undo.metadata as { after: unknown }).after, { minEmployees: 7, maxEmployees: 333 })
+})

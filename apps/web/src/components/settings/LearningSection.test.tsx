@@ -10,7 +10,7 @@ const base = { workspaceId: 'ws1', sampleSize: 40, mode: 'shadow', createdAt: '2
 const pending = {
   ...base, id: 'r1', type: 'ICP_INDUSTRY', status: 'PENDING', decidedAt: null, expired: false,
   currentValue: ['HVAC'], proposedValue: ['electrical'],
-  evidence: { totalOutcomes: 40, baselineWinRate: 0.2, industries: [{ segment: 'electrical', won: 8, total: 12, observedWinRate: 0.667, adjustedWinRate: 0.49, lift: 2.45 }] },
+  evidence: { totalOutcomes: 40, baselineWinRate: 0.2, confidence: 'Medium', recencyHalfLifeDays: 180, calibrationVersion: 1, industries: [{ segment: 'electrical', won: 8, total: 12, observedWinRate: 0.667, adjustedWinRate: 0.49, lift: 2.45 }] },
 }
 const applied = { ...base, id: 'r2', type: 'ICP_SIZE', status: 'APPROVED', decidedAt: '2026-09-02T00:00:00Z', currentValue: {}, proposedValue: { minEmployees: 20, maxEmployees: 80 }, evidence: {} }
 const expired = { ...pending, id: 'r3', expired: true }
@@ -29,6 +29,9 @@ describe('LearningSection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review evidence' }))
     expect(screen.getByText('2.45×')).toBeInTheDocument()
     expect(screen.getByText(/not proof of cause/)).toBeInTheDocument()
+    expect(screen.getByText('Medium')).toBeInTheDocument()
+    expect(screen.getByText(/half-weight after 180 days/)).toBeInTheDocument()
+    expect(screen.getByText(/method v1/)).toBeInTheDocument()
   })
 
   test('Accept posts the approve route for that recommendation', async () => {

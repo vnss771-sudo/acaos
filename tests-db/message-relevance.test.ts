@@ -52,3 +52,25 @@ test('sends from before relevance scoring fall back to the neutral default', asy
   await applyReplyAnalysis(lead.id, { classification: 'INTERESTED', confidence: 90, isAutoReply: false })
   assert.equal((await prisma.scoringOutcome.findFirstOrThrow({ where: { leadId: lead.id } })).messageRelevance, 0.5)
 })
+
+test('the eventual reply cannot change the stored relevance: positive vs negative reply, identical score', async () => {
+  const a = await seed()
+  const b = await seed()
+  await recordSendRelevance(a.send.id)
+  await recordSendRelevance(b.send.id)
+  const before = (id: string) => prisma.outreachSent.findUniqueOrThrow({ where: { id } }).then(r => r.messageRelevanceScore)
+  const [sa, sb] = [await before(a.send.id), await before(b.send.id)]
+  assert.equal(sa, sb, 'identical inputs → identical score')
+
+  await prisma.outreachSent.update({ where: { id: a.send.id }, data: { status: 'REPLIED', repliedAt: new Date() } })
+  await prisma.outreachSent.update({ where: { id: b.send.id }, data: { status: 'REPLIED', repliedAt: new Date() } })
+  await applyReplyAnalysis(a.lead.id, { classification: 'INTERESTED', confidence: 95, isAutoReply: false })
+  await applyReplyAnalysis(b.lead.id, { classification: 'NOT_INTERESTED', confidence: 95, isAutoReply: false })
+  await recordSendRelevance(a.send.id)
+  await recordSendRelevance(b.send.id)
+
+  assert.equal(await before(a.send.id), sa)
+  assert.equal(await before(b.send.id), sb)
+  const samples = await prisma.scoringOutcome.findMany({ where: { leadId: { in: [a.lead.id, b.lead.id] } } })
+  assert.equal(new Set(samples.map(x => x.messageRelevance)).size, 1, 'both learning samples carry the same pre-send value')
+})

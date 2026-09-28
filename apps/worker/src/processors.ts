@@ -1012,6 +1012,9 @@ async function dispatchOutreachEmail(p: {
     // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
     // endpoint already serves a safe GET confirmation and a POST one-click
     // handler. Major mailbox providers require these for bulk senders.
+    // Score relevance BEFORE dispatch: final copy, no outcome can exist yet.
+    // Best-effort — a scoring failure never blocks the send.
+    await recordSendRelevance(p.claimId).catch(() => {})
     const info = await p.sendMailFn(p.lead.email!, p.subject, htmlBody, p.smtpCfg, {
       text: textBody,
       headers: {
@@ -1040,8 +1043,6 @@ async function dispatchOutreachEmail(p: {
       // Advance the linked intent to SENT in the same transaction as the send.
       ...(p.linkedIntent ? [prisma.outreachIntent.update({ where: { id: p.linkedIntent.id }, data: { status: 'SENT' } })] : []),
     ])
-    // Pre-send relevance of the message just delivered (best-effort; never blocks the send).
-    await recordSendRelevance(p.claimId).catch(() => {})
 
     // Schedule the next sequence step (best-effort; no-op unless the campaign
     // opted into auto-followups and an active next step exists).
@@ -1623,6 +1624,7 @@ export async function sendFollowupTask(
   }
 
   try {
+    await recordSendRelevance(claimId).catch(() => {}) // before dispatch (see dispatchOutreachEmail)
     const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
       text: textBody,
       headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
@@ -1635,7 +1637,6 @@ export async function sendFollowupTask(
       prisma.campaignDailyStats.upsert(campaignDailyStatsUpsertArgs({ workspaceId, campaignId, date: new Date(), field: 'sent' })),
       prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SENT', outreachSentId: claimId } }),
     ])
-    await recordSendRelevance(claimId).catch(() => {})
     // Schedule the next step in the sequence. Awaited (so it's attempted before
     // the job completes) but best-effort: the send already committed, so a
     // scheduling hiccup must never fail it — the periodic scan re-drives anything

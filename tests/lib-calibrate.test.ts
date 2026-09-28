@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { calibrate, buildRecommendationDrafts, sameJson } from '../packages/backend-core/src/lib/learningLoop.ts'
+import { calibrate, buildRecommendationDrafts, sameJson, confidenceLabel } from '../packages/backend-core/src/lib/learningLoop.ts'
 import { EVENT_BASE_WEIGHTS } from '../packages/backend-core/src/lib/signalEngine.ts'
 
 type Stage = 'WON' | 'LOST'
@@ -113,6 +113,10 @@ test('ICP changes are proposed as recommendations with evidence', () => {
   assert.deepEqual(ind.proposedValue, ['electrical'])
   assert.ok(Array.isArray((ind.evidence as { industries: unknown[] }).industries))
   assert.equal(ind.sampleSize, 25)
+  const ev = ind.evidence as { confidence: string; calibrationVersion: number; recencyHalfLifeDays: number }
+  assert.equal(ev.confidence, 'Low')
+  assert.equal(ev.calibrationVersion, 1)
+  assert.equal(ev.recencyHalfLifeDays, 180)
 })
 
 test('no recommendation when the proposal matches the current configuration', () => {
@@ -137,4 +141,8 @@ test('among above-baseline industries, order is by adjusted lift, not win count'
   // Busy: 20/40 wins (50%). Sharp: 9/10 wins (90%). Filler drags the baseline down.
   const r = calibrate([...many(20, 'WON', 'Busy'), ...many(20, 'LOST', 'Busy'), ...many(9, 'WON', 'Sharp'), ...many(1, 'LOST', 'Sharp'), ...many(5, 'WON', 'Filler'), ...many(95, 'LOST', 'Filler')])
   assert.deepEqual(r.icpUpdate.targetIndustries, ['sharp', 'busy'])
+})
+
+test('confidence label follows sample size', () => {
+  assert.deepEqual([confidenceLabel(29), confidenceLabel(30), confidenceLabel(99), confidenceLabel(100)], ['Low', 'Medium', 'Medium', 'High'])
 })

@@ -29,10 +29,19 @@ export function describeRecommendation(r: LearningRecommendationDto): { title: s
 }
 
 function Evidence({ r }: { r: LearningRecommendationDto }) {
-  const e = r.evidence as { totalOutcomes?: number; baselineWinRate?: number; industries?: SegmentInsight[]; basis?: string; method?: string }
+  const e = r.evidence as {
+    totalOutcomes?: number; baselineWinRate?: number; industries?: SegmentInsight[]; basis?: string; method?: string
+    confidence?: string; recencyHalfLifeDays?: number; calibrationVersion?: number
+  }
   return (
     <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 8 }}>
       <div>Based on {e.totalOutcomes ?? r.sampleSize} recorded wins/losses · overall win rate {pct(e.baselineWinRate)}</div>
+      <div style={{ marginTop: 2 }}>
+        Confidence: <strong>{e.confidence ?? '—'}</strong>
+        {e.recencyHalfLifeDays ? ` · recent outcomes count more (half-weight after ${e.recencyHalfLifeDays} days)` : ''}
+        {e.calibrationVersion ? ` · method v${e.calibrationVersion}` : ''}
+        {` · proposed ${new Date(r.createdAt).toLocaleDateString()}`}
+      </div>
       {(e.basis || e.method) && <div style={{ marginTop: 2 }}>{e.basis ?? e.method}</div>}
       {Array.isArray(e.industries) && e.industries.length > 0 && (
         <table style={{ marginTop: 8, borderCollapse: 'collapse', width: '100%' }}>
