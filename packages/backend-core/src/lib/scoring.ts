@@ -413,3 +413,25 @@ export async function maybeRecomputeScoringWeights(
   })
   return { updated: apply, totalOutcomes }
 }
+
+/**
+ * A workspace's scoring model, created with default weights on first use.
+ * @unique(workspaceId) means a concurrent first-use race can lose the create
+ * with P2002; re-read in that case so every caller still gets the id.
+ */
+export async function getOrCreateScoringModel(workspaceId: string): Promise<{ id: string; weights: unknown }> {
+  const select = { id: true, weights: true } as const
+  const existing = await prisma.scoringModel.findUnique({ where: { workspaceId }, select })
+  if (existing) return existing
+  try {
+    return await prisma.scoringModel.create({
+      data: { workspaceId, weights: DEFAULT_SCORING_WEIGHTS, performanceMetrics: DEFAULT_SCORING_METRICS },
+      select,
+    })
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') throw err
+    const raced = await prisma.scoringModel.findUnique({ where: { workspaceId }, select })
+    if (!raced) throw new Error('scoring model unavailable after create race')
+    return raced
+  }
+}

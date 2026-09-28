@@ -4,7 +4,7 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { DEFAULT_SCORING_WEIGHTS, DEFAULT_MESSAGE_RELEVANCE, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
+import { DEFAULT_SCORING_WEIGHTS, DEFAULT_MESSAGE_RELEVANCE, getOrCreateScoringModel, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -1855,32 +1855,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // Common path is a read: the scoring model almost always already exists. The
   // @unique(workspaceId) means a concurrent first-reply race can lose the create
   // with P2002; re-read in that case so we still get the id.
-  let model = await prisma.scoringModel.findUnique({
-    where: { workspaceId: lead.workspaceId },
-    select: { id: true, weights: true },
-  })
-  if (!model) {
-    try {
-      model = await prisma.scoringModel.create({
-        data: {
-          workspaceId: lead.workspaceId,
-          weights: DEFAULT_SCORING_WEIGHTS,
-          performanceMetrics: {
-            totalScored: 0, totalReplied: 0, replyRate: 0,
-            avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0,
-          },
-        },
-        select: { id: true, weights: true },
-      })
-    } catch (err) {
-      if ((err as { code?: string }).code !== 'P2002') throw err
-      model = await prisma.scoringModel.findUnique({
-        where: { workspaceId: lead.workspaceId },
-        select: { id: true, weights: true },
-      })
-    }
-  }
-  if (!model) throw new Error('scoring model unavailable after create race')
+  const model = await getOrCreateScoringModel(lead.workspaceId)
 
   const replyIntentMap: Record<string, string> = {
     INTERESTED: 'INTERESTED',
