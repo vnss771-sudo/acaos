@@ -57,7 +57,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
       intent.recommendationId
         ? prisma.recommendation.findUnique({ where: { id: intent.recommendationId }, select: { reasoning: true, messageAngle: true } })
         : Promise.resolve(null),
-      prisma.workspaceICP.findUnique({ where: { workspaceId: prospect.workspaceId }, select: { targetIndustries: true, businessType: true, outreachTone: true } }),
+      prisma.workspaceICP.findUnique({ where: { workspaceId: prospect.workspaceId }, select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true } }),
       // Per-mission override (offer + target customer) when the intent belongs to a mission.
       intent.missionId
         ? prisma.mission.findUnique({ where: { id: intent.missionId }, select: { targetCustomer: true, offer: true } })
@@ -68,6 +68,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
           targetIndustries: icpRow?.targetIndustries,
           businessType: icpRow?.businessType ?? undefined,
           outreachTone: icpRow?.outreachTone ?? undefined,
+          businessContext: icpRow?.businessContext ?? undefined,
           offer: missionCtx?.offer ?? undefined,
           targetCustomer: missionCtx?.targetCustomer ?? undefined,
         }

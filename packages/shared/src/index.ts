@@ -205,6 +205,12 @@ export interface UpdateIcpRequest {
   excludedIndustries?: string[]
 }
 
+// PUT /api/workspaces/:id/business-context — free-text facts about the seller
+// (services, pricing, FAQs, tone) included in AI prompts. Blank or null clears it.
+export interface UpdateBusinessContextRequest {
+  businessContext: string | null
+}
+
 // POST /api/workspaces/:id/seed
 export interface SeedWorkspaceRequest {
   playbookId: string | null
@@ -268,6 +274,11 @@ export interface SendInboxReplyRequest {
 export interface ResolveInboxReplySendRequest {
   workspaceId: string
   outcome: 'sent' | 'not_sent'
+}
+
+// POST /api/inbox/reply/:replyId/draft — AI draft for the composer; never sent by itself.
+export interface DraftInboxReplyRequest {
+  workspaceId: string
 }
 
 // PATCH /api/inbox/reply/:replyId/feedback
@@ -629,6 +640,7 @@ export interface RouteContracts {
   'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
 
   // Inbox
+  'POST /api/inbox/reply/:replyId/draft': { params: { replyId: string }; body: DraftInboxReplyRequest; response: { body: string } }
   'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string; duplicate?: boolean } }
   'POST /api/inbox/reply/:replyId/sends/:sendId/resolve': { params: { replyId: string; sendId: string }; body: ResolveInboxReplySendRequest; response: { success: boolean; status: 'SENT' | 'FAILED' } }
   'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
@@ -640,6 +652,7 @@ export interface RouteContracts {
   'PATCH /api/workspaces/:id/compliance': { params: { id: string }; body: ComplianceUpdateRequest; response: unknown }
   'POST /api/workspaces/:id/consent': { params: { id: string }; body: ConsentRecordRequest; response: { id: string; recordedAt: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
+  'PUT /api/workspaces/:id/business-context': { params: { id: string }; body: UpdateBusinessContextRequest; response: { businessContext: string | null } }
   'POST /api/workspaces/:id/warmup/start': { params: { id: string }; response: { warmupStartedAt: string } }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }

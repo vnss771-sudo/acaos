@@ -130,7 +130,10 @@ const replyWorker = new Worker(
     // field every enqueue site sets even though the schema allows it to be
     // absent; without it there's no tenant to check quota against.
     if (workspaceId) await assertAiUsageAllowed(workspaceId)
-    const raw = await analyzeReply(replyBody)
+    const icpRow = workspaceId
+      ? await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { businessContext: true } })
+      : null
+    const raw = await analyzeReply(replyBody, { businessContext: icpRow?.businessContext ?? undefined })
     await job.updateProgress(70)
 
     // Strict: classification drives CRM stage + scoring, so an unknown value must

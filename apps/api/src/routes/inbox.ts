@@ -10,9 +10,16 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { isSuppressed } from '@acaos/backend-core/lib/suppressions.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { escapeHtml } from '../lib/html.js'
+import { requireFeature } from '../middleware/featureGate.js'
+import { aiRateLimit } from '../middleware/rateLimit.js'
+import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
+import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
+import { parseAiJson, ReplyDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
+import { generateReplyDraft } from '../services/openai.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
+// POST /api/inbox/reply/:replyId/draft — AI-draft a reply for the composer (never sent by itself)
 // POST /api/inbox/reply/:replyId/send — send a user-written reply to the original sender
 export const inboxRouter = Router()
 inboxRouter.use(requireAuth)
@@ -46,6 +53,10 @@ const sendReplySchema = z.object({
   // Client-generated per compose session (e.g. crypto.randomUUID()); a retry
   // with the same key never sends twice.
   idempotencyKey: z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/),
+})
+
+const draftReplySchema = z.object({
+  workspaceId: workspaceIdField,
 })
 
 const resolveParamsSchema = z.object({
@@ -427,6 +438,80 @@ async function threadingHeaders(
 function plainTextToHtml(text: string): string {
   return `<div>${escapeHtml(text).replace(/\r?\n/g, '<br>')}</div>`
 }
+
+// POST /api/inbox/reply/:replyId/draft — draft a reply with AI. The draft only
+// fills the composer: the person edits it and sends it through /send, so nothing
+// reaches the prospect without their approval. Built from the stored reply
+// analysis (the raw inbound body is never stored), the email we sent, and the
+// workspace's business context. Metered as an AI_REPLY call.
+// Returns: { body: string }
+export function createInboxReplyDraftHandler(deps: { generateReplyDraft?: typeof generateReplyDraft } = {}) {
+  const generateFn = deps.generateReplyDraft ?? generateReplyDraft
+  return asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { replyId } = parseParams(replyParamsSchema, req)
+    const { workspaceId } = parseBody(draftReplySchema, req)
+
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const reply = await prisma.outreachSent.findUnique({
+      where: { id: replyId },
+      select: {
+        workspaceId: true,
+        status: true,
+        subject: true,
+        body: true,
+        replyIntent: true,
+        replySummary: true,
+        replyKeyQuote: true,
+        replySuggestedAction: true,
+        lead: { select: { businessName: true, contactName: true } },
+      },
+    })
+    if (!reply) throw new ApiError(404, 'Reply not found')
+    if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
+    if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only draft replies to messages that have received a reply')
+
+    const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { businessContext: true, outreachTone: true } })
+
+    await enforceWorkspaceAiRate(workspaceId)
+    await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
+
+    let body: string
+    try {
+      const raw = await generateFn({
+        classification: reply.replyIntent,
+        summary: reply.replySummary,
+        keyQuote: reply.replyKeyQuote,
+        suggestedAction: reply.replySuggestedAction,
+        originalSubject: reply.subject,
+        originalBody: reply.body,
+        businessName: reply.lead?.businessName,
+        contactName: reply.lead?.contactName,
+        businessContext: icp?.businessContext,
+        outreachTone: icp?.outreachTone,
+      })
+      body = parseAiJson(ReplyDraftOutputSchema, raw, 'inbox-reply-draft').body
+    } catch (err) {
+      await refundAiUsage(workspaceId, 'AI_REPLY').catch(() => {})
+      throw err
+    }
+
+    await recordAudit({
+      workspaceId,
+      actorUserId: user.id,
+      type: 'inbox.reply_drafted',
+      entityType: 'outreachSent',
+      entityId: replyId,
+      metadata: { classification: reply.replyIntent, usedBusinessContext: !!icp?.businessContext },
+    })
+
+    res.json({ body })
+  })
+}
+
+inboxRouter.post('/reply/:replyId/draft', requireFeature('ai'), aiRateLimit, createInboxReplyDraftHandler())
 
 inboxRouter.post('/reply/:replyId/send', createInboxReplySendHandler())
 

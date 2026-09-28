@@ -82,6 +82,12 @@ export function InboxView({ api, workspace, toast }: Props) {
   const [composeKey, setComposeKey] = useState('')
   const [feedbackReplyId, setFeedbackReplyId] = useState<string | null>(null)
   const [feedbackSending, setFeedbackSending] = useState(false)
+  // Compose session (see composeKeyRef) whose AI draft is in flight, if any.
+  const [draftingKey, setDraftingKey] = useState<string | null>(null)
+  // The open compose session, so a draft that returns after the user cancelled,
+  // moved to another thread, or reopened the composer is dropped instead of
+  // overwriting what they typed.
+  const composeKeyRef = useRef('')
   const route = useMemo(() => makeRouteApi(api), [api])
 
   const loadReqRef = useRef(0)
@@ -103,10 +109,40 @@ export function InboxView({ api, workspace, toast }: Props) {
   useEffect(() => { load() }, [load])
 
   const openComposer = useCallback((replyId: string) => {
+    const key = newIdempotencyKey()
     setEditingReplyId(replyId)
     setCustomBody('')
-    setComposeKey(newIdempotencyKey())
+    setComposeKey(key)
+    composeKeyRef.current = key
   }, [])
+
+  const closeComposer = useCallback(() => {
+    setEditingReplyId(null)
+    setCustomBody('')
+    composeKeyRef.current = ''
+  }, [])
+
+  // Fills the composer with an AI draft for the person to review and edit. It is
+  // never sent from here: sending still goes through handleSendReply with
+  // whatever is in the box.
+  const handleDraftReply = useCallback(async (replyId: string) => {
+    if (!workspace) return
+    const session = composeKeyRef.current
+    if (!session) return
+    setDraftingKey(session)
+    try {
+      const { body } = await route('POST /api/inbox/reply/:replyId/draft', {
+        params: { replyId },
+        body: { workspaceId: workspace.id },
+      })
+      if (!body) throw new Error('No draft was returned')
+      if (composeKeyRef.current === session) setCustomBody(body)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to draft a reply')
+    } finally {
+      setDraftingKey(k => (k === session ? null : k))
+    }
+  }, [workspace?.id, route, toast])
 
   // The body is always what the user typed. The AI's "suggested next step" is an
   // internal note to the user, not prospect-facing copy, so it is never sent.
@@ -120,8 +156,7 @@ export function InboxView({ api, workspace, toast }: Props) {
       })
       if (response.success) {
         toast.success(`✓ Reply sent to ${data?.replies.find(r => r.id === replyId)?.toEmail ?? 'prospect'}`)
-        setCustomBody('')
-        setEditingReplyId(null)
+        closeComposer()
         load()
       }
     } catch (err) {
@@ -132,7 +167,10 @@ export function InboxView({ api, workspace, toast }: Props) {
     } finally {
       setSendingReplyId(null)
     }
-  }, [workspace?.id, route, toast, load, data])
+  }, [workspace?.id, route, toast, load, data, closeComposer])
+
+  // Only one composer is open at a time, so this is "the open composer is drafting".
+  const draftingHere = draftingKey !== null && draftingKey === composeKey
 
   const [resolvingSendId, setResolvingSendId] = useState<string | null>(null)
   const handleResolveSend = useCallback(async (replyId: string, sendId: string, outcome: 'sent' | 'not_sent') => {
@@ -322,6 +360,8 @@ export function InboxView({ api, workspace, toast }: Props) {
                       value={customBody}
                       onChange={(e) => setCustomBody(e.target.value)}
                       placeholder={r.replySuggestedAction ? `Write your reply to ${r.toEmail}. Next step: ${r.replySuggestedAction}` : `Write your reply to ${r.toEmail}…`}
+                      aria-label={`Reply to ${r.toEmail}`}
+                      readOnly={draftingHere}
                       style={{
                         flex: 1, padding: 8, borderRadius: 4, border: `1px solid ${colors.border}`,
                         fontFamily: 'inherit', fontSize: 13, minHeight: 80, resize: 'vertical',
@@ -329,10 +369,27 @@ export function InboxView({ api, workspace, toast }: Props) {
                         color: colors.text,
                       }}
                     />
+                    {/\[[^\]]+\]/.test(customBody) && (
+                      <div style={{ fontSize: 12, color: colors.textMuted }}>
+                        Fill in anything in [brackets] before sending.
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
+                        onClick={() => handleDraftReply(r.id)}
+                        disabled={draftingHere || sendingReplyId === r.id || !!customBody.trim()}
+                        title={customBody.trim() ? 'Clear the box to draft again' : 'Draft a reply you can edit before sending'}
+                        style={{
+                          padding: '8px 12px', borderRadius: 4, border: `1px solid ${colors.border}`,
+                          background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13,
+                          opacity: draftingHere || !!customBody.trim() ? 0.6 : 1,
+                        }}
+                      >
+                        {draftingHere ? 'Drafting...' : 'Draft with AI'}
+                      </button>
+                      <button
                         onClick={() => handleSendReply(r.id, customBody, composeKey)}
-                        disabled={sendingReplyId === r.id || !customBody.trim()}
+                        disabled={sendingReplyId === r.id || draftingHere || !customBody.trim()}
                         style={{
                           flex: 1, padding: '8px 12px', borderRadius: 4, border: 'none',
                           background: colors.green, color: '#fff', fontWeight: 600, cursor: 'pointer',
@@ -342,7 +399,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                         {sendingReplyId === r.id ? 'Sending...' : 'Send reply'}
                       </button>
                       <button
-                        onClick={() => { setEditingReplyId(null); setCustomBody(''); }}
+                        onClick={closeComposer}
                         style={{
                           padding: '8px 12px', borderRadius: 4, border: `1px solid ${colors.border}`,
                           background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13,
@@ -363,6 +420,16 @@ export function InboxView({ api, workspace, toast }: Props) {
                       }}
                     >
                       Reply
+                    </button>
+                    <button
+                      onClick={() => { openComposer(r.id); void handleDraftReply(r.id) }}
+                      disabled={sendingReplyId === r.id}
+                      style={{
+                        padding: '6px 12px', borderRadius: 4, border: `1px solid ${colors.border}`,
+                        background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 12,
+                      }}
+                    >
+                      Draft reply with AI
                     </button>
                   </div>
                 )}

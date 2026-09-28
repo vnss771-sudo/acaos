@@ -13,6 +13,7 @@ import { PasswordSection, type PasswordForm } from '../components/settings/Passw
 import { WorkspaceSection, type WorkspaceForm } from '../components/settings/WorkspaceSection.js'
 import { TeamSection, type MemberForm, type PendingInvite } from '../components/settings/TeamSection.js'
 import { IcpSection, type IcpForm } from '../components/settings/IcpSection.js'
+import { BusinessContextSection } from '../components/settings/BusinessContextSection.js'
 import { EmailConfigSection, type EmailConfigForm } from '../components/settings/EmailConfigSection.js'
 import { DeliverabilitySection, type DomainCheckResult, type DomainMonitor, type WarmupStatus, type ReputationVerdict } from '../components/settings/DeliverabilitySection.js'
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
@@ -27,6 +28,7 @@ type IcpConfig = {
   mustHaveEmail: boolean
   approvalMode?: boolean
   dailySendLimit?: number
+  businessContext?: string | null
 }
 
 type Props = {
@@ -64,6 +66,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const [icp, setIcp] = useState<IcpConfig | null>(null)
   const [icpForm, setIcpForm] = useState<IcpForm>({ targetIndustries: '', targetGeos: '', minEmployees: '', maxEmployees: '', mustHaveEmail: false })
   const [savingIcp, setSavingIcp] = useState(false)
+  const [businessContext, setBusinessContext] = useState('')
+  const [savingContext, setSavingContext] = useState(false)
 
   // Email config
   const emptyEmail: EmailConfigForm = { smtpHost: '', smtpPort: '587', smtpSecure: false, smtpUser: '', smtpPass: '', smtpFrom: '', imapHost: '', imapPort: '993', imapSecure: true, imapUser: '', imapPass: '', smtpPassSet: false, imapPassSet: false }
@@ -113,6 +117,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
             maxEmployees: d.icp.maxEmployees != null ? String(d.icp.maxEmployees) : '',
             mustHaveEmail: d.icp.mustHaveEmail,
           })
+          setBusinessContext(d.icp.businessContext ?? '')
         }
       })
       .catch(() => { if (!cancelled) toast.error('Failed to load ICP settings') })
@@ -387,6 +392,20 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     finally { setSavingIcp(false) }
   }
 
+  async function saveBusinessContext() {
+    if (!workspace) return
+    setSavingContext(true)
+    try {
+      const d = await route('PUT /api/workspaces/:id/business-context', {
+        params: { id: workspace.id },
+        body: { businessContext: businessContext.trim() || null },
+      })
+      setBusinessContext(d.businessContext ?? '')
+      toast.success('Business context saved')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to save business context') }
+    finally { setSavingContext(false) }
+  }
+
   async function generateApiKey() {
     if (!workspace) return
     setKeyWorking(true)
@@ -480,6 +499,10 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
 
       {workspace && (
         <IcpSection icpForm={icpForm} setIcpForm={setIcpForm} saving={savingIcp} onSave={saveIcp} />
+      )}
+
+      {workspace && isOwnerOrAdmin && (
+        <BusinessContextSection value={businessContext} setValue={setBusinessContext} saving={savingContext} onSave={saveBusinessContext} />
       )}
 
       {workspace && isOwnerOrAdmin && (

@@ -1205,6 +1205,10 @@ model WorkspaceICP {
   mustHaveEmail       Boolean   @default(false)
   businessType        String?
   outreachTone        String?   // professional | casual | direct
+  // Free-text facts about the seller (services, pricing, FAQs, tone notes) that
+  // the workspace writes once and every AI prompt includes, so drafts and
+  // suggested actions use the business's real details. null = none.
+  businessContext     String?
   approvalMode        Boolean   @default(true)
   dailySendLimit      Int       @default(50)
   // Opt-in monthly send ceiling — a coarse backstop to the daily cap against

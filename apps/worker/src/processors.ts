@@ -215,7 +215,7 @@ export async function researchLead(
   // gets analysis framed around plumbing/HVAC/etc.
   const wsIcp = await prisma.workspaceICP.findUnique({
     where: { workspaceId },
-    select: { targetIndustries: true, businessType: true, outreachTone: true },
+    select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true },
   })
 
   // Defense-in-depth re-check right before the model call: the enqueue-time
@@ -392,7 +392,7 @@ export async function generateOutreachDraft(
   // default), mirroring the campaign send path.
   const wsIcp = await prisma.workspaceICP.findUnique({
     where: { workspaceId },
-    select: { targetIndustries: true, businessType: true, outreachTone: true },
+    select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true },
   })
 
   // Defense-in-depth re-check right before the model call — see the same
@@ -883,6 +883,7 @@ async function generateDraftForSend(
         targetIndustries: icp?.targetIndustries,
         businessType: icp?.businessType ?? undefined,
         outreachTone: icp?.outreachTone ?? undefined,
+        businessContext: icp?.businessContext ?? undefined,
         offer: missionCtx?.offer ?? undefined,
         targetCustomer: missionCtx?.targetCustomer ?? undefined,
       } : undefined,

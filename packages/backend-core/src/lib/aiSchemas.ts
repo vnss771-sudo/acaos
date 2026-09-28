@@ -121,6 +121,14 @@ export const ReplyAnalysisOutputSchema = z.object({
 })
 export type ReplyAnalysisOutput = z.infer<typeof ReplyAnalysisOutputSchema>
 
+// ── Inbox reply draft (strict) ──────────────────────────────────────────────────
+// Filled into the composer for a person to edit, so an empty body is unusable.
+// Capped at the send route's 5,000-char body limit.
+export const ReplyDraftOutputSchema = z.object({
+  body: z.string().trim().min(1).max(5000),
+})
+export type ReplyDraftOutput = z.infer<typeof ReplyDraftOutputSchema>
+
 // Typed, fail-closed error for AI output that does not match its schema. Extends
 // ApiError so it maps to a 502 in the Express layer and is distinguishable from a
 // transport/circuit error by callers and by metrics/audit.
