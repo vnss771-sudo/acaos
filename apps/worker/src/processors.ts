@@ -528,7 +528,7 @@ export async function calibrateScoring(
   const pending = await prisma.learningRecommendation.findMany({
     where: { workspaceId, status: 'PENDING' }, select: { type: true, proposedValue: true },
   })
-  const freshDrafts = drafts.filter(d => !pending.some(p =>
+  const freshDrafts = drafts.filter(d => !pending.some((p: { type: string; proposedValue: unknown }) =>
     p.type === d.type && sameJson(p.proposedValue, d.proposedValue)))
   const applySignalWeights = mode === 'live' && freshDrafts.some(d => d.type === 'SIGNAL_WEIGHT')
 

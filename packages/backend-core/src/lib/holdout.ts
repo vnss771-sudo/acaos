@@ -74,13 +74,13 @@ export async function compareHoldout(workspaceId: string): Promise<HoldoutCompar
     prisma.outreachSelection.findMany({ where: { workspaceId, decision: 'SELECTED' }, select: { leadId: true }, distinct: ['leadId'] }),
     prisma.outreachSelection.findMany({ where: { workspaceId, decision: 'HELD_OUT' }, select: { leadId: true }, distinct: ['leadId'] }),
   ])
-  const contactedIds = new Set(contactedRows.map((r: { leadId: string }) => r.leadId))
+  const contactedIds = new Set<string>(contactedRows.map((r: { leadId: string }) => r.leadId))
   const heldIds = heldRows.map((r: { leadId: string }) => r.leadId).filter((id: string) => !contactedIds.has(id))
   const leads = await prisma.lead.findMany({
     where: { workspaceId, id: { in: [...contactedIds, ...heldIds] } },
     select: { id: true, stage: true },
   })
-  const stageOf = new Map(leads.map((l: { id: string; stage: string }) => [l.id, l.stage]))
+  const stageOf = new Map<string, string>(leads.map((l: { id: string; stage: string }) => [l.id, l.stage]))
   const pick = (ids: Iterable<string>) => [...ids].map(id => stageOf.get(id)).filter((s): s is string => !!s)
   const contacted = stats(pick(contactedIds))
   const heldOut = stats(pick(heldIds))

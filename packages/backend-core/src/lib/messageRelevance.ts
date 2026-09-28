@@ -155,7 +155,7 @@ export async function recordPreSendFeatures(
   ])
   if (!lead) return null
   const relevance = computeMessageRelevance({ subject: send.subject, body: send.body, lead, icp })
-  const timing = computeTimingFit(evidence.map(e => ({ text: e.signal, observedAt: e.observedAt })), now)
+  const timing = computeTimingFit(evidence.map((e: { signal: string; observedAt: Date }) => ({ text: e.signal, observedAt: e.observedAt })), now)
   await prisma.outreachSent.updateMany({
     where: { id: outreachSentId, messageRelevanceScore: null },
     data: {

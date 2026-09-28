@@ -29,7 +29,7 @@ export function registerLearningRoutes(workspaceRouter: Router) {
       })
       const now = new Date()
       res.json({
-        recommendations: rows.map(r => ({
+        recommendations: rows.map((r: { status: string; createdAt: Date; decidedAt: Date | null } & Record<string, unknown>) => ({
           ...r,
           createdAt: r.createdAt.toISOString(),
           decidedAt: r.decidedAt?.toISOString() ?? null,

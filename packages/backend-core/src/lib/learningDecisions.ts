@@ -13,6 +13,7 @@
 //     event commit in ONE transaction — all succeed or nothing changes.
 
 import { z } from 'zod'
+import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { auditCreateData } from './audit.js'
 import { sameJson } from './learningLoop.js'
@@ -41,7 +42,7 @@ const valueSchemas = {
 } as const
 type RecType = keyof typeof valueSchemas
 
-type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+type Tx = Prisma.TransactionClient
 
 async function readLive(tx: Tx, workspaceId: string, type: RecType): Promise<unknown> {
   if (type === 'SIGNAL_WEIGHT') {
