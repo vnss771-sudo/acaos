@@ -43,6 +43,8 @@ test('generateReplyDraft: uses the reply analysis, the email we sent, and the bu
   assert.match(system, /They asked for more information/)
   assert.ok(system.includes('Starter plan is $150/month for up to 10 users.'))
   assert.match(system, /square brackets/)          // missing facts become placeholders, never guesses
+  assert.match(system, /Answer EVERY question/)
+  assert.match(system, /Compare any numbers they mention/)
   for (const s of ['Acme Plumbing', 'Contact first name: Dana', 'what would this cost us?', 'How are you handling dispatch as you grow?']) {
     assert.ok(user.includes(s), s)
   }
@@ -64,6 +66,7 @@ test('generateReplyDraft: NOT_INTERESTED asks for a gracious close, and no conte
   await generateReplyDraft({ classification: 'NOT_INTERESTED' })
   assert.match(calls[0].system, /gracious close/)
   assert.ok(!calls[0].system.includes('ABOUT THE SELLER'))
+  assert.ok(!calls[0].system.includes('Answer EVERY question'))
   assert.ok(!calls[0].system.includes('\n\n\n'))
 })
 
