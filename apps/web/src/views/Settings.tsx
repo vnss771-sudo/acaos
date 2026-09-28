@@ -19,6 +19,7 @@ import { DeliverabilitySection, type DomainCheckResult, type DomainMonitor, type
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
 import { AccessReviewSection } from '../components/settings/AccessReviewSection.js'
+import { LearningSection } from '../components/settings/LearningSection.js'
 import { SETTINGS_SECTIONS, scrollToSettingsSection, type SettingsSection } from '../lib/settingsSections.js'
 
 // Settings is a long page; this bar lets a user jump straight to the part they
@@ -27,6 +28,7 @@ const JUMP_LINKS: { section: SettingsSection; label: string; needsWorkspace?: bo
   { section: 'email', label: 'Email sending', needsWorkspace: true, adminOnly: true },
   { section: 'workspace', label: 'Business details', needsWorkspace: true },
   { section: 'targeting', label: 'Who you target', needsWorkspace: true },
+  { section: 'learning', label: 'What ACAOS is learning', needsWorkspace: true },
   { section: 'team', label: 'Team', needsWorkspace: true },
   { section: 'compliance', label: 'Compliance', needsWorkspace: true, adminOnly: true },
   { section: 'deliverability', label: 'Deliverability', needsWorkspace: true },
@@ -537,6 +539,12 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       {workspace && (
         <div id={SETTINGS_SECTIONS.targeting} style={anchorStyle}>
           <IcpSection icpForm={icpForm} setIcpForm={setIcpForm} saving={savingIcp} onSave={saveIcp} />
+        </div>
+      )}
+
+      {workspace && (
+        <div id={SETTINGS_SECTIONS.learning} style={anchorStyle}>
+          <LearningSection api={api} workspaceId={workspace.id} toast={toast} canManage={canManage} />
         </div>
       )}
 

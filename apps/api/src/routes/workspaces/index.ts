@@ -7,6 +7,7 @@ import { registerEmailConfigRoutes } from './emailConfig.js'
 import { registerIcpRoutes } from './icp.js'
 import { registerComplianceRoutes } from './compliance.js'
 import { registerWarmupRoutes } from './warmup.js'
+import { registerLearningRoutes } from './learning.js'
 import { registerAccessReviewRoutes } from './accessReview.js'
 
 export const workspaceRouter = Router()
@@ -29,4 +30,5 @@ registerIcpRoutes(workspaceRouter)
 registerApiKeyRoutes(workspaceRouter)
 registerComplianceRoutes(workspaceRouter)
 registerWarmupRoutes(workspaceRouter)
+registerLearningRoutes(workspaceRouter)
 registerAccessReviewRoutes(workspaceRouter)
