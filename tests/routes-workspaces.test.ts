@@ -273,3 +273,47 @@ test('POST /:id/members — an admin can still add a regular member', async () =
   assert.equal(res.status, 201)
   assert.equal(res.body.member.role, 'member')
 })
+
+// ── business context: seller facts fed to AI prompts ──
+
+test('PUT /:id/business-context saves trimmed text without touching the ICP fields', async () => {
+  let upsertArgs: any
+  prisma = createFakePrisma(spec({
+    workspaceICP: { upsert: async (a: any) => { upsertArgs = a; return { businessContext: a.update.businessContext } } },
+  })); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/business-context`, {
+    method: 'PUT', headers: jsonAuth, body: JSON.stringify({ businessContext: '  Retainers from $4k/month.  ' }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.businessContext, 'Retainers from $4k/month.')
+  assert.deepEqual(upsertArgs.update, { businessContext: 'Retainers from $4k/month.' })
+})
+
+test('PUT /:id/business-context clears the context when blank', async () => {
+  let upsertArgs: any
+  prisma = createFakePrisma(spec({
+    workspaceICP: { upsert: async (a: any) => { upsertArgs = a; return { businessContext: null } } },
+  })); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/business-context`, {
+    method: 'PUT', headers: jsonAuth, body: JSON.stringify({ businessContext: '   ' }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(upsertArgs.update.businessContext, null)
+})
+
+test('PUT /:id/business-context rejects text over the length cap', async () => {
+  const res = await server.request(`/api/workspaces/${WS}/business-context`, {
+    method: 'PUT', headers: jsonAuth, body: JSON.stringify({ businessContext: 'x'.repeat(4001) }),
+  })
+  assert.equal(res.status, 400)
+})
+
+test('PUT /:id/business-context denies a plain member', async () => {
+  prisma = createFakePrisma(spec({
+    membership: { findFirst: async (a: any) => (a?.where?.role?.in ? null : { role: 'member' }) },
+  })); installPrisma(prisma)
+  const res = await server.request(`/api/workspaces/${WS}/business-context`, {
+    method: 'PUT', headers: jsonAuth, body: JSON.stringify({ businessContext: 'x' }),
+  })
+  assert.equal(res.status, 403)
+})

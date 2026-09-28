@@ -4,7 +4,7 @@ import { toIcpContext, buildVerticalDesc } from '../packages/backend-core/src/se
 
 test('toIcpContext maps a WorkspaceICP record (null → undefined)', () => {
   const ctx = toIcpContext({ targetIndustries: ['SaaS', 'Fintech'], businessType: 'B2B software', outreachTone: 'direct' })
-  assert.deepEqual(ctx, { targetIndustries: ['SaaS', 'Fintech'], businessType: 'B2B software', outreachTone: 'direct' })
+  assert.deepEqual(ctx, { targetIndustries: ['SaaS', 'Fintech'], businessType: 'B2B software', outreachTone: 'direct', businessContext: undefined })
 })
 
 test('toIcpContext returns undefined when no ICP is configured', () => {

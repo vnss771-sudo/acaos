@@ -6,7 +6,7 @@ import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
-import { generateLeadResearch, generateOutreach, analyzeReply, type IcpContext } from '../services/openai.js'
+import { generateLeadResearch, generateOutreach, analyzeReply, toIcpContext } from '../services/openai.js'
 import { explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@acaos/backend-core/lib/scoring.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { validate, workspaceIdField } from '../lib/validate.js'
@@ -72,12 +72,10 @@ aiRouter.post(
     await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_RESEARCH')
 
-    let icp: IcpContext | undefined
-    const icpRow = await prisma.workspaceICP.findUnique({
+    const icp = toIcpContext(await prisma.workspaceICP.findUnique({
       where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true }
-    })
-    if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+      select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true }
+    }))
 
     let data: Awaited<ReturnType<typeof generateLeadResearch>>
     try {
@@ -123,12 +121,10 @@ aiRouter.post(
     await enforceWorkspaceAiRate(workspaceId)
     await checkAndIncrementAiUsage(workspaceId, 'AI_OUTREACH')
 
-    let icp: IcpContext | undefined
-    const icpRow = await prisma.workspaceICP.findUnique({
+    const icp = toIcpContext(await prisma.workspaceICP.findUnique({
       where: { workspaceId },
-      select: { targetIndustries: true, businessType: true, outreachTone: true }
-    })
-    if (icpRow) icp = { targetIndustries: icpRow.targetIndustries, businessType: icpRow.businessType ?? undefined, outreachTone: icpRow.outreachTone ?? undefined }
+      select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true }
+    }))
 
     let data: Awaited<ReturnType<typeof generateOutreach>>
     try {
@@ -161,11 +157,12 @@ aiRouter.post(
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
     await enforceWorkspaceAiRate(workspaceId)
+    const icpRow = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { businessContext: true } })
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
     let data: Awaited<ReturnType<typeof analyzeReply>>
     try {
-      data = await analyzeReply(replyBody)
+      data = await analyzeReply(replyBody, { businessContext: icpRow?.businessContext ?? undefined })
     } catch (err) {
       await refundAiUsage(workspaceId, 'AI_REPLY').catch(() => {})
       throw err

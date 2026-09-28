@@ -107,6 +107,30 @@ describe('Settings', () => {
     expect(toast.success).toHaveBeenCalledWith('Workspace updated')
   })
 
+  test('loads the saved business context and saves an edit', async () => {
+    const api = makeApi((path, init) => {
+      if (path.endsWith('/icp')) return Promise.resolve({ icp: { targetIndustries: [], targetGeos: [], minEmployees: null, maxEmployees: null, mustHaveEmail: false, businessContext: 'We build Shopify stores.' } })
+      if (path.endsWith('/business-context') && init?.method === 'PUT')
+        return Promise.resolve({ businessContext: 'We build Shopify stores. Retainers from $4k.' })
+    })
+    renderSettings(api, { canManage: true })
+
+    const box = await screen.findByDisplayValue('We build Shopify stores.')
+    await userEvent.type(box, ' Retainers from $4k.')
+    await userEvent.click(screen.getByRole('button', { name: 'Save business context' }))
+
+    expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/business-context', expect.objectContaining({
+      method: 'PUT', body: JSON.stringify({ businessContext: 'We build Shopify stores. Retainers from $4k.' }),
+    }))
+    expect(toast.success).toHaveBeenCalledWith('Business context saved')
+  })
+
+  test('hides the business context section from plain members', async () => {
+    renderSettings(makeApi())
+    await waitFor(() => expect(screen.getByText('Ideal Customer Profile (ICP)')).toBeInTheDocument())
+    expect(screen.queryByText('Business context for AI')).not.toBeInTheDocument()
+  })
+
   test('removing a member asks for confirmation via a dialog, then removes them', async () => {
     const member = { id: 'm1', role: 'member' as const, user: { id: 'u2', email: 'jo@northwind.test', name: 'Jo' } }
     const api = makeApi((path, init) => {

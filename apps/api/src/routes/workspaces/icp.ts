@@ -5,7 +5,8 @@ import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
-import type { Assert, Extends, UpdateIcpRequest } from '@acaos/shared'
+import { BUSINESS_CONTEXT_MAX } from '../../services/openai.js'
+import type { Assert, Extends, UpdateBusinessContextRequest, UpdateIcpRequest } from '@acaos/shared'
 
 // Compile-time contract for PUT /:id/icp, pinned to the shared type so the
 // accepted body shape can't drift from UpdateIcpRequest.
@@ -53,6 +54,13 @@ const updateIcpRuntimeSchema = z.object({
   dailySendLimit:     z.unknown().optional().transform(v => (typeof v === 'number' && v > 0 ? Math.min(v, 500) : undefined)),
   playbook:           z.unknown().optional().transform(v => (typeof v === 'string' ? v || null : undefined)),
 })
+
+// Business context is saved on its own rather than through PUT /:id/icp, whose
+// handler always rewrites min/max employees, so saving it can't disturb the ICP.
+const businessContextSchema = z.object({
+  businessContext: z.string().trim().max(BUSINESS_CONTEXT_MAX).nullable().transform(v => v || null),
+})
+type _BusinessContextConforms = Assert<Extends<z.infer<typeof businessContextSchema>, UpdateBusinessContextRequest>>
 
 export function registerIcpRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
@@ -120,6 +128,28 @@ export function registerIcpRoutes(workspaceRouter: Router) {
 
       void trackEvent({ name: 'icp.configured', workspaceId, userId: user.id })
       res.json({ icp })
+    })
+  )
+
+  workspaceRouter.put(
+    '/:id/business-context',
+    asyncHandler(async (req, res) => {
+      const user = requireUser(req)
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
+
+      await assertWorkspacePermission(user.id, workspaceId, 'icp:update')
+
+      const { businessContext } = parseBody(businessContextSchema, req)
+
+      // Same create defaults as PUT /:id/icp for a workspace with no ICP row yet.
+      const icp = await prisma.workspaceICP.upsert({
+        where: { workspaceId },
+        create: { workspaceId, targetIndustries: [], targetGeos: [], excludedIndustries: [], businessContext },
+        update: { businessContext },
+        select: { businessContext: true },
+      })
+
+      res.json({ businessContext: icp.businessContext })
     })
   )
 }
