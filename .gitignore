@@ -48,3 +48,4 @@ dist-pack/
 
 # Claude Code agent worktrees (transient, harness-managed)
 .claude/worktrees/
+.claude/settings.local.json
