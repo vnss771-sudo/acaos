@@ -421,7 +421,7 @@ test('selection tracking: each considered lead is recorded with decision, reason
   assert.equal(run.orderBy, 'id_asc')
   assert.match(run.icpFingerprint, /^[0-9a-f]{64}$/)
   assert.ok(run.finishedAt)
-  assert.deepEqual((run.totals as { sent: number; skipped: number; failed: number }), { sent: 1, skipped: 1, failed: 1, skippedByReason: (run.totals as { skippedByReason: unknown }).skippedByReason })
+  assert.deepEqual((run.totals as { sent: number; skipped: number; failed: number }), { sent: 1, skipped: 1, failed: 1, skippedByReason: (run.totals as { skippedByReason: unknown }).skippedByReason, holdoutPercent: 0 })
   const by = Object.fromEntries(run.selections.map(s => [s.leadId, s]))
   assert.equal(by[good.id].decision, 'SELECTED')
   assert.equal(by[good.id].leadScore, 83)
@@ -476,5 +476,50 @@ test('selection tracking never blocks sending: a failure to record is logged, th
   } finally {
     await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS acaos_test_fail_sel ON "OutreachSelectionRun"`)
     await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS acaos_test_fail_sel()`)
+  }
+})
+
+// --- held-back comparison group ---
+
+test('holdout: a random share is never contacted, recorded as HELD_OUT, and compared against the contacted group', async () => {
+  const { holdoutBucket, compareHoldout } = await import('../packages/backend-core/src/lib/holdout.ts')
+  const prev = process.env.LEARNING_HOLDOUT_PERCENT
+  process.env.LEARNING_HOLDOUT_PERCENT = '20'
+  try {
+    const { workspace } = await seedUserWithWorkspace()
+    await seedSmtp(workspace.id)
+    const campaign = await seedCampaign(workspace.id)
+    const leads = []
+    for (let n = 0; n < 30; n++) leads.push(await seedSendableLead(workspace.id, campaign.id, `h${n}@buyer.test`))
+    const heldIds = new Set(leads.filter(l => holdoutBucket(workspace.id, l.id) < 20).map(l => l.id))
+    assert.ok(heldIds.size > 0 && heldIds.size < leads.length, 'fixture has both groups')
+
+    const mailer = recordingMailer()
+    const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+    assert.equal(result.skippedByReason.HOLDOUT, heldIds.size)
+    assert.equal(result.sent, leads.length - heldIds.size)
+    assert.equal(await prisma.outreachSent.count({ where: { leadId: { in: [...heldIds] } } }), 0, 'held-out leads are never contacted')
+
+    const run = await prisma.outreachSelectionRun.findFirstOrThrow({ where: { campaignId: campaign.id }, include: { selections: true } })
+    assert.equal((run.totals as { holdoutPercent: number }).holdoutPercent, 20)
+    const recordedHeld = run.selections.filter(s => s.decision === 'HELD_OUT')
+    assert.deepEqual(new Set(recordedHeld.map(s => s.leadId)), heldIds)
+    assert.ok(recordedHeld.every(s => s.reason === 'HOLDOUT'))
+
+    // Stable across runs: a second run still contacts none of them.
+    await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+    assert.equal(await prisma.outreachSent.count({ where: { leadId: { in: [...heldIds] } } }), 0)
+
+    // Comparison: one contacted lead books; one held-out lead closes anyway.
+    const contactedId = leads.find(l => !heldIds.has(l.id))!.id
+    await prisma.lead.update({ where: { id: contactedId }, data: { stage: 'BOOKED' } })
+    const c = await compareHoldout(workspace.id)
+    assert.equal(c.contacted.leads, leads.length - heldIds.size)
+    assert.equal(c.heldOut.leads, heldIds.size)
+    assert.equal(c.contacted.converted, 1)
+    assert.equal(c.heldOut.converted, 0)
+    assert.ok(c.conversionLiftPts! > 0)
+  } finally {
+    if (prev === undefined) delete process.env.LEARNING_HOLDOUT_PERCENT; else process.env.LEARNING_HOLDOUT_PERCENT = prev
   }
 })

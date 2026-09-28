@@ -17,6 +17,7 @@ import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-c
 import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
 import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.js'
 import { SelectionRecorder } from '@acaos/backend-core/lib/selectionTracking.js'
+import { holdoutPercent, isHeldOut } from '@acaos/backend-core/lib/holdout.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -596,6 +597,7 @@ export type SendSkipReason =
   | 'DOMAIN_PACED'
   | 'OUTSIDE_SEND_WINDOW'
   | 'CONSENT_REQUIRED'
+  | 'HOLDOUT'
 
 type SendCampaignResult = {
   campaignId: string
@@ -1113,6 +1115,9 @@ export async function sendCampaignBatch(
   // excluded and why. Leads are processed in id order (≈ creation order), so a
   // cap cut-off is not score-driven — recorded so bias analysis can rely on it.
   const selection = await SelectionRecorder.start(workspaceId, campaignId, 'id_asc')
+  // Held-back comparison group: a random, stable share of otherwise-sendable
+  // leads is never contacted, so outcomes can be compared to a fair baseline.
+  const holdoutPct = holdoutPercent()
 
   let sent = 0
   let skipped = 0
@@ -1121,13 +1126,13 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, HOLDOUT: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
   const finish = async (): Promise<SendCampaignResult> => {
     const r = result()
-    await selection.finish({ sent: r.sent, skipped: r.skipped, failed: r.failed, skippedByReason: r.skippedByReason })
+    await selection.finish({ sent: r.sent, skipped: r.skipped, failed: r.failed, skippedByReason: r.skippedByReason, holdoutPercent: holdoutPct })
     return r
   }
 
@@ -1355,6 +1360,10 @@ export async function sendCampaignBatch(
       })
       continue
     }
+
+    // Holdout: placed after every eligibility check, so the held-out group is
+    // drawn only from leads that would otherwise have been contacted.
+    if (isHeldOut(workspaceId, lead.id, holdoutPct)) { skip('HOLDOUT'); selection.record(lead, 'HELD_OUT', 'HOLDOUT'); continue }
 
     // Per-domain pacing: don't burst past the provider's tolerance for one domain.
     if (domainCounts) {

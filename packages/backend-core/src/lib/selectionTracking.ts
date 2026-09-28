@@ -4,7 +4,8 @@
 //
 // Per run: ordering, fingerprints of the targeting + scoring model in force,
 // and final totals (including bulk cut-offs whose leads were never
-// enumerated). Per considered lead: SELECTED / EXCLUDED(reason) / FAILED and
+// enumerated). Per considered lead: SELECTED / EXCLUDED(reason) / FAILED /
+// HELD_OUT (comparison group, see holdout.ts) and
 // the lead's score at that moment.
 //
 // Best-effort by design: a failure to record analytics must never block or
@@ -14,7 +15,7 @@ import { createHash } from 'node:crypto'
 import { prisma } from './prisma.js'
 import { logger } from './logger.js'
 
-export type SelectionDecision = 'SELECTED' | 'EXCLUDED' | 'FAILED'
+export type SelectionDecision = 'SELECTED' | 'EXCLUDED' | 'FAILED' | 'HELD_OUT'
 
 /** Stable sha256 of a JSON value (key-order independent). */
 export function fingerprint(value: unknown): string {

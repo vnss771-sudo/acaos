@@ -4,6 +4,7 @@ import { asyncHandler, requireUser, ApiError } from '../../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseParams, idField } from '../../lib/validate.js'
+import { compareHoldout } from '@acaos/backend-core/lib/holdout.js'
 import { decideRecommendation, DecisionError, isExpired, type DecisionAction } from '@acaos/backend-core/lib/learningDecisions.js'
 
 const listParams = z.object({ id: idField })
@@ -35,6 +36,18 @@ export function registerLearningRoutes(workspaceRouter: Router) {
           expired: r.status === 'PENDING' && isExpired(r.createdAt, now),
         })),
       })
+    })
+  )
+
+  // Contacted vs held-back comparison group (lib/holdout.ts).
+  workspaceRouter.get(
+    '/:id/learning/holdout',
+    asyncHandler(async (req, res) => {
+      const user = requireUser(req)
+      const { id: workspaceId } = parseParams(listParams, req)
+      const membership = await prisma.membership.findFirst({ where: { userId: user.id, workspaceId }, select: { role: true } })
+      if (!membership) throw new ApiError(403, 'Access denied')
+      res.json(await compareHoldout(workspaceId))
     })
   )
 

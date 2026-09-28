@@ -7,6 +7,34 @@ import type { ToastHook } from '../../hooks/useToast.js'
 
 type Props = { api: ApiHook; workspaceId: string; toast: ToastHook; canManage: boolean }
 
+type GroupStats = { leads: number; replied: number; converted: number; replyRate: number; conversionRate: number }
+type HoldoutComparison = { holdoutPercent: number; contacted: GroupStats; heldOut: GroupStats; conversionLiftPts: number | null }
+
+// Contacted vs held-back comparison group: the fair baseline that shows
+// whether outreach (and learning-driven outreach) actually improves results.
+function HoldoutPanel({ h }: { h: HoldoutComparison }) {
+  const row = (label: string, g: GroupStats) => (
+    <tr><td>{label}</td><td>{g.leads}</td><td>{g.replyRate}%</td><td>{g.conversionRate}%</td></tr>
+  )
+  return (
+    <div style={{ ...s.cardInner, fontSize: 12, color: colors.textMuted, marginTop: 12 }}>
+      <div style={{ fontWeight: 600, color: colors.text, marginBottom: 4 }}>Comparison group</div>
+      <div>
+        {h.holdoutPercent > 0
+          ? `${h.holdoutPercent}% of leads are picked at random and held back from campaigns, as a fair baseline.`
+          : 'Off — no leads are being held back. Set LEARNING_HOLDOUT_PERCENT to measure lift (5% is used automatically once learning is live).'}
+      </div>
+      {(h.contacted.leads > 0 || h.heldOut.leads > 0) && (
+        <table style={{ marginTop: 8, borderCollapse: 'collapse', width: '100%' }}>
+          <thead><tr style={{ textAlign: 'left', color: colors.textFaint }}><th>Group</th><th>Leads</th><th>Replied</th><th>Booked / closed</th></tr></thead>
+          <tbody>{row('Contacted', h.contacted)}{row('Held back', h.heldOut)}</tbody>
+        </table>
+      )}
+      {h.conversionLiftPts != null && <div style={{ marginTop: 6 }}>Lift: <strong>{h.conversionLiftPts > 0 ? '+' : ''}{h.conversionLiftPts} pts</strong> booked/closed rate vs the held-back group.</div>}
+    </div>
+  )
+}
+
 type SegmentInsight = { segment: string; won: number; total: number; observedWinRate: number; adjustedWinRate: number; lift: number }
 
 const pct = (x: unknown) => (typeof x === 'number' ? `${(x * 100).toFixed(1)}%` : '—')
@@ -75,6 +103,7 @@ export function LearningSection({ api, workspaceId, toast, canManage }: Props) {
   const [recs, setRecs] = useState<LearningRecommendationDto[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [openEvidence, setOpenEvidence] = useState<string | null>(null)
+  const [holdout, setHoldout] = useState<HoldoutComparison | null>(null)
 
   const load = useCallback(() => {
     api<{ recommendations: LearningRecommendationDto[] }>(`/api/workspaces/${workspaceId}/learning-recommendations`)
@@ -82,6 +111,11 @@ export function LearningSection({ api, workspaceId, toast, canManage }: Props) {
       .catch(() => setRecs([]))
   }, [api, workspaceId])
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    api<HoldoutComparison>(`/api/workspaces/${workspaceId}/learning/holdout`)
+      .then(d => setHoldout(d && d.contacted && d.heldOut ? d : null))
+      .catch(() => setHoldout(null))
+  }, [api, workspaceId])
 
   async function act(r: LearningRecommendationDto, action: 'approve' | 'reject' | 'revert') {
     setBusyId(r.id)
@@ -161,6 +195,7 @@ export function LearningSection({ api, workspaceId, toast, canManage }: Props) {
           })}
         </div>
       )}
+      {holdout && <HoldoutPanel h={holdout} />}
     </div>
   )
 }

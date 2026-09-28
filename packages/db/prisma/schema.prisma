@@ -1619,6 +1619,7 @@ model OutreachSelection {
   runId          String
   leadId         String
   // SELECTED (dispatched) | EXCLUDED (skipped, see reason) | FAILED (attempted, errored)
+  // | HELD_OUT (random comparison group, never contacted — see lib/holdout.ts)
   decision       String
   reason         String?
   leadScore      Int
