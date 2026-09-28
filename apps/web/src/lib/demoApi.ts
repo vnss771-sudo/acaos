@@ -169,6 +169,9 @@ const PERMISSIVE_EMPTY = {
 export function makeDemoApi(): ApiHook {
   return (async <T = unknown>(path: string, init?: { method?: string }): Promise<T> => {
     // Mutations: pretend success.
+    if (init?.method?.toUpperCase() === 'POST' && /\/api\/inbox\/reply\/[^/]+\/draft$/.test(path)) {
+      return { body: 'Thanks for getting back to me! Happy to walk you through it. Would [Tuesday 10am] or [Thursday 2pm] work for a quick 15-minute call?' } as T
+    }
     if (init?.method && init.method.toUpperCase() !== 'GET') return {} as T
 
     if (path.startsWith('/api/stats')) return DEMO_STATS as T

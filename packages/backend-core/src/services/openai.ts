@@ -139,6 +139,7 @@ const MAX_TOKENS = {
   research: clampTokens(process.env.OPENAI_MAX_TOKENS_RESEARCH, 1500),
   outreach: clampTokens(process.env.OPENAI_MAX_TOKENS_OUTREACH, 1200),
   reply: clampTokens(process.env.OPENAI_MAX_TOKENS_REPLY, 700),
+  replyDraft: clampTokens(process.env.OPENAI_MAX_TOKENS_REPLY_DRAFT, 700),
 } as const
 
 // An optional prompt section followed by a blank line, or nothing when empty, so
@@ -393,5 +394,74 @@ ${replyBody.slice(0, 3000)}
 
 Be precise. Distinguish genuine interest from polite brush-offs, flag referrals, and catch auto-replies.`,
     MAX_TOKENS.reply
+  )
+}
+
+export type ReplyDraftInput = {
+  // What the prospect said. Their raw message is never stored (privacy), so the
+  // draft works from the classifier's derived fields.
+  classification?: string | null
+  summary?: string | null
+  keyQuote?: string | null
+  suggestedAction?: string | null
+  // The email we sent them, which they replied to.
+  originalSubject?: string | null
+  originalBody?: string | null
+  businessName?: string | null
+  contactName?: string | null
+  businessContext?: string | null
+  outreachTone?: string | null
+}
+
+// How the reply should move the conversation, per classification.
+const REPLY_GOALS: Record<string, string> = {
+  INTERESTED: 'They are interested. Thank them briefly and propose one concrete next step (e.g. a short call, with two time options as [placeholders]).',
+  NEEDS_MORE_INFO: 'They asked for more information. Answer what they asked directly, then offer one low-friction next step.',
+  NOT_NOW: 'The timing is wrong for them. Acknowledge it graciously and ask if you may check back at the time they mentioned (or in a few months). Do not pitch.',
+  REFERRAL: 'They pointed you to someone else. Thank them and ask for a warm introduction or the right contact details.',
+  NOT_INTERESTED: 'They are not interested. Write a brief, gracious close that respects their decision. Do not pitch, argue, or ask for a call.',
+  OUT_OF_OFFICE: 'This was an automatic out-of-office reply. Write a one-line note to send when they are back, or say in [brackets] that no reply is needed.',
+}
+
+export async function generateReplyDraft(input: ReplyDraftInput): Promise<string> {
+  const goal = REPLY_GOALS[input.classification ?? ''] ?? 'Reply helpfully to what they said and suggest one next step.'
+  const toneNote = input.outreachTone === 'casual'
+    ? 'Tone: conversational and friendly, like a peer.'
+    : input.outreachTone === 'direct'
+    ? 'Tone: direct and brief, no fluff.'
+    : 'Tone: professional but human, warm, not stiff.'
+  const firstName = sanitizeUntrusted(input.contactName?.split(' ')[0] ?? null)
+
+  return chat(
+    `You write email replies on behalf of the seller to a prospect who answered their cold email. A person reviews and edits every draft before it is sent.
+
+${goal}
+${toneNote}
+
+Rules:
+- Under 120 words. Plain text, no subject line, no signature block (the sender adds their own).
+- You have NOT seen the prospect's full message, only a summary and a key quote. Respond to what they said; never quote or claim details beyond those.
+- Only state facts about the seller that appear in the seller facts below. If the reply needs something not provided (a price, a date, a link), put a short placeholder in square brackets, e.g. [price for 10 users], so the person fills it in. Never invent it.
+- Never promise discounts, guarantees, or commitments that are not in the seller facts.
+
+${paragraph(buildBusinessContextBlock(input.businessContext))}${UNTRUSTED_DATA_SYSTEM_RULE}
+
+Return ONLY a valid JSON object with this exact key:
+- body (string): the reply text.`,
+
+    `Draft a reply to this prospect:
+${fenceProspectData(
+  [
+    `Business: ${sanitizeUntrusted(input.businessName) || 'Unknown'}`,
+    firstName ? `Contact first name: ${firstName}` : '',
+    `Their reply was classified as: ${sanitizeUntrusted(input.classification) || 'Unclassified'}`,
+    `Summary of their reply: ${sanitizeUntrusted(input.summary) || '(none)'}`,
+    `Key quote from their reply: ${sanitizeUntrusted(input.keyQuote) || '(none)'}`,
+    `Suggested next step: ${sanitizeUntrusted(input.suggestedAction) || '(none)'}`,
+    `The email we sent them (subject): ${sanitizeUntrusted(input.originalSubject) || '(unknown)'}`,
+    `The email we sent them (body): ${sanitizeUntrusted(input.originalBody?.slice(0, 2000)) || '(unknown)'}`,
+  ].filter(Boolean).join('\n')
+)}`,
+    MAX_TOKENS.replyDraft
   )
 }

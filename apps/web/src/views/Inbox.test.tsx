@@ -95,6 +95,78 @@ describe('InboxView', () => {
     expect(JSON.stringify(body)).not.toContain('Propose three slots')
   })
 
+  test('Draft reply with AI fills the composer for editing, and only the edited text is sent', async () => {
+    const api = vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
+      if (path === '/api/inbox/reply/r1/draft') return Promise.resolve({ body: 'Thanks! Would [Tuesday 10am] work?' })
+      if (init?.method === 'POST') return Promise.resolve({ success: true, sentAt: '2026-06-03T00:00:00Z', message: 'ok' })
+      return Promise.resolve(payload)
+    })
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    await screen.findByText('Meridian Roofing')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Draft reply with AI' }))
+    const box = screen.getByRole('textbox')
+    await waitFor(() => expect(box).toHaveValue('Thanks! Would [Tuesday 10am] work?'))
+    // Drafting never sends: only the draft call has gone out.
+    expect(api.mock.calls.filter(([p]) => String(p).endsWith('/send'))).toHaveLength(0)
+    expect(screen.getByText(/Fill in anything in \[brackets\]/)).toBeInTheDocument()
+    // With text in the box, drafting again is off until it's cleared.
+    expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeDisabled()
+
+    await userEvent.clear(box)
+    await userEvent.type(box, 'Thanks! Would Tuesday at 10 work?')
+    await userEvent.click(screen.getByRole('button', { name: 'Send reply' }))
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+    const send = api.mock.calls.find(([p]) => p === '/api/inbox/reply/r1/send')!
+    expect(JSON.parse((send[1] as { body: string }).body).body).toBe('Thanks! Would Tuesday at 10 work?')
+  })
+
+  test('a failed draft shows an error and leaves the composer empty', async () => {
+    const api = vi.fn().mockImplementation((path: string) =>
+      path.endsWith('/draft') ? Promise.reject(new Error('AI limit reached')) : Promise.resolve(payload),
+    )
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    await screen.findByText('Meridian Roofing')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Draft reply with AI' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('AI limit reached'))
+    expect(screen.getByRole('textbox')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeEnabled()
+  })
+
+  test('a draft that returns after the composer was cancelled is dropped', async () => {
+    let resolveDraft!: (v: unknown) => void
+    const api = vi.fn().mockImplementation((path: string) =>
+      path.endsWith('/draft') ? new Promise(r => { resolveDraft = r }) : Promise.resolve(payload),
+    )
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    await screen.findByText('Meridian Roofing')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Draft reply with AI' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    resolveDraft({ body: 'Late draft' })
+    await userEvent.click(await screen.findByRole('button', { name: 'Reply' }))
+    expect(screen.getByRole('textbox')).toHaveValue('')
+  })
+
+  test('a late draft never overwrites text typed after reopening the composer', async () => {
+    let resolveDraft!: (v: unknown) => void
+    const api = vi.fn().mockImplementation((path: string) =>
+      path.endsWith('/draft') ? new Promise(r => { resolveDraft = r }) : Promise.resolve(payload),
+    )
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    await screen.findByText('Meridian Roofing')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Draft reply with AI' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Reply' }))
+    await userEvent.type(screen.getByRole('textbox'), 'My own words')
+    resolveDraft({ body: 'Late draft' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Draft with AI' })).not.toHaveTextContent('Drafting'))
+    expect(screen.getByRole('textbox')).toHaveValue('My own words')
+  })
+
   test('an outcome-unknown reply pauses replying and can be resolved', async () => {
     const pending = {
       ...payload,

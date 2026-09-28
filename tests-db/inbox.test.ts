@@ -6,7 +6,8 @@
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { Router } from 'express'
-import { inboxRouter, createInboxReplySendHandler } from '../apps/api/src/routes/inbox.ts'
+import { inboxRouter, createInboxReplySendHandler, createInboxReplyDraftHandler } from '../apps/api/src/routes/inbox.ts'
+import type { generateReplyDraft } from '../packages/backend-core/src/services/openai.ts'
 import { requireAuth, requireVerifiedForMutation } from '../apps/api/src/middleware/auth.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
@@ -500,4 +501,98 @@ test('reply/feedback: 403 when the reply belongs to a different workspace', asyn
     body: JSON.stringify({ workspaceId: a.workspace.id, feedback: 'correct' }),
   })
   assert.equal(res.status, 403)
+})
+
+// ── POST /reply/:replyId/draft — AI draft for the composer ──────────────────
+
+type DraftInput = Parameters<typeof generateReplyDraft>[0]
+let draftCalls: DraftInput[] = []
+let draftResult: string | Error = JSON.stringify({ body: 'Thanks! Does [Tuesday 10am] work for a quick call?' })
+const stubGenerateReplyDraft = (async (input: DraftInput) => {
+  draftCalls.push(input)
+  if (draftResult instanceof Error) throw draftResult
+  return draftResult
+}) as typeof generateReplyDraft
+
+let draftServer: TestServer
+before(async () => {
+  const r = Router()
+  r.use(requireAuth)
+  r.use(requireVerifiedForMutation)
+  r.post('/reply/:replyId/draft', createInboxReplyDraftHandler({ generateReplyDraft: stubGenerateReplyDraft }))
+  draftServer = await startTestServer('/api/inbox', r)
+})
+after(async () => { await draftServer.close() })
+beforeEach(() => {
+  draftCalls = []
+  draftResult = JSON.stringify({ body: 'Thanks! Does [Tuesday 10am] work for a quick call?' })
+})
+
+async function aiUsage(workspaceId: string) {
+  const rows = await prisma.usageRecord.findMany({ where: { workspaceId, action: 'AI_REPLY' } })
+  return rows.reduce((n, r) => n + r.count, 0)
+}
+
+test('draft: returns the AI draft built from the reply analysis and business context, and meters one AI_REPLY call', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  await prisma.workspaceICP.create({ data: { workspaceId: workspace.id, targetIndustries: [], targetGeos: [], businessContext: 'Starter plan is $150/month.', outreachTone: 'casual' } })
+  const reply = await seedReply(workspace.id, { subject: 'Scheduling for Acme', body: 'How do you handle dispatch?' })
+
+  const res = await draftServer.request(`/api/inbox/reply/${reply.id}/draft`, {
+    method: 'POST', headers: jsonAuth(user.id), body: JSON.stringify({ workspaceId: workspace.id }),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.body, 'Thanks! Does [Tuesday 10am] work for a quick call?')
+  assert.equal(draftCalls.length, 1)
+  assert.equal(draftCalls[0].classification, 'INTERESTED')
+  assert.equal(draftCalls[0].summary, 'Wants a call next week')
+  assert.equal(draftCalls[0].originalBody, 'How do you handle dispatch?')
+  assert.equal(draftCalls[0].businessContext, 'Starter plan is $150/month.')
+  assert.equal(draftCalls[0].outreachTone, 'casual')
+  assert.equal(await aiUsage(workspace.id), 1)
+  assert.ok(await prisma.auditEvent.findFirst({ where: { type: 'inbox.reply_drafted', entityId: reply.id } }))
+  // Drafting never sends anything.
+  assert.equal(await prisma.inboxReplySend.count({ where: { outreachSentId: reply.id } }), 0)
+})
+
+test('draft: refunds the AI call when generation fails', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const reply = await seedReply(workspace.id)
+  draftResult = new Error('provider down')
+
+  const res = await draftServer.request(`/api/inbox/reply/${reply.id}/draft`, {
+    method: 'POST', headers: jsonAuth(user.id), body: JSON.stringify({ workspaceId: workspace.id }),
+  })
+  assert.equal(res.status, 500)
+  assert.equal(await aiUsage(workspace.id), 0)
+})
+
+test('draft: an empty model body fails closed (502) and is refunded', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const reply = await seedReply(workspace.id)
+  draftResult = JSON.stringify({ body: '   ' })
+
+  const res = await draftServer.request(`/api/inbox/reply/${reply.id}/draft`, {
+    method: 'POST', headers: jsonAuth(user.id), body: JSON.stringify({ workspaceId: workspace.id }),
+  })
+  assert.equal(res.status, 502)
+  assert.equal(await aiUsage(workspace.id), 0)
+})
+
+test('draft: refuses a thread with no reply and one from another workspace, without calling the AI', async () => {
+  const a = await seedUserWithWorkspace('a@x.test')
+  const b = await seedUserWithWorkspace('b@x.test')
+  const notReplied = await seedReply(a.workspace.id, { status: 'SENT' })
+  const foreign = await seedReply(b.workspace.id)
+
+  const r1 = await draftServer.request(`/api/inbox/reply/${notReplied.id}/draft`, {
+    method: 'POST', headers: jsonAuth(a.user.id), body: JSON.stringify({ workspaceId: a.workspace.id }),
+  })
+  assert.equal(r1.status, 400)
+  const r2 = await draftServer.request(`/api/inbox/reply/${foreign.id}/draft`, {
+    method: 'POST', headers: jsonAuth(a.user.id), body: JSON.stringify({ workspaceId: a.workspace.id }),
+  })
+  assert.equal(r2.status, 403)
+  assert.equal(draftCalls.length, 0)
+  assert.equal(await aiUsage(a.workspace.id), 0)
 })

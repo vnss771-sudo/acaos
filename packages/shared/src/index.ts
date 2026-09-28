@@ -276,6 +276,11 @@ export interface ResolveInboxReplySendRequest {
   outcome: 'sent' | 'not_sent'
 }
 
+// POST /api/inbox/reply/:replyId/draft — AI draft for the composer; never sent by itself.
+export interface DraftInboxReplyRequest {
+  workspaceId: string
+}
+
 // PATCH /api/inbox/reply/:replyId/feedback
 export interface InboxClassificationFeedbackRequest {
   workspaceId: string
@@ -635,6 +640,7 @@ export interface RouteContracts {
   'POST /api/missions/:id/score': { params: { id: string }; response: unknown }
 
   // Inbox
+  'POST /api/inbox/reply/:replyId/draft': { params: { replyId: string }; body: DraftInboxReplyRequest; response: { body: string } }
   'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string; duplicate?: boolean } }
   'POST /api/inbox/reply/:replyId/sends/:sendId/resolve': { params: { replyId: string; sendId: string }; body: ResolveInboxReplySendRequest; response: { success: boolean; status: 'SENT' | 'FAILED' } }
   'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
