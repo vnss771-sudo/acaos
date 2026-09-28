@@ -59,15 +59,20 @@ test('toIcpContext carries businessContext (null → undefined)', () => {
 
 test('analyzeReply includes the business context and asks for a specific answer', async () => {
   const prompts = captureSystemPrompts()
-  await analyzeReply('How much does this cost?', { businessContext: 'Starter plan is $150/month.' })
-  assert.ok(prompts[0].includes('Starter plan is $150/month.'))
-  assert.match(prompts[0], /make suggestedAction name the specific answer/)
+  await analyzeReply('How much does this cost?', { businessContext: 'Inbox Assistant plan is $150/month.' })
+  assert.ok(prompts[0].includes('Inbox Assistant plan is $150/month.'))
+  assert.match(prompts[0], /Answer EVERY question/)
+  assert.match(prompts[0], /Compare any numbers they mention/)
+  assert.match(prompts[0], /exact plan, product and service names/)
+  // No concrete example plan name the model could copy (it once echoed "Starter").
+  assert.ok(!/Starter/.test(prompts[0]))
 })
 
 test('analyzeReply without context sends the prompt unchanged', async () => {
   const prompts = captureSystemPrompts()
   await analyzeReply('How much does this cost?')
   assert.ok(!prompts[0].includes('<business_context>'))
+  assert.ok(!prompts[0].includes('Answer EVERY question'))
   assert.ok(prompts[0].trimEnd().endsWith('isAutoReply (boolean): true if this appears to be an automated OOO or bounce reply.'))
 })
 

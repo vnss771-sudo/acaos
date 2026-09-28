@@ -142,6 +142,14 @@ const MAX_TOKENS = {
   replyDraft: clampTokens(process.env.OPENAI_MAX_TOKENS_REPLY_DRAFT, 700),
 } as const
 
+// How to use the seller facts when responding to a prospect's reply. Shared by
+// reply analysis (suggestedAction) and reply drafting so both answer the same way.
+const SELLER_FACTS_RULES = `When responding to what the prospect said, using the seller facts:
+- Answer EVERY question or request in their reply, one by one. Never say "clarify", "send info" or "follow up on" something the facts already answer.
+- Compare any numbers they mention (team size, users, volume, budget, dates) with limits in the facts. If they exceed a limit or don't fit, say so and name the option the facts give instead.
+- Use the seller's exact plan, product and service names from the facts. Never invent or rename them.
+- If the facts don't cover a question, never guess: in a suggested action, say what to find out; in a drafted reply, use a short [placeholder].`
+
 // An optional prompt section followed by a blank line, or nothing when empty, so
 // it can sit at the start of the next paragraph without leaving stray gaps.
 function paragraph(section: string): string {
@@ -384,7 +392,8 @@ Return ONLY a valid JSON object with these exact keys:
 - isAutoReply (boolean): true if this appears to be an automated OOO or bounce reply.${contextBlock ? `
 
 ${contextBlock}
-When the reply asks something these facts answer (price, services, availability), make suggestedAction name the specific answer to give, e.g. "Reply with the Starter price ($150/mo) and offer a call". If the facts do not cover it, say what to find out instead of guessing.` : ''}`,
+${SELLER_FACTS_RULES}
+Apply these rules to suggestedAction: it must give the specific answer to each question in turn, e.g. "Answer both: quote <price from the facts>, note that <their number> is over <the limit in the facts> and offer <the option the facts give>; confirm <contract terms from the facts>".` : ''}`,
 
     `Classify this B2B cold email reply:
 
@@ -431,6 +440,7 @@ export async function generateReplyDraft(input: ReplyDraftInput): Promise<string
     ? 'Tone: direct and brief, no fluff.'
     : 'Tone: professional but human, warm, not stiff.'
   const firstName = sanitizeUntrusted(input.contactName?.split(' ')[0] ?? null)
+  const contextBlock = buildBusinessContextBlock(input.businessContext)
 
   return chat(
     `You write email replies on behalf of the seller to a prospect who answered their cold email. A person reviews and edits every draft before it is sent.
@@ -444,7 +454,7 @@ Rules:
 - Only state facts about the seller that appear in the seller facts below. If the reply needs something not provided (a price, a date, a link), put a short placeholder in square brackets, e.g. [price for 10 users], so the person fills it in. Never invent it.
 - Never promise discounts, guarantees, or commitments that are not in the seller facts.
 
-${paragraph(buildBusinessContextBlock(input.businessContext))}${UNTRUSTED_DATA_SYSTEM_RULE}
+${contextBlock ? paragraph(`${contextBlock}\n${SELLER_FACTS_RULES}`) : ''}${UNTRUSTED_DATA_SYSTEM_RULE}
 
 Return ONLY a valid JSON object with this exact key:
 - body (string): the reply text.`,
