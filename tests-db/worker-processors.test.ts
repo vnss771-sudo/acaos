@@ -5,6 +5,7 @@ import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { scoreProspects, calibrateScoring, applyReplyAnalysis, researchLead, generateOutreachDraft } from '../apps/worker/src/processors.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { maybeRecomputeScoringWeights, DEFAULT_SCORING_WEIGHTS } from '../packages/backend-core/src/lib/scoring.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -140,6 +141,16 @@ test('calibrateScoring (live): applies signal weights with an audit record; unch
   assert.equal(icp, null, 'even live mode never writes the ICP')
 })
 
+test('database enforces one PENDING recommendation per (workspace, type)', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const rec = { workspaceId: workspace.id, type: 'ICP_SIZE', proposedValue: {}, evidence: {}, sampleSize: 1, mode: 'shadow' }
+  await prisma.learningRecommendation.create({ data: rec })
+  await assert.rejects(prisma.learningRecommendation.create({ data: rec }), /Unique constraint/)
+  // Decided rows don't count: a new PENDING is allowed once the old one is superseded.
+  await prisma.learningRecommendation.updateMany({ where: { workspaceId: workspace.id }, data: { status: 'SUPERSEDED' } })
+  await prisma.learningRecommendation.create({ data: rec })
+})
+
 test('calibrateScoring (off): does nothing', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedLearnable(workspace.id)
@@ -147,6 +158,42 @@ test('calibrateScoring (off): does nothing', async () => {
   assert.equal(stats.calibrated, false)
   assert.equal(await prisma.scoringModel.count({ where: { workspaceId: workspace.id } }), 0)
   assert.equal(await prisma.learningRecommendation.count({ where: { workspaceId: workspace.id } }), 0)
+})
+
+async function seedLearnableReplyModel(workspaceId: string) {
+  const model = await prisma.scoringModel.create({
+    data: { workspaceId, weights: DEFAULT_SCORING_WEIGHTS, performanceMetrics: {} },
+  })
+  // 35 outcomes with a VARYING, reply-correlated feature: genuinely learnable.
+  for (let i = 0; i < 35; i++) {
+    const rel = (i % 10) / 10
+    await prisma.scoringOutcome.create({
+      data: { workspaceId, scoringModelId: model.id, score: 50, replied: rel >= 0.5, messageRelevance: rel },
+    })
+  }
+  return model
+}
+
+test('learnable evidence in shadow mode: proposal recorded, production weights untouched', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const model = await seedLearnableReplyModel(workspace.id)
+  const r = await withMode('shadow', () => maybeRecomputeScoringWeights(model.id, DEFAULT_SCORING_WEIGHTS))
+  assert.equal(r.updated, false)
+  const after = await prisma.scoringModel.findUnique({ where: { id: model.id } })
+  assert.deepEqual(after!.weights, DEFAULT_SCORING_WEIGHTS)
+  const m = after!.performanceMetrics as { proposedWeights: { messageRelevance: number }; adjustedFeatures: string[] }
+  assert.deepEqual(m.adjustedFeatures, ['messageRelevance'])
+  assert.ok(m.proposedWeights.messageRelevance > DEFAULT_SCORING_WEIGHTS.messageRelevance)
+})
+
+test('learnable evidence in live mode: weights move, bounded by the per-step cap', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const model = await seedLearnableReplyModel(workspace.id)
+  const r = await withMode('live', () => maybeRecomputeScoringWeights(model.id, DEFAULT_SCORING_WEIGHTS))
+  assert.equal(r.updated, true)
+  const w = (await prisma.scoringModel.findUnique({ where: { id: model.id } }))!.weights as typeof DEFAULT_SCORING_WEIGHTS
+  assert.ok(w.messageRelevance > DEFAULT_SCORING_WEIGHTS.messageRelevance)
+  assert.ok(w.messageRelevance <= DEFAULT_SCORING_WEIGHTS.messageRelevance * 1.1 + 1e-9)
 })
 
 // --- applyReplyAnalysis (analyze-reply DB effects) ---
@@ -264,6 +311,10 @@ test('applyReplyAnalysis feeds the SAME learning loop as POST /api/outcomes: the
 
   const modelAfter = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
   assert.equal(await prisma.scoringOutcome.count({ where: { workspaceId: workspace.id } }), 7)
+  // Leakage invariant: every recorded predictor is the pre-send value, never
+  // one derived from the reply (the old code wrote replied ? 0.8 : 0.2).
+  const recorded = await prisma.scoringOutcome.findMany({ where: { workspaceId: workspace.id }, select: { messageRelevance: true } })
+  assert.deepEqual([...new Set(recorded.map(r => r.messageRelevance))], [0.5])
   // The 7th outcome triggers an evaluation of the SAME loop the external ingest
   // path drives — but the only recorded feature is the pre-send constant, so
   // there is no learnable evidence and production weights must not move.

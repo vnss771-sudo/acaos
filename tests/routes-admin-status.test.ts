@@ -34,13 +34,21 @@ function specForUser(isPlatformAdmin: boolean) {
 }
 
 let server: TestServer
+let prevRedisUrl: string | undefined
 beforeEach(async () => {
   // No ADMIN_EMAIL: a non-admin must be denied outright, never bootstrapped.
   delete process.env.ADMIN_EMAIL
+  // Hermetic "Redis down": point at a port nothing listens on, so a Redis that
+  // happens to be running on the machine can't change this test's result.
+  prevRedisUrl = process.env.REDIS_URL
+  process.env.REDIS_URL = 'redis://127.0.0.1:1'
+  try { await resetRedisConnectionForTests() } catch { /* never connected */ }
   server = await startTestServer('/api/admin', adminRouter)
 })
 afterEach(async () => {
   await server.close()
+  if (prevRedisUrl === undefined) delete process.env.REDIS_URL
+  else process.env.REDIS_URL = prevRedisUrl
   resetPrisma()
   // Drop the shared Redis connection's reconnect timer so it can't outlive the test.
   try { await resetRedisConnectionForTests() } catch { /* never connected */ }

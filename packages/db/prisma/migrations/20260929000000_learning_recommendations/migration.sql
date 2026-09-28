@@ -16,3 +16,8 @@ CREATE TABLE "LearningRecommendation" (
 );
 CREATE INDEX "LearningRecommendation_workspaceId_status_idx" ON "LearningRecommendation"("workspaceId", "status");
 ALTER TABLE "LearningRecommendation" ADD CONSTRAINT "LearningRecommendation_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- At most one PENDING recommendation per (workspace, type): concurrent
+-- calibration runs can't both leave a pending proposal (processors.ts relies on it).
+CREATE UNIQUE INDEX "LearningRecommendation_one_pending_per_type"
+  ON "LearningRecommendation" ("workspaceId", "type")
+  WHERE "status" = 'PENDING';

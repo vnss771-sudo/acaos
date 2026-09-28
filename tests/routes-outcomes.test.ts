@@ -123,6 +123,17 @@ test('POST records an outcome via a valid ingest API key', async () => {
   assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 1)
 })
 
+test('POST ignores a caller-supplied messageRelevance (it arrives with the outcome, so it could leak it)', async () => {
+  const res = await server.request('/api/outcomes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+    body: JSON.stringify({ prospectId: 'p1', score: 80, replied: true, messageRelevance: 0.95 }),
+  })
+  assert.equal(res.status, 201)
+  const [{ data }] = prisma.callsTo('scoringOutcome', 'create')[0].args as [{ data: { messageRelevance: number } }]
+  assert.equal(data.messageRelevance, 0.5)
+})
+
 test('POST rejects an invalid ingest API key', async () => {
   const res = await server.request('/api/outcomes', {
     method: 'POST',

@@ -132,3 +132,9 @@ test('sameJson ignores key order (jsonb reorders keys)', () => {
   assert.equal(sameJson({ FUNDING: 1, HIRING: 2 }, { HIRING: 2, FUNDING: 1 }), true)
   assert.equal(sameJson({ a: [1, 2] }, { a: [2, 1] }), false)
 })
+
+test('among above-baseline industries, order is by adjusted lift, not win count', () => {
+  // Busy: 20/40 wins (50%). Sharp: 9/10 wins (90%). Filler drags the baseline down.
+  const r = calibrate([...many(20, 'WON', 'Busy'), ...many(20, 'LOST', 'Busy'), ...many(9, 'WON', 'Sharp'), ...many(1, 'LOST', 'Sharp'), ...many(5, 'WON', 'Filler'), ...many(95, 'LOST', 'Filler')])
+  assert.deepEqual(r.icpUpdate.targetIndustries, ['sharp', 'busy'])
+})
