@@ -14,6 +14,7 @@ import {
   DEFAULT_SCORING_METRICS as DEFAULT_METRICS,
   maybeRecomputeScoringWeights,
   type ScoringWeights as Weights,
+  DEFAULT_MESSAGE_RELEVANCE,
 } from '@acaos/backend-core/lib/scoring.js'
 
 export const outcomesRouter = Router()
@@ -117,7 +118,12 @@ outcomesRouter.post(
     const score = parsed.score
     const replied = parsed.replied ?? false
     const replyIntent = typeof parsed.replyIntent === 'string' ? parsed.replyIntent : null
-    const messageRelevance = Math.min(1, Math.max(0, parsed.messageRelevance ?? 0.5))
+    // A caller-supplied messageRelevance arrives in the same request as the
+    // outcome, so nothing proves it was fixed before the reply — it could be
+    // derived from it (outcome leakage). Still accepted for backward
+    // compatibility, but ignored: the learning loop only ever sees the
+    // scorer's pre-send value.
+    const messageRelevance = DEFAULT_MESSAGE_RELEVANCE
     const channelUsed = parsed.channelUsed === 'LINKEDIN' ? 'LINKEDIN' : 'EMAIL'
     const leadId = typeof parsed.leadId === 'string' ? parsed.leadId.trim() || null : null
 

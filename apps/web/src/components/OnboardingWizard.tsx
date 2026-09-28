@@ -57,7 +57,11 @@ const cardStyle: React.CSSProperties = {
   border: `1px solid ${colors.border}`,
   borderRadius: 16,
   padding: 32,
-  position: 'relative'
+  position: 'relative',
+  // Auto margins centre the card when it fits, but (unlike alignItems:center)
+  // collapse to 0 when it's taller than the viewport — so the top of a long
+  // step stays reachable by scrolling instead of being clipped off-screen.
+  margin: 'auto'
 }
 
 const hintStyle: React.CSSProperties = { color: colors.textFaint, fontSize: 12, marginTop: 4, lineHeight: 1.4 }

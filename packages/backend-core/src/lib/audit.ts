@@ -12,7 +12,8 @@ export type AuditInput = {
   metadata?: Record<string, unknown>
 }
 
-function auditCreateData(e: AuditInput) {
+/** Row data for an audit event — exported so callers can write it inside their own transaction. */
+export function auditCreateData(e: AuditInput) {
   return {
     workspaceId: e.workspaceId ?? null,
     actorUserId: e.actorUserId ?? null,

@@ -4,7 +4,7 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { DEFAULT_SCORING_WEIGHTS, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
+import { DEFAULT_SCORING_WEIGHTS, DEFAULT_MESSAGE_RELEVANCE, getOrCreateScoringModel, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -13,7 +13,11 @@ import {
   MAX_SIGNALS_FOR_SCORING,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
-import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
+import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-core/lib/learningLoop.js'
+import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
+import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.js'
+import { SelectionRecorder } from '@acaos/backend-core/lib/selectionTracking.js'
+import { holdoutPercent, isHeldOut } from '@acaos/backend-core/lib/holdout.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -94,6 +98,7 @@ type CampaignLeadRow = {
   outreachAngle: string | null
   notes: string | null
   outreachDrafts: Array<{ subject: string; emailBody: string }>
+  score: number
 }
 
 /** Recompute opportunity scores for every prospect in a workspace. */
@@ -240,6 +245,7 @@ export async function researchLead(
   // dropped (not fatal) and the scorer falls back to its computed score.
   const parsed = parseLeadResearchJson(raw)
 
+  const researchedAt = new Date()
   const enrichedLead = {
     businessName: lead.businessName,
     category: lead.category,
@@ -249,7 +255,10 @@ export async function researchLead(
     notes: lead.notes,
     aiSummary: parsed.aiSummary ?? null,
     outreachAngle: parsed.outreachAngle ?? null,
-    estimatedTeamSize: parsed.estimatedTeamSize ?? null
+    estimatedTeamSize: parsed.estimatedTeamSize ?? null,
+    // Evidence found by this research run, observed now → timing fit ("why now").
+    timingEvidence: (parsed.evidence ?? []).map((e) => ({ text: e.signal, observedAt: researchedAt })),
+    scoredAt: researchedAt,
   }
 
   const [weights, icpTargets] = await Promise.all([
@@ -458,13 +467,21 @@ export async function generateOutreachDraft(
 }
 
 /**
- * Recalibrate signal weights and the workspace ICP from WON/LOST prospect
- * outcomes. No-ops (returns uncalibrated stats) below the minimum sample size.
+ * Learn from WON/LOST prospect outcomes and turn what's learned into
+ * LearningRecommendations. Gated by LEARNING_ADAPTATION_MODE:
+ *   off     — does nothing
+ *   shadow / approved — records PENDING recommendations; changes nothing
+ *   live    — also applies signal-weight changes (recorded as
+ *             APPLIED_AUTOMATICALLY with before/after for audit + rollback)
+ * The workspace ICP is NEVER written here in any mode — ICP changes are
+ * always recommendations awaiting a human decision.
  */
 export async function calibrateScoring(
   workspaceId: string,
   progress?: Progress
 ): Promise<{ calibrated: boolean; reason?: string; totalOutcomes: number; baselineWinRate: number }> {
+  const mode = learningAdaptationMode()
+  if (mode === 'off') return { calibrated: false, reason: 'learning disabled', totalOutcomes: 0, baselineWinRate: 0 }
   await progress?.(10)
 
   const rawOutcomes = await prisma.prospectOutcome.findMany({
@@ -496,48 +513,68 @@ export async function calibrateScoring(
     return result.stats
   }
 
-  const performanceMetrics = {
-    totalOutcomes: result.stats.totalOutcomes,
-    winRate: result.stats.baselineWinRate,
-    calibratedAt: new Date().toISOString(),
-  }
-
-  await prisma.scoringModel.upsert({
-    where: { workspaceId },
-    create: {
-      workspaceId,
-      weights: DEFAULT_SCORING_WEIGHTS,
-      signalWeights: result.signalWeights,
-      performanceMetrics,
-    },
-    update: {
-      signalWeights: result.signalWeights,
-      lastWeightUpdate: new Date(),
-      updateCount: { increment: 1 },
-      performanceMetrics,
-    },
+  const [model, icp] = await Promise.all([
+    prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { targetIndustries: true, minEmployees: true, maxEmployees: true } }),
+  ])
+  const drafts = buildRecommendationDrafts(result, {
+    targetIndustries: icp?.targetIndustries ?? [],
+    minEmployees: icp?.minEmployees ?? null,
+    maxEmployees: icp?.maxEmployees ?? null,
+    signalWeights: (model?.signalWeights as Record<string, number> | null) ?? {},
   })
-  await progress?.(80)
+  // An identical proposal that's already PENDING stays as-is (no churn); a
+  // different proposal supersedes the pending one of the same type.
+  const pending = await prisma.learningRecommendation.findMany({
+    where: { workspaceId, status: 'PENDING' }, select: { type: true, proposedValue: true },
+  })
+  const freshDrafts = drafts.filter(d => !pending.some((p: { type: string; proposedValue: unknown }) =>
+    p.type === d.type && sameJson(p.proposedValue, d.proposedValue)))
+  const applySignalWeights = mode === 'live' && freshDrafts.some(d => d.type === 'SIGNAL_WEIGHT')
 
-  if (Object.keys(result.icpUpdate).length > 0) {
-    await prisma.workspaceICP.upsert({
+  await prisma.$transaction(async (tx) => {
+    const types = freshDrafts.map(d => d.type)
+    if (types.length > 0) {
+      await tx.learningRecommendation.updateMany({
+        where: { workspaceId, status: 'PENDING', type: { in: types } },
+        data: { status: 'SUPERSEDED', decidedAt: new Date(), decidedBy: 'system' },
+      })
+    }
+    for (const d of freshDrafts) {
+      const auto = applySignalWeights && d.type === 'SIGNAL_WEIGHT'
+      await tx.learningRecommendation.create({
+        data: {
+          workspaceId,
+          type: d.type,
+          status: auto ? 'APPLIED_AUTOMATICALLY' : 'PENDING',
+          currentValue: d.currentValue as Prisma.InputJsonValue,
+          proposedValue: d.proposedValue as Prisma.InputJsonValue,
+          evidence: d.evidence as Prisma.InputJsonValue,
+          sampleSize: d.sampleSize,
+          mode,
+          ...(auto && { decidedAt: new Date(), decidedBy: 'system' }),
+        },
+      })
+    }
+    const performanceMetrics = {
+      totalOutcomes: result.stats.totalOutcomes,
+      winRate: result.stats.baselineWinRate,
+      calibratedAt: new Date().toISOString(),
+      mode,
+    }
+    await tx.scoringModel.upsert({
       where: { workspaceId },
       create: {
         workspaceId,
-        targetIndustries: result.icpUpdate.targetIndustries ?? [],
-        minEmployees: result.icpUpdate.minEmployees ?? 1,
-        maxEmployees: result.icpUpdate.maxEmployees ?? 999999,
-        targetGeos: [],
-        mustHaveEmail: false,
+        weights: DEFAULT_SCORING_WEIGHTS,
+        ...(applySignalWeights && { signalWeights: result.signalWeights }),
+        performanceMetrics,
       },
-      update: {
-        ...(result.icpUpdate.targetIndustries && { targetIndustries: result.icpUpdate.targetIndustries }),
-        ...(result.icpUpdate.minEmployees !== undefined && { minEmployees: result.icpUpdate.minEmployees }),
-        ...(result.icpUpdate.maxEmployees !== undefined && { maxEmployees: result.icpUpdate.maxEmployees }),
-      },
+      update: applySignalWeights
+        ? { signalWeights: result.signalWeights, lastWeightUpdate: new Date(), updateCount: { increment: 1 }, performanceMetrics }
+        : { performanceMetrics },
     })
-  }
-
+  })
   await progress?.(100)
   return result.stats
 }
@@ -560,6 +597,7 @@ export type SendSkipReason =
   | 'DOMAIN_PACED'
   | 'OUTSIDE_SEND_WINDOW'
   | 'CONSENT_REQUIRED'
+  | 'HOLDOUT'
 
 type SendCampaignResult = {
   campaignId: string
@@ -982,6 +1020,9 @@ async function dispatchOutreachEmail(p: {
     // RFC 2369 / 8058 one-click unsubscribe headers — the /api/unsubscribe
     // endpoint already serves a safe GET confirmation and a POST one-click
     // handler. Major mailbox providers require these for bulk senders.
+    // Score relevance BEFORE dispatch: final copy, no outcome can exist yet.
+    // Best-effort — a scoring failure never blocks the send.
+    await recordPreSendFeatures(p.claimId).catch(() => {})
     const info = await p.sendMailFn(p.lead.email!, p.subject, htmlBody, p.smtpCfg, {
       text: textBody,
       headers: {
@@ -1070,6 +1111,13 @@ export async function sendCampaignBatch(
 
   const { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg } =
     await loadCampaignSendConfig(campaignId, workspaceId)
+  // Selection tracking (best-effort): who this run considered, selected or
+  // excluded and why. Leads are processed in id order (≈ creation order), so a
+  // cap cut-off is not score-driven — recorded so bias analysis can rely on it.
+  const selection = await SelectionRecorder.start(workspaceId, campaignId, 'id_asc')
+  // Held-back comparison group: a random, stable share of otherwise-sendable
+  // leads is never contacted, so outcomes can be compared to a fair baseline.
+  const holdoutPct = holdoutPercent()
 
   let sent = 0
   let skipped = 0
@@ -1078,10 +1126,15 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, HOLDOUT: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
+  const finish = async (): Promise<SendCampaignResult> => {
+    const r = result()
+    await selection.finish({ sent: r.sent, skipped: r.skipped, failed: r.failed, skippedByReason: r.skippedByReason, holdoutPercent: holdoutPct })
+    return r
+  }
 
   // Per-contact consent gate — DORMANT unless COMPLIANCE_GATE_ENABLED (same
   // launch-control flag as getSendReadiness, so this never surprises an existing
@@ -1103,14 +1156,14 @@ export async function sendCampaignBatch(
   if (workspace?.sendSuppressed) {
     console.log(`[send-campaign] Workspace ${workspaceId} is send-suppressed — skipping campaign ${campaignId}`)
     incSendOutcome('send-campaign', 'WORKSPACE_SUPPRESSED')
-    return result()
+    return finish()
   }
 
   // Don't even start a batch for a paused/completed mission.
   const initialBlock = await getMissionSendBlockReason(campaignId)
   if (initialBlock) {
     console.log(`[send-campaign] Skipping campaign ${campaignId}: ${initialBlock}`)
-    return result()
+    return finish()
   }
 
   await progress?.(5)
@@ -1153,7 +1206,7 @@ export async function sendCampaignBatch(
     if (usedToday >= dailySendLimit) {
       console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
       skip('DAILY_CAP', total)
-      return result()
+      return finish()
     }
   }
 
@@ -1168,7 +1221,7 @@ export async function sendCampaignBatch(
     if (usedThisMonth >= monthlySendLimit) {
       console.log(`[send-campaign] Monthly limit of ${monthlySendLimit} reached for workspace ${workspaceId}`)
       skip('MONTHLY_CAP', total)
-      return result()
+      return finish()
     }
   }
 
@@ -1185,7 +1238,7 @@ export async function sendCampaignBatch(
       if (guardMode === 'enforce') {
         incReputationBlock('send-campaign')
         skip('REPUTATION_BLOCKED', total)
-        return result()
+        return finish()
       }
     }
   }
@@ -1198,7 +1251,7 @@ export async function sendCampaignBatch(
   if (sendWindow && !isWithinSendWindow(new Date(), sendWindow)) {
     console.log(`[send-campaign] Outside send window for workspace ${workspaceId}; halting (eligible=${total})`)
     skip('OUTSIDE_SEND_WINDOW', total)
-    return result()
+    return finish()
   }
 
   // Per-recipient-domain pacing (opt-in via PER_DOMAIN_DAILY_CAP). Seed today's
@@ -1260,6 +1313,9 @@ export async function sendCampaignBatch(
       await loadPageFastPathSets(page, workspaceId, campaignId, consentRequired)
 
     for (const lead of page) {
+    // Single-lead exclusions are recorded per lead (bulk cut-offs below that
+    // skip the REST of the run are captured in the run's totals instead).
+    const exclude = (reason: SendSkipReason) => { skip(reason); selection.record(lead, 'EXCLUDED', reason) }
 
     // Progress: 10% → 90% across the campaign (by leads handled so far / total).
     await progress?.(10 + Math.floor(((sent + skipped + failed) / (total || 1)) * 80))
@@ -1282,14 +1338,14 @@ export async function sendCampaignBatch(
     // constraint on the claim below remains the real safety net against
     // duplicate sends. FAILED is fail-closed (not auto-retried) — surfaced for
     // operator review rather than blindly resent.
-    if (alreadySentLeadIds.has(lead.id)) { skip('ALREADY_SENT'); continue }
+    if (alreadySentLeadIds.has(lead.id)) { exclude('ALREADY_SENT'); continue }
 
     // Skip suppressed addresses (unsubscribed or bounced)
-    if (isSuppressed(lead.email!)) { skip('SUPPRESSED'); continue }
+    if (isSuppressed(lead.email!)) { exclude('SUPPRESSED'); continue }
 
     // Reject structurally-invalid addresses before claiming/generating — a bad
     // address would only burn an SMTP attempt and hurt sender reputation.
-    if (!isDeliverableEmail(lead.email)) { skip('INVALID_EMAIL'); continue }
+    if (!isDeliverableEmail(lead.email)) { exclude('INVALID_EMAIL'); continue }
 
     // Compliance gate (dormant unless COMPLIANCE_GATE_ENABLED): a consent-basis or
     // Canada-targeting workspace must have an on-file ConsentRecord for THIS
@@ -1297,7 +1353,7 @@ export async function sendCampaignBatch(
     // consent recorded. Audited per skip (fire-and-forget) for the SAR/compliance
     // trail; never blocks the send loop even if the audit write fails.
     if (consentRequired && !hasConsent(lead.email!)) {
-      skip('CONSENT_REQUIRED')
+      exclude('CONSENT_REQUIRED')
       void recordAudit({
         workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: lead.id,
         metadata: { campaignId, reason: consentReason },
@@ -1305,10 +1361,14 @@ export async function sendCampaignBatch(
       continue
     }
 
+    // Holdout: placed after every eligibility check, so the held-out group is
+    // drawn only from leads that would otherwise have been contacted.
+    if (isHeldOut(workspaceId, lead.id, holdoutPct)) { skip('HOLDOUT'); selection.record(lead, 'HELD_OUT', 'HOLDOUT'); continue }
+
     // Per-domain pacing: don't burst past the provider's tolerance for one domain.
     if (domainCounts) {
       const d = emailDomain(lead.email)
-      if (d && (domainCounts.get(d) ?? 0) >= perDomainCap!) { skip('DOMAIN_PACED'); continue }
+      if (d && (domainCounts.get(d) ?? 0) >= perDomainCap!) { exclude('DOMAIN_PACED'); continue }
     }
 
     // Resolve the draft source WITHOUT spending AI yet. The outbox claim below
@@ -1316,7 +1376,7 @@ export async function sendCampaignBatch(
     // (campaignId, leadId) claim and skips before burning AI quota — no duplicate
     // AI spend and no duplicate draft (the previous order generated first).
     const draftSource = resolveDraftSource(lead, { approvalRequired, policyReviewLeadIds })
-    if (draftSource.action === 'skip') { skip(draftSource.reason); continue }
+    if (draftSource.action === 'skip') { exclude(draftSource.reason); continue }
     let subject: string | null = draftSource.action === 'reuse' ? draftSource.subject : null
     let body: string | null = draftSource.action === 'reuse' ? draftSource.body : null
     const needGeneration = draftSource.action === 'generate'
@@ -1343,8 +1403,8 @@ export async function sendCampaignBatch(
         skip('DAILY_CAP', remaining)
         break pageLoop
       }
-      if (claimOutcome.reason === 'DOMAIN_PACED') { skip('DOMAIN_PACED'); continue }
-      skip('ALREADY_SENT'); continue
+      if (claimOutcome.reason === 'DOMAIN_PACED') { exclude('DOMAIN_PACED'); continue }
+      exclude('ALREADY_SENT'); continue
     }
     const claimId = claimOutcome.claimId
     const releaseClaim = claimOutcome.release
@@ -1355,13 +1415,13 @@ export async function sendCampaignBatch(
       const outcome = await generateDraftForSend(lead, { workspaceId, claimId, icp, missionCtx, draftPolicy, generateOutreachFn })
       switch (outcome.kind) {
         case 'ai_limit':
-          await releaseClaim(); skip('AI_LIMIT'); continue
+          await releaseClaim(); exclude('AI_LIMIT'); continue
         case 'invalid_json':
-          await releaseClaim(); skip('AI_GENERATION_FAILED'); continue
+          await releaseClaim(); exclude('AI_GENERATION_FAILED'); continue
         case 'policy_review':
-          await releaseClaim(); skip('POLICY_REVIEW'); continue
+          await releaseClaim(); exclude('POLICY_REVIEW'); continue
         case 'error':
-          await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue
+          await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); selection.record(lead, 'FAILED'); continue
         case 'generated':
           subject = outcome.subject
           body = outcome.body
@@ -1371,7 +1431,7 @@ export async function sendCampaignBatch(
 
     // Past this point subject/body are non-null (reused draft or freshly generated).
     // Guard defensively so a logic slip fails this one lead, not the whole batch.
-    if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue }
+    if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); selection.record(lead, 'FAILED'); continue }
 
     const dispatchOutcome = await dispatchOutreachEmail({
       sendMailFn, smtpCfg, lead, subject, body, claimId,
@@ -1383,12 +1443,15 @@ export async function sendCampaignBatch(
     if (dispatchOutcome.ok) {
       sent++
       incSendOutcome('send-campaign', 'sent')
+      selection.record(lead, 'SELECTED', null, claimId)
       if (domainCounts) { const d = emailDomain(lead.email); if (d) domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1) }
     } else {
       failed++
       incSendOutcome('send-campaign', 'failed')
+      selection.record(lead, 'FAILED')
     }
     } // end per-lead loop for this page
+    await selection.flush()
 
     // Advance the cursor; a short page means we've reached the end.
     cursor = page[page.length - 1].id
@@ -1396,7 +1459,7 @@ export async function sendCampaignBatch(
   }
 
   await progress?.(100)
-  return result()
+  return finish()
 }
 
 // ── send-followup: dispatch one due sequence step ─────────────────────────────
@@ -1591,6 +1654,7 @@ export async function sendFollowupTask(
   }
 
   try {
+    await recordPreSendFeatures(claimId).catch(() => {}) // before dispatch (see dispatchOutreachEmail)
     const info = await sendMailFn(lead.email!, subject, htmlBody, smtpCfg, {
       text: textBody,
       headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
@@ -1778,7 +1842,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   const target = await prisma.outreachSent.findFirst({
     where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
     orderBy: { repliedAt: 'desc' },
-    select: { id: true },
+    select: { id: true, messageRelevanceScore: true, timingFitScore: true },
   })
   if (target) {
     await prisma.outreachSent.update({
@@ -1826,32 +1890,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // Common path is a read: the scoring model almost always already exists. The
   // @unique(workspaceId) means a concurrent first-reply race can lose the create
   // with P2002; re-read in that case so we still get the id.
-  let model = await prisma.scoringModel.findUnique({
-    where: { workspaceId: lead.workspaceId },
-    select: { id: true, weights: true },
-  })
-  if (!model) {
-    try {
-      model = await prisma.scoringModel.create({
-        data: {
-          workspaceId: lead.workspaceId,
-          weights: DEFAULT_SCORING_WEIGHTS,
-          performanceMetrics: {
-            totalScored: 0, totalReplied: 0, replyRate: 0,
-            avgScoreOfReplied: 0, avgScoreOfNotReplied: 0, correlationScore: 0,
-          },
-        },
-        select: { id: true, weights: true },
-      })
-    } catch (err) {
-      if ((err as { code?: string }).code !== 'P2002') throw err
-      model = await prisma.scoringModel.findUnique({
-        where: { workspaceId: lead.workspaceId },
-        select: { id: true, weights: true },
-      })
-    }
-  }
-  if (!model) throw new Error('scoring model unavailable after create race')
+  const model = await getOrCreateScoringModel(lead.workspaceId)
 
   const replyIntentMap: Record<string, string> = {
     INTERESTED: 'INTERESTED',
@@ -1874,7 +1913,11 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       score: lead.score,
       replied,
       replyIntent: replyIntentMap[effectiveClassification] ?? null,
-      messageRelevance: replied ? 0.8 : 0.2,
+      // The replied-to message's relevance, scored and frozen at SEND time —
+      // never derived from the reply (that would leak the outcome into its own
+      // predictor). Sends from before relevance scoring fall back to the default.
+      messageRelevance: target?.messageRelevanceScore ?? DEFAULT_MESSAGE_RELEVANCE,
+      timingFit: target?.timingFitScore ?? null,
       channelUsed: 'EMAIL',
       scoringModelId: model.id,
     },

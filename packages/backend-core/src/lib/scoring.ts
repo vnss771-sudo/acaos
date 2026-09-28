@@ -2,6 +2,8 @@
 // Uses the same weight schema as ScorerV2 / outcomes.ts
 
 import { prisma } from './prisma.js'
+import { learningAdaptationMode, isLearnableFeature, MAX_WEIGHT_STEP } from './learningMode.js'
+import { computeTimingFit, DEFAULT_TIMING_FIT, type TimingEvidence } from './timingFit.js'
 
 export type ScoringWeights = {
   industry: number
@@ -157,6 +159,10 @@ type LeadInput = {
   aiSummary?: string | null
   outreachAngle?: string | null
   estimatedTeamSize?: string | null
+  // Dated buying-trigger evidence for timing fit, and the moment of scoring.
+  // Absent → timing is unknown and scores the neutral default.
+  timingEvidence?: TimingEvidence[]
+  scoredAt?: Date
 }
 
 export type ScoreSignals = Record<keyof ScoringWeights, number>
@@ -184,7 +190,14 @@ export type LeadScoreExplanation = {
 // Constant placeholder signals carry no evidence (they are fixed defaults until a
 // richer enrichment fills them in), so they are excluded from the human-readable
 // topReasons — they would otherwise crowd out the signals that actually differ.
-const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['size', 'messageRelevance', 'timingFit'])
+// (`size` is evidence-derived from estimatedTeamSize, so it is not listed here.)
+// (`timingFit` is evidence-derived when dated triggers exist — see timingFit.ts.)
+const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['messageRelevance'])
+
+// Placeholder value the scorer assigns before a message exists. Exported so the
+// reply pipeline records the SAME pre-send value as the learning feature —
+// never a value derived from the reply itself (outcome leakage).
+export const DEFAULT_MESSAGE_RELEVANCE = 0.5
 
 // Maps a signal's strength to a short, human phrase. Deterministic and band-based
 // so the same inputs always produce the same rationale.
@@ -197,7 +210,7 @@ const SIGNAL_LABELS: Record<keyof ScoringWeights, (v: number) => string> = {
   contact: (v) => (v >= 0.9 ? 'Direct contact (name + email) available' : v >= 0.5 ? 'Partial contact details' : 'No contact details'),
   messageRelevance: () => 'Message relevance (default — needs enrichment)',
   channelFit: (v) => (v >= 0.9 ? 'Reachable by email' : v >= 0.6 ? 'Website-only channel' : 'Weak channel fit'),
-  timingFit: () => 'Timing fit (default — needs signal data)',
+  timingFit: (v) => (v >= 0.7 ? 'Recent buying trigger — good timing' : v > 0.5 ? 'Some recent buying activity' : v === 0.5 ? 'Timing unknown (no dated trigger)' : 'Buying triggers are stale'),
   dataFreshness: (v) => (v >= 0.8 ? 'Enriched with current research' : 'Limited research data'),
 }
 
@@ -212,9 +225,9 @@ function computeSignals(lead: LeadInput, icpTargets?: string[]): ScoreSignals {
     tech: scoreTech(combined),
     growth: scoreGrowth(combined),
     contact: scoreContact(lead.email, lead.contactName),
-    messageRelevance: 0.50,
+    messageRelevance: DEFAULT_MESSAGE_RELEVANCE,
     channelFit: scoreChannelFit(lead.email, lead.website),
-    timingFit: 0.50,
+    timingFit: lead.timingEvidence ? computeTimingFit(lead.timingEvidence, lead.scoredAt ?? new Date()).score : DEFAULT_TIMING_FIT,
     dataFreshness: scoreDataFreshness(lead.aiSummary),
   }
 }
@@ -290,91 +303,80 @@ export const DEFAULT_SCORING_METRICS: ScoringPerformanceMetrics = {
   correlationScore: 0,
 }
 
-export type ScoringOutcomeSample = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
+export type ScoringOutcomeSample = { score: number; replied: boolean; messageRelevance: number; channelUsed: string; timingFit?: number | null }
+
+/** Pearson correlation; 0 when either side has no variance. */
+export function pearson(xs: number[], ys: number[]): number {
+  const n = Math.min(xs.length, ys.length)
+  if (n === 0) return 0
+  const mx = xs.slice(0, n).reduce((s, x) => s + x, 0) / n
+  const my = ys.slice(0, n).reduce((s, y) => s + y, 0) / n
+  let num = 0, dx = 0, dy = 0
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - mx) * (ys[i] - my)
+    dx += (xs[i] - mx) ** 2
+    dy += (ys[i] - my) ** 2
+  }
+  return dx === 0 || dy === 0 ? 0 : num / Math.sqrt(dx * dy)
+}
 
 export function calculateOutcomeCorrelation(outcomes: ScoringOutcomeSample[]): number {
-  const replied = outcomes.filter((o) => o.replied)
-  const notReplied = outcomes.filter((o) => !o.replied)
-  if (replied.length === 0 || notReplied.length === 0) return 0
-
-  const meanScore = outcomes.reduce((s, o) => s + o.score, 0) / outcomes.length
-  const meanReply = replied.length / outcomes.length
-
-  let numerator = 0, denomScore = 0, denomReply = 0
-  for (const o of outcomes) {
-    const sd = o.score - meanScore
-    const rd = (o.replied ? 1 : 0) - meanReply
-    numerator += sd * rd
-    denomScore += sd * sd
-    denomReply += rd * rd
-  }
-  if (denomScore === 0 || denomReply === 0) return 0
-  return numerator / Math.sqrt(denomScore * denomReply)
+  return pearson(outcomes.map((o) => o.score), outcomes.map((o) => (o.replied ? 1 : 0)))
 }
 
 /**
- * Pure weight-retuning step: given a workspace's recorded outcomes and its
- * current weights, nudge weights toward whatever actually correlates with
- * replies, clamp to >= 0, and renormalize to sum to 1. Also returns the
- * performance metrics snapshot (reply rate, correlation, etc.) for the caller
- * to persist alongside the retuned weights.
+ * Pure weight-retuning step. A weight moves ONLY when its feature was recorded
+ * per outcome, has enough samples, and actually varies (isLearnableFeature);
+ * the move is proportional to that feature's own correlation with replies and
+ * capped at ±MAX_WEIGHT_STEP per iteration. No hard-coded directional nudges:
+ * with no learnable evidence, weights come back unchanged.
+ *
+ * Today only messageRelevance is recorded per outcome, and it is a pre-send
+ * constant until real relevance scoring lands — so in practice this returns
+ * the current weights untouched. That is the honest answer.
  */
 export function recomputeScoringWeights(
   outcomes: ScoringOutcomeSample[],
   current: ScoringWeights,
-): { weights: ScoringWeights; metrics: ScoringPerformanceMetrics } {
+): { weights: ScoringWeights; metrics: ScoringPerformanceMetrics; adjustedFeatures: (keyof ScoringWeights)[] } {
   const replied = outcomes.filter((o) => o.replied)
   const notReplied = outcomes.filter((o) => !o.replied)
-
-  const avgReplied = replied.length > 0
-    ? replied.reduce((s, o) => s + o.score, 0) / replied.length : 0
-  const avgNotReplied = notReplied.length > 0
-    ? notReplied.reduce((s, o) => s + o.score, 0) / notReplied.length : 0
-
-  const correlation = calculateOutcomeCorrelation(outcomes)
-  const replyRate = outcomes.length > 0 ? replied.length / outcomes.length : 0
+  const avg = (xs: ScoringOutcomeSample[]) => (xs.length > 0 ? xs.reduce((s, o) => s + o.score, 0) / xs.length : 0)
 
   const w = { ...current }
-  const lr = 0.1
+  const adjustedFeatures: (keyof ScoringWeights)[] = []
+  const repliedFlags = outcomes.map((o) => (o.replied ? 1 : 0))
 
-  // Weak correlation -> shift weight from ICP to message/channel fit
-  if (correlation < 0.3) {
-    w.messageRelevance += lr * 0.02
-    w.channelFit += lr * 0.02
-    w.industry -= lr * 0.01
+  // Each per-outcome, pre-send feature is learned independently under the same
+  // guards: enough samples, real variance, bounded step.
+  const features: Array<[keyof ScoringWeights, number[]]> = [
+    ['messageRelevance', outcomes.map((o) => o.messageRelevance)],
+    ['timingFit', outcomes.map((o) => o.timingFit ?? DEFAULT_TIMING_FIT)],
+  ]
+  for (const [key, values] of features) {
+    if (!isLearnableFeature(values)) continue
+    const step = Math.max(-1, Math.min(1, pearson(values, repliedFlags))) * MAX_WEIGHT_STEP
+    w[key] = w[key] * (1 + step)
+    adjustedFeatures.push(key)
   }
 
-  // Message relevance impact
-  const msgImpact = replied.length > 0
-    ? replied.reduce((s, o) => s + o.messageRelevance, 0) / replied.length : 0
-  if (msgImpact > 0.7) w.messageRelevance += lr * 0.01
-
-  // Channel impact — if LinkedIn replies outpace email, boost channelFit
-  const emailReplies = replied.filter((o) => o.channelUsed === 'EMAIL').length
-  const linkedinReplies = replied.filter((o) => o.channelUsed === 'LINKEDIN').length
-  if (linkedinReplies > emailReplies * 1.5) w.channelFit += lr * 0.01
-
-  // Clamp all weights to >= 0, then normalize to sum = 1
-  const weightKeys = Object.keys(DEFAULT_SCORING_WEIGHTS) as (keyof ScoringWeights)[]
-  for (const k of weightKeys) {
-    w[k] = Math.max(0, w[k])
-  }
-  const total = weightKeys.reduce((s, k) => s + w[k], 0)
-  if (total > 0) {
-    for (const k of weightKeys) {
-      w[k] = w[k] / total
-    }
+  if (adjustedFeatures.length > 0) {
+    const weightKeys = Object.keys(DEFAULT_SCORING_WEIGHTS) as (keyof ScoringWeights)[]
+    for (const k of weightKeys) w[k] = Math.max(0, w[k])
+    const total = weightKeys.reduce((s, k) => s + w[k], 0)
+    if (total > 0) for (const k of weightKeys) w[k] = w[k] / total
   }
 
   return {
     weights: w,
+    adjustedFeatures,
     metrics: {
       totalScored: outcomes.length,
       totalReplied: replied.length,
-      replyRate,
-      avgScoreOfReplied: avgReplied,
-      avgScoreOfNotReplied: avgNotReplied,
-      correlationScore: correlation,
+      replyRate: outcomes.length > 0 ? replied.length / outcomes.length : 0,
+      avgScoreOfReplied: avg(replied),
+      avgScoreOfNotReplied: avg(notReplied),
+      correlationScore: calculateOutcomeCorrelation(outcomes),
     },
   }
 }
@@ -397,21 +399,51 @@ export async function maybeRecomputeScoringWeights(
   scoringModelId: string,
   currentWeights: ScoringWeights,
 ): Promise<{ updated: boolean; totalOutcomes: number }> {
+  const mode = learningAdaptationMode()
   const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId } })
+  if (mode === 'off') return { updated: false, totalOutcomes }
   if (totalOutcomes < RECOMPUTE_EVERY_N_OUTCOMES || totalOutcomes % RECOMPUTE_EVERY_N_OUTCOMES !== 0) {
     return { updated: false, totalOutcomes }
   }
 
   const all = await prisma.scoringOutcome.findMany({
     where: { scoringModelId },
-    select: { score: true, replied: true, messageRelevance: true, channelUsed: true },
+    select: { score: true, replied: true, messageRelevance: true, channelUsed: true, timingFit: true },
   })
 
-  const { weights, metrics } = recomputeScoringWeights(all, currentWeights)
+  const { weights, metrics, adjustedFeatures } = recomputeScoringWeights(all, currentWeights)
 
+  // Only `live` mode may change production weights. Every other mode records
+  // the proposal alongside the metrics (shadow evaluation) and leaves the
+  // weights the scorer actually uses untouched.
+  const apply = mode === 'live' && adjustedFeatures.length > 0
   await prisma.scoringModel.update({
     where: { id: scoringModelId },
-    data: { weights, performanceMetrics: metrics, updateCount: { increment: 1 }, lastWeightUpdate: new Date() },
+    data: apply
+      ? { weights, performanceMetrics: { ...metrics, adjustedFeatures, mode }, updateCount: { increment: 1 }, lastWeightUpdate: new Date() }
+      : { performanceMetrics: { ...metrics, proposedWeights: weights, adjustedFeatures, mode } },
   })
-  return { updated: true, totalOutcomes }
+  return { updated: apply, totalOutcomes }
+}
+
+/**
+ * A workspace's scoring model, created with default weights on first use.
+ * @unique(workspaceId) means a concurrent first-use race can lose the create
+ * with P2002; re-read in that case so every caller still gets the id.
+ */
+export async function getOrCreateScoringModel(workspaceId: string): Promise<{ id: string; weights: unknown }> {
+  const select = { id: true, weights: true } as const
+  const existing = await prisma.scoringModel.findUnique({ where: { workspaceId }, select })
+  if (existing) return existing
+  try {
+    return await prisma.scoringModel.create({
+      data: { workspaceId, weights: DEFAULT_SCORING_WEIGHTS, performanceMetrics: DEFAULT_SCORING_METRICS },
+      select,
+    })
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') throw err
+    const raced = await prisma.scoringModel.findUnique({ where: { workspaceId }, select })
+    if (!raced) throw new Error('scoring model unavailable after create race')
+    return raced
+  }
 }

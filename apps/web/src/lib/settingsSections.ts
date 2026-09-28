@@ -9,6 +9,7 @@ export const SETTINGS_SECTIONS = {
   workspace: 'settings-workspace',
   team: 'settings-team',
   targeting: 'settings-targeting',
+  learning: 'settings-learning',
   email: 'settings-email',
   compliance: 'settings-compliance',
   deliverability: 'settings-deliverability',

@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { calibrate } from '../packages/backend-core/src/lib/learningLoop.ts'
+import { calibrate, buildRecommendationDrafts, sameJson, confidenceLabel } from '../packages/backend-core/src/lib/learningLoop.ts'
 import { EVENT_BASE_WEIGHTS } from '../packages/backend-core/src/lib/signalEngine.ts'
 
 type Stage = 'WON' | 'LOST'
@@ -82,4 +82,67 @@ test('does not calibrate weights when there are zero wins (no signal lift to lea
   assert.equal(res.stats.reason, 'insufficient wins')
   assert.equal(res.stats.baselineWinRate, 0)
   assert.deepEqual(res.signalWeights, {})
+})
+
+// ── Learning hardening (P0): ICP maths + recommendations ────────────────────
+// ── ICP learning maths ──────────────────────────────────────────────────────
+
+const po2 = (stage: Stage, industry: string, employeeCount = 30) =>
+  ({ stage, prospect: { industry, employeeCount, signals: [] as { type: string }[] } })
+const many = (n: number, stage: Stage, industry: string) => Array.from({ length: n }, () => po2(stage, industry))
+
+test('industry ranking uses adjusted win RATE, not raw win count (HVAC 10/200 vs Electrical 5/30)', () => {
+  const r = calibrate([...many(10, 'WON', 'HVAC'), ...many(190, 'LOST', 'HVAC'), ...many(5, 'WON', 'Electrical'), ...many(25, 'LOST', 'Electrical')])
+  assert.deepEqual(r.icpUpdate.targetIndustries, ['electrical'])
+  const elec = r.industryInsights.find(i => i.segment === 'electrical')!
+  assert.ok(elec.lift > 1 && elec.adjustedWinRate < elec.observedWinRate, 'shrunk toward baseline')
+})
+
+test('one lucky win in a tiny segment does not outrank a large proven segment', () => {
+  const r = calibrate([...many(1, 'WON', 'Lucky'), ...many(1, 'LOST', 'Lucky'), ...many(50, 'WON', 'Proven'), ...many(150, 'LOST', 'Proven')])
+  assert.ok(!r.industryInsights.some(i => i.segment === 'lucky'), '2 samples is below the minimum and withheld')
+})
+
+// ── Recommendations, never silent ICP rewrites ──────────────────────────────
+
+test('ICP changes are proposed as recommendations with evidence', () => {
+  const r = calibrate([...many(8, 'WON', 'Electrical'), ...many(4, 'LOST', 'Electrical'), ...many(1, 'WON', 'HVAC'), ...many(12, 'LOST', 'HVAC')])
+  const drafts = buildRecommendationDrafts(r, { targetIndustries: ['HVAC', 'Plumbing'], minEmployees: 5, maxEmployees: 500, signalWeights: {} })
+  const ind = drafts.find(d => d.type === 'ICP_INDUSTRY')!
+  assert.deepEqual(ind.currentValue, ['HVAC', 'Plumbing'])
+  assert.deepEqual(ind.proposedValue, ['electrical'])
+  assert.ok(Array.isArray((ind.evidence as { industries: unknown[] }).industries))
+  assert.equal(ind.sampleSize, 25)
+  const ev = ind.evidence as { confidence: string; calibrationVersion: number; recencyHalfLifeDays: number }
+  assert.equal(ev.confidence, 'Low')
+  assert.equal(ev.calibrationVersion, 1)
+  assert.equal(ev.recencyHalfLifeDays, 180)
+})
+
+test('no recommendation when the proposal matches the current configuration', () => {
+  const r = calibrate([...many(8, 'WON', 'Electrical'), ...many(4, 'LOST', 'Electrical'), ...many(1, 'WON', 'HVAC'), ...many(12, 'LOST', 'HVAC')])
+  const drafts = buildRecommendationDrafts(r, {
+    targetIndustries: ['Electrical'], minEmployees: r.icpUpdate.minEmployees ?? null,
+    maxEmployees: r.icpUpdate.maxEmployees ?? null, signalWeights: r.signalWeights,
+  })
+  assert.deepEqual(drafts, [])
+})
+
+test('uncalibrated results produce no recommendations', () => {
+  assert.deepEqual(buildRecommendationDrafts(calibrate([po2('WON', 'x')]), { targetIndustries: [], minEmployees: null, maxEmployees: null, signalWeights: {} }), [])
+})
+
+test('sameJson ignores key order (jsonb reorders keys)', () => {
+  assert.equal(sameJson({ FUNDING: 1, HIRING: 2 }, { HIRING: 2, FUNDING: 1 }), true)
+  assert.equal(sameJson({ a: [1, 2] }, { a: [2, 1] }), false)
+})
+
+test('among above-baseline industries, order is by adjusted lift, not win count', () => {
+  // Busy: 20/40 wins (50%). Sharp: 9/10 wins (90%). Filler drags the baseline down.
+  const r = calibrate([...many(20, 'WON', 'Busy'), ...many(20, 'LOST', 'Busy'), ...many(9, 'WON', 'Sharp'), ...many(1, 'LOST', 'Sharp'), ...many(5, 'WON', 'Filler'), ...many(95, 'LOST', 'Filler')])
+  assert.deepEqual(r.icpUpdate.targetIndustries, ['sharp', 'busy'])
+})
+
+test('confidence label follows sample size', () => {
+  assert.deepEqual([confidenceLabel(29), confidenceLabel(30), confidenceLabel(99), confidenceLabel(100)], ['Low', 'Medium', 'Medium', 'High'])
 })

@@ -654,6 +654,9 @@ export interface RouteContracts {
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
   'PUT /api/workspaces/:id/business-context': { params: { id: string }; body: UpdateBusinessContextRequest; response: { businessContext: string | null } }
   'POST /api/workspaces/:id/warmup/start': { params: { id: string }; response: { warmupStartedAt: string } }
+  'POST /api/workspaces/:id/learning-recommendations/:recId/approve': { params: { id: string; recId: string }; response: { recommendation: LearningRecommendationDto } }
+  'POST /api/workspaces/:id/learning-recommendations/:recId/reject': { params: { id: string; recId: string }; response: { recommendation: LearningRecommendationDto } }
+  'POST /api/workspaces/:id/learning-recommendations/:recId/revert': { params: { id: string; recId: string }; response: { recommendation: LearningRecommendationDto } }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }
   'POST /api/workspaces/:id/members': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }
@@ -697,3 +700,20 @@ export type RouteKey = keyof RouteContracts
 export type RouteParams<K extends RouteKey> = RouteContracts[K] extends { params: infer P } ? P : undefined
 export type RouteBody<K extends RouteKey> = RouteContracts[K] extends { body: infer B } ? B : undefined
 export type RouteResponse<K extends RouteKey> = RouteContracts[K] extends { response: infer R } ? R : unknown
+
+/** A learning proposal as served by GET /api/workspaces/:id/learning-recommendations. */
+export type LearningRecommendationDto = {
+  id: string
+  workspaceId: string
+  type: 'ICP_INDUSTRY' | 'ICP_SIZE' | 'SIGNAL_WEIGHT' | string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'REVERTED' | 'EXPIRED' | 'APPLIED_AUTOMATICALLY' | string
+  currentValue: unknown
+  proposedValue: unknown
+  evidence: Record<string, unknown>
+  sampleSize: number
+  mode: string
+  createdAt: string
+  decidedAt: string | null
+  decidedBy: string | null
+  expired?: boolean
+}

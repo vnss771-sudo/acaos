@@ -32,6 +32,7 @@ import {
   DiscoverOpportunitiesPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
+import { observeEngagementOutcomes } from '@acaos/backend-core/lib/engagementObservation.js'
 import { runDomainHealthSweep, isDomainHealthEnabled, domainHealthIntervalMs } from '@acaos/backend-core/lib/domainHealth.js'
 import { runOpportunitySweep, isOpportunityDiscoveryEnabled, opportunityDiscoveryIntervalMs } from '@acaos/backend-core/lib/opportunitySweep.js'
 import { recoverStaleSends } from '@acaos/backend-core/lib/staleSends.js'
@@ -396,9 +397,15 @@ const retentionWorker = new Worker(
           log('retention-purge', `stats reconcile failed: ${(e as Error).message}`); return null
         })
       : null
+    // Close observation windows: classify sends past NO_RESPONSE_AFTER_DAYS as
+    // REPLIED / BOUNCED / UNSUBSCRIBED / COMPLAINT / NO_RESPONSE (idempotent).
+    const observation = await observeEngagementOutcomes().catch((e) => {
+      log('retention-purge', `engagement observation failed: ${(e as Error).message}`); return null
+    })
+    if (observation) log('retention-purge', `engagement observation: ${JSON.stringify(observation)}`)
     if (reconcile) log('retention-purge', `stats reconcile: checked=${reconcile.campaignsChecked} drift=${reconcile.drifted.length} rebuilt=${reconcile.workspacesRebuilt}`)
     log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
-    return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0 }
+    return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0, engagementObserved: observation?.observed ?? 0 }
   }),
   { connection, concurrency: 1 }
 )

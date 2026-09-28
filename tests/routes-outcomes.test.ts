@@ -123,6 +123,17 @@ test('POST records an outcome via a valid ingest API key', async () => {
   assert.equal(prisma.callsTo('scoringOutcome', 'create').length, 1)
 })
 
+test('POST ignores a caller-supplied messageRelevance (it arrives with the outcome, so it could leak it)', async () => {
+  const res = await server.request('/api/outcomes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+    body: JSON.stringify({ prospectId: 'p1', score: 80, replied: true, messageRelevance: 0.95 }),
+  })
+  assert.equal(res.status, 201)
+  const [{ data }] = prisma.callsTo('scoringOutcome', 'create')[0].args as [{ data: { messageRelevance: number } }]
+  assert.equal(data.messageRelevance, 0.5)
+})
+
 test('POST rejects an invalid ingest API key', async () => {
   const res = await server.request('/api/outcomes', {
     method: 'POST',
@@ -182,7 +193,7 @@ test('POST validates the score range', async () => {
   assert.equal(res.status, 400)
 })
 
-test('POST recomputes weights on every 7th outcome', async () => {
+test('POST evaluates the learning loop on every 7th outcome; weights move only with learnable evidence in live mode', async () => {
   await boot(baseSpec({
     scoringOutcome: {
       create: async () => ({ id: 'oc-7' }),
@@ -200,8 +211,12 @@ test('POST recomputes weights on every 7th outcome', async () => {
     body: JSON.stringify({ prospectId: 'p1', score: 80, replied: true }),
   })
   assert.equal(res.status, 201)
-  assert.equal(res.body.weightsUpdated, true)
-  assert.equal(prisma.callsTo('scoringModel', 'update').length, 1)
+  // 2 samples < MIN_FEATURE_SAMPLES and default shadow mode → no weight change,
+  // but the evaluation still runs and records its metrics.
+  assert.equal(res.body.weightsUpdated, false)
+  const updates = prisma.callsTo('scoringModel', 'update')
+  assert.equal(updates.length, 1)
+  assert.equal(JSON.stringify(updates[0]).includes('"weights"'), false, 'production weights untouched')
 })
 
 // --- POST /api/outcomes/model/reset (owner only) ---
