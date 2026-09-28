@@ -90,6 +90,18 @@ test('allowsInsecureJwtFallback: true only for unset/development/test NODE_ENV',
   assert.equal(allowsInsecureJwtFallback(), false)
 })
 
+test('allowsInsecureJwtFallback: unset NODE_ENV on a hosting platform fails closed', () => {
+  const saved = process.env.RAILWAY_ENVIRONMENT
+  try {
+    setEnv({ NODE_ENV: undefined })
+    process.env.RAILWAY_ENVIRONMENT = 'production'
+    assert.equal(allowsInsecureJwtFallback(), false)
+  } finally {
+    if (saved === undefined) delete process.env.RAILWAY_ENVIRONMENT
+    else process.env.RAILWAY_ENVIRONMENT = saved
+  }
+})
+
 test('getJwtSecret throws for a deployed (staging) NODE_ENV with no JWT_SECRET set — the exact gap this closes', () => {
   setEnv({ NODE_ENV: 'staging', JWT_SECRET: undefined })
   assert.throws(() => getJwtSecret(), /JWT_SECRET is required when NODE_ENV="staging"/)

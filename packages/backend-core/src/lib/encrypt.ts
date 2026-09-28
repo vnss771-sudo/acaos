@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
+import { allowsInsecureFallback } from './runtimeEnv.js'
 
 const ALG = 'aes-256-gcm'
 const KEY_LEN = 32
@@ -25,8 +26,7 @@ function getLegacyKey(): Buffer {
     // known all-zero key, decryptable by anyone with DB read access. Only an unset
     // NODE_ENV (local/test default) or an explicit development/test may fall back.
     const env = (process.env.NODE_ENV || '').trim()
-    const allowsInsecureFallback = env === '' || env === 'development' || env === 'test'
-    if (!allowsInsecureFallback) {
+    if (!allowsInsecureFallback()) {
       throw new Error(`EMAIL_ENCRYPTION_KEY is required when NODE_ENV="${env}" (only an unset NODE_ENV or development/test may use the insecure zeroed dev key)`)
     }
     // Dev-only fallback: zeroed key so the app boots without configuration.

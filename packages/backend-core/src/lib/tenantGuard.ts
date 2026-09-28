@@ -63,10 +63,13 @@ const GUARDED_OPS: ReadonlySet<string> = new Set([
 
 export type TenantGuardMode = 'off' | 'observe' | 'enforce'
 
-/** Resolve the guard mode from TENANT_GUARD_MODE (default 'off' — fully inert). */
+/** Resolve the guard mode from TENANT_GUARD_MODE. Unset defaults to 'observe' in
+ *  production (log-only, never throws) so the guard is never silently inert there,
+ *  and 'off' elsewhere. An explicit value (including 'off') always wins. */
 export function tenantGuardMode(): TenantGuardMode {
   const v = (process.env.TENANT_GUARD_MODE || '').trim().toLowerCase()
-  return v === 'observe' || v === 'enforce' ? v : 'off'
+  if (v === 'observe' || v === 'enforce' || v === 'off') return v
+  return process.env.NODE_ENV === 'production' ? 'observe' : 'off'
 }
 
 export type TenantAccessResult = 'skipped' | 'scoped' | 'scoped_via_fk' | 'unscoped'
