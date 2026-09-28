@@ -22,6 +22,7 @@ import { readdirSync } from 'node:fs'
 const SCHEMA = 'packages/db/prisma/schema.prisma'
 const SERVER = 'apps/api/dist/server.js'
 const MIGRATIONS_DIR = 'packages/db/prisma/migrations'
+const RAW_INDEX_DIR = 'scripts/sql/raw-indexes'
 
 function prisma(args) {
   // Throws on non-zero exit; caller inspects err.stdout/err.stderr.
@@ -77,6 +78,26 @@ if (!res.ok && /P3005|database schema is not empty/i.test(res.output)) {
 if (!res.ok) {
   console.error('[startup] migrations failed — refusing to start with an unmigrated database.')
   process.exit(1)
+}
+
+// Raw-SQL-only indexes (partial uniques Prisma's schema can't express) — see
+// scripts/sql/raw-indexes/README.md. A database ever run with `db push` lacks
+// them, and baselining marks their migrations applied without running them, so
+// re-create them idempotently on every start, one file at a time so one failure
+// can't block the rest. Best-effort: existing duplicate rows make a unique index
+// fail; that state predates this deploy, so warn loudly and start anyway.
+for (const file of readdirSync(RAW_INDEX_DIR).filter((f) => f.endsWith('.sql')).sort()) {
+  try {
+    prisma(['db', 'execute', '--file', `${RAW_INDEX_DIR}/${file}`, '--schema', SCHEMA])
+    console.log(`[startup] raw-SQL index ok: ${file}`)
+  } catch (err) {
+    console.warn(`[startup] WARNING: could not ensure raw-SQL index ${file} — likely duplicate rows; this guard is OFF until they are removed:\n${err.stdout || ''}${err.stderr || ''}`)
+  }
+}
+
+if (process.env.MIGRATIONS_ONLY === '1') {
+  console.log('[startup] MIGRATIONS_ONLY=1 — database ready, not starting the API.')
+  process.exit(0)
 }
 
 console.log(`[startup] database up to date — starting API (${SERVER}).`)
