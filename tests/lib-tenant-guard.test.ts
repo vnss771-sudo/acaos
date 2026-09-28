@@ -145,6 +145,14 @@ test('tenantGuardMode defaults to off and parses observe/enforce case-insensitiv
     assert.equal(tenantGuardMode(), 'enforce')
     process.env.TENANT_GUARD_MODE = 'nonsense'
     assert.equal(tenantGuardMode(), 'off', 'unknown values fall back to off')
+    const savedEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    delete process.env.TENANT_GUARD_MODE
+    assert.equal(tenantGuardMode(), 'observe', 'production defaults to observe')
+    process.env.TENANT_GUARD_MODE = 'off'
+    assert.equal(tenantGuardMode(), 'off', 'explicit off wins in production')
+    if (savedEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = savedEnv
   } finally {
     if (saved === undefined) delete process.env.TENANT_GUARD_MODE
     else process.env.TENANT_GUARD_MODE = saved

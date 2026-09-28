@@ -1,5 +1,6 @@
 import jwt, { type SignOptions, type VerifyOptions } from 'jsonwebtoken'
 import crypto from 'crypto'
+import { allowsInsecureFallback } from './runtimeEnv.js'
 
 const PLACEHOLDER_SECRET = 'change-me'
 const MIN_SECRET_LENGTH = 16
@@ -11,8 +12,7 @@ export type JwtPayload = { userId: string }
 // secret. A bare `NODE_ENV === 'production'` check (the old behavior) let any
 // other deployed value (staging, a typo) silently take the insecure path.
 export function allowsInsecureJwtFallback(): boolean {
-  const env = (process.env.NODE_ENV || '').trim()
-  return env === '' || env === 'development' || env === 'test'
+  return allowsInsecureFallback()
 }
 
 // A strong, per-process random secret used only when JWT_SECRET is unset and
