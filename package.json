@@ -48,6 +48,7 @@
     "loadtest": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/loadtest.ts",
     "eval:outreach": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/eval-outreach.ts",
     "eval:research": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/eval-research.ts",
+    "eval:replies": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/eval-replies.ts",
     "start:prod": "node scripts/start-with-migrations.mjs",
     "smoke:api": "node scripts/smoke-api-health.mjs",
     "release:smoke": "node scripts/smoke-deploy.mjs",

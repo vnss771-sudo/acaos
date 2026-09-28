@@ -1,7 +1,8 @@
 name: AI quality eval
 
 # Runs the outreach/research quality evals (scripts/eval-outreach.ts,
-# scripts/eval-research.ts) against the real OpenAI API. Deliberately NOT run
+# scripts/eval-research.ts) and the reply-classification accuracy eval
+# (scripts/eval-replies.ts) against the real OpenAI API. Deliberately NOT run
 # on every PR — each run makes several real, billed model calls, so it's kept
 # to a weekly schedule (plus manual dispatch) to control spend rather than
 # multiplying that cost across every push.
@@ -47,7 +48,7 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
-      # Both scripts exit 0 (skip) if OPENAI_API_KEY is unset, so this step is
+      # All eval scripts exit 0 (skip) if OPENAI_API_KEY is unset, so this step is
       # safe even if the secret is missing — but that would silently defeat the
       # point of this workflow, so fail loudly instead of reporting a false green.
       - name: Confirm OPENAI_API_KEY is configured
@@ -76,6 +77,12 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: npm run eval:research
+
+      - name: Reply classification eval
+        if: always()
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npm run eval:replies
 
       # Persist the score history the two steps above just wrote, so "lift" is
       # a real number tracked over time (eval-results/*.json) rather than only
