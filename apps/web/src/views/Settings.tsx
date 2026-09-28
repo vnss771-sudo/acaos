@@ -19,6 +19,22 @@ import { DeliverabilitySection, type DomainCheckResult, type DomainMonitor, type
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
 import { AccessReviewSection } from '../components/settings/AccessReviewSection.js'
+import { SETTINGS_SECTIONS, scrollToSettingsSection, type SettingsSection } from '../lib/settingsSections.js'
+
+// Settings is a long page; this bar lets a user jump straight to the part they
+// came for instead of scrolling past Profile/Password/MFA to find email setup.
+const JUMP_LINKS: { section: SettingsSection; label: string; needsWorkspace?: boolean; adminOnly?: boolean }[] = [
+  { section: 'email', label: 'Email sending', needsWorkspace: true, adminOnly: true },
+  { section: 'workspace', label: 'Business details', needsWorkspace: true },
+  { section: 'targeting', label: 'Who you target', needsWorkspace: true },
+  { section: 'team', label: 'Team', needsWorkspace: true },
+  { section: 'compliance', label: 'Compliance', needsWorkspace: true, adminOnly: true },
+  { section: 'deliverability', label: 'Deliverability', needsWorkspace: true },
+  { section: 'profile', label: 'Profile & security' },
+  { section: 'apiKeys', label: 'API keys', needsWorkspace: true },
+]
+
+const anchorStyle: React.CSSProperties = { scrollMarginTop: 16 }
 
 type IcpConfig = {
   targetIndustries: string[]
@@ -440,37 +456,57 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const myMembership = members.find(m => m.user.id === user.id)
   const isOwnerOrAdmin = canManage || myMembership?.role === 'owner' || myMembership?.role === 'admin'
 
+  const jumpLinks = JUMP_LINKS.filter(l => (!l.needsWorkspace || workspace) && (!l.adminOnly || (l.section === 'compliance' ? canManage : isOwnerOrAdmin)))
+
   return (
     <div style={s.stack}>
-      <ProfileSection
-        user={user}
-        name={profileForm.name}
-        onNameChange={name => setProfileForm({ name })}
-        saving={savingProfile}
-        onSave={saveProfile}
-        onResendVerification={resendVerification}
-      />
+      <nav aria-label="Settings sections" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <span style={{ color: colors.textFaint, fontSize: 12, marginRight: 4 }}>Jump to:</span>
+        {jumpLinks.map(l => (
+          <button
+            key={l.section}
+            onClick={() => scrollToSettingsSection(l.section)}
+            style={{ ...s.btnGhost, fontSize: 12, padding: '4px 10px' }}
+          >
+            {l.label}
+          </button>
+        ))}
+      </nav>
 
-      <PasswordSection
-        passwordForm={passwordForm}
-        setPasswordForm={setPasswordForm}
-        saving={savingPassword}
-        onSave={changePassword}
-      />
+      <div id={SETTINGS_SECTIONS.profile} style={{ ...s.stack, ...anchorStyle }}>
+        <ProfileSection
+          user={user}
+          name={profileForm.name}
+          onNameChange={name => setProfileForm({ name })}
+          saving={savingProfile}
+          onSave={saveProfile}
+          onResendVerification={resendVerification}
+        />
 
-      {/* Security / Two-factor authentication */}
-      <MfaSettings
-        api={api}
-        enabled={!!user.totpEnabled}
-        onEnabledChange={(totpEnabled) => onUserUpdate({ ...user, totpEnabled })}
-        toast={toast}
-      />
+        <PasswordSection
+          passwordForm={passwordForm}
+          setPasswordForm={setPasswordForm}
+          saving={savingPassword}
+          onSave={changePassword}
+        />
+
+        {/* Security / Two-factor authentication */}
+        <MfaSettings
+          api={api}
+          enabled={!!user.totpEnabled}
+          onEnabledChange={(totpEnabled) => onUserUpdate({ ...user, totpEnabled })}
+          toast={toast}
+        />
+      </div>
 
       {workspace && (
-        <WorkspaceSection wsForm={wsForm} setWsForm={setWsForm} saving={savingWs} onSave={saveWorkspace} />
+        <div id={SETTINGS_SECTIONS.workspace} style={anchorStyle}>
+          <WorkspaceSection wsForm={wsForm} setWsForm={setWsForm} saving={savingWs} onSave={saveWorkspace} />
+        </div>
       )}
 
       {workspace && (
+        <div id={SETTINGS_SECTIONS.team} style={anchorStyle}>
         <TeamSection
           members={members}
           membersLoading={membersLoading}
@@ -491,6 +527,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           onSendInvite={sendInvite}
           onCancelInvite={cancelInvite}
         />
+        </div>
       )}
 
       {workspace && isOwnerOrAdmin && (
@@ -498,7 +535,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       )}
 
       {workspace && (
-        <IcpSection icpForm={icpForm} setIcpForm={setIcpForm} saving={savingIcp} onSave={saveIcp} />
+        <div id={SETTINGS_SECTIONS.targeting} style={anchorStyle}>
+          <IcpSection icpForm={icpForm} setIcpForm={setIcpForm} saving={savingIcp} onSave={saveIcp} />
+        </div>
       )}
 
       {workspace && isOwnerOrAdmin && (
@@ -506,10 +545,13 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       )}
 
       {workspace && isOwnerOrAdmin && (
-        <EmailConfigSection emailForm={emailForm} setEmailForm={setEmailForm} saving={savingEmail} onSave={saveEmailConfig} />
+        <div id={SETTINGS_SECTIONS.email} style={anchorStyle}>
+          <EmailConfigSection emailForm={emailForm} setEmailForm={setEmailForm} saving={savingEmail} onSave={saveEmailConfig} />
+        </div>
       )}
 
       {workspace && canManage && (
+        <div id={SETTINGS_SECTIONS.compliance} style={anchorStyle}>
         <ErrorBoundary fallback={() => (
           <div style={{ ...s.card, color: colors.textMuted, fontSize: 13 }}>
             Compliance panel unavailable right now — the rest of Settings is unaffected.
@@ -517,9 +559,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
         )}>
           <CompliancePanel api={api} workspace={workspace} toast={toast} canManage={canManage} />
         </ErrorBoundary>
+        </div>
       )}
 
       {workspace && (
+        <div id={SETTINGS_SECTIONS.deliverability} style={anchorStyle}>
         <DeliverabilitySection
           smtpFromConfigured={!!emailForm.smtpFrom}
           domainCheck={domainCheck}
@@ -534,9 +578,11 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           startingWarmup={startingWarmup}
           onStartWarmup={startWarmup}
         />
+        </div>
       )}
 
       {workspace && (
+        <div id={SETTINGS_SECTIONS.apiKeys} style={anchorStyle}>
         <ApiKeysSection
           hasKey={hasKey}
           keyWorking={keyWorking}
@@ -550,6 +596,7 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           onCopyKey={copyKey}
           onCloseKeyModal={() => { setNewKeyModal(null); setKeyCopied(false) }}
         />
+        </div>
       )}
 
       {workspace && <WorkspaceInfoSection workspace={workspace} />}

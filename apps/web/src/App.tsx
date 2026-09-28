@@ -15,6 +15,7 @@ import { SkipLink } from './components/SkipLink.js'
 import { ErrorBoundary } from './components/ErrorBoundary.js'
 import { isHubNavEnabled, hubForView } from './lib/hubs.js'
 import { useViewRouter } from './lib/router.js'
+import { openSettingsSection } from './lib/settingsSections.js'
 import { isInvestorDemoRequested, enableInvestorDemo, clearInvestorDemo, removeDemoUrlFlag } from './lib/demoMode.js'
 import { makeDemoApi, DEMO_USER, DEMO_WORKSPACES } from './lib/demoApi.js'
 import { Spinner } from './components/Spinner.js'
@@ -487,6 +488,10 @@ export function App() {
           api={api}
           toast={toast}
           onComplete={() => handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })}
+          onConnectEmail={() => {
+            handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })
+            openSettingsSection(setView, 'email')
+          }}
         />
       )}
 
