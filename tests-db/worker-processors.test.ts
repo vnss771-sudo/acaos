@@ -67,37 +67,86 @@ test('calibrateScoring no-ops below the minimum sample size', async () => {
   assert.equal(await prisma.scoringModel.count({ where: { workspaceId: workspace.id } }), 0)
 })
 
-test('calibrateScoring derives signal weights and an ICP from WON/LOST outcomes', async () => {
-  const { workspace } = await seedUserWithWorkspace()
-  // 8 WON (FUNDING) + 4 LOST (PROCUREMENT) = 12 outcomes (>= the 10 minimum).
-  for (let i = 0; i < 8; i++) await seedOutcome(workspace.id, 'WON', 'FUNDING')
-  for (let i = 0; i < 4; i++) await seedOutcome(workspace.id, 'LOST', 'PROCUREMENT')
+async function withMode<T>(mode: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.LEARNING_ADAPTATION_MODE
+  if (mode === undefined) delete process.env.LEARNING_ADAPTATION_MODE
+  else process.env.LEARNING_ADAPTATION_MODE = mode
+  try { return await fn() } finally {
+    if (prev === undefined) delete process.env.LEARNING_ADAPTATION_MODE
+    else process.env.LEARNING_ADAPTATION_MODE = prev
+  }
+}
 
-  const stats = await calibrateScoring(workspace.id)
+async function seedLearnable(workspaceId: string) {
+  // 8 WON (FUNDING) + 4 LOST (PROCUREMENT) = 12 outcomes (>= the 10 minimum).
+  for (let i = 0; i < 8; i++) await seedOutcome(workspaceId, 'WON', 'FUNDING')
+  for (let i = 0; i < 4; i++) await seedOutcome(workspaceId, 'LOST', 'PROCUREMENT')
+}
+
+test('calibrateScoring (default shadow): proposes, applies nothing, never touches the ICP', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await prisma.workspaceICP.create({
+    data: { workspaceId: workspace.id, targetIndustries: ['HVAC'], targetGeos: [], minEmployees: 5, maxEmployees: 50, mustHaveEmail: false },
+  })
+  const icpBefore = await prisma.workspaceICP.findUnique({ where: { workspaceId: workspace.id } })
+  await seedLearnable(workspace.id)
+
+  const stats = await withMode(undefined, () => calibrateScoring(workspace.id))
   assert.equal(stats.calibrated, true)
   assert.equal(stats.totalOutcomes, 12)
   assert.ok(Math.abs(stats.baselineWinRate - 8 / 12) < 1e-9)
 
-  // A scoring model with signal weights was persisted.
   const model = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
-  assert.ok(model, 'scoring model created')
-  const weights = model!.signalWeights as Record<string, number>
-  assert.ok(weights.FUNDING > 0, 'FUNDING weight learned')
+  assert.equal(model!.signalWeights, null, 'shadow mode must not apply learned signal weights')
 
-  // The ICP was updated from the WON prospects (all construction).
-  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: workspace.id } })
-  assert.ok(icp!.targetIndustries.includes('construction'))
+  const recs = await prisma.learningRecommendation.findMany({ where: { workspaceId: workspace.id } })
+  const sig = recs.find(r => r.type === 'SIGNAL_WEIGHT')!
+  assert.equal(sig.status, 'PENDING')
+  assert.equal(sig.mode, 'shadow')
+  assert.ok((sig.proposedValue as Record<string, number>).FUNDING > 0)
+
+  const icpAfter = await prisma.workspaceICP.findUnique({ where: { workspaceId: workspace.id } })
+  assert.deepEqual(icpAfter, icpBefore, 'learning must never silently rewrite the ICP')
 })
 
-test('calibrateScoring is idempotent-safe: a second run increments updateCount', async () => {
+test('calibrateScoring: identical re-run keeps one pending proposal; new evidence supersedes it', async () => {
   const { workspace } = await seedUserWithWorkspace()
-  for (let i = 0; i < 8; i++) await seedOutcome(workspace.id, 'WON', 'FUNDING')
-  for (let i = 0; i < 4; i++) await seedOutcome(workspace.id, 'LOST', 'HIRING')
+  await seedLearnable(workspace.id)
+  await withMode('shadow', () => calibrateScoring(workspace.id))
+  await withMode('shadow', () => calibrateScoring(workspace.id))
+  const sigRecs = () => prisma.learningRecommendation.findMany({ where: { workspaceId: workspace.id, type: 'SIGNAL_WEIGHT' } })
+  assert.deepEqual((await sigRecs()).map(r => r.status), ['PENDING'])
 
-  await calibrateScoring(workspace.id)
-  await calibrateScoring(workspace.id)
+  for (let i = 0; i < 6; i++) await seedOutcome(workspace.id, 'LOST', 'FUNDING')
+  await withMode('shadow', () => calibrateScoring(workspace.id))
+  assert.deepEqual((await sigRecs()).map(r => r.status).sort(), ['PENDING', 'SUPERSEDED'])
+})
+
+test('calibrateScoring (live): applies signal weights with an audit record; unchanged re-run is a no-op', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedLearnable(workspace.id)
+  await withMode('live', () => calibrateScoring(workspace.id))
   const model = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
-  assert.equal(model!.updateCount, 1) // create then one update
+  assert.ok((model!.signalWeights as Record<string, number>).FUNDING > 0)
+  const rec = await prisma.learningRecommendation.findFirst({ where: { workspaceId: workspace.id, type: 'SIGNAL_WEIGHT' } })
+  assert.equal(rec!.status, 'APPLIED_AUTOMATICALLY')
+  assert.deepEqual(rec!.currentValue, {}, 'before-value recorded for rollback')
+
+  const countAfterFirst = await prisma.learningRecommendation.count({ where: { workspaceId: workspace.id } })
+  await withMode('live', () => calibrateScoring(workspace.id))
+  assert.equal(await prisma.learningRecommendation.count({ where: { workspaceId: workspace.id } }), countAfterFirst,
+    'unchanged data must not create new recommendations')
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: workspace.id } })
+  assert.equal(icp, null, 'even live mode never writes the ICP')
+})
+
+test('calibrateScoring (off): does nothing', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedLearnable(workspace.id)
+  const stats = await withMode('off', () => calibrateScoring(workspace.id))
+  assert.equal(stats.calibrated, false)
+  assert.equal(await prisma.scoringModel.count({ where: { workspaceId: workspace.id } }), 0)
+  assert.equal(await prisma.learningRecommendation.count({ where: { workspaceId: workspace.id } }), 0)
 })
 
 // --- applyReplyAnalysis (analyze-reply DB effects) ---
@@ -215,8 +264,14 @@ test('applyReplyAnalysis feeds the SAME learning loop as POST /api/outcomes: the
 
   const modelAfter = await prisma.scoringModel.findUnique({ where: { workspaceId: workspace.id } })
   assert.equal(await prisma.scoringOutcome.count({ where: { workspaceId: workspace.id } }), 7)
-  assert.equal(modelAfter!.updateCount, 1, 'the 7th outcome from the product\'s own reply pipeline must trigger a retune, matching the external FieldOps ingest path')
-  assert.ok(modelAfter!.lastWeightUpdate, 'lastWeightUpdate must be stamped')
+  // The 7th outcome triggers an evaluation of the SAME loop the external ingest
+  // path drives — but the only recorded feature is the pre-send constant, so
+  // there is no learnable evidence and production weights must not move.
+  const metrics = modelAfter!.performanceMetrics as { totalScored: number; adjustedFeatures: string[] }
+  assert.equal(metrics.totalScored, 7, 'the retune evaluation ran on all 7 outcomes')
+  assert.deepEqual(metrics.adjustedFeatures, [])
+  assert.equal(modelAfter!.updateCount, 0, 'no learnable evidence → weights unchanged')
+  assert.deepEqual(modelAfter!.weights, modelBefore!.weights)
 })
 
 // --- researchLead (extracted from worker.ts's research-lead handler) ---

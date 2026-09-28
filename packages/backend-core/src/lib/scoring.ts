@@ -2,6 +2,7 @@
 // Uses the same weight schema as ScorerV2 / outcomes.ts
 
 import { prisma } from './prisma.js'
+import { learningAdaptationMode, isLearnableFeature, MAX_WEIGHT_STEP } from './learningMode.js'
 
 export type ScoringWeights = {
   industry: number
@@ -184,7 +185,13 @@ export type LeadScoreExplanation = {
 // Constant placeholder signals carry no evidence (they are fixed defaults until a
 // richer enrichment fills them in), so they are excluded from the human-readable
 // topReasons — they would otherwise crowd out the signals that actually differ.
-const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['size', 'messageRelevance', 'timingFit'])
+// (`size` is evidence-derived from estimatedTeamSize, so it is not listed here.)
+const CONSTANT_SIGNALS = new Set<keyof ScoringWeights>(['messageRelevance', 'timingFit'])
+
+// Placeholder value the scorer assigns before a message exists. Exported so the
+// reply pipeline records the SAME pre-send value as the learning feature —
+// never a value derived from the reply itself (outcome leakage).
+export const DEFAULT_MESSAGE_RELEVANCE = 0.5
 
 // Maps a signal's strength to a short, human phrase. Deterministic and band-based
 // so the same inputs always produce the same rationale.
@@ -212,7 +219,7 @@ function computeSignals(lead: LeadInput, icpTargets?: string[]): ScoreSignals {
     tech: scoreTech(combined),
     growth: scoreGrowth(combined),
     contact: scoreContact(lead.email, lead.contactName),
-    messageRelevance: 0.50,
+    messageRelevance: DEFAULT_MESSAGE_RELEVANCE,
     channelFit: scoreChannelFit(lead.email, lead.website),
     timingFit: 0.50,
     dataFreshness: scoreDataFreshness(lead.aiSummary),
@@ -292,89 +299,72 @@ export const DEFAULT_SCORING_METRICS: ScoringPerformanceMetrics = {
 
 export type ScoringOutcomeSample = { score: number; replied: boolean; messageRelevance: number; channelUsed: string }
 
-export function calculateOutcomeCorrelation(outcomes: ScoringOutcomeSample[]): number {
-  const replied = outcomes.filter((o) => o.replied)
-  const notReplied = outcomes.filter((o) => !o.replied)
-  if (replied.length === 0 || notReplied.length === 0) return 0
-
-  const meanScore = outcomes.reduce((s, o) => s + o.score, 0) / outcomes.length
-  const meanReply = replied.length / outcomes.length
-
-  let numerator = 0, denomScore = 0, denomReply = 0
-  for (const o of outcomes) {
-    const sd = o.score - meanScore
-    const rd = (o.replied ? 1 : 0) - meanReply
-    numerator += sd * rd
-    denomScore += sd * sd
-    denomReply += rd * rd
+/** Pearson correlation; 0 when either side has no variance. */
+export function pearson(xs: number[], ys: number[]): number {
+  const n = Math.min(xs.length, ys.length)
+  if (n === 0) return 0
+  const mx = xs.slice(0, n).reduce((s, x) => s + x, 0) / n
+  const my = ys.slice(0, n).reduce((s, y) => s + y, 0) / n
+  let num = 0, dx = 0, dy = 0
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - mx) * (ys[i] - my)
+    dx += (xs[i] - mx) ** 2
+    dy += (ys[i] - my) ** 2
   }
-  if (denomScore === 0 || denomReply === 0) return 0
-  return numerator / Math.sqrt(denomScore * denomReply)
+  return dx === 0 || dy === 0 ? 0 : num / Math.sqrt(dx * dy)
+}
+
+export function calculateOutcomeCorrelation(outcomes: ScoringOutcomeSample[]): number {
+  return pearson(outcomes.map((o) => o.score), outcomes.map((o) => (o.replied ? 1 : 0)))
 }
 
 /**
- * Pure weight-retuning step: given a workspace's recorded outcomes and its
- * current weights, nudge weights toward whatever actually correlates with
- * replies, clamp to >= 0, and renormalize to sum to 1. Also returns the
- * performance metrics snapshot (reply rate, correlation, etc.) for the caller
- * to persist alongside the retuned weights.
+ * Pure weight-retuning step. A weight moves ONLY when its feature was recorded
+ * per outcome, has enough samples, and actually varies (isLearnableFeature);
+ * the move is proportional to that feature's own correlation with replies and
+ * capped at ±MAX_WEIGHT_STEP per iteration. No hard-coded directional nudges:
+ * with no learnable evidence, weights come back unchanged.
+ *
+ * Today only messageRelevance is recorded per outcome, and it is a pre-send
+ * constant until real relevance scoring lands — so in practice this returns
+ * the current weights untouched. That is the honest answer.
  */
 export function recomputeScoringWeights(
   outcomes: ScoringOutcomeSample[],
   current: ScoringWeights,
-): { weights: ScoringWeights; metrics: ScoringPerformanceMetrics } {
+): { weights: ScoringWeights; metrics: ScoringPerformanceMetrics; adjustedFeatures: (keyof ScoringWeights)[] } {
   const replied = outcomes.filter((o) => o.replied)
   const notReplied = outcomes.filter((o) => !o.replied)
-
-  const avgReplied = replied.length > 0
-    ? replied.reduce((s, o) => s + o.score, 0) / replied.length : 0
-  const avgNotReplied = notReplied.length > 0
-    ? notReplied.reduce((s, o) => s + o.score, 0) / notReplied.length : 0
-
-  const correlation = calculateOutcomeCorrelation(outcomes)
-  const replyRate = outcomes.length > 0 ? replied.length / outcomes.length : 0
+  const avg = (xs: ScoringOutcomeSample[]) => (xs.length > 0 ? xs.reduce((s, o) => s + o.score, 0) / xs.length : 0)
 
   const w = { ...current }
-  const lr = 0.1
+  const adjustedFeatures: (keyof ScoringWeights)[] = []
+  const repliedFlags = outcomes.map((o) => (o.replied ? 1 : 0))
 
-  // Weak correlation -> shift weight from ICP to message/channel fit
-  if (correlation < 0.3) {
-    w.messageRelevance += lr * 0.02
-    w.channelFit += lr * 0.02
-    w.industry -= lr * 0.01
+  const relevance = outcomes.map((o) => o.messageRelevance)
+  if (isLearnableFeature(relevance)) {
+    const step = Math.max(-1, Math.min(1, pearson(relevance, repliedFlags))) * MAX_WEIGHT_STEP
+    w.messageRelevance = w.messageRelevance * (1 + step)
+    adjustedFeatures.push('messageRelevance')
   }
 
-  // Message relevance impact
-  const msgImpact = replied.length > 0
-    ? replied.reduce((s, o) => s + o.messageRelevance, 0) / replied.length : 0
-  if (msgImpact > 0.7) w.messageRelevance += lr * 0.01
-
-  // Channel impact — if LinkedIn replies outpace email, boost channelFit
-  const emailReplies = replied.filter((o) => o.channelUsed === 'EMAIL').length
-  const linkedinReplies = replied.filter((o) => o.channelUsed === 'LINKEDIN').length
-  if (linkedinReplies > emailReplies * 1.5) w.channelFit += lr * 0.01
-
-  // Clamp all weights to >= 0, then normalize to sum = 1
-  const weightKeys = Object.keys(DEFAULT_SCORING_WEIGHTS) as (keyof ScoringWeights)[]
-  for (const k of weightKeys) {
-    w[k] = Math.max(0, w[k])
-  }
-  const total = weightKeys.reduce((s, k) => s + w[k], 0)
-  if (total > 0) {
-    for (const k of weightKeys) {
-      w[k] = w[k] / total
-    }
+  if (adjustedFeatures.length > 0) {
+    const weightKeys = Object.keys(DEFAULT_SCORING_WEIGHTS) as (keyof ScoringWeights)[]
+    for (const k of weightKeys) w[k] = Math.max(0, w[k])
+    const total = weightKeys.reduce((s, k) => s + w[k], 0)
+    if (total > 0) for (const k of weightKeys) w[k] = w[k] / total
   }
 
   return {
     weights: w,
+    adjustedFeatures,
     metrics: {
       totalScored: outcomes.length,
       totalReplied: replied.length,
-      replyRate,
-      avgScoreOfReplied: avgReplied,
-      avgScoreOfNotReplied: avgNotReplied,
-      correlationScore: correlation,
+      replyRate: outcomes.length > 0 ? replied.length / outcomes.length : 0,
+      avgScoreOfReplied: avg(replied),
+      avgScoreOfNotReplied: avg(notReplied),
+      correlationScore: calculateOutcomeCorrelation(outcomes),
     },
   }
 }
@@ -397,7 +387,9 @@ export async function maybeRecomputeScoringWeights(
   scoringModelId: string,
   currentWeights: ScoringWeights,
 ): Promise<{ updated: boolean; totalOutcomes: number }> {
+  const mode = learningAdaptationMode()
   const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId } })
+  if (mode === 'off') return { updated: false, totalOutcomes }
   if (totalOutcomes < RECOMPUTE_EVERY_N_OUTCOMES || totalOutcomes % RECOMPUTE_EVERY_N_OUTCOMES !== 0) {
     return { updated: false, totalOutcomes }
   }
@@ -407,11 +399,17 @@ export async function maybeRecomputeScoringWeights(
     select: { score: true, replied: true, messageRelevance: true, channelUsed: true },
   })
 
-  const { weights, metrics } = recomputeScoringWeights(all, currentWeights)
+  const { weights, metrics, adjustedFeatures } = recomputeScoringWeights(all, currentWeights)
 
+  // Only `live` mode may change production weights. Every other mode records
+  // the proposal alongside the metrics (shadow evaluation) and leaves the
+  // weights the scorer actually uses untouched.
+  const apply = mode === 'live' && adjustedFeatures.length > 0
   await prisma.scoringModel.update({
     where: { id: scoringModelId },
-    data: { weights, performanceMetrics: metrics, updateCount: { increment: 1 }, lastWeightUpdate: new Date() },
+    data: apply
+      ? { weights, performanceMetrics: { ...metrics, adjustedFeatures, mode }, updateCount: { increment: 1 }, lastWeightUpdate: new Date() }
+      : { performanceMetrics: { ...metrics, proposedWeights: weights, adjustedFeatures, mode } },
   })
-  return { updated: true, totalOutcomes }
+  return { updated: apply, totalOutcomes }
 }

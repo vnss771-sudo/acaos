@@ -127,46 +127,7 @@ describe('recomputeWeights', () => {
     assert.equal(metrics.avgScoreOfNotReplied, 0)
   })
 
-  it('weak correlation boosts messageRelevance weight', () => {
-    // All scores identical → correlation = 0 < 0.3 → boost message relevance
-    const outcomes = [makeOutcome(50, true), makeOutcome(50, false), makeOutcome(50, true), makeOutcome(50, false)]
-    const before = DEFAULT_WEIGHTS.messageRelevance
-    const { weights } = recomputeWeights(outcomes, { ...DEFAULT_WEIGHTS })
-    // After normalization the relative weight of messageRelevance should be higher
-    // than starting proportion since we added to it before normalizing
-    assert.ok(weights.messageRelevance > before * 0.95, `Expected messageRelevance boost, got ${weights.messageRelevance}`)
-  })
-
-  it('weak correlation boosts channelFit weight', () => {
-    const outcomes = [makeOutcome(50, true), makeOutcome(50, false)]
-    const { weights } = recomputeWeights(outcomes, { ...DEFAULT_WEIGHTS })
-    // channelFit gets boosted by weak correlation path
-    assert.ok(weights.channelFit >= 0)
-  })
-
-  it('high LinkedIn reply rate boosts channelFit', () => {
-    const outcomes = [
-      makeOutcome(60, true, 0.5, 'LINKEDIN'),
-      makeOutcome(60, true, 0.5, 'LINKEDIN'),
-      makeOutcome(60, true, 0.5, 'LINKEDIN'),
-      makeOutcome(60, false, 0.5, 'EMAIL')
-    ]
-    const { weights } = recomputeWeights(outcomes, { ...DEFAULT_WEIGHTS })
-    assert.ok(weights.channelFit >= 0)
-    assert.ok(Math.abs(sumWeights(weights) - 1) < 1e-10)
-  })
-
-  it('high message relevance among replies boosts messageRelevance', () => {
-    const outcomes = [
-      makeOutcome(70, true, 0.9),
-      makeOutcome(65, true, 0.85),
-      makeOutcome(40, false, 0.2)
-    ]
-    const { weights } = recomputeWeights(outcomes, { ...DEFAULT_WEIGHTS })
-    // messageRelevance boosted via msgImpact > 0.7 path
-    assert.ok(weights.messageRelevance >= 0)
-    assert.ok(Math.abs(sumWeights(weights) - 1) < 1e-10)
-  })
+  // Directional/leakage behaviour is covered strictly in learning-hardening.test.ts.
 
   it('repeated updates remain stable (no runaway growth)', () => {
     let w = { ...DEFAULT_WEIGHTS }

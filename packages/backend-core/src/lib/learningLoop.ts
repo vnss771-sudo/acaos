@@ -23,8 +23,18 @@ type CalibrateStats = {
   baselineWinRate: number
 }
 
+export type SegmentInsight = {
+  segment: string
+  won: number
+  total: number
+  observedWinRate: number
+  adjustedWinRate: number // shrunk toward baseline (SHRINKAGE_PRIOR)
+  lift: number // adjustedWinRate / baselineWinRate
+}
+
 export type CalibrateResult = {
   stats: CalibrateStats
+  industryInsights: SegmentInsight[]
   signalWeights: Record<string, number>
   icpUpdate: {
     targetIndustries?: string[]
@@ -95,6 +105,7 @@ export function calibrate(outcomes: Outcome[], now: Date = new Date()): Calibrat
     return {
       stats: { calibrated: false, reason: 'insufficient data', totalOutcomes: total, baselineWinRate: 0 },
       signalWeights: {},
+      industryInsights: [],
       icpUpdate: {},
     }
   }
@@ -123,6 +134,7 @@ export function calibrate(outcomes: Outcome[], now: Date = new Date()): Calibrat
     return {
       stats: { calibrated: false, reason: 'insufficient wins', totalOutcomes: total, baselineWinRate },
       signalWeights: {},
+      industryInsights: [],
       icpUpdate: {},
     }
   }
@@ -163,18 +175,31 @@ export function calibrate(outcomes: Outcome[], now: Date = new Date()): Calibrat
     signalWeights[type] = Math.round(base * multiplier)
   }
 
-  // ICP update from WON prospect characteristics
-  const industryFreq: Record<string, number> = {}
-  for (const o of won) {
-    if (o.prospect.industry) {
-      const ind = o.prospect.industry.toLowerCase()
-      industryFreq[ind] = (industryFreq[ind] ?? 0) + 1
-    }
+  // Industry performance: win RATE per industry, shrunk toward the baseline
+  // and compared against it (lift) — never raw win counts. Ranking by counts
+  // just rediscovers whatever was contacted most (HVAC with 10/200 would beat
+  // Electrical with 5/30). Industries below MIN_TYPE_SAMPLES are withheld.
+  const industryStats: Record<string, { won: number; total: number }> = {}
+  for (const o of outcomes) {
+    if (!o.prospect.industry) continue
+    const ind = o.prospect.industry.toLowerCase()
+    industryStats[ind] ??= { won: 0, total: 0 }
+    industryStats[ind].total++
+    if (o.stage === 'WON') industryStats[ind].won++
   }
-  const topIndustries = Object.entries(industryFreq)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([ind]) => ind)
+  const industryInsights: SegmentInsight[] = Object.entries(industryStats)
+    .filter(([, c]) => c.total >= MIN_TYPE_SAMPLES)
+    .map(([segment, c]) => {
+      const adjustedWinRate = (c.won + SHRINKAGE_PRIOR * baselineWinRate) / (c.total + SHRINKAGE_PRIOR)
+      return {
+        segment, won: c.won, total: c.total,
+        observedWinRate: c.won / c.total,
+        adjustedWinRate,
+        lift: adjustedWinRate / baselineWinRate,
+      }
+    })
+    .sort((a, b) => b.lift - a.lift)
+  const topIndustries = industryInsights.filter(i => i.lift > 1).slice(0, 5).map(i => i.segment)
 
   const wonCounts = won
     .map(o => o.prospect.employeeCount)
@@ -191,6 +216,85 @@ export function calibrate(outcomes: Outcome[], now: Date = new Date()): Calibrat
   return {
     stats: { calibrated: true, totalOutcomes: total, baselineWinRate },
     signalWeights,
+    industryInsights,
     icpUpdate,
   }
+}
+
+/**
+ * Key-order-independent JSON equality. Needed because Postgres jsonb does not
+ * preserve object key order, so a stored value and a freshly computed one can
+ * be equal yet stringify differently.
+ */
+export function sameJson(a: unknown, b: unknown): boolean {
+  const canon = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(canon)
+      : v && typeof v === 'object'
+        ? Object.fromEntries(Object.keys(v as object).sort().map(k => [k, canon((v as Record<string, unknown>)[k])]))
+        : v
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b))
+}
+
+export type RecommendationDraft = {
+  type: 'ICP_INDUSTRY' | 'ICP_SIZE' | 'SIGNAL_WEIGHT'
+  currentValue: unknown
+  proposedValue: unknown
+  evidence: Record<string, unknown>
+  sampleSize: number
+}
+
+/**
+ * Turn a calibration result into reviewable recommendation drafts. Pure. A
+ * draft is only produced when the proposal differs from what's configured, so
+ * re-running calibration on unchanged data doesn't spam the review queue.
+ */
+export function buildRecommendationDrafts(
+  result: CalibrateResult,
+  current: {
+    targetIndustries: string[]
+    minEmployees: number | null
+    maxEmployees: number | null
+    signalWeights: Record<string, number>
+  },
+): RecommendationDraft[] {
+  if (!result.stats.calibrated) return []
+  const { totalOutcomes, baselineWinRate } = result.stats
+  const base = { totalOutcomes, baselineWinRate }
+  const drafts: RecommendationDraft[] = []
+  const same = sameJson
+
+  const proposedIndustries = result.icpUpdate.targetIndustries
+  const currentIndustries = current.targetIndustries.map(i => i.toLowerCase()).sort()
+  if (proposedIndustries?.length && !same([...proposedIndustries].sort(), currentIndustries)) {
+    drafts.push({
+      type: 'ICP_INDUSTRY',
+      currentValue: current.targetIndustries,
+      proposedValue: proposedIndustries,
+      evidence: { ...base, industries: result.industryInsights },
+      sampleSize: totalOutcomes,
+    })
+  }
+
+  const { minEmployees, maxEmployees } = result.icpUpdate
+  if (minEmployees !== undefined && maxEmployees !== undefined &&
+      (minEmployees !== current.minEmployees || maxEmployees !== current.maxEmployees)) {
+    drafts.push({
+      type: 'ICP_SIZE',
+      currentValue: { minEmployees: current.minEmployees, maxEmployees: current.maxEmployees },
+      proposedValue: { minEmployees, maxEmployees },
+      evidence: { ...base, basis: '10th–90th percentile of employee counts among WON prospects' },
+      sampleSize: totalOutcomes,
+    })
+  }
+
+  if (Object.keys(result.signalWeights).length > 0 && !same(result.signalWeights, current.signalWeights)) {
+    drafts.push({
+      type: 'SIGNAL_WEIGHT',
+      currentValue: current.signalWeights,
+      proposedValue: result.signalWeights,
+      evidence: { ...base, method: 'per-signal win rate, shrunk toward baseline, lift capped 0.5×–2×' },
+      sampleSize: totalOutcomes,
+    })
+  }
+  return drafts
 }

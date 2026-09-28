@@ -4,7 +4,7 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { DEFAULT_SCORING_WEIGHTS, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
+import { DEFAULT_SCORING_WEIGHTS, DEFAULT_MESSAGE_RELEVANCE, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
 import {
   calculateOpportunityScores,
   detectBuyingStage,
@@ -13,7 +13,8 @@ import {
   MAX_SIGNALS_FOR_SCORING,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
-import { calibrate } from '@acaos/backend-core/lib/learningLoop.js'
+import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-core/lib/learningLoop.js'
+import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -458,13 +459,21 @@ export async function generateOutreachDraft(
 }
 
 /**
- * Recalibrate signal weights and the workspace ICP from WON/LOST prospect
- * outcomes. No-ops (returns uncalibrated stats) below the minimum sample size.
+ * Learn from WON/LOST prospect outcomes and turn what's learned into
+ * LearningRecommendations. Gated by LEARNING_ADAPTATION_MODE:
+ *   off     — does nothing
+ *   shadow / approved — records PENDING recommendations; changes nothing
+ *   live    — also applies signal-weight changes (recorded as
+ *             APPLIED_AUTOMATICALLY with before/after for audit + rollback)
+ * The workspace ICP is NEVER written here in any mode — ICP changes are
+ * always recommendations awaiting a human decision.
  */
 export async function calibrateScoring(
   workspaceId: string,
   progress?: Progress
 ): Promise<{ calibrated: boolean; reason?: string; totalOutcomes: number; baselineWinRate: number }> {
+  const mode = learningAdaptationMode()
+  if (mode === 'off') return { calibrated: false, reason: 'learning disabled', totalOutcomes: 0, baselineWinRate: 0 }
   await progress?.(10)
 
   const rawOutcomes = await prisma.prospectOutcome.findMany({
@@ -496,48 +505,68 @@ export async function calibrateScoring(
     return result.stats
   }
 
-  const performanceMetrics = {
-    totalOutcomes: result.stats.totalOutcomes,
-    winRate: result.stats.baselineWinRate,
-    calibratedAt: new Date().toISOString(),
-  }
-
-  await prisma.scoringModel.upsert({
-    where: { workspaceId },
-    create: {
-      workspaceId,
-      weights: DEFAULT_SCORING_WEIGHTS,
-      signalWeights: result.signalWeights,
-      performanceMetrics,
-    },
-    update: {
-      signalWeights: result.signalWeights,
-      lastWeightUpdate: new Date(),
-      updateCount: { increment: 1 },
-      performanceMetrics,
-    },
+  const [model, icp] = await Promise.all([
+    prisma.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } }),
+    prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { targetIndustries: true, minEmployees: true, maxEmployees: true } }),
+  ])
+  const drafts = buildRecommendationDrafts(result, {
+    targetIndustries: icp?.targetIndustries ?? [],
+    minEmployees: icp?.minEmployees ?? null,
+    maxEmployees: icp?.maxEmployees ?? null,
+    signalWeights: (model?.signalWeights as Record<string, number> | null) ?? {},
   })
-  await progress?.(80)
+  // An identical proposal that's already PENDING stays as-is (no churn); a
+  // different proposal supersedes the pending one of the same type.
+  const pending = await prisma.learningRecommendation.findMany({
+    where: { workspaceId, status: 'PENDING' }, select: { type: true, proposedValue: true },
+  })
+  const freshDrafts = drafts.filter(d => !pending.some(p =>
+    p.type === d.type && sameJson(p.proposedValue, d.proposedValue)))
+  const applySignalWeights = mode === 'live' && freshDrafts.some(d => d.type === 'SIGNAL_WEIGHT')
 
-  if (Object.keys(result.icpUpdate).length > 0) {
-    await prisma.workspaceICP.upsert({
+  await prisma.$transaction(async (tx) => {
+    const types = freshDrafts.map(d => d.type)
+    if (types.length > 0) {
+      await tx.learningRecommendation.updateMany({
+        where: { workspaceId, status: 'PENDING', type: { in: types } },
+        data: { status: 'SUPERSEDED', decidedAt: new Date(), decidedBy: 'system' },
+      })
+    }
+    for (const d of freshDrafts) {
+      const auto = applySignalWeights && d.type === 'SIGNAL_WEIGHT'
+      await tx.learningRecommendation.create({
+        data: {
+          workspaceId,
+          type: d.type,
+          status: auto ? 'APPLIED_AUTOMATICALLY' : 'PENDING',
+          currentValue: d.currentValue as Prisma.InputJsonValue,
+          proposedValue: d.proposedValue as Prisma.InputJsonValue,
+          evidence: d.evidence as Prisma.InputJsonValue,
+          sampleSize: d.sampleSize,
+          mode,
+          ...(auto && { decidedAt: new Date(), decidedBy: 'system' }),
+        },
+      })
+    }
+    const performanceMetrics = {
+      totalOutcomes: result.stats.totalOutcomes,
+      winRate: result.stats.baselineWinRate,
+      calibratedAt: new Date().toISOString(),
+      mode,
+    }
+    await tx.scoringModel.upsert({
       where: { workspaceId },
       create: {
         workspaceId,
-        targetIndustries: result.icpUpdate.targetIndustries ?? [],
-        minEmployees: result.icpUpdate.minEmployees ?? 1,
-        maxEmployees: result.icpUpdate.maxEmployees ?? 999999,
-        targetGeos: [],
-        mustHaveEmail: false,
+        weights: DEFAULT_SCORING_WEIGHTS,
+        ...(applySignalWeights && { signalWeights: result.signalWeights }),
+        performanceMetrics,
       },
-      update: {
-        ...(result.icpUpdate.targetIndustries && { targetIndustries: result.icpUpdate.targetIndustries }),
-        ...(result.icpUpdate.minEmployees !== undefined && { minEmployees: result.icpUpdate.minEmployees }),
-        ...(result.icpUpdate.maxEmployees !== undefined && { maxEmployees: result.icpUpdate.maxEmployees }),
-      },
+      update: applySignalWeights
+        ? { signalWeights: result.signalWeights, lastWeightUpdate: new Date(), updateCount: { increment: 1 }, performanceMetrics }
+        : { performanceMetrics },
     })
-  }
-
+  })
   await progress?.(100)
   return result.stats
 }
@@ -1874,7 +1903,9 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       score: lead.score,
       replied,
       replyIntent: replyIntentMap[effectiveClassification] ?? null,
-      messageRelevance: replied ? 0.8 : 0.2,
+      // The pre-send value the scorer used — never derived from the reply
+      // (that would leak the outcome into its own predictor).
+      messageRelevance: DEFAULT_MESSAGE_RELEVANCE,
       channelUsed: 'EMAIL',
       scoringModelId: model.id,
     },
