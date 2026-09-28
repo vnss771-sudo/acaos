@@ -399,3 +399,82 @@ test('AI generation: a valid generated draft sends and persists the draft', asyn
   assert.equal(await prisma.outreachDraft.count({ where: { leadId: lead.id } }), 1, 'the generated draft is persisted')
   assert.equal(await aiOutreachUsed(workspace.id), 1, 'a successful generation consumes one AI call')
 })
+
+// --- selection tracking ---
+
+test('selection tracking: each considered lead is recorded with decision, reason and score-at-selection', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  await prisma.workspaceICP.create({
+    data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: ['HVAC'], targetGeos: [], excludedIndustries: [] },
+  })
+  const campaign = await seedCampaign(workspace.id)
+  const good = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+  await prisma.lead.update({ where: { id: good.id }, data: { score: 83 } })
+  const blocked = await seedSendableLead(workspace.id, campaign.id, 'stop@buyer.test')
+  await suppress(workspace.id, 'stop@buyer.test', 'UNSUBSCRIBED')
+  const broken = await seedSendableLead(workspace.id, campaign.id, 'boom@buyer.test')
+
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: recordingMailer({ throwOn: (to) => to === 'boom@buyer.test' }).fn })
+
+  const run = await prisma.outreachSelectionRun.findFirstOrThrow({ where: { campaignId: campaign.id }, include: { selections: true } })
+  assert.equal(run.orderBy, 'id_asc')
+  assert.match(run.icpFingerprint, /^[0-9a-f]{64}$/)
+  assert.ok(run.finishedAt)
+  assert.deepEqual((run.totals as { sent: number; skipped: number; failed: number }), { sent: 1, skipped: 1, failed: 1, skippedByReason: (run.totals as { skippedByReason: unknown }).skippedByReason })
+  const by = Object.fromEntries(run.selections.map(s => [s.leadId, s]))
+  assert.equal(by[good.id].decision, 'SELECTED')
+  assert.equal(by[good.id].leadScore, 83)
+  assert.ok(by[good.id].outreachSentId, 'selected rows link to the send')
+  assert.equal(by[blocked.id].decision, 'EXCLUDED')
+  assert.equal(by[blocked.id].reason, 'SUPPRESSED')
+  assert.equal(by[broken.id].decision, 'FAILED')
+})
+
+test('selection tracking: fingerprints change when targeting or the scoring model changes', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  await prisma.workspaceICP.create({ data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: ['HVAC'], targetGeos: [], excludedIndustries: [] } })
+  const campaign = await seedCampaign(workspace.id)
+  const mailer = recordingMailer()
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+  await prisma.workspaceICP.update({ where: { workspaceId: workspace.id }, data: { targetIndustries: ['Electrical'] } })
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+  await prisma.scoringModel.create({ data: { workspaceId: workspace.id, weights: { industry: 1 }, performanceMetrics: {} } })
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+  const runs = await prisma.outreachSelectionRun.findMany({ where: { campaignId: campaign.id }, orderBy: { startedAt: 'asc' } })
+  assert.equal(runs.length, 3)
+  assert.notEqual(runs[0].icpFingerprint, runs[1].icpFingerprint)
+  assert.equal(runs[1].icpFingerprint, runs[2].icpFingerprint)
+  assert.notEqual(runs[1].modelFingerprint, runs[2].modelFingerprint)
+})
+
+test('selection tracking: bulk cut-offs are captured in run totals; mid-run cap leaves unconsidered leads unrecorded', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  await prisma.workspaceICP.create({ data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 2, targetIndustries: [], targetGeos: [], excludedIndustries: [] } })
+  const campaign = await seedCampaign(workspace.id)
+  for (let n = 0; n < 5; n++) await seedSendableLead(workspace.id, campaign.id, `c${n}@buyer.test`)
+  await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: recordingMailer().fn, pageSize: 2 })
+  const run = await prisma.outreachSelectionRun.findFirstOrThrow({ where: { campaignId: campaign.id }, include: { selections: true } })
+  const totals = run.totals as { sent: number; skipped: number; skippedByReason: Record<string, number> }
+  assert.equal(totals.sent, 2)
+  assert.equal(totals.skippedByReason.DAILY_CAP, 3)
+  assert.equal(run.selections.filter(s => s.decision === 'SELECTED').length, 2)
+})
+
+test('selection tracking never blocks sending: a failure to record is logged, the send still goes out', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+  await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION acaos_test_fail_sel() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'selection store down'; END $$ LANGUAGE plpgsql`)
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER acaos_test_fail_sel BEFORE INSERT ON "OutreachSelectionRun" FOR EACH ROW EXECUTE FUNCTION acaos_test_fail_sel()`)
+  try {
+    const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: recordingMailer().fn })
+    assert.equal(result.sent, 1)
+  } finally {
+    await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS acaos_test_fail_sel ON "OutreachSelectionRun"`)
+    await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS acaos_test_fail_sel()`)
+  }
+})

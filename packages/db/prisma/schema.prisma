@@ -197,6 +197,8 @@ model Workspace {
   discoverySourceStates   DiscoverySourceState[]
   opportunities           Opportunity[]
   learningRecommendations LearningRecommendation[]
+  outreachSelectionRuns   OutreachSelectionRun[]
+  outreachSelections      OutreachSelection[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -1583,4 +1585,48 @@ model LearningRecommendation {
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, status])
+}
+
+// Selection tracking: which leads a campaign run considered, which it selected
+// or excluded (and why), with each lead's score at that moment and fingerprints
+// of the targeting + scoring model in force. Lets later analysis ask "did X
+// perform better, or did we only contact the easiest X?" (selection bias).
+model OutreachSelectionRun {
+  id               String              @id @default(cuid())
+  workspaceId      String
+  campaignId       String
+  // How leads were ordered for processing. With caps, ordering decides who is
+  // cut, so it's recorded (id_asc ≈ creation order, i.e. not score-driven).
+  orderBy          String
+  // sha256 of the ICP targeting fields / scoring weights in force at the run.
+  icpFingerprint   String
+  modelFingerprint String
+  // sent / skipped / failed / skippedByReason — includes bulk cut-offs (caps,
+  // send window, reputation) whose leads were never individually enumerated.
+  totals           Json?
+  startedAt        DateTime            @default(now())
+  finishedAt       DateTime?
+  workspace        Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  selections       OutreachSelection[]
+
+  @@index([workspaceId, startedAt])
+  @@index([campaignId])
+}
+
+model OutreachSelection {
+  id             String               @id @default(cuid())
+  workspaceId    String
+  runId          String
+  leadId         String
+  // SELECTED (dispatched) | EXCLUDED (skipped, see reason) | FAILED (attempted, errored)
+  decision       String
+  reason         String?
+  leadScore      Int
+  outreachSentId String?
+  createdAt      DateTime             @default(now())
+  workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  run            OutreachSelectionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, runId])
+  @@index([leadId])
 }

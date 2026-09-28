@@ -16,6 +16,7 @@ import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEn
 import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-core/lib/learningLoop.js'
 import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
 import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.js'
+import { SelectionRecorder } from '@acaos/backend-core/lib/selectionTracking.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
@@ -96,6 +97,7 @@ type CampaignLeadRow = {
   outreachAngle: string | null
   notes: string | null
   outreachDrafts: Array<{ subject: string; emailBody: string }>
+  score: number
 }
 
 /** Recompute opportunity scores for every prospect in a workspace. */
@@ -1107,6 +1109,10 @@ export async function sendCampaignBatch(
 
   const { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg } =
     await loadCampaignSendConfig(campaignId, workspaceId)
+  // Selection tracking (best-effort): who this run considered, selected or
+  // excluded and why. Leads are processed in id order (≈ creation order), so a
+  // cap cut-off is not score-driven — recorded so bias analysis can rely on it.
+  const selection = await SelectionRecorder.start(workspaceId, campaignId, 'id_asc')
 
   let sent = 0
   let skipped = 0
@@ -1119,6 +1125,11 @@ export async function sendCampaignBatch(
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
+  const finish = async (): Promise<SendCampaignResult> => {
+    const r = result()
+    await selection.finish({ sent: r.sent, skipped: r.skipped, failed: r.failed, skippedByReason: r.skippedByReason })
+    return r
+  }
 
   // Per-contact consent gate — DORMANT unless COMPLIANCE_GATE_ENABLED (same
   // launch-control flag as getSendReadiness, so this never surprises an existing
@@ -1140,14 +1151,14 @@ export async function sendCampaignBatch(
   if (workspace?.sendSuppressed) {
     console.log(`[send-campaign] Workspace ${workspaceId} is send-suppressed — skipping campaign ${campaignId}`)
     incSendOutcome('send-campaign', 'WORKSPACE_SUPPRESSED')
-    return result()
+    return finish()
   }
 
   // Don't even start a batch for a paused/completed mission.
   const initialBlock = await getMissionSendBlockReason(campaignId)
   if (initialBlock) {
     console.log(`[send-campaign] Skipping campaign ${campaignId}: ${initialBlock}`)
-    return result()
+    return finish()
   }
 
   await progress?.(5)
@@ -1190,7 +1201,7 @@ export async function sendCampaignBatch(
     if (usedToday >= dailySendLimit) {
       console.log(`[send-campaign] Daily limit of ${dailySendLimit} reached for workspace ${workspaceId}`)
       skip('DAILY_CAP', total)
-      return result()
+      return finish()
     }
   }
 
@@ -1205,7 +1216,7 @@ export async function sendCampaignBatch(
     if (usedThisMonth >= monthlySendLimit) {
       console.log(`[send-campaign] Monthly limit of ${monthlySendLimit} reached for workspace ${workspaceId}`)
       skip('MONTHLY_CAP', total)
-      return result()
+      return finish()
     }
   }
 
@@ -1222,7 +1233,7 @@ export async function sendCampaignBatch(
       if (guardMode === 'enforce') {
         incReputationBlock('send-campaign')
         skip('REPUTATION_BLOCKED', total)
-        return result()
+        return finish()
       }
     }
   }
@@ -1235,7 +1246,7 @@ export async function sendCampaignBatch(
   if (sendWindow && !isWithinSendWindow(new Date(), sendWindow)) {
     console.log(`[send-campaign] Outside send window for workspace ${workspaceId}; halting (eligible=${total})`)
     skip('OUTSIDE_SEND_WINDOW', total)
-    return result()
+    return finish()
   }
 
   // Per-recipient-domain pacing (opt-in via PER_DOMAIN_DAILY_CAP). Seed today's
@@ -1297,6 +1308,9 @@ export async function sendCampaignBatch(
       await loadPageFastPathSets(page, workspaceId, campaignId, consentRequired)
 
     for (const lead of page) {
+    // Single-lead exclusions are recorded per lead (bulk cut-offs below that
+    // skip the REST of the run are captured in the run's totals instead).
+    const exclude = (reason: SendSkipReason) => { skip(reason); selection.record(lead, 'EXCLUDED', reason) }
 
     // Progress: 10% → 90% across the campaign (by leads handled so far / total).
     await progress?.(10 + Math.floor(((sent + skipped + failed) / (total || 1)) * 80))
@@ -1319,14 +1333,14 @@ export async function sendCampaignBatch(
     // constraint on the claim below remains the real safety net against
     // duplicate sends. FAILED is fail-closed (not auto-retried) — surfaced for
     // operator review rather than blindly resent.
-    if (alreadySentLeadIds.has(lead.id)) { skip('ALREADY_SENT'); continue }
+    if (alreadySentLeadIds.has(lead.id)) { exclude('ALREADY_SENT'); continue }
 
     // Skip suppressed addresses (unsubscribed or bounced)
-    if (isSuppressed(lead.email!)) { skip('SUPPRESSED'); continue }
+    if (isSuppressed(lead.email!)) { exclude('SUPPRESSED'); continue }
 
     // Reject structurally-invalid addresses before claiming/generating — a bad
     // address would only burn an SMTP attempt and hurt sender reputation.
-    if (!isDeliverableEmail(lead.email)) { skip('INVALID_EMAIL'); continue }
+    if (!isDeliverableEmail(lead.email)) { exclude('INVALID_EMAIL'); continue }
 
     // Compliance gate (dormant unless COMPLIANCE_GATE_ENABLED): a consent-basis or
     // Canada-targeting workspace must have an on-file ConsentRecord for THIS
@@ -1334,7 +1348,7 @@ export async function sendCampaignBatch(
     // consent recorded. Audited per skip (fire-and-forget) for the SAR/compliance
     // trail; never blocks the send loop even if the audit write fails.
     if (consentRequired && !hasConsent(lead.email!)) {
-      skip('CONSENT_REQUIRED')
+      exclude('CONSENT_REQUIRED')
       void recordAudit({
         workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: lead.id,
         metadata: { campaignId, reason: consentReason },
@@ -1345,7 +1359,7 @@ export async function sendCampaignBatch(
     // Per-domain pacing: don't burst past the provider's tolerance for one domain.
     if (domainCounts) {
       const d = emailDomain(lead.email)
-      if (d && (domainCounts.get(d) ?? 0) >= perDomainCap!) { skip('DOMAIN_PACED'); continue }
+      if (d && (domainCounts.get(d) ?? 0) >= perDomainCap!) { exclude('DOMAIN_PACED'); continue }
     }
 
     // Resolve the draft source WITHOUT spending AI yet. The outbox claim below
@@ -1353,7 +1367,7 @@ export async function sendCampaignBatch(
     // (campaignId, leadId) claim and skips before burning AI quota — no duplicate
     // AI spend and no duplicate draft (the previous order generated first).
     const draftSource = resolveDraftSource(lead, { approvalRequired, policyReviewLeadIds })
-    if (draftSource.action === 'skip') { skip(draftSource.reason); continue }
+    if (draftSource.action === 'skip') { exclude(draftSource.reason); continue }
     let subject: string | null = draftSource.action === 'reuse' ? draftSource.subject : null
     let body: string | null = draftSource.action === 'reuse' ? draftSource.body : null
     const needGeneration = draftSource.action === 'generate'
@@ -1380,8 +1394,8 @@ export async function sendCampaignBatch(
         skip('DAILY_CAP', remaining)
         break pageLoop
       }
-      if (claimOutcome.reason === 'DOMAIN_PACED') { skip('DOMAIN_PACED'); continue }
-      skip('ALREADY_SENT'); continue
+      if (claimOutcome.reason === 'DOMAIN_PACED') { exclude('DOMAIN_PACED'); continue }
+      exclude('ALREADY_SENT'); continue
     }
     const claimId = claimOutcome.claimId
     const releaseClaim = claimOutcome.release
@@ -1392,13 +1406,13 @@ export async function sendCampaignBatch(
       const outcome = await generateDraftForSend(lead, { workspaceId, claimId, icp, missionCtx, draftPolicy, generateOutreachFn })
       switch (outcome.kind) {
         case 'ai_limit':
-          await releaseClaim(); skip('AI_LIMIT'); continue
+          await releaseClaim(); exclude('AI_LIMIT'); continue
         case 'invalid_json':
-          await releaseClaim(); skip('AI_GENERATION_FAILED'); continue
+          await releaseClaim(); exclude('AI_GENERATION_FAILED'); continue
         case 'policy_review':
-          await releaseClaim(); skip('POLICY_REVIEW'); continue
+          await releaseClaim(); exclude('POLICY_REVIEW'); continue
         case 'error':
-          await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue
+          await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); selection.record(lead, 'FAILED'); continue
         case 'generated':
           subject = outcome.subject
           body = outcome.body
@@ -1408,7 +1422,7 @@ export async function sendCampaignBatch(
 
     // Past this point subject/body are non-null (reused draft or freshly generated).
     // Guard defensively so a logic slip fails this one lead, not the whole batch.
-    if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); continue }
+    if (subject == null || body == null) { await releaseClaim(); failed++; incSendOutcome('send-campaign', 'failed'); selection.record(lead, 'FAILED'); continue }
 
     const dispatchOutcome = await dispatchOutreachEmail({
       sendMailFn, smtpCfg, lead, subject, body, claimId,
@@ -1420,12 +1434,15 @@ export async function sendCampaignBatch(
     if (dispatchOutcome.ok) {
       sent++
       incSendOutcome('send-campaign', 'sent')
+      selection.record(lead, 'SELECTED', null, claimId)
       if (domainCounts) { const d = emailDomain(lead.email); if (d) domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1) }
     } else {
       failed++
       incSendOutcome('send-campaign', 'failed')
+      selection.record(lead, 'FAILED')
     }
     } // end per-lead loop for this page
+    await selection.flush()
 
     // Advance the cursor; a short page means we've reached the end.
     cursor = page[page.length - 1].id
@@ -1433,7 +1450,7 @@ export async function sendCampaignBatch(
   }
 
   await progress?.(100)
-  return result()
+  return finish()
 }
 
 // ── send-followup: dispatch one due sequence step ─────────────────────────────
