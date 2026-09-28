@@ -29,6 +29,20 @@ describe('GettingStarted', () => {
     expect(screen.queryByText('CAN-SPAM.')).not.toBeInTheDocument()       // hint hidden for a done item
   })
 
+  test('each unfinished step links to Settings; finished steps get no button', async () => {
+    const api = vi.fn((path: string) => {
+      if (path.includes('/send-readiness')) return Promise.resolve(notReady)
+      return Promise.resolve({})
+    })
+    const setView = vi.fn()
+    render(<GettingStarted api={api as never} workspaceId="ws1" toast={toast as never} setView={setView} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Set up: Email sending configured' }))
+    expect(setView).toHaveBeenCalledWith('settings')
+    expect(screen.queryByRole('button', { name: 'Set up: Business name set' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Set up: Postal / contact address set' })).toBeInTheDocument()
+  })
+
   test('renders nothing once the workspace is send-ready', async () => {
     const api = vi.fn(() => Promise.resolve({ ready: true, checks: [] }))
     const { container } = render(<GettingStarted api={api as never} workspaceId="ws1" toast={toast as never} />)

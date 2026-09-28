@@ -4,8 +4,20 @@ import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import type { View } from '../types.js'
+import { openSettingsSection, type SettingsSection } from '../lib/settingsSections.js'
 
 type ReadinessCheck = { name: string; label: string; ok: boolean; hint: string }
+
+// Where in Settings each readiness check is fixed, so every unfinished item gets
+// a button that lands on the exact form — not the top of a 12-section page.
+const CHECK_SECTIONS: Record<string, SettingsSection> = {
+  smtpConfigured: 'email',
+  senderBusinessName: 'workspace',
+  senderPostalAddress: 'workspace',
+  lawfulBasis: 'compliance',
+  termsAccepted: 'compliance',
+  caslConsent: 'compliance',
+}
 type Readiness = { ready: boolean; checks: ReadinessCheck[] }
 
 type Props = {
@@ -58,30 +70,39 @@ export function GettingStarted({ api, workspaceId, toast, setView }: Props) {
         <span style={{ color: colors.textFaint, fontSize: 12 }}>{done}/{total} ready</span>
       </div>
       <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 12 }}>
-        A couple of steps before ACAOS can send outreach on your behalf.
+        You can explore everything now. Before ACAOS can send emails for you, finish these steps —
+        each one takes a minute or two.
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {checks.map(c => (
-          <div key={c.name} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <span style={{ color: c.ok ? colors.green : colors.amber, fontWeight: 700, fontSize: 14, lineHeight: '20px' }}>
-              {c.ok ? '✓' : '○'}
-            </span>
-            <div>
-              <div style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>{c.label}</div>
-              {!c.ok && <div style={{ color: colors.textFaint, fontSize: 12 }}>{c.hint}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {checks.map(c => {
+          const section = CHECK_SECTIONS[c.name]
+          return (
+            <div key={c.name} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <span style={{ color: c.ok ? colors.green : colors.amber, fontWeight: 700, fontSize: 14, lineHeight: '20px' }}>
+                {c.ok ? '✓' : '○'}
+              </span>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>{c.label}</div>
+                {!c.ok && <div style={{ color: colors.textFaint, fontSize: 12 }}>{c.hint}</div>}
+              </div>
+              {!c.ok && setView && section && (
+                <button
+                  style={{ ...s.btnGhost, fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
+                  onClick={() => openSettingsSection(setView, section)}
+                  aria-label={`Set up: ${c.label}`}
+                >
+                  Set up →
+                </button>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        {setView && (
-          <button style={{ ...s.btn, background: colors.blue }} onClick={() => setView('settings')}>
-            Configure sender →
-          </button>
-        )}
-        <button style={s.btnGhost} onClick={applyFieldOps} disabled={applying}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14, color: colors.textFaint, fontSize: 12 }}>
+        <span>Selling to trades or field-service businesses?</span>
+        <button style={{ ...s.btnGhost, fontSize: 12, padding: '4px 10px' }} onClick={applyFieldOps} disabled={applying}>
           {applying ? 'Applying…' : 'Apply FieldOps preset'}
         </button>
       </div>
