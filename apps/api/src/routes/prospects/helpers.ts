@@ -25,7 +25,7 @@ export const discoverSchema = z.object({
 type _DiscoverConforms = Assert<Extends<z.infer<typeof discoverSchema>, DiscoverProspectsRequest>>
 
 /** An array, or undefined when it's missing/empty — for layered ICP fallbacks. */
-export function nonEmpty<T>(arr: T[] | null | undefined): T[] | undefined {
+function nonEmpty<T>(arr: T[] | null | undefined): T[] | undefined {
   return arr && arr.length > 0 ? arr : undefined
 }
 

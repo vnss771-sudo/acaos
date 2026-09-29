@@ -3,7 +3,7 @@ import { s, colors } from '../../styles.js'
 import { Spinner } from '../Spinner.js'
 
 // Mirrors BUSINESS_CONTEXT_MAX in backend-core/services/openai.ts.
-export const BUSINESS_CONTEXT_MAX = 4000
+const BUSINESS_CONTEXT_MAX = 4000
 
 const PLACEHOLDER = `e.g.
 What we do: Shopify store builds and CRO for DTC brands doing $1–10M/yr.

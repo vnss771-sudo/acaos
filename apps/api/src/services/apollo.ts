@@ -48,7 +48,7 @@ type ApolloOrg = {
   primary_address?: { city?: string; state?: string; country?: string }
 }
 
-export function isApolloConfigured(): boolean {
+function isApolloConfigured(): boolean {
   return hasEnv(['APOLLO_API_KEY'])
 }
 

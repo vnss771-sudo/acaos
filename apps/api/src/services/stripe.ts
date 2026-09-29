@@ -22,7 +22,7 @@ export type CheckoutPlan = Exclude<BillingPlan, 'free'>
 // Resolve the Stripe price id for a plan from server-side config only. The
 // client never supplies a price id directly (it would let a user point checkout
 // at an arbitrary price in the account).
-export function priceIdForPlan(plan: CheckoutPlan): string {
+function priceIdForPlan(plan: CheckoutPlan): string {
   const id = plan === 'growth' ? process.env.STRIPE_PRICE_GROWTH : process.env.STRIPE_PRICE_STARTER
   if (!id) throw new ApiError(503, `No Stripe price configured for the ${plan} plan`)
   return id

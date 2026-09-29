@@ -365,7 +365,7 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
 // A SENDING claim younger than this is treated as a live request; older, its
 // outcome is unknown. Comfortably above the worst-case SMTP send (connection 15s
 // + greeting 10s + socket idle 20s per step, plus DNS pinning).
-export const INBOX_SEND_IN_FLIGHT_MS = 5 * 60_000
+const INBOX_SEND_IN_FLIGHT_MS = 5 * 60_000
 const IN_FLIGHT_MESSAGE = 'A reply on this thread is already being sent'
 const OUTCOME_UNKNOWN_MESSAGE =
   'A previous reply on this thread may already have been delivered. Check your mailbox\'s Sent folder, then mark it as sent or not sent before replying again.'

@@ -13,7 +13,7 @@
 
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { prospectsRouter } from '../apps/api/src/routes/prospects.ts'
+import { prospectsRouter } from '../apps/api/src/routes/prospects/index.ts'
 import { sendCampaignBatch } from '../apps/worker/src/processors.ts'
 import { getSendReadiness } from '../apps/api/src/lib/sendReadiness.ts'
 import { AUTO_RECOMMEND_THRESHOLD } from '../packages/backend-core/src/lib/recommendationPolicy.ts'

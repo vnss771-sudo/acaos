@@ -4,7 +4,7 @@
 
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { prospectsRouter } from '../apps/api/src/routes/prospects.ts'
+import { prospectsRouter } from '../apps/api/src/routes/prospects/index.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
 let server: TestServer
