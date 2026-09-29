@@ -7,6 +7,7 @@ import type { Workspace } from '../types.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { PLAYBOOKS, type Playbook } from '../lib/playbooks.js'
+import { FirstProspectsForm } from './FirstProspectsForm.js'
 
 type Props = {
   workspace: Workspace
@@ -158,7 +159,7 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
       const body: SeedWorkspaceRequest = { playbookId: selectedPlaybook?.id ?? null, includeExamples }
       await route('POST /api/workspaces/:id/seed', { params: { id: workspace.id }, body })
       setExamplesAdded(includeExamples)
-      setStep(4)
+      setStep(FIRST_PROSPECTS_STEP)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to finish setup')
     } finally {
@@ -169,7 +170,7 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
   return (
     <div style={overlayStyle} role="dialog" aria-modal="true" aria-label="Workspace setup">
       <div style={cardStyle}>
-        {step <= 3 && <StepProgress current={step} />}
+        {(step <= 3 || step === FIRST_PROSPECTS_STEP) && <StepProgress current={Math.min(step, 3)} />}
 
         {step === 1 && (
           <Step1 onSelect={selectPlaybook} onSkip={handleSkipSetup} saving={saving} />
@@ -191,6 +192,15 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
             saving={saving}
           />
         )}
+        {step === FIRST_PROSPECTS_STEP && (
+          <FirstProspectsForm
+            api={api}
+            workspaceId={workspace.id}
+            toast={toast}
+            onDone={() => setStep(4)}
+            onSkip={() => setStep(4)}
+          />
+        )}
         {step === 4 && (
           <Step4
             examplesAdded={examplesAdded}
@@ -203,6 +213,10 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
     </div>
   )
 }
+
+// Shown after the targeting/examples steps and before the final screen: the
+// customer's own first prospects, which get outreach prepared for them.
+const FIRST_PROSPECTS_STEP = 5
 
 function Step1({
   onSelect,

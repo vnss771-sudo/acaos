@@ -18,6 +18,7 @@ import { listSources } from '@acaos/backend-core/lib/prospectSources.js'
 import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
 import { clampInt } from '../../lib/textNormalize.js'
+import { isSuppressed } from '@acaos/backend-core/lib/suppressions.js'
 import { normalizeDomain, withDollars, getICP } from './helpers.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
@@ -215,13 +216,27 @@ export function registerCrudRoutes(prospectsRouter: Router) {
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
-        prospect: { select: { id: true, companyName: true, industry: true, location: true, opportunityScore: true, buyingStage: true } },
+        prospect: { select: { id: true, companyName: true, industry: true, location: true, opportunityScore: true, buyingStage: true, contactEmail: true, contactName: true } },
         recommendation: { select: { reasoning: true, actionText: true, urgency: true, priority: true } },
       },
     })
     // Surface the strongest opportunities first.
     intents.sort((a: { prospect?: { opportunityScore?: number | null } | null }, b: { prospect?: { opportunityScore?: number | null } | null }) => (b.prospect?.opportunityScore ?? 0) - (a.prospect?.opportunityScore ?? 0))
-    res.json({ intents })
+
+    // Prepared-to-send intents (materialised: leadId + campaignId set) carry what
+    // the send confirmation shows — the campaign name and whether the recipient is
+    // suppressed — so the operator sees it before dispatching.
+    const campaignIds = [...new Set(intents.map((i: { campaignId: string | null }) => i.campaignId).filter((id: string | null): id is string => !!id))]
+    const campaigns = campaignIds.length
+      ? await prisma.campaign.findMany({ where: { id: { in: campaignIds }, workspaceId }, select: { id: true, name: true } })
+      : []
+    const campaignName = new Map(campaigns.map((c: { id: string; name: string }) => [c.id, c.name]))
+    const withSendContext = await Promise.all(intents.map(async (i: (typeof intents)[number]) => ({
+      ...i,
+      campaignName: i.campaignId ? campaignName.get(i.campaignId) ?? null : null,
+      recipientSuppressed: i.leadId && i.prospect?.contactEmail ? await isSuppressed(workspaceId, i.prospect.contactEmail) : false,
+    })))
+    res.json({ intents: withSendContext })
   }))
 
   // GET /api/prospects/:id
