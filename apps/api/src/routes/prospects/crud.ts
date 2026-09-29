@@ -400,6 +400,24 @@ export function registerCrudRoutes(prospectsRouter: Router) {
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
     if (prospect.convertedLeadId) throw new ApiError(409, 'This prospect has already been converted to a lead')
 
+    // A lead for this contact may already exist (manual entry, CSV, or an earlier
+    // outreach send). Link to it instead of creating a duplicate for the same person.
+    const emailKey = prospect.contactEmail ? normalizeEmailKey(prospect.contactEmail) : null
+    const existingLead = emailKey
+      ? await prisma.lead.findFirst({ where: { workspaceId: prospect.workspaceId, emailKey } })
+      : null
+    if (existingLead) {
+      const linked = await prisma.prospect.update({
+        where: { id: prospect.id },
+        data: { convertedLeadId: existingLead.id, convertedAt: new Date() },
+      })
+      void recordAudit({
+        workspaceId: prospect.workspaceId, actorUserId: userId, type: 'prospect.converted_to_lead',
+        entityType: 'prospect', entityId: prospect.id, metadata: { leadId: existingLead.id, reusedExistingLead: true },
+      })
+      return res.json({ lead: existingLead, prospect: withDollars({ ...linked, tier: getOpportunityTier(linked.opportunityScore) }) })
+    }
+
     await checkLeadLimit(prospect.workspaceId)
 
     const leadData = {

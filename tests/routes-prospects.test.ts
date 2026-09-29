@@ -77,6 +77,7 @@ function spec() {
       },
       create: async (args: any) => ({ ...prospectRow(OWNED_WS), ...args.data }),
       update: async (args: any) => ({ ...prospectRow(OWNED_WS), ...args.data }),
+      updateMany: async () => ({ count: 1 }),
       delete: async () => ({ id: 'p1' }),
     },
     workspaceICP: { findUnique: async () => null },
@@ -293,7 +294,7 @@ test('POST /:id/intents/:intentId/materialize 201 materialises an approved inten
   const s = intentSpec('APPROVED')
   ;(s as any).outreachIntent.findUnique = async () => ({ id: 'oi1', prospectId: 'p1', workspaceId: OWNED_WS, status: 'APPROVED', draftSubject: 'S', draftBody: 'B', draftFollowup: null, leadId: null })
   ;(s as any).outreachIntent.update = async (a: any) => ({ id: 'oi1', ...a.data })
-  ;(s as any).prospect = { findUnique: async () => ({ id: 'p1', workspaceId: OWNED_WS, companyName: 'Acme', contactEmail: 'c@acme.test', contactName: 'C', domain: 'acme.test', location: 'Bne', industry: 'Plumbing' }) }
+  ;(s as any).prospect = { findUnique: async () => ({ id: 'p1', workspaceId: OWNED_WS, companyName: 'Acme', contactEmail: 'c@acme.test', contactName: 'C', domain: 'acme.test', location: 'Bne', industry: 'Plumbing' }), updateMany: async () => ({ count: 1 }) }
   ;(s as any).campaign = { findFirst: async () => null, create: async () => ({ id: 'camp1' }) }
   ;(s as any).lead = { findFirst: async () => null, create: async () => ({ id: 'lead1' }) }
   ;(s as any).outreachDraft = { create: async () => ({ id: 'draft1' }) }

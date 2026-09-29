@@ -11,11 +11,12 @@ test('materialize creates default campaign + lead + APPROVED draft and links the
     lead: { findFirst: async () => null, create: async () => ({ id: 'lead1' }) },
     outreachDraft: { create: async (a: any) => ({ id: 'draft1', ...a.data }) },
     outreachIntent: { update: async (a: any) => ({ id: 'oi1', ...a.data }) },
+    prospect: { updateMany: async () => ({ count: 1 }) },
   })
   installPrisma(fake)
 
   const out = await materializeOutreachIntent({
-    intent: { id: 'oi1', workspaceId: 'w', status: 'APPROVED', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: 'F' },
+    intent: { id: 'oi1', workspaceId: 'w', prospectId: 'p1', status: 'APPROVED', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: 'F' },
     prospect: { companyName: 'Acme Plumbing', contactEmail: 'c@acme.test', contactName: 'C', domain: 'acme.test', location: 'Brisbane', industry: 'Plumbing' },
   })
 
@@ -25,6 +26,10 @@ test('materialize creates default campaign + lead + APPROVED draft and links the
   const upd = fake.callsTo('outreachIntent', 'update')[0].args[0].data
   assert.equal(upd.leadId, 'lead1')
   assert.equal(upd.campaignId, 'camp1')
+  // The prospect records its conversion (only if not already converted).
+  const conv = fake.callsTo('prospect', 'updateMany')[0].args[0]
+  assert.deepEqual(conv.where, { id: 'p1', workspaceId: 'w', convertedLeadId: null })
+  assert.equal(conv.data.convertedLeadId, 'lead1')
 })
 
 test('materialize reuses a provided campaign and an existing lead by email', async () => {
@@ -32,11 +37,12 @@ test('materialize reuses a provided campaign and an existing lead by email', asy
     lead: { findFirst: async () => ({ id: 'existing-lead' }), update: async () => ({ id: 'existing-lead' }) },
     outreachDraft: { create: async () => ({ id: 'd' }) },
     outreachIntent: { update: async () => ({}) },
+    prospect: { updateMany: async () => ({ count: 1 }) },
   })
   installPrisma(fake)
 
   const out = await materializeOutreachIntent({
-    intent: { id: 'oi1', workspaceId: 'w', status: 'APPROVED', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: null },
+    intent: { id: 'oi1', workspaceId: 'w', prospectId: 'p1', status: 'APPROVED', leadId: null, draftSubject: 'S', draftBody: 'B', draftFollowup: null },
     prospect: { companyName: 'X', contactEmail: 'c@x.test', contactName: null, domain: null, location: null, industry: null },
     campaignId: 'provided-camp',
   })

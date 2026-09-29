@@ -71,6 +71,9 @@ test('new workspace: one real prospect reaches an approved, sent email with inte
   const mat = await post(`/api/prospects/${prospectId}/intents/${intentId}/materialize`, user.id)
   assert.equal(mat.status, 201)
   const { leadId, campaignId } = mat.body as { leadId: string; campaignId: string }
+  // The prospect records its conversion, so "Convert to Lead" can't create a duplicate.
+  assert.equal((await prisma.prospect.findUniqueOrThrow({ where: { id: prospectId } })).convertedLeadId, leadId)
+  assert.equal((await post(`/api/prospects/${prospectId}/convert-to-lead`, user.id)).status, 409)
 
   // 6) The send gate's readiness checks pass for this workspace.
   assert.equal((await getSendReadiness(workspace.id)).ready, true)

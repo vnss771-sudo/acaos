@@ -107,3 +107,20 @@ test('convert-to-lead is blocked at the workspace lead cap, same as a plain lead
   assert.equal(res.status, 429)
   assert.equal(await prisma.prospect.findUnique({ where: { id: p.id } }).then(r => r!.convertedLeadId), null)
 })
+
+test('convert-to-lead links to an existing lead with the same email instead of creating a duplicate', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const existing = await prisma.lead.create({
+    data: { workspaceId: workspace.id, businessName: 'Acme Corp', email: 'jane@acme.test', emailKey: 'jane@acme.test' },
+  })
+  const p = await prisma.prospect.create({
+    data: { workspaceId: workspace.id, companyName: 'Acme Corp', contactEmail: 'Jane@Acme.TEST' },
+  })
+  const res = await prospects.request(`/api/prospects/${p.id}/convert-to-lead`, {
+    method: 'POST', headers: jsonAuth(user.id), body: JSON.stringify({}),
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.lead.id, existing.id)
+  assert.equal(await prisma.lead.count({ where: { workspaceId: workspace.id } }), 1, 'no duplicate lead')
+  assert.equal((await prisma.prospect.findUniqueOrThrow({ where: { id: p.id } })).convertedLeadId, existing.id)
+})
