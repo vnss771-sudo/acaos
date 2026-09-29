@@ -22,7 +22,7 @@ type IntentRow = {
 
 type Props = { api: ApiHook; workspaceId: string; toast: ToastHook; senderBusinessName?: string | null }
 
-// "This week's outreach" — turns the OutreachIntent bridge into an operable
+// "Ready to contact" — turns the OutreachIntent bridge into an operable
 // surface: each evidence-backed opportunity can be drafted → approved → prepared
 // to send inline, no API/curl needed. Hides itself when there's nothing to act on.
 export function OutreachIntents({ api, workspaceId, toast, senderBusinessName }: Props) {
@@ -76,7 +76,7 @@ export function OutreachIntents({ api, workspaceId, toast, senderBusinessName }:
 
   return (
     <div style={s.card}>
-      <div style={s.sectionHeader}>This week’s outreach — {intents.length} {intents.length === 1 ? 'opportunity' : 'opportunities'}</div>
+      <div style={s.sectionHeader}>Ready to contact — {intents.length} potential {intents.length === 1 ? 'client' : 'clients'}</div>
       <div style={{ color: colors.textMuted, fontSize: 13, margin: '4px 0 12px' }}>
         Evidence-backed companies worth contacting. Review, approve, then send — you stay in control of every message.
       </div>

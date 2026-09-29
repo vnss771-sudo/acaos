@@ -26,9 +26,9 @@ async function walkToStep3(api: Api, props: Partial<React.ComponentProps<typeof 
   await screen.findByText('Want some example data to explore?')
 }
 
-// Step 3 now leads to the "Your first prospects" step before the final screen.
+// Step 3 now leads to the "Your first potential clients" step before the final screen.
 async function skipFirstProspects() {
-  await screen.findByText('Your first prospects')
+  await screen.findByText('Your first potential clients')
   await userEvent.click(screen.getByRole('button', { name: /Skip for now/ }))
 }
 
@@ -79,7 +79,7 @@ describe('OnboardingWizard', () => {
         : {}))
     await walkToStep3(api)
     await userEvent.click(screen.getByRole('button', { name: /Looks good/ }))
-    await screen.findByText('Your first prospects')
+    await screen.findByText('Your first potential clients')
 
     const submit = screen.getByRole('button', { name: /Prepare my first emails/ })
     expect(submit).toBeDisabled()

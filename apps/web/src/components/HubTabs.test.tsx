@@ -7,7 +7,7 @@ describe('HubTabs', () => {
   test('renders the active hub’s tabs and marks the current one selected', () => {
     render(<HubTabs view="leads" setView={vi.fn()} isAdmin={false} />)
     // The Prospects hub: Prospects · Leads · Analytics
-    expect(screen.getByRole('tab', { name: 'Prospects' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Potential clients' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Analytics' })).toBeInTheDocument()
     const leads = screen.getByRole('tab', { name: 'Leads' })
     expect(leads).toHaveAttribute('aria-selected', 'true')

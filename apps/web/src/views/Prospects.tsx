@@ -68,7 +68,7 @@ function AddSignalForm({ prospectId, workspaceId, api, onDone, toast }: {
       await route('POST /api/signals', {
         body: { workspaceId, prospectId, type, strength, title, sourceReliability, industryRelevance }
       })
-      toast.success('Signal added — prospect rescored')
+      toast.success('Signal added — potential client rescored')
       onDone()
     } catch (e: unknown) { toast.error((e as Error).message) }
     finally { setSaving(false) }
@@ -320,7 +320,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
               )}
               {canManage && (
                 p.convertedLeadId ? (
-                  <span style={{ color: colors.green, fontSize: 12, fontWeight: 600 }} title="A Lead was created from this prospect — find it on the Leads page">
+                  <span style={{ color: colors.green, fontSize: 12, fontWeight: 600 }} title="A lead was created from this potential client — find it on the Leads page">
                     ✓ Converted to Lead
                   </span>
                 ) : (
@@ -328,7 +328,7 @@ function ProspectDetail({ prospect, api, toast, onClose, onRefresh, canManage = 
                     style={{ ...s.btnSm, background: colors.green, color: '#fff' }}
                     onClick={handleConvert}
                     disabled={converting}
-                    title="Create an outreach-ready Lead from this prospect's company and contact info"
+                    title="Create an outreach-ready lead from this potential client's company and contact info"
                   >
                     {converting ? 'Converting…' : '→ Convert to Lead'}
                   </button>
@@ -470,7 +470,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
     setSaving(true)
     try {
       await route('POST /api/prospects', { body: { ...form, workspaceId: workspace.id } })
-      toast.success('Prospect added')
+      toast.success('Potential client added')
       setShowAdd(false)
       setForm(BLANK)
       load()
@@ -490,7 +490,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       // refresh as the run finalizes.
       toast.success(res.deduped
         ? 'Discovery already running for this query — results will appear shortly.'
-        : 'Discovery started — new prospects will appear shortly.')
+        : 'Discovery started — new potential clients will appear shortly.')
     } catch (e: unknown) { toast.error((e as Error).message) }
     finally { setDiscovering(false); loadRuns() }
   }
@@ -613,12 +613,12 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
 
   return (
     <div style={s.stack}>
-      {loadError && <ErrorBanner message="Failed to load prospects." onRetry={load} />}
+      {loadError && <ErrorBanner message="Failed to load potential clients." onRetry={load} />}
 
       <div style={{ color: colors.textFaint, fontSize: 12 }}>
-        Prospects are opportunities you're still qualifying — scored on fit, intent, and timing.
-        Ready to reach out? Open a prospect and use <strong style={{ color: colors.textMuted }}>Convert to Lead</strong> to
-        move it to the <strong style={{ color: colors.textMuted }}>Leads</strong> page for outreach.
+        Potential clients are companies ACAOS is watching and scoring on fit, intent and timing.
+        When you reach out, a potential client becomes a <strong style={{ color: colors.textMuted }}>lead</strong> — open one
+        and use <strong style={{ color: colors.textMuted }}>Convert to Lead</strong>, or approve and send its email from Home.
       </div>
 
       {/* Contextual AI: qualify any business with AI, before it's a saved lead. */}
@@ -630,7 +630,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       <div style={{ ...s.flexBetween, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
-            type="text" placeholder="Search prospects…" value={search}
+            type="text" placeholder="Search potential clients…" value={search}
             onChange={e => setSearch(e.target.value)}
             style={{ ...s.input, width: 240 }}
           />
@@ -666,7 +666,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
               onChange={e => setDiscoverMissionId(e.target.value)}
               disabled={discovering}
               style={{ ...s.input, width: 180 }}
-              title="Attribute discovered prospects to a mission"
+              title="Attribute discovered potential clients to a mission"
             >
               <option value="">No mission</option>
               {missions.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -687,7 +687,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
               {discovering ? `⟳ Searching…` : `⚡ ${src.label}`}
             </button>
           ))}
-          <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button>
+          <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Potential Client</button>
           </>)}
         </div>
       </div>
@@ -725,7 +725,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       {/* Add form */}
       {showAdd && (
         <div style={s.card}>
-          <div style={{ ...s.sectionHeader, marginBottom: 14 }}>New Prospect</div>
+          <div style={{ ...s.sectionHeader, marginBottom: 14 }}>New Potential Client</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
             {[
               { k: 'companyName', label: 'Company Name *', placeholder: 'Acme Corp' },
@@ -757,7 +757,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={handleAdd} disabled={saving || !form.companyName.trim()} style={s.btn}>
-              {saving ? 'Saving…' : 'Add Prospect'}
+              {saving ? 'Saving…' : 'Add Potential Client'}
             </button>
             <button onClick={() => { setShowAdd(false); setForm(BLANK) }} style={s.btnGhost}>Cancel</button>
           </div>
@@ -793,9 +793,9 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       ) : prospects.length === 0 ? (
         <div style={s.card}>
           <EmptyState
-            title="No prospects yet"
-            description="Add your first prospect to start tracking signals."
-            action={canManage ? <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Prospect</button> : undefined}
+            title="No potential clients yet"
+            description="Add your first potential client to start tracking signals."
+            action={canManage ? <button style={s.btn} onClick={() => setShowAdd(true)}>+ Add Potential Client</button> : undefined}
           />
         </div>
       ) : (

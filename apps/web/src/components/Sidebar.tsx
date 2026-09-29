@@ -17,6 +17,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { id: 'dashboard', label: 'Home', icon: '⬡' },
+      { id: 'prospects', label: 'Potential clients', icon: '◎' },
       { id: 'leads', label: 'Leads', icon: '▤' },
       { id: 'campaigns', label: 'Campaigns', icon: '▣' },
       { id: 'approvals', label: 'To Review', icon: '✓' },
@@ -27,7 +28,6 @@ const NAV_GROUPS: NavGroup[] = [
     heading: 'Discover & analyze',
     items: [
       { id: 'missions', label: 'Missions', icon: '◇' },
-      { id: 'prospects', label: 'Prospects', icon: '◎' },
       { id: 'intelligence', label: 'Analytics', icon: '◈' },
       { id: 'ai', label: 'AI Tools', icon: '✦' },
     ],

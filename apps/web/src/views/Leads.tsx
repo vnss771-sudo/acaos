@@ -252,7 +252,7 @@ export function Leads({ api, workspace, toast, canManage = false }: Props) {
 
       <div style={{ color: colors.textFaint, fontSize: 12 }}>
         Leads are outreach-ready contacts — score, research, draft, and send campaigns here.
-        Looking for new opportunities to qualify first? That's the <strong style={{ color: colors.textMuted }}>Prospects</strong> page.
+        Looking for new opportunities to qualify first? That's the <strong style={{ color: colors.textMuted }}>Potential clients</strong> page.
       </div>
 
       <LeadsToolbar

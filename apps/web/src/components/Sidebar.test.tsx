@@ -24,7 +24,7 @@ describe('Sidebar', () => {
     renderSidebar()
     expect(screen.getByText('Northwind Trades')).toBeInTheDocument()
     expect(screen.getByText('sarah@northwind.test')).toBeInTheDocument()
-    for (const label of ['Home', 'Analytics', 'Prospects', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
+    for (const label of ['Home', 'Analytics', 'Potential clients', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
   })
@@ -37,7 +37,7 @@ describe('Sidebar', () => {
 
   test('clicking a nav item calls setView with its id', async () => {
     const { setView } = renderSidebar()
-    await userEvent.click(screen.getByText('Prospects'))
+    await userEvent.click(screen.getByText('Potential clients'))
     expect(setView).toHaveBeenCalledWith('prospects')
   })
 
@@ -60,7 +60,7 @@ describe('Sidebar', () => {
   describe('hub nav mode', () => {
     test('renders the five hubs instead of the flat grouped nav', () => {
       renderSidebar({ hubNav: true })
-      for (const label of ['Home', 'Prospects', 'Outreach', 'Inbox', 'Settings']) {
+      for (const label of ['Home', 'Potential clients', 'Outreach', 'Inbox', 'Settings']) {
         expect(screen.getByText(label)).toBeInTheDocument()
       }
       // Merged-away surfaces are no longer top-level items.
@@ -77,7 +77,7 @@ describe('Sidebar', () => {
 
     test('highlights the hub that owns the current view', () => {
       renderSidebar({ hubNav: true, view: 'leads' })
-      expect(screen.getByText('Prospects').closest('button')).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByText('Potential clients').closest('button')).toHaveAttribute('aria-current', 'page')
     })
   })
 })
