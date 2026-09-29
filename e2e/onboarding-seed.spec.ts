@@ -25,7 +25,7 @@ test('signup → onboarding seeds example prospects that appear in the UI', asyn
   // Step 4: enter the app without connecting email yet.
   await page.getByRole('button', { name: /Explore first/ }).click()
 
-  // The seeded Industrial example company must be visible in the Prospects view.
-  await page.getByRole('button', { name: /Prospects/ }).click()
+  // The seeded Industrial example company must be visible on the Potential clients page.
+  await page.getByRole('button', { name: /Potential clients/ }).click()
   await expect(page.getByText('Summit Plant & Equipment')).toBeVisible()
 })

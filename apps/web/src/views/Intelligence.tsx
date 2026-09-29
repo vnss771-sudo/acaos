@@ -377,7 +377,7 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
       {/* KPI Bar */}
       <Grid cols={4}>
         <div style={s.card}>
-          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Total Prospects</div>
+          <div style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', marginBottom: 6 }}>Total Potential Clients</div>
           <div style={{ color: colors.blueLight, fontSize: 28, fontWeight: 800 }}>{loading ? '…' : (totals?.total ?? 0)}</div>
         </div>
         <div style={s.card}>
@@ -424,8 +424,8 @@ export function Intelligence({ api, workspace, toast, setView }: Props) {
         ) : (
           <div style={s.card}>
             <EmptyState
-              title="No prospects yet"
-              description="Add your first prospect to get started."
+              title="No potential clients yet"
+              description="Add your first potential client to get started."
               action={<button style={s.btn} onClick={() => setView('prospects')}>Add Prospect</button>}
             />
           </div>

@@ -53,7 +53,7 @@ export function FirstProspectsForm({ api, workspaceId, toast, onDone, onSkip }: 
       toast.success(`Prepared ${res.intents.length} ${res.intents.length === 1 ? 'opportunity' : 'opportunities'} on your dashboard`)
       onDone(res.intents.length)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not add prospects')
+      toast.error(e instanceof Error ? e.message : 'Could not add potential clients')
     } finally {
       setSaving(false)
     }
@@ -62,7 +62,7 @@ export function FirstProspectsForm({ api, workspaceId, toast, onDone, onSkip }: 
   const inputStyle = { ...s.input, marginBottom: 0 }
   return (
     <div>
-      <h2 style={{ color: colors.text, fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>Your first prospects</h2>
+      <h2 style={{ color: colors.text, fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>Your first potential clients</h2>
       <p style={{ color: colors.textMuted, fontSize: 14, margin: '0 0 16px', lineHeight: 1.5 }}>
         Add a few real companies you’d like to reach. We’ll prepare your first few opportunities so you can see how
         ACAOS works — you review and approve every email before anything is sent.
@@ -80,7 +80,7 @@ export function FirstProspectsForm({ api, workspaceId, toast, onDone, onSkip }: 
       {rows.length < MAX_ROWS && (
         <button style={{ ...s.btnSecondary, marginTop: 12 }} onClick={() => setRows((rs) => [...rs, emptyRow()])}>+ Add another</button>
       )}
-      {invalid && <div style={{ color: colors.amber, fontSize: 12, marginTop: 8 }}>Each prospect needs a company name and a valid email.</div>}
+      {invalid && <div style={{ color: colors.amber, fontSize: 12, marginTop: 8 }}>Each potential client needs a company name and a valid email.</div>}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
         <button style={s.btnSecondary} onClick={onSkip} disabled={saving}>Skip for now</button>
         <button style={s.btn} onClick={submit} disabled={!canSubmit}>{saving ? 'Preparing…' : 'Prepare my first emails'}</button>

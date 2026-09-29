@@ -272,7 +272,7 @@ export function App() {
   const VIEW_TITLE: Record<View, string> = {
     dashboard: 'Home',
     intelligence: 'Analytics',
-    prospects: 'Prospects',
+    prospects: 'Potential clients',
     missions: 'Missions',
     campaigns: 'Campaigns',
     approvals: 'To Review',

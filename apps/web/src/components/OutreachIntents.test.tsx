@@ -16,7 +16,7 @@ describe('OutreachIntents', () => {
     const api = vi.fn((path: string) => (path.includes('/intents?') ? Promise.resolve({ intents }) : Promise.resolve({})))
     render(<OutreachIntents api={api as never} workspaceId="ws1" toast={toast as never} />)
 
-    expect(await screen.findByText(/This week/)).toBeInTheDocument()
+    expect(await screen.findByText(/Ready to contact/)).toBeInTheDocument()
     expect(screen.getByText('Acme Plumbing')).toBeInTheDocument()
     expect(screen.getByText('Hiring spike')).toBeInTheDocument()
 

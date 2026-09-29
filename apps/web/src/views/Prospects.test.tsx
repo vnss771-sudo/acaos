@@ -56,7 +56,7 @@ describe('ProspectsView', () => {
     expect(await screen.findByText('Meridian Roofing')).toBeInTheDocument() // read access intact
     expect(screen.queryByRole('button', { name: /Import CSV/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Export CSV/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Add Prospect/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Add Potential Client/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Apollo/i })).not.toBeInTheDocument()
   })
 
@@ -84,7 +84,7 @@ describe('ProspectsView', () => {
 
     await userEvent.click(await screen.findByText('Meridian Roofing'))
 
-    expect(await screen.findByText('Prospect brief')).toBeInTheDocument()
+    expect(await screen.findByText('Potential client brief')).toBeInTheDocument()
     expect(screen.getByText(/Driven mainly by their funding signal/i)).toBeInTheDocument()
     expect(screen.getByText(/Construction is one of your target industries/)).toBeInTheDocument()
     expect(screen.getByText(/Fast-track to proposal/)).toBeInTheDocument()
@@ -93,14 +93,14 @@ describe('ProspectsView', () => {
   test('shows the empty state when the workspace has no prospects', async () => {
     const api = makeApi()
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
-    expect(await screen.findByText(/No prospects yet/i)).toBeInTheDocument()
+    expect(await screen.findByText(/No potential clients yet/i)).toBeInTheDocument()
   })
 
   test('typing in search refetches with the search query', async () => {
     const api = makeApi()
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
-    await userEvent.type(screen.getByPlaceholderText('Search prospects…'), 'acme')
+    await userEvent.type(screen.getByPlaceholderText('Search potential clients…'), 'acme')
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(expect.stringContaining('search=acme')),
     )
@@ -116,7 +116,7 @@ describe('ProspectsView', () => {
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
     // Pick the mission, then trigger discovery.
-    const select = await screen.findByTitle('Attribute discovered prospects to a mission')
+    const select = await screen.findByTitle('Attribute discovered potential clients to a mission')
     await userEvent.selectOptions(select, 'm1')
     await userEvent.click(await screen.findByText('⚡ Apollo'))
 
@@ -161,7 +161,7 @@ describe('ProspectsView', () => {
     })
     render(<ProspectsView api={api as never} workspace={workspace} toast={toast as never} canManage />)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load prospects/i)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load potential clients/i)
     expect(toast.error).toHaveBeenCalledWith('Network error')
 
     api.mockImplementation((path: string) => {

@@ -28,8 +28,8 @@ export const HUBS: Hub[] = [
     // switches between them, not this hub-tab strip.
     { view: 'ops-dashboard', label: 'Field Ops' },
   ] },
-  { id: 'prospects', label: 'Prospects', icon: '◎', tabs: [
-    { view: 'prospects', label: 'Prospects' },
+  { id: 'prospects', label: 'Potential clients', icon: '◎', tabs: [
+    { view: 'prospects', label: 'Potential clients' },
     { view: 'leads', label: 'Leads' },
     { view: 'intelligence', label: 'Analytics' },
   ] },

@@ -83,7 +83,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
       const d = await route('POST /api/prospects/discover', { body })
       toast.success(d.deduped
         ? 'Discovery already running for this query — results will appear shortly.'
-        : 'Discovery started — new prospects will appear shortly.')
+        : 'Discovery started — new potential clients will appear shortly.')
       load()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Discovery failed') }
     finally { setBusy(prev => ({ ...prev, [id]: false })) }
@@ -165,7 +165,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
                     </button>
                     {canManage && (
                       <button style={s.btnSm} disabled={isBusy} onClick={() => discover(m.id)}>
-                        {isBusy ? 'Discovering…' : 'Discover prospects'}
+                        {isBusy ? 'Discovering…' : 'Find potential clients'}
                       </button>
                     )}
                     {canManage && (m.status === 'PAUSED' || m.status === 'DRAFT' ? (
@@ -206,8 +206,8 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
 // on screen — so it guides a new operator without hiding or duplicating anything.
 function MissionGuide({ detail }: { detail: MissionDetail }) {
   const steps = [
-    { label: 'Discover', done: detail.funnel.discovered > 0, hint: 'Use “Discover prospects” to find companies that match your ICP.' },
-    { label: 'Score & recommend', done: detail.funnel.recommended > 0, hint: 'Hit “Score & recommend” to turn prospects into outreach recommendations.' },
+    { label: 'Discover', done: detail.funnel.discovered > 0, hint: 'Use “Find potential clients” to find companies that match your ICP.' },
+    { label: 'Score & recommend', done: detail.funnel.recommended > 0, hint: 'Hit “Score & recommend” to turn potential clients into outreach recommendations.' },
     { label: 'Review & approve', done: detail.funnel.approved > 0, hint: 'Generate a draft for each recommendation in the action queue, then approve the keepers.' },
     { label: 'Ready to send', done: detail.sendReadiness.ready, hint: 'Clear the send-readiness checks below (SMTP + compliance details).' },
     { label: 'Engaged', done: detail.engagement.sent > 0, hint: 'Run the campaign — replies and learning appear under Engagement.' },
@@ -361,7 +361,7 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
           <div>
             <div style={heading}>Action queue</div>
             {detail.intents.length === 0 ? (
-              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — discover prospects, then Score &amp; recommend to populate it.</div>
+              <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>No pending outreach yet — find potential clients, then Score &amp; recommend to populate it.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
                 {detail.intents.map(i => {
@@ -453,7 +453,7 @@ function MissionDetailPanel({ api, missionId, toast, canManage }: { api: ApiHook
           </div>
 
           <div>
-            <div style={heading}>Top prospects</div>
+            <div style={heading}>Top potential clients</div>
             {detail.prospects.length === 0 ? (
               <div style={{ color: colors.textFaint, fontSize: 12, marginTop: 4 }}>None discovered for this mission yet.</div>
             ) : (

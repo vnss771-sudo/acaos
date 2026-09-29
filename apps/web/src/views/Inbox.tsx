@@ -155,7 +155,7 @@ export function InboxView({ api, workspace, toast }: Props) {
         body: { workspaceId: workspace.id, body, idempotencyKey },
       })
       if (response.success) {
-        toast.success(`✓ Reply sent to ${data?.replies.find(r => r.id === replyId)?.toEmail ?? 'prospect'}`)
+        toast.success(`✓ Reply sent to ${data?.replies.find(r => r.id === replyId)?.toEmail ?? 'recipient'}`)
         closeComposer()
         load()
       }
@@ -243,7 +243,7 @@ export function InboxView({ api, workspace, toast }: Props) {
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : !data || data.replies.length === 0 ? (
         <div style={s.card}>
-          <EmptyState title="No replies yet" description="Once prospects respond to your outreach, classified replies land here." />
+          <EmptyState title="No replies yet" description="Once potential clients respond to your outreach, classified replies land here." />
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
