@@ -23,7 +23,7 @@ async function resolveCampaignId(workspaceId: string, campaignId?: string | null
 
 export async function materializeOutreachIntent(args: {
   intent: {
-    id: string; workspaceId: string; status: string; leadId: string | null
+    id: string; workspaceId: string; prospectId: string; status: string; leadId: string | null
     draftSubject: string | null; draftBody: string | null; draftFollowup: string | null
   }
   prospect: { companyName: string; contactEmail: string | null; contactName: string | null; domain: string | null; location: string | null; industry: string | null }
@@ -66,6 +66,13 @@ export async function materializeOutreachIntent(args: {
     })
     leadId = lead.id
   }
+
+  // Record the prospect → lead conversion (if not already recorded) so the
+  // prospect shows as converted and "Convert to Lead" can't mint a duplicate.
+  await prisma.prospect.updateMany({
+    where: { id: intent.prospectId, workspaceId, convertedLeadId: null },
+    data: { convertedLeadId: leadId, convertedAt: new Date() },
+  })
 
   // APPROVED draft from the intent's reviewed copy, so the approval-mode worker
   // will actually send it.
