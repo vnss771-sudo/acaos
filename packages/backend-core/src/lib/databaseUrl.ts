@@ -2,7 +2,7 @@
 // process.env.DATABASE_URL itself, so other code that reads that var directly
 // is unaffected.
 //
-// R4 (Phase 1) warns in production when DATABASE_URL has no `connection_limit`
+// Startup validation warns in production when DATABASE_URL has no `connection_limit`
 // query param, since Prisma's default pool size (num_cpus*2+1 per process) is
 // unbounded across replicas and a real risk against Postgres max_connections.
 // This goes further: when the operator hasn't set one explicitly, a sane

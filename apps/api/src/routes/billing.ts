@@ -7,7 +7,7 @@ import { createCheckoutSession, constructWebhookEvent, createBillingPortalSessio
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { getMonthlyUsage, getPlanCatalog } from '@acaos/backend-core/lib/limits.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { isMailConfigured, sendMail } from '../services/mail.js'
+import { isMailConfigured, sendMail } from '@acaos/backend-core/services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { evictCachedWorkspace } from '../lib/ingestCache.js'
 import type { BillingPlan } from '@acaos/shared'

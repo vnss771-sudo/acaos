@@ -1,5 +1,5 @@
 // Database-backed tests for automatic ConsentRecord creation from lead
-// create/import (Phase 3 — DPA/CASL consent capture). Previously a ConsentRecord
+// create/import (DPA/CASL consent capture). Previously a ConsentRecord
 // could only be created via the manual Settings → Compliance admin action; these
 // exercise the realistic path where consent evidence rides along with the
 // contact itself (e.g. a CSV "consent date" column).

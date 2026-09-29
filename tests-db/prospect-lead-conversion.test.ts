@@ -1,6 +1,4 @@
-// Database-backed tests for POST /api/prospects/:id/convert-to-lead — the fix
-// for Phase 0.4 (Lead vs Prospect have no visible relationship, no conversion
-// path). Verifies the created Lead's fields, the 1:1 link back on the
+// Database-backed tests for POST /api/prospects/:id/convert-to-lead. Verifies the created Lead's fields, the 1:1 link back on the
 // Prospect, and that a second conversion attempt is rejected rather than
 // creating a duplicate Lead.
 

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
-import { BUSINESS_CONTEXT_MAX } from '../../services/openai.js'
+import { BUSINESS_CONTEXT_MAX } from '@acaos/backend-core/services/openai.js'
 import type { Assert, Extends, UpdateBusinessContextRequest, UpdateIcpRequest } from '@acaos/shared'
 
 // Compile-time contract for PUT /:id/icp, pinned to the shared type so the

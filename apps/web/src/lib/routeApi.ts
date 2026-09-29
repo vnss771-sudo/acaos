@@ -1,6 +1,6 @@
 import type { RouteKey, RouteParams, RouteBody, RouteResponse } from '@acaos/shared'
 
-// Typed route client (A+ review finding P0-3). Wraps the low-level `api(path,
+// Typed route client. Wraps the low-level `api(path,
 // init)` hook so every mutation is made through a single, contract-keyed call:
 //   route('POST /api/campaigns/:id/send', { params: { id }, body: { approved: true } })
 // The method, path template, params, and body shape all come from the shared

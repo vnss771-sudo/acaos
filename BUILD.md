@@ -209,8 +209,8 @@ exports:
 - **node** (prod): no condition → `default` → compiled `dist/*.js` (build emits it).
 
 Inside `backend-core`, modules import each other with relative paths, so they work
-identically from `src` and `dist`. The API keeps thin re-export shims at the old
-`apps/api/src/lib|services/*` paths so existing imports resolve unchanged.
+identically from `src` and `dist`. The API and worker import `@acaos/backend-core`
+directly; `npm run check:no-new-shim-imports` blocks local re-export shims.
 
 ---
 

@@ -32,7 +32,7 @@ RUN npm ci --include=dev
 
 COPY packages/db ./packages/db
 COPY packages/shared ./packages/shared
-# Shared backend runtime — the API re-exports it (lib/services shims) and
+# Shared backend runtime — the API imports it directly and
 # compiles it during its build, and resolves it from dist at runtime.
 COPY packages/backend-core ./packages/backend-core
 COPY apps/api ./apps/api

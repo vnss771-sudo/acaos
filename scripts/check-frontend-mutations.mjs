@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Ratcheting guard against raw, untyped frontend API mutations (A+ review finding
-// P1-5). Production frontend code must route mutations through the typed client
+// Ratcheting guard against raw, untyped frontend API mutations.
+// Production frontend code must route mutations through the typed client
 // (apps/web/src/lib/routeApi.ts), not hand-build `body: JSON.stringify(...)`, so
 // the request shape can never drift from the shared RouteContracts.
 //

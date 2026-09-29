@@ -17,7 +17,7 @@
  * tested in tests/eval-research.test.ts without needing a key or the network.
  */
 import { execSync } from 'node:child_process'
-import { generateLeadResearch } from '../apps/api/src/services/openai.js'
+import { generateLeadResearch } from '@acaos/backend-core/services/openai.js'
 import { appendEvalRun, computeEvalScore, computeLift, formatLift } from './lib/evalHistory.js'
 import { appendStepSummary, readHistoryFile, writeHistoryFile } from './lib/evalHistoryStore.js'
 

@@ -1,6 +1,6 @@
 import type { View } from '../types.js'
 
-// ── Consolidated 5-hub navigation (Phase 1, on by default) ──────────────────────
+// ── Consolidated 5-hub navigation (on by default) ──────────────────────
 // The product is one acquisition loop that had grown to 11 top-level pages. This
 // collapses them into five hubs, each hosting the existing page views as sub-tabs:
 //
@@ -10,10 +10,9 @@ import type { View } from '../types.js'
 //   Inbox     → Inbox (replies / response triage only — draft approval lives in Outreach)
 //   Settings  → Settings (incl. Compliance, Team, Mailboxes) · Billing · Admin
 //
-// Phase 1 is a NAV-ONLY refactor: nothing is merged at the data layer, no route or
+// This is a NAV-ONLY grouping: nothing is merged at the data layer, no route or
 // view is deleted, and every existing `view` id stays valid — so the command palette
-// and any deep links keep working. Later phases fold AI Tools into contextual actions
-// inside the hubs and clean up the now-redundant standalone pages.
+// and any deep links keep working.
 
 export type HubId = 'home' | 'prospects' | 'outreach' | 'inbox' | 'settings'
 
@@ -70,8 +69,7 @@ export function defaultViewForHub(hub: Hub, isAdmin: boolean): View {
 // Whether the consolidated hub nav is active. A runtime localStorage override wins
 // (so it can be dogfooded — or rolled back — in a browser without a rebuild);
 // otherwise the build-time VITE_HUB_NAV flag decides. Defaults ON: the hub nav
-// resolves the Lead/Prospect and Missions/Campaigns groupings called out
-// separately (item 0.4), so VITE_HUB_NAV=false (or localStorage acaos_hub_nav=0)
+// groups Lead/Prospect and Missions/Campaigns together, so VITE_HUB_NAV=false (or localStorage acaos_hub_nav=0)
 // is a rollback switch back to the old flat nav, not the normal path.
 export function isHubNavEnabled(): boolean {
   try {

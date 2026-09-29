@@ -65,7 +65,7 @@ for (const name of STATELESS_APPS) {
 if (errors.length) {
   console.error('✗ docker-compose runtime hardening regressed:')
   for (const e of errors) console.error(`    ${e}`)
-  console.error('  See security review finding #14 / scripts/check-compose-hardening.mjs.')
+  console.error('  See scripts/check-compose-hardening.mjs.')
   process.exit(1)
 }
 console.log(`✓ Compose runtime hardening present for ${ALL_SERVICES.length} services (read-only root + dropped caps on ${STATELESS_APPS.length} app services).`)

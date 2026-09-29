@@ -12,7 +12,7 @@ interface RateLimitOptions {
   keyFn?: (req: Request) => string | null
   name?: string
   // Tighter ceiling enforced ONLY while Redis is unavailable AND NODE_ENV is
-  // 'production' — the "tighten on degrade" stance (review finding #9). In a real
+  // 'production' — the "tighten on degrade" stance. In a real
   // outage the limiter falls back to a per-pod in-process counter, so global
   // enforcement weakens; dropping to degradedMax keeps brute-force HARDER, not
   // easier, without the self-DoS of failing fully closed. Defaults to `max`
@@ -71,7 +71,7 @@ export function createRateLimiter(opts: RateLimitOptions): RequestHandler {
     } catch {
       // Redis unavailable — degrade to in-process fallback. In production, tighten
       // the ceiling to degradedMax so losing the shared counter doesn't loosen
-      // protection (review finding #9). Never tighten in dev/test.
+      // protection. Never tighten in dev/test.
       if (process.env.NODE_ENV === 'production') effectiveMax = Math.min(max, degradedMax)
       const now = Date.now()
       let entry = fallback.get(clientKey)
@@ -110,7 +110,7 @@ const authIpRateLimit = createRateLimiter({
 })
 
 // Per-account: 10 attempts / 15 min against a single email, independent of source
-// IP (review finding #9 — per-account limits). Stops a distributed/rotating-IP
+// IP. Stops a distributed/rotating-IP
 // brute force against one account that the per-IP window alone can't see. Skips
 // requests with no email in the body (e.g. /refresh, /verify-totp), which the
 // per-IP limiter still covers.

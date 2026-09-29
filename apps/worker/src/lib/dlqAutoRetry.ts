@@ -1,6 +1,6 @@
 // DLQ auto-retry policy.
 //
-// scripts/queue-drain.mjs (Phase 1) is a manual, operator-invoked tool for
+// scripts/queue-drain.mjs is a manual, operator-invoked tool for
 // inspecting/retrying/draining a queue's failed-job set. This is the automated
 // counterpart: a periodic sweep that gives a FEW bonus retries to failed jobs
 // whose error looks transient (a provider blip, a network hiccup) and that

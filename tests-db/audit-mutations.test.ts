@@ -1,7 +1,6 @@
 // Database-backed tests: workspace-scoped mutations write an AuditEvent row.
 //
-// A review council flagged that audit logging was opt-in and missing from most
-// data-mutating endpoints. These tests drive a mutation through each router and
+// These tests drive a mutation through each router and
 // assert a correctly-scoped AuditEvent (type + entityId + workspaceId + actor)
 // was recorded. Auditing is fire-and-forget (`void recordAudit(...)`), so we
 // poll briefly for the row rather than assuming it lands before the response.

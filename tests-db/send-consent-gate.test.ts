@@ -1,5 +1,5 @@
 // Database-backed tests for the per-contact consent enforcement gate in
-// sendCampaignBatch (Phase 3 — DPA/CASL consent capture). The gate is DORMANT
+// sendCampaignBatch (DPA/CASL consent capture). The gate is DORMANT
 // unless COMPLIANCE_GATE_ENABLED is set (same launch-control flag as
 // getSendReadiness), and — once enabled — is fail-closed: a workspace whose
 // lawful basis is 'consent', or that targets Canadian recipients (CASL), must

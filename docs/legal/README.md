@@ -6,8 +6,8 @@
 > shown to customers or relied upon**, and before `COMPLIANCE_GATE_ENABLED` is turned on.
 
 These back the in-product compliance surface shipped in PR #224 (Settings → Compliance,
-the `/api/legal/*` disclosure endpoints, and the dormant send-readiness gate), plus the
-Phase 3 additions: an in-product DPA summary + acknowledgement (`GET /api/legal/dpa`,
+the `/api/legal/*` disclosure endpoints, and the dormant send-readiness gate), plus
+an in-product DPA summary + acknowledgement (`GET /api/legal/dpa`,
 `dpaDisclosure()` in `lib/subprocessors.ts`) and a per-recipient consent enforcement gate
 in the send pipeline (see "Turning the gate on" below).
 

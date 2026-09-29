@@ -11,7 +11,7 @@
  * keyed CI job to catch regressions in what customers actually receive.
  */
 import { execSync } from 'node:child_process'
-import { generateOutreach, type OutreachInput } from '../apps/api/src/services/openai.js'
+import { generateOutreach, type OutreachInput } from '@acaos/backend-core/services/openai.js'
 import { appendEvalRun, computeEvalScore, computeLift, formatLift } from './lib/evalHistory.js'
 import { appendStepSummary, readHistoryFile, writeHistoryFile } from './lib/evalHistoryStore.js'
 
