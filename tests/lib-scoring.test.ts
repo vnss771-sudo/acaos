@@ -173,7 +173,7 @@ describe('explainLeadScore', () => {
   })
 })
 
-describe('ICP-aware industry scoring (P0-6)', () => {
+describe('ICP-aware industry scoring', () => {
   it('defaults to the built-in field-service ICP when no targets are configured', () => {
     // Unchanged behavior: a field-service category beats a generic one with no ICP.
     const plumbing = computeLeadScore(lead({ category: 'plumbing contractor' }))

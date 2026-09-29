@@ -1,7 +1,7 @@
-# Design: Bi-directional CRM sync (HubSpot + Salesforce) — Phase 3.2
+# Design: Bi-directional CRM sync (HubSpot + Salesforce)
 
 **Status:** Design / ready-to-execute (blocked only on third-party API credentials + sandboxes)
-**Council finding:** Product #2 (P0) — the #1 switching-cost and enterprise-deal blocker. Without it ACAOS is a silo; reps won't trust pipeline that doesn't flow to the system of record. It also feeds closed-won outcomes back into the learning loop, compounding the moat.
+**Why:** the main switching-cost and enterprise-deal blocker. Without it ACAOS is a silo; reps won't trust pipeline that doesn't flow to the system of record. It also feeds closed-won outcomes back into the learning loop, compounding the moat.
 
 This document is the executable design so the build can start the moment credentials are available. It deliberately builds on the **webhook/event infrastructure already shipped** (`packages/backend-core/src/lib/webhooks.ts`, the `AnalyticsEvent`/`ContactEvent` ledgers, and the `OutreachIntent`/`ProspectOutcome` models).
 
@@ -95,7 +95,7 @@ Each job is idempotent via `CrmSyncMapping` (upsert-by-mapping; never create a d
 - OAuth tokens **encrypted at rest** (`encrypt.ts`), never logged, never returned by any API (mirrors SMTP creds + the webhook-secret masking shipped alongside this doc).
 - Connection management gated by `workspace:update` (admin/owner), like webhooks.
 - Disconnect = revoke + delete tokens + stop the scheduled job (mirror the MFA-disable token-revocation pattern).
-- Inbound data is third-party → flows through the same prospect-import sanitization; CRM-sourced free-text entering AI prompts uses the existing `<prospect_data>` fence (shipped in Phase 0).
+- Inbound data is third-party → flows through the same prospect-import sanitization; CRM-sourced free-text entering AI prompts uses the existing `<prospect_data>` fence.
 - Add HubSpot/Salesforce to `docs/legal/subprocessors.md` (the disclosure surface already exists).
 
 ## 6. Rollout

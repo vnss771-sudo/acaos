@@ -54,7 +54,7 @@ type SidebarProps = {
   workspace: Workspace | null
   onLogout: () => void
   isAdmin?: boolean
-  // When true, render the consolidated 5-hub nav (Phase 1, behind VITE_HUB_NAV);
+  // When true, render the consolidated 5-hub nav (behind VITE_HUB_NAV);
   // otherwise the flat grouped nav. Defaults to the grouped nav.
   hubNav?: boolean
 }

@@ -1,9 +1,9 @@
 # Design: In-product compliance — sub-processor disclosure, lawful-basis capture, consent
 
 **Status:** Design (implementation-ready) · **Date:** 2026-06-24 · **Owner:** TBD
-**Source:** Readiness review §5 (Security/CISO seat) — cold-email compliance gaps (GDPR Art. 6 lawful basis, CASL consent, DPA/sub-processor transparency) are an operator responsibility today with **no in-product surface**.
+**Problem:** cold-email compliance gaps (GDPR Art. 6 lawful basis, CASL consent, DPA/sub-processor transparency) are an operator responsibility today with **no in-product surface**.
 
-> Scope note: this is the one substantive Phase-1 item that is genuinely *product + legal*, not pure engineering. The schema/API/UI below are buildable now; the **copy** (sub-processor descriptions, T&Cs, LIA prompts) needs legal sign-off before shipping. Nothing here changes send behavior until the gate in §4 is turned on.
+> Scope note: this is *product + legal*, not pure engineering. The schema/API/UI below are buildable now; the **copy** (sub-processor descriptions, T&Cs, LIA prompts) needs legal sign-off before shipping. Nothing here changes send behavior until the gate in §4 is turned on.
 
 ---
 

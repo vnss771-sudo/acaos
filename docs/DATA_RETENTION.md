@@ -1,8 +1,7 @@
 # Data Retention & Deletion Policy
 
 What ACAOS stores, how long it should be kept, and how a workspace's data is
-exported or deleted. This is the policy of record for review finding P0-2/§6.2
-("data retention policy"). The documented windows are enforced automatically by a
+exported or deleted. The documented windows are enforced automatically by a
 daily `retention-purge` worker job (`purgeExpiredData`); rows that fall outside a
 window (e.g. lifecycle-bound data) are noted in the Enforcement column.
 

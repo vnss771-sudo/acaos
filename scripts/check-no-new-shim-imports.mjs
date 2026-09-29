@@ -1,31 +1,22 @@
 #!/usr/bin/env node
-// Guard against apps/api/src/lib/ re-export shims ever coming back.
+// Guard against backend-core re-export shims in apps/api/src.
 //
-// Phase 1 introduced this as a RATCHET against the 23 `export * from
-// '@acaos/backend-core/lib/X.js'` shim files that used to live in
-// apps/api/src/lib/ (kept only so pre-existing import sites, written before
-// that code moved to backend-core, kept resolving). Phase 2 deleted all 23
-// shims and repointed every call site at `@acaos/backend-core/lib/X.js`
-// directly, so the ratchet is now a hard guarantee instead of an allowlist:
-// CI fails if ANY apps/api/src file re-introduces a re-export shim (a local
-// `./something.ts` whose entire body is `export * from
-// '@acaos/backend-core/lib/...'`) or imports apps/api/src/lib/ code that
-// merely forwards to backend-core. New code should always import
-// @acaos/backend-core directly — going through a local indirection adds a
-// layer with no benefit.
+// CI fails if any apps/api/src file is a pure re-export shim (its entire body is
+// `export * from '@acaos/backend-core/...'`) or imports one by relative path.
+// Code should import @acaos/backend-core directly — a local forwarding file
+// adds a layer with no benefit.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const API_SRC = join(ROOT, 'apps/api/src')
-const LIB_DIR = join(API_SRC, 'lib')
 
 // The statement a pure re-export shim's body must reduce to once any leading
 // comments are stripped. Deliberately simple (one line, no repeated
 // alternation) — see isPureReexportShim below for why comment-stripping is
 // done as a plain line scan rather than folded into this regex.
-const REEXPORT_STATEMENT = /^export\s*\*\s*from\s*['"]@acaos\/backend-core\/lib\/[^'"]+\.js['"]\s*;?$/
+const REEXPORT_STATEMENT = /^export\s*\*\s*from\s*['"]@acaos\/backend-core\/(?:lib|services)\/[^'"]+\.js['"]\s*;?$/
 
 // True when `src`, once its leading //-comments and /* */-comments are
 // stripped, is nothing but a single `export * from '@acaos/backend-core/lib/
@@ -61,9 +52,9 @@ function walk(dir) {
   return out
 }
 
-// 1. No file under apps/api/src/lib/ may be a pure backend-core re-export shim.
+// 1. No file under apps/api/src may be a pure backend-core re-export shim.
 const reintroducedShims = []
-for (const file of walk(LIB_DIR)) {
+for (const file of walk(API_SRC)) {
   const src = readFileSync(file, 'utf8')
   if (isPureReexportShim(src)) reintroducedShims.push(relative(ROOT, file))
 }
@@ -95,7 +86,7 @@ if (shimFiles.size > 0) {
 let failed = false
 if (reintroducedShims.length > 0) {
   failed = true
-  console.error('✗ apps/api/src/lib/ re-export shim(s) reintroduced — import @acaos/backend-core directly instead:')
+  console.error('✗ apps/api/src re-export shim(s) found — import @acaos/backend-core directly instead:')
   for (const f of reintroducedShims) console.error(`  ${f}`)
 }
 if (shimImporters.size > 0) {
@@ -105,4 +96,4 @@ if (shimImporters.size > 0) {
 }
 
 if (failed) process.exit(1)
-console.log('✓ No apps/api/src/lib/ re-export shims (all 23 deleted in Phase 2; every call site imports @acaos/backend-core directly).')
+console.log('✓ No re-export shims in apps/api/src; every call site imports @acaos/backend-core directly.')

@@ -22,7 +22,7 @@ import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, RE
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/textNormalize.js'
 import { resolveUniqueWorkspaceSlug, normalizeWorkspaceRole } from '../lib/workspaces.js'
-import { isMailConfigured, sendMail } from '../services/mail.js'
+import { isMailConfigured, sendMail } from '@acaos/backend-core/services/mail.js'
 import { validate, emailField, passwordField } from '../lib/validate.js'
 import { z } from 'zod'
 

@@ -1,5 +1,5 @@
 // Unit tests for consent.ts — the per-recipient ConsentRecord lookups the
-// send pipeline's fail-closed consent gate depends on (Phase 3 DPA/CASL work).
+// send pipeline's fail-closed consent gate depends on (DPA/CASL).
 // Mirrors tests/lib-suppressions.test.ts's fake-prisma pattern for its sibling
 // module: previously only exercised indirectly through route/worker tests
 // with mocked prisma, leaving bulkCheckConsent's own normalization and

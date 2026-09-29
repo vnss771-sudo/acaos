@@ -5,7 +5,7 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
-import { sendMail, isMailConfigured } from '../services/mail.js'
+import { sendMail, isMailConfigured } from '@acaos/backend-core/services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { isSuppressed } from '@acaos/backend-core/lib/suppressions.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
@@ -15,7 +15,7 @@ import { aiRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { parseAiJson, ReplyDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
-import { generateReplyDraft } from '../services/openai.js'
+import { generateReplyDraft } from '@acaos/backend-core/services/openai.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
