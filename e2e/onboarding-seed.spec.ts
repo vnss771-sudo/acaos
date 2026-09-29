@@ -19,6 +19,9 @@ test('signup → onboarding seeds example prospects that appear in the UI', asyn
   // Step 3: add the example companies.
   await page.getByRole('button', { name: /Looks good/ }).click()
 
+  // First-prospects step: this spec covers example seeding, so skip it.
+  await page.getByRole('button', { name: /Skip for now/ }).click()
+
   // Step 4: enter the app without connecting email yet.
   await page.getByRole('button', { name: /Explore first/ }).click()
 

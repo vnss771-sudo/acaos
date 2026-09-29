@@ -30,6 +30,8 @@ export function buildEvidenceSnapshot(signals: SnapshotSignal[]) {
   }
 }
 
+export type OutreachIntentOrigin = 'RECOMMENDATION' | 'ONBOARDING'
+
 export async function createOutreachIntentForRecommendation(input: {
   workspaceId: string
   prospectId: string
@@ -39,6 +41,7 @@ export async function createOutreachIntentForRecommendation(input: {
   signals: SnapshotSignal[]
   missionId?: string | null
   campaignId?: string | null
+  origin?: OutreachIntentOrigin
 }) {
   return prisma.outreachIntent.create({
     data: {
@@ -46,6 +49,7 @@ export async function createOutreachIntentForRecommendation(input: {
       prospectId: input.prospectId,
       recommendationId: input.recommendationId,
       status: 'PROPOSED',
+      origin: input.origin ?? 'RECOMMENDATION',
       messageAngle: input.messageAngle ?? null,
       channel: input.channel ?? null,
       evidenceSnapshot: buildEvidenceSnapshot(input.signals),

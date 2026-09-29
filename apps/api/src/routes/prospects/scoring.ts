@@ -5,14 +5,12 @@ import {
   calculateOpportunityScores,
   detectBuyingStage,
   calcWinProbability,
-  generateRuleBasedRecommendation,
   getOpportunityTier,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import { userHasWorkspaceAccess } from '../../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '@acaos/backend-core/lib/queues.js'
-import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
-import { createOutreachIntentForRecommendation } from '@acaos/backend-core/lib/outreachIntent.js'
+import { recommendProspect, loadProspectWithSignals } from '../../lib/recommendProspect.js'
 import { dollarsToCents, centsToDollars } from '../../lib/money.js'
 import { withDollars, getICP } from './helpers.js'
 import { validate, parseParams, idField } from '../../lib/validate.js'
@@ -108,56 +106,13 @@ export function registerScoringRoutes(prospectsRouter: Router) {
 
   // POST /api/prospects/:id/recommend
   prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
-    const prospect = await prisma.prospect.findUnique({
-      where: { id: req.params.id as string },
-      include: { signals: true },
-    })
+    const prospect = await loadProspectWithSignals(req.params.id as string)
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
     const userId = requireUser(req).id
     if (!await userHasWorkspaceAccess(userId, prospect.workspaceId)) throw new ApiError(403, 'Access denied')
 
-    const rawSignals = prospect.signals.map(toRawSignal)
-    const rec = generateRuleBasedRecommendation(
-      {
-        industry:      prospect.industry,
-        employeeCount: prospect.employeeCount,
-        contactEmail:  prospect.contactEmail,
-        contactName:   prospect.contactName,
-        contactPhone:  prospect.contactPhone,
-        linkedinUrl:   prospect.linkedinUrl,
-        domain:        prospect.domain,
-        location:      prospect.location,
-      },
-      rawSignals
-    )
-
-    // Evidence-first gate: high-confidence priority requires provable, fresh
-    // evidence on a signal — otherwise it's capped below the high-confidence line.
-    const priority = evidenceGatedPriority(rec.priority, prospect.signals)
-
-    const recommendation = await prisma.recommendation.create({
-      data: {
-        workspaceId: prospect.workspaceId,
-        prospectId:  prospect.id,
-        ...rec,
-        priority,
-        expiresAt: new Date(Date.now() + 7 * 86_400_000),
-      },
-    })
-
-    // Bridge (Stage 2): carry this recommendation into the outreach spine as an
-    // OutreachIntent with an evidence snapshot. Best-effort — additive.
-    await createOutreachIntentForRecommendation({
-      workspaceId: prospect.workspaceId,
-      prospectId:  prospect.id,
-      recommendationId: recommendation.id,
-      messageAngle: rec.messageAngle,
-      channel: rec.bestChannel,
-      signals: prospect.signals,
-      missionId: prospect.missionId,
-    }).catch(() => {})
-
+    const { recommendation } = await recommendProspect(prospect)
     res.status(201).json(recommendation)
   }))
 }

@@ -409,6 +409,14 @@ export interface ImportProspectsRequest {
   workspaceId: string
   rows: Record<string, unknown>[]
 }
+export interface OnboardingImportRequest {
+  workspaceId: string
+  rows: Array<{ companyName: string; contactEmail: string } & Record<string, unknown>>
+}
+export interface OnboardingImportResponse {
+  imported: number; skipped: number; failed: number; errors: string[]
+  intents: Array<{ id: string; prospectId: string; companyName: string }>
+}
 export interface BillingCheckoutRequest { workspaceId: string; plan: 'starter' | 'growth' }
 export interface BillingPortalRequest { workspaceId: string }
 export interface UpdateWorkspaceRequest {
@@ -621,6 +629,7 @@ export interface RouteContracts {
   // `deduped` is true when an identical run was already in flight.
   'POST /api/prospects/discover': { body: DiscoverProspectsRequest; response: { runId: string; jobId?: string; queue?: string; status: string; deduped?: boolean; message?: string } }
   'POST /api/prospects/import': { body: ImportProspectsRequest; response: { imported: number; skipped: number; failed: number; errors: string[] } }
+  'POST /api/prospects/onboarding-import': { body: OnboardingImportRequest; response: OnboardingImportResponse }
   'POST /api/prospects/:id/rescore': { params: { id: string }; response: unknown }
   'POST /api/prospects/:id/recommend': { params: { id: string }; response: unknown }
   'POST /api/prospects/:id/enrich': { params: { id: string }; response: { signalsCreated: number } }

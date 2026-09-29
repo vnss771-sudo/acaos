@@ -341,7 +341,7 @@ export function Dashboard({ api, workspace, setView, toast }: Props) {
       <SendMonitor api={api} workspaceId={workspace.id} setView={setView} />
 
       {/* This week's outreach: actionable evidence-backed intents; hides when empty */}
-      <OutreachIntents api={api} workspaceId={workspace.id} toast={toast} />
+      <OutreachIntents api={api} workspaceId={workspace.id} toast={toast} senderBusinessName={workspace.senderBusinessName} />
 
       {/* Hot accounts + signal feed — only shown when data exists */}
       {!loading && (hotProspects.length > 0 || recentSignals.length > 0) && (

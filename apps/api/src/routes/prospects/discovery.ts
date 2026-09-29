@@ -18,6 +18,7 @@ import { listSources, getSource } from '@acaos/backend-core/lib/prospectSources.
 import { getPack } from '../../lib/packs/index.js'
 import { createHash } from 'node:crypto'
 import { dollarsToCents } from '../../lib/money.js'
+import { recommendProspect } from '../../lib/recommendProspect.js'
 import { validate } from '../../lib/validate.js'
 import { z } from 'zod'
 import { discoverSchema, normalizeDomain, normalizeCompanyNameKey, normalizeEmailKey, getICP, resolveEffectiveTargeting, buildDiscoveryQuery, IMPORT_SIGNAL_TYPES } from './helpers.js'
@@ -32,6 +33,88 @@ const importProspectsSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown()))
     .min(1, 'rows array required')
     .max(1000, 'Maximum 1000 rows per import'),
+})
+
+// Shared by POST /import and POST /onboarding-import: create one prospect per row,
+// scored inline against the workspace ICP. Duplicate domains count as skipped.
+async function importProspectRows(workspaceId: string, rows: Record<string, unknown>[]) {
+  const icp = await getICP(workspaceId)
+
+  let imported = 0
+  let skipped = 0
+  const errors: string[] = []
+  const createdIds: string[] = []
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
+    if (!companyName) { skipped++; continue }
+    try {
+      const meta = {
+        industry:      row.industry      ? String(row.industry)      : null,
+        employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
+        contactEmail:  row.contactEmail  ? String(row.contactEmail)  : null,
+        contactName:   row.contactName   ? String(row.contactName)   : null,
+        domain:        row.domain        ? String(row.domain)        : null,
+        location:      row.location      ? String(row.location)      : null,
+      }
+      const scores        = calculateOpportunityScores([], meta, icp)
+      const buyingStage   = detectBuyingStage([], scores.opportunityScore)
+      const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+
+      const created = await prisma.prospect.create({
+        data: {
+          workspaceId,
+          companyName,
+          domain:        meta.domain,
+          domainKey:     normalizeDomain(meta.domain),
+          companyNameKey: normalizeCompanyNameKey(companyName),
+          emailKey:      normalizeEmailKey(meta.contactEmail),
+          industry:      meta.industry,
+          employeeCount: meta.employeeCount,
+          location:      meta.location,
+          contactName:   meta.contactName,
+          contactEmail:  meta.contactEmail,
+          contactPhone:  row.contactPhone  ? String(row.contactPhone)  : null,
+          contactTitle:  row.contactTitle  ? String(row.contactTitle)  : null,
+          linkedinUrl:   row.linkedinUrl   ? String(row.linkedinUrl)   : null,
+          description:   row.description   ? String(row.description)   : null,
+          notes:         row.notes         ? String(row.notes)         : null,
+          sourceTag:     row.sourceTag     ? String(row.sourceTag)     : 'csv_import',
+          estimatedRevenue: row.estimatedRevenue ? dollarsToCents(Number(row.estimatedRevenue)) : null,
+          expectedDealValue: row.expectedDealValue ? dollarsToCents(Number(row.expectedDealValue)) : null,
+          ...scores,
+          buyingStage,
+          winProbability,
+        },
+        select: { id: true },
+      })
+      createdIds.push(created.id)
+      imported++
+    } catch (err) {
+      // P2002 on (workspaceId, domainKey): the row's domain already exists in
+      // this workspace — a duplicate, not an error. Count it skipped so a CSV
+      // re-upload is idempotent instead of surfacing a constraint message.
+      if ((err as { code?: string }).code === 'P2002') { skipped++; continue }
+      errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
+    }
+  }
+  return { imported, skipped, errors, createdIds }
+}
+
+// POST /onboarding-import body. A deliberately narrow contract: a new workspace's
+// first few REAL prospects, each with a contact email (so the first send can't fail
+// late on a missing address). Extra row fields pass through to the shared importer.
+export const ONBOARDING_MAX_ROWS = 10
+export const ONBOARDING_INTENT_COUNT = 3
+const onboardingImportSchema = z.object({
+  workspaceId: workspaceIdField,
+  rows: z.array(z.object({
+    companyName: z.string().trim().min(1, 'companyName required'),
+    contactEmail: z.string().trim().email('contactEmail must be a valid email'),
+  }).passthrough())
+    .min(1, 'rows array required')
+    .max(ONBOARDING_MAX_ROWS, `Maximum ${ONBOARDING_MAX_ROWS} prospects during onboarding`),
 })
 
 export function registerDiscoveryRoutes(prospectsRouter: Router) {
@@ -139,66 +222,47 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
     const userId = requireUser(req).id
     await assertWorkspacePermission(userId, workspaceId, 'prospects:import')
 
-    const icp = await getICP(workspaceId)
+    const { imported, skipped, errors } = await importProspectRows(workspaceId, rows)
+    res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20) })
+  }))
 
-    let imported = 0
-    let skipped = 0
-    const errors: string[] = []
+  // POST /api/prospects/onboarding-import — a new workspace's first prospects.
+  // Imports and scores them exactly like /import, then prepares outreach intents
+  // for the top few even if they score below AUTO_RECOMMEND_THRESHOLD, so the
+  // customer can run the full draft → approve → send loop on their own data. Those
+  // intents are stamped origin ONBOARDING (not RECOMMENDATION) so they're never
+  // mistaken for evidence-backed recommendations. The normal threshold is untouched.
+  // Only allowed before the workspace has any real outreach intent.
+  prospectsRouter.post('/onboarding-import', requireVerifiedEmail, validate(onboardingImportSchema), asyncHandler(async (req, res) => {
+    const { workspaceId, rows } = req.body as z.infer<typeof onboardingImportSchema>
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]
-      const companyName = String(row.companyName ?? row.company ?? row.name ?? '').trim()
-      if (!companyName) { skipped++; continue }
-      try {
-        const meta = {
-          industry:      row.industry      ? String(row.industry)      : null,
-          employeeCount: row.employeeCount ? Number(row.employeeCount) : null,
-          contactEmail:  row.contactEmail  ? String(row.contactEmail)  : null,
-          contactName:   row.contactName   ? String(row.contactName)   : null,
-          domain:        row.domain        ? String(row.domain)        : null,
-          location:      row.location      ? String(row.location)      : null,
-        }
-        const scores        = calculateOpportunityScores([], meta, icp)
-        const buyingStage   = detectBuyingStage([], scores.opportunityScore)
-        const winProbability = calcWinProbability(buyingStage, scores.opportunityScore)
+    const userId = requireUser(req).id
+    await assertWorkspacePermission(userId, workspaceId, 'prospects:import')
 
-        await prisma.prospect.create({
-          data: {
-            workspaceId,
-            companyName,
-            domain:        meta.domain,
-            domainKey:     normalizeDomain(meta.domain),
-            companyNameKey: normalizeCompanyNameKey(companyName),
-            emailKey:      normalizeEmailKey(meta.contactEmail),
-            industry:      meta.industry,
-            employeeCount: meta.employeeCount,
-            location:      meta.location,
-            contactName:   meta.contactName,
-            contactEmail:  meta.contactEmail,
-            contactPhone:  row.contactPhone  ? String(row.contactPhone)  : null,
-            contactTitle:  row.contactTitle  ? String(row.contactTitle)  : null,
-            linkedinUrl:   row.linkedinUrl   ? String(row.linkedinUrl)   : null,
-            description:   row.description   ? String(row.description)   : null,
-            notes:         row.notes         ? String(row.notes)         : null,
-            sourceTag:     row.sourceTag     ? String(row.sourceTag)     : 'csv_import',
-            estimatedRevenue: row.estimatedRevenue ? dollarsToCents(Number(row.estimatedRevenue)) : null,
-            expectedDealValue: row.expectedDealValue ? dollarsToCents(Number(row.expectedDealValue)) : null,
-            ...scores,
-            buyingStage,
-            winProbability,
-          }
-        })
-        imported++
-      } catch (err) {
-        // P2002 on (workspaceId, domainKey): the row's domain already exists in
-        // this workspace — a duplicate, not an error. Count it skipped so a CSV
-        // re-upload is idempotent instead of surfacing a constraint message.
-        if ((err as { code?: string }).code === 'P2002') { skipped++; continue }
-        errors.push(`Row ${i + 1} (${companyName}): ${(err as Error).message}`)
-      }
+    const existingIntents = await prisma.outreachIntent.count({ where: { workspaceId, prospect: { isExample: false } } })
+    if (existingIntents > 0) {
+      throw new ApiError(409, 'Onboarding import is only available before your first outreach opportunity — use the normal import instead')
     }
 
-    res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20) })
+    const { imported, skipped, errors, createdIds } = await importProspectRows(workspaceId, rows)
+    const top = await prisma.prospect.findMany({
+      where: { id: { in: createdIds } },
+      orderBy: { opportunityScore: 'desc' },
+      take: ONBOARDING_INTENT_COUNT,
+      include: { signals: true },
+    })
+    const intents: { id: string; prospectId: string; companyName: string }[] = []
+    for (const prospect of top) {
+      const { intent } = await recommendProspect(prospect, 'ONBOARDING')
+      if (intent) intents.push({ id: intent.id, prospectId: prospect.id, companyName: prospect.companyName })
+    }
+
+    void recordAudit({
+      workspaceId, actorUserId: userId, type: 'onboarding.intents_prepared',
+      entityType: 'workspace', entityId: workspaceId,
+      metadata: { imported, intentIds: intents.map((i) => i.id) },
+    })
+    res.status(201).json({ imported, skipped, failed: errors.length, errors: errors.slice(0, 20), intents })
   }))
 
   // POST /api/prospects/import-signals — bulk feed signal-backed prospects (the

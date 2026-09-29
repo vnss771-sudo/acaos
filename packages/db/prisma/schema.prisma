@@ -1140,6 +1140,9 @@ model OutreachIntent {
   campaignId       String?
   missionId        String?
   status           OutreachIntentStatus @default(PROPOSED)
+  // RECOMMENDATION | ONBOARDING — ONBOARDING intents were prepared for a new
+  // workspace's first send and did not pass the normal recommendation threshold.
+  origin           String               @default("RECOMMENDATION")
   messageAngle     String?
   channel          String?
   evidenceSnapshot Json?
