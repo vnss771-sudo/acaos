@@ -10,9 +10,10 @@
   },
   "dependencies": {
     "@acaos/backend-core": "*",
+    "@acaos/shared": "*",
+    "@prisma/client": "^5.18.0",
     "bullmq": "^5.12.12",
-    "dotenv": "^16.4.5",
-    "ioredis": "^5.4.1"
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
     "tsx": "^4.16.2",

@@ -7,7 +7,7 @@
 
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { prospectsRouter } from '../apps/api/src/routes/prospects.ts'
+import { prospectsRouter } from '../apps/api/src/routes/prospects/index.ts'
 import {
   createFakePrisma,
   installPrisma,

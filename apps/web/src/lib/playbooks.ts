@@ -301,7 +301,3 @@ export const PLAYBOOKS: Playbook[] = [
     ]
   }
 ]
-
-export function getPlaybook(id: string): Playbook | undefined {
-  return PLAYBOOKS.find(p => p.id === id)
-}

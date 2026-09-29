@@ -1,5 +1,4 @@
 import React from 'react'
-import { colors } from '../styles.js'
 
 export function Spinner({ size = 20, color = '#3b82f6', label = 'Loading' }: { size?: number; color?: string; label?: string }) {
   return (
@@ -9,15 +8,5 @@ export function Spinner({ size = 20, color = '#3b82f6', label = 'Loading' }: { s
         <path d="M12 2a10 10 0 0 1 10 10" stroke={color} strokeWidth="3" strokeLinecap="round" />
       </svg>
     </span>
-  )
-}
-
-export function LoadingRow({ cols = 1 }: { cols?: number }) {
-  return (
-    <tr>
-      <td colSpan={cols} style={{ padding: '32px 16px', textAlign: 'center', color: colors.textFaint }}>
-        <Spinner /> Loading…
-      </td>
-    </tr>
   )
 }

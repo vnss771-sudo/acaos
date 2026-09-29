@@ -44,7 +44,7 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 // Plain-language headline for a proposal: what would change, in customer terms.
-export function describeRecommendation(r: LearningRecommendationDto): { title: string; from: string; to: string } {
+function describeRecommendation(r: LearningRecommendationDto): { title: string; from: string; to: string } {
   const list = (v: unknown) => (Array.isArray(v) && v.length ? v.join(', ') : 'none set')
   const size = (v: unknown) => {
     const o = (v ?? {}) as { minEmployees?: number | null; maxEmployees?: number | null }

@@ -53,7 +53,6 @@ export function incProviderCall(provider: string, operation: string, outcome: st
   else providerTotals.set(id, { labels, value: 1 })
 }
 
-export function setInFlight(n: number): void { inFlight = n }
 export function incInFlight(): void { inFlight++ }
 export function decInFlight(): void { inFlight = Math.max(0, inFlight - 1) }
 

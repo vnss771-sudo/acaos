@@ -105,8 +105,8 @@ async function importProspectRows(workspaceId: string, rows: Record<string, unkn
 // POST /onboarding-import body. A deliberately narrow contract: a new workspace's
 // first few REAL prospects, each with a contact email (so the first send can't fail
 // late on a missing address). Extra row fields pass through to the shared importer.
-export const ONBOARDING_MAX_ROWS = 10
-export const ONBOARDING_INTENT_COUNT = 3
+const ONBOARDING_MAX_ROWS = 10
+const ONBOARDING_INTENT_COUNT = 3
 const onboardingImportSchema = z.object({
   workspaceId: workspaceIdField,
   rows: z.array(z.object({

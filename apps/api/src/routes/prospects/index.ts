@@ -6,10 +6,6 @@ import { registerScoringRoutes } from './scoring.js'
 import { registerIntentRoutes } from './intents.js'
 import { registerEnrichmentRoutes } from './enrichment.js'
 
-// Re-exported for any in-package importers and to preserve the original public
-// surface of routes/prospects.ts.
-export { normalizeDomain } from './helpers.js'
-
 export const prospectsRouter = Router()
 prospectsRouter.use(requireAuth)
 prospectsRouter.use(requireVerifiedForMutation)
