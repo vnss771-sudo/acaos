@@ -1,5 +1,6 @@
 // Signal intelligence engine — decay functions, opportunity scoring, buying stage detection
 import type { BuyingStage, SignalType } from '@acaos/shared'
+import { inferCommercialEvent } from './commercialEvent.js'
 export type { BuyingStage, OutcomeStage, SignalType } from '@acaos/shared'
 
 // Upper bound on signals loaded per prospect for scoring. Prospects with deep
@@ -44,6 +45,11 @@ export type RawSignal = {
   sourceReliability: number
   industryRelevance: number
   detectedAt: Date
+  /** Optional provenance used by quality/corroboration analysis. */
+  source?: string | null
+  evidenceSourceId?: string | null
+  title?: string | null
+  description?: string | null
 }
 
 // Decayed signal strength accounting for age
@@ -386,7 +392,11 @@ export function generateRuleBasedRecommendation(
     BUSINESS_REGISTRATION: 'New business registration signals fresh buyer entering market',
     WEBSITE_CHANGE: 'Website updates signal business evolution',
   }
-  const reasoning = dominant ? REASON_MAP[dominant.type] : 'Based on company profile and industry fit'
+  const baseReasoning = dominant ? REASON_MAP[dominant.type] : 'Based on company profile and industry fit'
+  const event = inferCommercialEvent(signals)
+  const reasoning = event.type !== 'NO_CLEAR_EVENT' && event.supportingTypes.length > 1
+    ? `${baseReasoning}. Commercial event: ${event.title.toLowerCase()} — ${event.whyNow}`
+    : baseReasoning
 
   const ACTION_MAP: Record<string, string> = {
     EMAIL: `Send personalized email${meta.contactEmail ? ` to ${meta.contactEmail}` : ''}`,
