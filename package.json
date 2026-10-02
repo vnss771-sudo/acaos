@@ -63,9 +63,9 @@
     "doctor": "node scripts/doctor.mjs"
   },
   "overrides": {
-    "nodemailer": "^9.1.1",
+    "nodemailer": "^10.0.13",
     "imapflow": {
-      "nodemailer": "^9.1.1"
+      "nodemailer": "^10.0.13"
     },
     "ioredis": "5.10.1",
     "qs": "^6.16.0",
