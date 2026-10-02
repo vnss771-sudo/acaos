@@ -22,7 +22,7 @@ The plan has 15 phases, grouped into release trains:
 | Operator console | 14 |
 | FieldOps loop | 15 |
 
-## Done (merged to `master`; current head is `c039b9e`)
+## Done (merged to `master`; current head is `4b7c1e8`)
 
 | Plan phase | PR | What | Key files | Docs |
 |---|---|---|---|---|
@@ -36,7 +36,7 @@ The plan has 15 phases, grouped into release trains:
 | 7 Buying stage | #321 | Seven stages, a move per stage, a stage gate on "contact now", `buyingStageDetail` | `lib/buyingStage.ts` | same |
 | 8 Recommendation engine | #323 | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
 | 9 Intelligence → execution | #324 | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
-| 10 Outcome graph | (this PR) | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
+| 10 Outcome graph | #325 | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -51,6 +51,14 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
    - `chooseNextBestAction`, then the gates
    - `recommendForOpportunity` (gate 2: no explanation, no recommendation)
 4. upsert `CommercialOpportunity`, then sync its bridged `Recommendation` row
+
+**After the pipeline (operator-driven, phases 9–10).**
+- `POST /api/commercial-opportunities/:id/intent` creates a PROPOSED `OutreachIntent`
+  carrying a grounding record.
+- The existing routes then take it through draft → approve (the grounding gate) →
+  materialise → send.
+- `GET /api/commercial-opportunities/:id/outcome` and `GET …/outcomes` read the
+  outcome graph.
 
 ## Invariants (don't break these)
 
@@ -105,16 +113,109 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
     `merge_method: merge`, pinned to the full head SHA (`git rev-parse`).
   - After merging, unsubscribe and delete the check-in.
 - **Commits** end with the session's Co-Authored-By and Claude-Session lines.
+- **One phase per PR.** If you start the next phase while a PR is in CI, keep the work
+  local, uncommitted or in a local commit. Once the PR merges, restart the branch
+  from `origin/master` and cherry-pick the work. Pushing earlier would add it to
+  the open PR.
+
+## Lessons from the phase 8–10 session
+
+- **Check exit codes, not grep's.** `cmd | grep … && git push` pushed a failing test
+  once. Run a test step on its own, then check `$?` before committing.
+- **CodeQL runs as its own check, separate from CI.** A host-like substring check in a
+  test, such as `x.includes('news.example.org')`, raises a high "incomplete URL
+  substring sanitization" alert. Compare against the computed value instead.
+- **Reading alerts:** the code-scanning API returns 403 from here. Use
+  `gh api repos/<o>/<r>/check-runs/<id>/annotations` instead.
+- **Job logs:** `gh api …/jobs/<id>/logs` is blocked (blob storage 403). Use the GitHub
+  tool `get_job_logs` with `return_content: true`.
+- **Waiting on CI:** use a background loop on
+  `gh api "repos/<o>/<r>/commits/<sha>/check-runs?check_name=required"`, which
+  re-invokes you when it exits. The `required` check aggregates every job.
+- **Re-runs:** a failed job can only be re-run after the whole workflow completes
+  (`…/runs/<id>/rerun-failed-jobs`).
+- **Known web-suite fragility.** `OpsShifts.test.tsx` has timing-sensitive tests
+  that already retry. One timed out once in CI. A leaked poll timer in
+  `settingsSections.ts` was fixed in #325. Read the vitest output for "Unhandled
+  Errors" before calling a failure a flake.
+- **Route order.** In `routes/commercialOpportunities.ts`, a static path such as
+  `/outcomes` must be registered before `/:id`.
+- **OpenAI in DB tests.** Stub `globalThis.fetch` for OpenAI URLs only, and pass
+  other URLs through, because the test server uses fetch. See
+  `tests-db/opportunity-intent.test.ts`.
 
 ## Next phases (to do)
 
-### Phase 11: Closed-loop learning
-- Attribute each outcome to a cause: wrong signal, wrong timing, wrong contact, bad
-  message, or lost to a competitor.
-- Proposals go to `LearningRecommendation` (a human approves). Shadow by default.
-- Start from `buildOutcomeChain` (phase 10): the chain says how far each
-  opportunity got and when, so "no reply", "lost after the quote" and so on are
-  readable from it.
+### Phase 11: Closed-loop learning (next)
+
+**Goal.** For every opportunity that closed or stalled, say why, and turn repeated
+causes into proposals a human approves.
+
+**Build on:**
+- `lib/outcomeGraph.ts`: `buildOutcomeChain` gives each chain's nodes, final
+  outcome and attribution. `outcomeGraphStore.ts` has batched, workspace-scoped
+  loaders.
+- `CommercialOpportunity`: its `scorecard`, `buyingStageDetail`, `recommendation`
+  (with citations and ages) and `intelligenceGate`, and its `CommercialEvent`
+  status (an ACTIVE event that went STALE suggests the signal was wrong).
+- `OutreachSent`: `replyIntent` is one of INTERESTED, NOT_INTERESTED,
+  NEEDS_MORE_INFO, NOT_NOW, OUT_OF_OFFICE or REFERRAL; `status` includes BOUNCED.
+- `OutreachIntent.grounding`, which records whether the draft that went out was
+  grounded.
+- The existing learning loop:
+  - `LearningRecommendation` model: its types today are ICP_INDUSTRY, ICP_SIZE and
+    SIGNAL_WEIGHT; its statuses are PENDING, APPROVED, REJECTED, SUPERSEDED and
+    APPLIED_AUTOMATICALLY.
+  - `lib/learningDecisions.ts`: the only path that applies a proposal. It's
+    race-safe, stale-safe, expiring and audited.
+  - `apps/worker/src/processors.ts` `calibrateScoring`: gated by
+    `LEARNING_ADAPTATION_MODE` (off, shadow, approved or live).
+  - `routes/workspaces/learning.ts`.
+
+**Suggested shape.** Keep it deterministic, with no model calls.
+
+1. **`lib/outcomeCauses.ts` (pure).** `attributeCause(chain, opportunity, sends)`
+   returns `{ cause, confidence, reasons[] }`. Its causes:
+
+   | Cause | Signs |
+   |---|---|
+   | WRONG_SIGNAL | The event went STALE, the intelligence gate was false, or the stage regressed |
+   | WRONG_TIMING | The reply was NOT_NOW, the send went out before ACTIVE_REQUIREMENT, or the evidence was more than N days old at send |
+   | WRONG_CONTACT | A bounce, a REFERRAL reply, or low contactability |
+   | BAD_MESSAGE | A good opportunity (corroborated, active stage) was sent to and got no reply within N days, or the draft wasn't grounded |
+   | LOST_TO_COMPETITOR | LOST with high competition, or after a quote |
+   | UNKNOWN | None of the above |
+
+   Only closed chains (WON or LOST), or chains stalled past a window, get a cause.
+   WON gets `cause: null`.
+2. **`summarizeCauses` (pure).** Counts per cause, per event kind, per offer and per
+   buying stage, with sample sizes. Below a minimum sample (reuse
+   `learningLoopMinOutcomes()`), report it but don't propose.
+3. **Proposals → `LearningRecommendation`, PENDING only (shadow).** Never
+   APPLIED_AUTOMATICALLY in this phase, even when the mode is `live`.
+   - **Decision needed from the user:** should the new proposal types be
+     advisory or config-writing?
+     - Advisory: approving acknowledges the proposal; nothing changes.
+     - Config-writing: for example an event-kind weight, or the WAIT days per
+       stage. This needs `valueSchemas` and `writeLive` cases in
+       `learningDecisions.ts` and somewhere to store the config.
+   - **Recommendation:** advisory types in phase 11 (e.g. `OPPORTUNITY_CAUSE`), with
+     `evidence` holding the counts and example opportunity ids. Leave config-writing
+     to phase 12, which owns the weights.
+   - **Ask the user before building config-writing types.**
+4. **Hook.** A worker step next to `calibrateScoring`, under the same mode gate
+   (`off` does nothing). Supersede older PENDING proposals of the same type, the
+   way `calibrateScoring` does.
+5. **API.**
+   - Add `cause` to `GET /api/commercial-opportunities/:id/outcome`.
+   - Add cause counts to `GET …/outcomes`.
+   - Proposals show up in the existing learning routes.
+6. **Tests.**
+   - Unit tests: one per cause, the precedence between causes, and summary sample
+     thresholds.
+   - DB tests: seed chains, then run the hook. Check that PENDING proposals appear,
+     that `off` writes nothing, and that `live` still doesn't auto-apply.
+   - Mutation-check the cause rules.
 
 ### Phase 12: Signal calibration
 - Conversion rates: signal → opportunity → conversation → quote → win → revenue.
@@ -146,11 +247,14 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 - `syncEvents` rewrites evidence links on every rescore. It's correct but write-heavy;
   skip unchanged events if it shows up in load.
 - Scoring weights are hand-set until phases 11–12.
+- `ProspectOutcome` is per prospect, so one recorded win counts toward each of the
+  prospect's opportunities (one per offer).
 - Draft grounding checks specifics (numbers, amounts, percentages) and fact use; a
   qualitative invented claim with no number isn't caught deterministically.
 
 ## Kick-off prompt for the next session
 
 > Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 11
-> (closed-loop learning), following the invariants and workflow there. Open a PR and
-> merge it when CI is green. Be conservative with tokens.
+> (closed-loop learning), following the invariants, workflow and lessons there. Before
+> building config-writing proposal types, ask me (the plan recommends advisory types
+> first). Open a PR and merge it when CI is green. Be conservative with tokens.
