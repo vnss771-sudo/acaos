@@ -18,6 +18,14 @@ import { prisma } from './prisma.js'
 import { auditCreateData } from './audit.js'
 import { sameJson } from './learningLoop.js'
 import { DEFAULT_SCORING_WEIGHTS, DEFAULT_SCORING_METRICS } from './scoring.js'
+import { OPPORTUNITY_CAUSE_TYPE } from './outcomeCauses.js'
+
+/**
+ * Advisory proposal types (outcomeLearning.ts): approving one records that a
+ * human reviewed it; nothing in the workspace's configuration changes, so there
+ * is nothing to revert.
+ */
+export const ADVISORY_TYPES: ReadonlySet<string> = new Set([OPPORTUNITY_CAUSE_TYPE])
 
 export type DecisionAction = 'approve' | 'reject' | 'revert'
 
@@ -98,7 +106,8 @@ export async function decideRecommendation(input: {
     const rec = await tx.learningRecommendation.findFirst({ where: { id: recommendationId, workspaceId } })
     if (!rec) throw new DecisionError(404, 'Recommendation not found')
     const type = rec.type as RecType
-    if (!(type in valueSchemas)) throw new DecisionError(422, `Unsupported recommendation type ${rec.type}`)
+    const advisory = ADVISORY_TYPES.has(rec.type)
+    if (!advisory && !(type in valueSchemas)) throw new DecisionError(422, `Unsupported recommendation type ${rec.type}`)
 
     // Claim the transition atomically: only one decider can move it out of `from`.
     const transition = async (from: string[], to: string) => {
@@ -120,6 +129,18 @@ export async function decideRecommendation(input: {
 
     if (action === 'reject') {
       await transition(['PENDING'], 'REJECTED')
+      await audit(null, null)
+      return { rec, before: null, after: null }
+    }
+
+    if (advisory) {
+      if (action === 'revert') throw new DecisionError(422, 'This recommendation is advisory — approving it changed nothing, so there is nothing to revert')
+      if (rec.status !== 'PENDING') throw new DecisionError(409, 'This recommendation was already decided')
+      if (isExpired(rec.createdAt, now)) {
+        await transition(['PENDING'], 'EXPIRED')
+        return { rec: null, before: null, after: null }
+      }
+      await transition(['PENDING'], 'APPROVED')
       await audit(null, null)
       return { rec, before: null, after: null }
     }

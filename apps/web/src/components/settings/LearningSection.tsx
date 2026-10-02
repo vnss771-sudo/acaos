@@ -43,12 +43,29 @@ const STATUS_LABEL: Record<string, string> = {
   APPROVED: 'Accepted', REJECTED: 'Rejected', REVERTED: 'Reverted', EXPIRED: 'Expired', APPLIED_AUTOMATICALLY: 'Applied automatically',
 }
 
+// Advisory proposals (closed-loop learning): accepting acknowledges them; nothing changes.
+const ADVISORY = new Set(['OPPORTUNITY_CAUSE'])
+const CAUSE_LABEL: Record<string, string> = {
+  LOST_TO_COMPETITOR: 'Lost to a competitor', WRONG_CONTACT: 'Wrong contact', WRONG_TIMING: 'Wrong timing',
+  WRONG_SIGNAL: 'Wrong signal', BAD_MESSAGE: 'Message didn\'t land',
+}
+
 // Plain-language headline for a proposal: what would change, in customer terms.
 function describeRecommendation(r: LearningRecommendationDto): { title: string; from: string; to: string } {
   const list = (v: unknown) => (Array.isArray(v) && v.length ? v.join(', ') : 'none set')
   const size = (v: unknown) => {
     const o = (v ?? {}) as { minEmployees?: number | null; maxEmployees?: number | null }
     return o.minEmployees == null && o.maxEmployees == null ? 'any size' : `${o.minEmployees ?? '?'}–${o.maxEmployees ?? '?'} employees`
+  }
+  if (r.type === 'OPPORTUNITY_CAUSE') {
+    const findings = ((r.proposedValue ?? {}) as { findings?: Array<{ cause: string; dimension: string; value: string; advice: string }> }).findings ?? []
+    const dim = (d: string) => (d === 'offerKey' ? 'offer' : d === 'buyingStage' ? 'buying stage' : 'event')
+    const top = findings[0]
+    return {
+      title: top ? `${top.advice}${findings.length > 1 ? ` (+${findings.length - 1} more)` : ''}` : 'Review why opportunities closed or stalled',
+      from: findings.map(f => `${CAUSE_LABEL[f.cause] ?? f.cause} for ${dim(f.dimension)} ${f.value}`).join('; ') || 'no repeated cause',
+      to: 'advisory — accepting changes nothing',
+    }
   }
   if (r.type === 'ICP_INDUSTRY') return { title: 'Focus on the industries that are converting best', from: list(r.currentValue), to: list(r.proposedValue) }
   if (r.type === 'ICP_SIZE') return { title: 'Adjust the company size you target', from: size(r.currentValue), to: size(r.proposedValue) }
@@ -60,6 +77,14 @@ function Evidence({ r }: { r: LearningRecommendationDto }) {
   const e = r.evidence as {
     totalOutcomes?: number; baselineWinRate?: number; industries?: SegmentInsight[]; basis?: string; method?: string
     confidence?: string; recencyHalfLifeDays?: number; calibrationVersion?: number
+  }
+  if (ADVISORY.has(r.type)) {
+    return (
+      <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 8 }}>
+        <div>{e.basis ?? `Based on ${r.sampleSize} closed or stalled opportunities`}</div>
+        <div style={{ marginTop: 2 }}>{` Proposed ${new Date(r.createdAt).toLocaleDateString()}`}</div>
+      </div>
+    )
   }
   return (
     <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 8 }}>
@@ -124,7 +149,7 @@ export function LearningSection({ api, workspaceId, toast, canManage }: Props) {
       if (action === 'approve') await route('POST /api/workspaces/:id/learning-recommendations/:recId/approve', { params })
       else if (action === 'reject') await route('POST /api/workspaces/:id/learning-recommendations/:recId/reject', { params })
       else await route('POST /api/workspaces/:id/learning-recommendations/:recId/revert', { params })
-      toast.success(action === 'approve' ? 'Change applied' : action === 'reject' ? 'Recommendation dismissed' : 'Change reverted')
+      toast.success(action === 'approve' ? (ADVISORY.has(r.type) ? 'Noted' : 'Change applied') : action === 'reject' ? 'Recommendation dismissed' : 'Change reverted')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed')
     } finally {
@@ -181,7 +206,7 @@ export function LearningSection({ api, workspaceId, toast, canManage }: Props) {
           <div style={{ color: colors.textFaint, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>History</div>
           {history.map(r => {
             const d = describeRecommendation(r)
-            const revertable = canManage && (r.status === 'APPROVED' || r.status === 'APPLIED_AUTOMATICALLY')
+            const revertable = canManage && !ADVISORY.has(r.type) && (r.status === 'APPROVED' || r.status === 'APPLIED_AUTOMATICALLY')
             return (
               <div key={r.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, color: colors.textMuted, padding: '4px 0' }}>
                 <span style={{ flex: 1 }}>{d.title} — {STATUS_LABEL[r.status] ?? r.status}{r.decidedAt ? ` ${new Date(r.decidedAt).toLocaleDateString()}` : ''}</span>
