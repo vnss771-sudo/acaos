@@ -22,6 +22,12 @@ async function assertMember(userId: string, workspaceId: string) {
   if (!(await userBelongsToWorkspace(userId, workspaceId))) throw new ApiError(403, 'Access denied')
 }
 
+const ORDER_BY = {
+  priority: [{ priority: 'desc' as const }, { confidence: 'desc' as const }, { id: 'asc' as const }],
+  expectedValue: [{ expectedValueCents: { sort: 'desc' as const, nulls: 'last' as const } }, { priority: 'desc' as const }, { id: 'asc' as const }],
+  confidence: [{ confidence: 'desc' as const }, { priority: 'desc' as const }, { id: 'asc' as const }],
+}
+
 /** Statuses hidden from the default list: closed out by the operator or the engine. */
 const HIDDEN_BY_DEFAULT = ['DISMISSED', 'EXPIRED']
 
@@ -29,6 +35,9 @@ const listQuerySchema = z.object({
   workspaceId: workspaceIdField,
   status: z.enum(COMMERCIAL_OPPORTUNITY_STATUSES).optional(),
   prospectId: idField.optional(),
+  // priority (default): value × probability × urgency. expectedValue: value ×
+  // probability (unknown values last). confidence: how sure the event is real.
+  sort: z.enum(['priority', 'expectedValue', 'confidence']).optional(),
   page: z.coerce.number().optional(),
   limit: z.coerce.number().optional(),
 })
@@ -36,7 +45,8 @@ const listQuerySchema = z.object({
 const LIST_SELECT = {
   id: true, prospectId: true, offerId: true, missionId: true, offerKey: true,
   eventType: true, eventTitle: true, whyNow: true, confidence: true, evidenceConfidence: true,
-  independentSources: true, offerFit: true, timingScore: true, contactability: true,
+  independentSources: true, offerFit: true, intentScore: true, timingScore: true, contactability: true,
+  competition: true, valueScore: true, expectedValueCents: true,
   estimatedValueMinCents: true, estimatedValueMaxCents: true, probability: true, urgency: true,
   priority: true, buyingStage: true, recommendedBuyer: true, recommendedAction: true, actionLabel: true,
   actionReason: true, intelligenceGate: true, status: true, firstDetectedAt: true, lastAssessedAt: true,
@@ -44,8 +54,8 @@ const LIST_SELECT = {
   offer: { select: { id: true, name: true } },
 }
 
-// GET /api/commercial-opportunities — highest priority first. Without ?status,
-// DISMISSED and EXPIRED are hidden.
+// GET /api/commercial-opportunities — highest priority first (or ?sort=
+// expectedValue | confidence). Without ?status, DISMISSED and EXPIRED are hidden.
 commercialOpportunitiesRouter.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -63,7 +73,7 @@ commercialOpportunitiesRouter.get(
     const [opportunities, total, grouped] = await Promise.all([
       prisma.commercialOpportunity.findMany({
         where,
-        orderBy: [{ priority: 'desc' }, { confidence: 'desc' }, { id: 'asc' }],
+        orderBy: ORDER_BY[q.sort ?? 'priority'],
         skip: (page - 1) * limit,
         take: limit,
         select: LIST_SELECT,
