@@ -8,6 +8,7 @@ import { COMMERCIAL_OPPORTUNITY_STATUSES, bridgesRecommendation, refreshCommerci
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { proposeIntentForOpportunity } from '@acaos/backend-core/lib/opportunityIntent.js'
 import { loadOutcomeChain, loadOutcomeSummary } from '@acaos/backend-core/lib/outcomeGraphStore.js'
+import { loadCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type { Assert, Extends, UpdateCommercialOpportunityStatusRequest, RefreshCommercialOpportunitiesRequest } from '@acaos/shared'
@@ -100,6 +101,19 @@ commercialOpportunitiesRouter.get(
     const q = parseQuery(z.object({ workspaceId: workspaceIdField, since: z.coerce.date().optional() }), req)
     await assertMember(user.id, q.workspaceId)
     res.json({ summary: await loadOutcomeSummary(q.workspaceId, { since: q.since }) })
+  })
+)
+
+// GET /api/commercial-opportunities/calibration — which event kinds turn into
+// revenue: the funnel per kind, combination lift, the approved weights and what
+// calibration would propose now. Read-only; proposals go through learning.
+commercialOpportunitiesRouter.get(
+  '/calibration',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseQuery(z.object({ workspaceId: workspaceIdField }), req)
+    await assertMember(user.id, workspaceId)
+    res.json(await loadCalibration(workspaceId))
   })
 )
 

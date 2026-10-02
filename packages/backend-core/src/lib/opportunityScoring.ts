@@ -35,6 +35,8 @@ export type OpportunityScorecard = {
   contactability: ScoreDimension
   /** How hard is it to win? (0 = uncontested, 100 = fiercely contested.) */
   competition: ScoreDimension
+  /** The approved event-kind calibration weight applied to probability (1 = none). */
+  calibration: { weight: number; reason: string }
   /** 0..1 */
   probability: number
   urgency: Urgency
@@ -58,6 +60,8 @@ export type ScorecardInput = {
   contact: { name?: string | null; email?: string | null; title?: string | null; targetTitles: string[] }
   deal: { minCents: number | null; maxCents: number | null; minimumCents: number | null }
   now: number
+  /** Approved calibration weight for the event kind (signalCalibration.ts); 1 = neutral. */
+  eventKindWeight?: number
 }
 
 /** How strongly each event family indicates a need, before evidence strength. */
@@ -180,7 +184,10 @@ export function scoreOpportunity(input: ScorecardInput): OpportunityScorecard {
   const intentAdj = 0.7 + 0.3 * (intentScore / 100)           // 0.70 – 1.00
   const contactAdj = 0.8 + 0.2 * (contactScore / 100)         // 0.80 – 1.00
   const competitionAdj = 1 - 0.4 * (competitionScore / 100)   // 0.60 – 1.00
-  const probability = Math.round((input.confidence / 100) * (input.offerFit.score / 100) * intentAdj * contactAdj * competitionAdj * 1000) / 1000
+  // Calibration (phase 12): a human-approved, bounded weight for how often this
+  // event kind has actually turned into wins in this workspace.
+  const calibrationWeight = input.eventKindWeight ?? 1
+  const probability = Math.min(1, Math.round((input.confidence / 100) * (input.offerFit.score / 100) * intentAdj * contactAdj * competitionAdj * calibrationWeight * 1000) / 1000)
   const expectedValueCents = mid != null ? Math.round(mid * probability) : null
   // Scaled so a 0.6 probability, high urgency, $1M+ opportunity is priority 100
   // (realistic probabilities top out around 0.8 after the competition adjustment).
@@ -196,5 +203,11 @@ export function scoreOpportunity(input: ScorecardInput): OpportunityScorecard {
         : 'Not yet corroborated by an independent source',
     },
     contactability, competition, probability, urgency, expectedValueCents, priority,
+    calibration: {
+      weight: calibrationWeight,
+      reason: calibrationWeight === 1
+        ? 'No calibrated weight for this event kind'
+        : `${event.kind.toLowerCase().replace(/_/g, ' ')} has ${calibrationWeight > 1 ? 'out' : 'under'}performed in this workspace (×${calibrationWeight})`,
+    },
   }
 }

@@ -84,4 +84,19 @@ describe('LearningSection', () => {
     await waitFor(() => expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/learning-recommendations/r4/approve', expect.objectContaining({ method: 'POST' })))
     expect(toast.success).toHaveBeenCalledWith('Noted')
   })
+
+  test('event-kind weight proposals show what would change, and can be reverted once accepted', async () => {
+    const weights = {
+      ...base, id: 'r6', type: 'EVENT_KIND_WEIGHT', status: 'PENDING', decidedAt: null, expired: false,
+      currentValue: { HIRING_SURGE: 0.8 }, proposedValue: { HIRING_SURGE: 0.8, TENDER_OPPORTUNITY: 1.3 }, evidence: {},
+    }
+    const accepted = { ...weights, id: 'r7', status: 'APPROVED', decidedAt: '2026-09-02T00:00:00Z' }
+    const api = apiWith([weights, accepted])
+    render(<LearningSection api={api as never} workspaceId="ws1" toast={toast as never} canManage />)
+    expect(await screen.findByText('Weight commercial events by how often they turned into wins')).toBeInTheDocument()
+    expect(screen.getByText(/tender opportunity ×1\.3/)).toBeInTheDocument()
+    expect(screen.getByText(/1 calibrated event/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Revert' }))
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/learning-recommendations/r7/revert', expect.objectContaining({ method: 'POST' })))
+  })
 })

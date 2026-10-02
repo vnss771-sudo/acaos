@@ -554,6 +554,9 @@ model ScoringModel {
   workspaceId        String           @unique
   weights            Json
   signalWeights      Json?
+  // Approved event-kind calibration weights (lib/signalCalibration.ts), 0.5–1.5
+  // per kind; applied to opportunity probability. Null until one is approved.
+  eventKindWeights   Json?
   performanceMetrics Json
   updateCount        Int              @default(0)
   lastWeightUpdate   DateTime?

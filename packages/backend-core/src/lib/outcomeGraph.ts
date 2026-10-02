@@ -159,7 +159,7 @@ export type OutcomeSummary = {
 }
 
 /** The stages a chain reached, counting the earlier buyer stages a later one implies. */
-function reachedStages(c: OutcomeChain): Set<OutcomeGraphStage> {
+export function reachedStages(c: OutcomeChain): Set<OutcomeGraphStage> {
   const stages = new Set(c.nodes.map(n => n.stage))
   const out = new Set<OutcomeGraphStage>()
   for (const s of OUTCOME_STAGES) {
