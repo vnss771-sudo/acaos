@@ -1103,23 +1103,27 @@ model EvidenceSource {
 }
 
 model Recommendation {
-  id             String          @id @default(cuid())
-  workspaceId    String
-  prospectId     String
-  bestContact    String?
-  bestTiming     String?
-  bestChannel    String?
-  messageAngle   String?
-  reasoning      String?
-  actionText     String?
-  urgency        String          @default("MEDIUM")
-  priority       Int             @default(50)
-  expiresAt      DateTime?
-  actedAt        DateTime?
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  prospect       Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
-  outreachIntent OutreachIntent?
-  createdAt      DateTime        @default(now())
+  id                      String                 @id @default(cuid())
+  workspaceId             String
+  prospectId              String
+  bestContact             String?
+  bestTiming              String?
+  bestChannel             String?
+  messageAngle            String?
+  reasoning               String?
+  actionText              String?
+  urgency                 String                 @default("MEDIUM")
+  priority                Int                    @default(50)
+  expiresAt               DateTime?
+  actedAt                 DateTime?
+  workspace               Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect                Prospect               @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  outreachIntent          OutreachIntent?
+  // Set when the recommendation engine (lib/recommendationEngine.ts) made this
+  // row for a commercial opportunity: one per opportunity, refreshed in place.
+  commercialOpportunityId String?                @unique
+  commercialOpportunity   CommercialOpportunity? @relation(fields: [commercialOpportunityId], references: [id], onDelete: SetNull)
+  createdAt               DateTime               @default(now())
 
   @@index([workspaceId])
   @@index([prospectId])
@@ -1735,6 +1739,10 @@ model CommercialOpportunity {
   evidence               Json // EvidenceClaim[]
   velocity               Json // SignalVelocity[]
   intelligenceGate       Boolean
+  // The explained move (lib/recommendationEngine.ts). Nullable: null when the
+  // move can't be explained (gate 2) or the row predates phase 8.
+  recommendationKind     String?
+  recommendation         Json?
   status                 String           @default("OPEN")
   statusChangedAt        DateTime?
   statusChangedByUserId  String?
@@ -1746,8 +1754,10 @@ model CommercialOpportunity {
   prospect               Prospect         @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   offer                  Offer?           @relation(fields: [offerId], references: [id], onDelete: SetNull)
   commercialEvent        CommercialEvent? @relation(fields: [commercialEventId], references: [id], onDelete: SetNull)
+  bridgeRecommendation   Recommendation?
 
   @@unique([workspaceId, prospectId, offerKey])
+  @@index([workspaceId, status, recommendationKind])
   @@index([workspaceId, status, priority])
   @@index([workspaceId, status, expectedValueCents])
   @@index([prospectId])

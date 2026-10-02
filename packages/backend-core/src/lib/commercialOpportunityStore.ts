@@ -11,7 +11,13 @@
 //   gone/inactive), the row becomes EXPIRED; fresh evidence re-opens it.
 // - Operator statuses (PURSUING, WON, LOST, DISMISSED) are never overwritten:
 //   the assessment fields refresh, the status stays the operator's.
+// - Each assessment carries its recommendation (recommendationEngine.ts). An
+//   outreach move on an OPEN or PURSUING row is mirrored into one Recommendation
+//   row (the entry to the intent → approval → send bridge), refreshed in place
+//   until someone acts on it; otherwise that row is retired (expiresAt = now).
+//   Nothing is sent from here.
 // Callers rescore first; this reads the persisted signals.
+import { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { MAX_SIGNALS_FOR_SCORING } from './signalEngine.js'
 import { toCanonicalSignal } from './signalIntelligence.js'
@@ -19,6 +25,7 @@ import { offerFromMission, offerFromRow, type OfferDefinition, type OfferRow } f
 import { assessOpportunity, type OpportunityAssessment } from './opportunityEngine.js'
 import { detectCommercialEvents, type CommercialEventHypothesis } from './commercialEventEngine.js'
 import type { EngagementStage } from './buyingStage.js'
+import type { OpportunityRecommendation } from './recommendationEngine.js'
 
 export const COMMERCIAL_OPPORTUNITY_STATUSES = ['OPEN', 'PURSUING', 'WON', 'LOST', 'DISMISSED', 'EXPIRED'] as const
 export type CommercialOpportunityStatus = (typeof COMMERCIAL_OPPORTUNITY_STATUSES)[number]
@@ -148,6 +155,66 @@ function assessmentData(a: OpportunityAssessment, commercialEventId: string | nu
     evidence: a.evidence,
     velocity: a.velocity,
     intelligenceGate: a.gates.intelligenceTruth,
+    recommendationKind: a.recommendation?.kind ?? null,
+    recommendation: a.recommendation ?? Prisma.JsonNull,
+  }
+}
+
+/** Statuses whose outreach recommendation stays live in the bridge. */
+const BRIDGE_STATUSES = new Set(['OPEN', 'PURSUING'])
+/** How long a bridged recommendation stays live without a rescore. */
+const BRIDGE_TTL_DAYS = 7
+
+/** Whether an opportunity in this status keeps its bridged recommendation live. */
+export function bridgesRecommendation(status: string): boolean {
+  return BRIDGE_STATUSES.has(status)
+}
+
+/** Retire the un-acted bridge row for an opportunity, if it's still live. */
+export async function retireBridge(workspaceId: string, commercialOpportunityId: string, now: Date): Promise<void> {
+  await prisma.recommendation.updateMany({
+    where: { workspaceId, commercialOpportunityId, actedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    data: { expiresAt: now },
+  })
+}
+
+/**
+ * Keep the opportunity's Recommendation row in step with its recommendation.
+ * Only an outreach move on an OPEN/PURSUING opportunity is bridged; a row
+ * someone has acted on is never rewritten.
+ */
+async function syncBridge(
+  prospect: ProspectWithSignals,
+  opp: { id: string; status: string },
+  rec: OpportunityRecommendation | null,
+  recommendedBuyer: string | null,
+  now: Date,
+): Promise<void> {
+  if (!rec || !rec.outreach || !bridgesRecommendation(opp.status)) {
+    await retireBridge(prospect.workspaceId, opp.id, now)
+    return
+  }
+  const data = {
+    bestContact: recommendedBuyer,
+    bestTiming: rec.urgency === 'HIGH' ? 'Now' : 'This week',
+    bestChannel: 'email',
+    messageAngle: rec.headline,
+    reasoning: rec.why.join(' · '),
+    actionText: rec.label,
+    urgency: rec.urgency,
+    priority: rec.priority,
+    expiresAt: new Date(now.getTime() + BRIDGE_TTL_DAYS * 86_400_000),
+  }
+  const existing = await prisma.recommendation.findFirst({
+    where: { workspaceId: prospect.workspaceId, commercialOpportunityId: opp.id },
+    select: { id: true, actedAt: true },
+  }) as { id: string; actedAt: Date | null } | null
+  if (!existing) {
+    await prisma.recommendation.create({
+      data: { workspaceId: prospect.workspaceId, prospectId: prospect.id, commercialOpportunityId: opp.id, ...data },
+    })
+  } else if (!existing.actedAt) {
+    await prisma.recommendation.update({ where: { id: existing.id }, data })
   }
 }
 
@@ -226,15 +293,18 @@ async function refreshOne(
     const row = byKey.get(offer.key)
     if (a) {
       const data = assessmentData(a, idByKind.get(a.eventType) ?? null)
-      await prisma.commercialOpportunity.upsert({
+      const saved = await prisma.commercialOpportunity.upsert({
         where: { workspaceId_prospectId_offerKey: { workspaceId: prospect.workspaceId, prospectId: prospect.id, offerKey: offer.key } },
         create: { workspaceId: prospect.workspaceId, prospectId: prospect.id, offerKey: offer.key, ...data, firstDetectedAt: now, lastAssessedAt: now },
         // Re-open an EXPIRED row on fresh evidence; never touch an operator status.
         update: { ...data, lastAssessedAt: now, ...(row?.status === 'EXPIRED' ? { status: 'OPEN', statusChangedAt: now, statusChangedByUserId: null } : {}) },
-      })
+        select: { id: true, status: true },
+      }) as { id: string; status: string }
+      await syncBridge(prospect, saved, a.recommendation, a.recommendedBuyer, now)
       upserted++
     } else if (row?.status === 'OPEN') {
       await prisma.commercialOpportunity.update({ where: { id: row.id }, data: { status: 'EXPIRED', statusChangedAt: now, statusChangedByUserId: null, lastAssessedAt: now } })
+      await retireBridge(prospect.workspaceId, row.id, now)
       expired++
     }
   }
@@ -244,6 +314,7 @@ async function refreshOne(
   for (const row of existing) {
     if (!seen.has(row.offerKey) && row.status === 'OPEN') {
       await prisma.commercialOpportunity.update({ where: { id: row.id }, data: { status: 'EXPIRED', statusChangedAt: now, statusChangedByUserId: null, lastAssessedAt: now } })
+      await retireBridge(prospect.workspaceId, row.id, now)
       expired++
     }
   }
