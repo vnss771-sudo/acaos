@@ -23,6 +23,7 @@ import { chooseNextBestAction, type NextBestAction } from './nextBestAction.js'
 import { evaluateOffer, offerTerms, type OfferDefinition } from './offerModel.js'
 import { calculateOpportunityScores } from './signalEngine.js'
 import { scoreOpportunity, type OpportunityScorecard } from './opportunityScoring.js'
+import { inferBuyingStage, type BuyingStageAssessment, type BuyingStageV2, type EngagementStage } from './buyingStage.js'
 import {
   assessSignalQuality, eventDate, signalVelocity, toRawFromCanonical,
   type CanonicalSignal, type SignalVelocity,
@@ -31,12 +32,8 @@ import {
 export type { EvidenceClaim } from './commercialEventEngine.js'
 export { SINGLE_SOURCE_CONFIDENCE_CAP as UNCORROBORATED_CONFIDENCE_CAP } from './commercialEventEngine.js'
 
-/**
- * Where the buyer is in the buying process, inferred from the event family.
- * Provisional (a rules mapping) until outcome data can calibrate it.
- */
-export type OpportunityBuyingStage =
-  | 'EMERGING_TRIGGER' | 'PROBLEM_LIKELY' | 'ACTIVE_REQUIREMENT' | 'EVALUATING_SOLUTIONS'
+/** Where the buyer is in the buying process (buyingStage.ts). */
+export type OpportunityBuyingStage = BuyingStageV2
 
 export type OpportunityAssessment = {
   offerKey: string
@@ -74,6 +71,8 @@ export type OpportunityAssessment = {
   /** Every dimension with its reason. */
   scorecard: OpportunityScorecard
   buyingStage: OpportunityBuyingStage
+  /** Stage confidence, reasons and the move that fits the stage. */
+  buyingStageDetail: BuyingStageAssessment
   recommendedBuyer: string | null
   recommendedAction: NextBestAction['action']
   actionLabel: string
@@ -96,6 +95,8 @@ export type OpportunityProspect = {
   contactName?: string | null
   contactEmail?: string | null
   contactTitle?: string | null
+  /** Recorded engagement (Prospect.outcomeStage) — moves the buying stage on. */
+  outcomeStage?: EngagementStage | null
 }
 
 export type AssessOpportunityInput = {
@@ -105,17 +106,6 @@ export type AssessOpportunityInput = {
   /** Pre-computed events for these signals (the store detects once per prospect). */
   events?: CommercialEventHypothesis[]
   now?: number
-}
-
-function stageFor(family: EventFamily, confidence: number): OpportunityBuyingStage {
-  switch (family) {
-    case 'ACTIVE_PROCUREMENT': return 'EVALUATING_SOLUTIONS'
-    case 'CAPACITY_EXPANSION': return confidence >= 75 ? 'ACTIVE_REQUIREMENT' : 'PROBLEM_LIKELY'
-    case 'GROWTH_EVENT':
-    case 'ORGANISATIONAL_CHANGE':
-    case 'DIGITAL_CHANGE': return 'PROBLEM_LIKELY'
-    default: return 'EMERGING_TRIGGER'
-  }
 }
 
 /** How far back company evidence can disqualify an offer ("in liquidation"). */
@@ -182,6 +172,16 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     opportunityScore: scores.opportunityScore,
   })
   let action: NextBestAction = nba
+  const stage = inferBuyingStage({ events, engagement: prospect.outcomeStage })
+  if (nba.action === 'CONTACT_NOW' && intelligenceTruth && !stage.outreachAppropriate) {
+    // Stage gate: real evidence, but the buyer isn't at a stage where asking for
+    // business fits — make the stage's move instead.
+    action = {
+      action: 'RESEARCH_CONTACT', label: stage.play.move, urgency: 'MEDIUM',
+      reason: `The buyer looks to be at "${stage.stage.toLowerCase().replace(/_/g, ' ')}" — ${stage.play.messageGoal.toLowerCase()} before selling.`,
+      blockers: [...nba.blockers, 'Buying stage is before an active requirement'],
+    }
+  }
   if (nba.action === 'CONTACT_NOW' && !intelligenceTruth) {
     action = {
       action: 'RESEARCH_CONTACT', label: 'Confirm the evidence before outreach', urgency: 'MEDIUM',
@@ -231,7 +231,8 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     urgency: scorecard.urgency,
     priority: scorecard.priority,
     scorecard,
-    buyingStage: stageFor(chosen.family, confidence),
+    buyingStage: stage.stage,
+    buyingStageDetail: stage,
     recommendedBuyer: offer.targetBuyerTitles[0] ?? prospect.contactTitle ?? null,
     recommendedAction: action.action,
     actionLabel: action.label,

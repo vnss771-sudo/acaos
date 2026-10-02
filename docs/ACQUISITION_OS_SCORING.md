@@ -48,3 +48,32 @@ change fill in on their next assessment.
 - **Competition is inferred from the type of event.** It doesn't yet know about actual
   incumbents or the number of bidders. Tender records in `Opportunity` could supply
   bidder counts later.
+
+# Buying-Stage Intelligence (phase 7)
+
+`lib/buyingStage.ts` answers "where is the buyer in the buying process?" instead of "is
+this a good prospect?". Each stage has its own move:
+
+| Stage | Move |
+|---|---|
+| NO_DETECTABLE_NEED | Don't contact; monitor |
+| EMERGING_TRIGGER | Don't sell yet; share something useful |
+| PROBLEM_LIKELY | Ask a qualifying question |
+| ACTIVE_REQUIREMENT | Start outreach, tied to the event |
+| EVALUATING_SOLUTIONS | Send proof: a case study or comparison |
+| BUYING_DECISION | Push toward a quote or decision meeting |
+| CUSTOMER | Deliver, then expand |
+
+How the stage is set:
+- **From events.** The stage comes from the strongest event, e.g. tender or procurement →
+  evaluating; capacity shortage, new project or hiring surge → active requirement;
+  expansion, funding or tech change → problem likely.
+- **Low confidence.** An event below 55% confidence only counts as an emerging trigger.
+- **Gate 1.** An uncorroborated event is held at "problem likely".
+- **Engagement.** Only recorded engagement on the prospect moves it further: a meeting or
+  proposal means a buying decision, and won means a customer. Evidence alone never claims
+  a buyer is deciding.
+
+**Stage gate.** "Contact now" is allowed only from active requirement up to buying
+decision. Before that, the recommendation becomes the stage's move. Stage confidence,
+reasons and the move are stored in `CommercialOpportunity.buyingStageDetail`.

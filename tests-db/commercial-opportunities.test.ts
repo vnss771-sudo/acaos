@@ -85,6 +85,8 @@ test('refresh creates a corroborated opportunity with its evidence and recommend
   // Built on the strongest triggered event: expansion + hiring, two sources.
   assert.equal(row.eventType, 'CAPACITY_EXPANSION')
   assert.equal(row.eventFamily, 'CAPACITY_EXPANSION')
+  assert.equal(row.buyingStage, 'ACTIVE_REQUIREMENT')
+  assert.equal((row.buyingStageDetail as { play: { stance: string } }).play.stance, 'ENGAGE')
   assert.equal(row.independentSources, 2)
   assert.equal(row.recommendedAction, 'CONTACT_NOW')
   const evidence = row.evidence as Array<{ signalId: string; sourceUrl: string }>

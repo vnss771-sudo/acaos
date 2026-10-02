@@ -1724,6 +1724,8 @@ model CommercialOpportunity {
   urgency                String
   priority               Int
   buyingStage            String
+  // Stage confidence, reasons and the stage's move (lib/buyingStage.ts).
+  buyingStageDetail      Json?
   recommendedBuyer       String?
   recommendedAction      String
   actionLabel            String
