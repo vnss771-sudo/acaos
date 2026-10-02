@@ -40,3 +40,12 @@ test('next-best-action can contact now only with strong, fresh evidence', () => 
   const action = chooseNextBestAction({ event, offerFit: fit, signals, hasContact: true, hasEmail: true, opportunityScore: 85 })
   assert.equal(action.action, 'CONTACT_NOW')
 })
+
+test('next-best-action holds when otherwise-good evidence has gone stale', () => {
+  const fresh = [signal('PROCUREMENT', 'Tender', 'Active procurement for external supplier'), signal('HIRING', 'Hiring', 'Operations team expanding')]
+  const event = inferCommercialEvent(fresh)
+  const fit = scoreOfferFit({ offer: 'procurement support and supplier services' }, event, fresh)
+  const stale = fresh.map(s => ({ ...s, detectedAt: new Date(Date.now() - 45 * 86_400_000) }))
+  const action = chooseNextBestAction({ event, offerFit: fit, signals: stale, hasContact: true, hasEmail: true, opportunityScore: 85 })
+  assert.equal(action.action, 'HOLD')
+})

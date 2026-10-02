@@ -49,7 +49,9 @@ export function chooseNextBestAction(args: {
   if (age <= 7 && offerFit.score >= 75 && event.confidence >= 75 && opportunityScore >= 70) {
     return { action: 'CONTACT_NOW', label: 'Contact now', urgency: 'HIGH', reason: 'Fresh, corroborated evidence strongly matches the mission offer.', blockers }
   }
-  if (age <= 30 && offerFit.score >= 70 && event.confidence >= 70) {
+  // Fit and confidence are both >= 65 here (the research gate above), so this
+  // tier only checks timing; HOLD is reserved for evidence that has gone stale.
+  if (age <= 30) {
     return { action: 'CONTACT_NOW', label: 'Contact this week', urgency: 'MEDIUM', reason: 'The opportunity is still timely and the evidence fits the offer.', blockers }
   }
   return { action: 'HOLD', label: 'Hold and watch for movement', urgency: 'LOW', reason: 'The opportunity may be real, but timing has cooled.', blockers }
