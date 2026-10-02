@@ -181,3 +181,46 @@ test('the draft is checked against the evidence; an ungrounded draft cannot be a
   assert.equal((await prisma.outreachIntent.findUniqueOrThrow({ where: { id: intentId } })).status, 'APPROVED')
   assert.equal(await prisma.outreachSent.count({ where: { workspaceId: workspace.id } }), 0, 'approval alone sends nothing')
 })
+
+test('phase 10: the outcome graph chains the opportunity through outreach, reply and recorded outcomes', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const other = await seedUserWithWorkspace('other@acme.test')
+  const { prospect, opp } = await seedOpportunity(workspace.id)
+  await seedOpportunity(workspace.id, 'Quiet Co')
+  const res = await opps.request(`/api/commercial-opportunities/${opp.id}/intent`, { method: 'POST', headers: json(user.id), body: JSON.stringify({ workspaceId: workspace.id }) })
+  const { intentId } = res.body as { intentId: string }
+
+  // The existing path did the rest: approval, a send stamped with the intent, a reply, then the deal.
+  const now = Date.now()
+  await prisma.outreachIntent.update({ where: { id: intentId }, data: { status: 'SENT', approvedAt: new Date(now + 1000) } })
+  const sent = await prisma.outreachSent.create({
+    data: { workspaceId: workspace.id, toEmail: 'sam@abc.example', status: 'REPLIED', outreachIntentId: intentId, sentAt: new Date(now + 2000), repliedAt: new Date(now + 3000), replyIntent: 'INTERESTED' },
+  })
+  await prisma.prospectOutcome.create({ data: { workspaceId: workspace.id, prospectId: prospect.id, stage: 'MEETING', recordedAt: new Date(now + 4000) } })
+  await prisma.prospectOutcome.create({ data: { workspaceId: workspace.id, prospectId: prospect.id, stage: 'WON', dealValue: 6_000_000, recordedAt: new Date(now + 5000) } })
+
+  const chainRes = await opps.request(`/api/commercial-opportunities/${opp.id}/outcome?workspaceId=${workspace.id}`, { headers: json(user.id) })
+  assert.equal(chainRes.status, 200)
+  const chain = (chainRes.body as { chain: { nodes: Array<{ stage: string; ref: { id: string } }>; final: string; revenueCents: number; attribution: string } }).chain
+  assert.deepEqual(chain.nodes.map(n => n.stage), ['DETECTED', 'RECOMMENDED', 'PROPOSED', 'APPROVED', 'SENT', 'REPLIED', 'MEETING', 'WON'])
+  assert.equal(chain.nodes.find(n => n.stage === 'SENT')?.ref.id, sent.id)
+  assert.equal(chain.final, 'WON')
+  assert.equal(chain.revenueCents, 6_000_000)
+  assert.equal(chain.attribution, 'SOURCED')
+
+  const sumRes = await opps.request(`/api/commercial-opportunities/outcomes?workspaceId=${workspace.id}`, { headers: json(user.id) })
+  assert.equal(sumRes.status, 200)
+  const summary = (sumRes.body as { summary: { opportunities: number; reached: Record<string, number>; wonRevenueCents: { sourced: number }; truncated: boolean } }).summary
+  assert.equal(summary.opportunities, 2)
+  assert.equal(summary.reached.SENT, 1)
+  assert.equal(summary.reached.WON, 1)
+  assert.equal(summary.wonRevenueCents.sourced, 6_000_000)
+  assert.equal(summary.truncated, false)
+  const future = await opps.request(`/api/commercial-opportunities/outcomes?workspaceId=${workspace.id}&since=2999-01-01`, { headers: json(user.id) })
+  assert.equal((future.body as { summary: { opportunities: number } }).summary.opportunities, 0)
+
+  // Tenant isolation and not-found.
+  assert.equal((await opps.request(`/api/commercial-opportunities/${opp.id}/outcome?workspaceId=${workspace.id}`, { headers: json(other.user.id) })).status, 403)
+  assert.equal((await opps.request(`/api/commercial-opportunities/${opp.id}/outcome?workspaceId=${other.workspace.id}`, { headers: json(other.user.id) })).status, 404)
+  assert.equal((await opps.request(`/api/commercial-opportunities/outcomes?workspaceId=${workspace.id}`, { headers: json(other.user.id) })).status, 403)
+})
