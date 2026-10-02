@@ -22,6 +22,7 @@ import {
 import { chooseNextBestAction, type NextBestAction } from './nextBestAction.js'
 import { evaluateOffer, offerTerms, type OfferDefinition } from './offerModel.js'
 import { calculateOpportunityScores } from './signalEngine.js'
+import { scoreOpportunity, type OpportunityScorecard } from './opportunityScoring.js'
 import {
   assessSignalQuality, eventDate, signalVelocity, toRawFromCanonical,
   type CanonicalSignal, type SignalVelocity,
@@ -57,13 +58,21 @@ export type OpportunityAssessment = {
   intentScore: number
   timingScore: number
   contactability: number
+  /** How hard the deal is to win, 0..100 (opportunityScoring.ts). */
+  competition: number
+  /** 0..100, log-scaled from the deal value. */
+  valueScore: number
   estimatedValueMinCents: number | null
   estimatedValueMaxCents: number | null
-  /** 0..1 — confidence × offer fit. */
+  /** Mid deal value × probability; null when the value is unknown. */
+  expectedValueCents: number | null
+  /** 0..1 — confidence × offer fit, adjusted by intent, contactability and competition. */
   probability: number
   urgency: 'HIGH' | 'MEDIUM' | 'LOW'
   /** 0..100 — expected value × probability × urgency, normalised. */
   priority: number
+  /** Every dimension with its reason. */
+  scorecard: OpportunityScorecard
   buyingStage: OpportunityBuyingStage
   recommendedBuyer: string | null
   recommendedAction: NextBestAction['action']
@@ -108,27 +117,6 @@ function stageFor(family: EventFamily, confidence: number): OpportunityBuyingSta
     default: return 'EMERGING_TRIGGER'
   }
 }
-
-function contactabilityOf(p: OpportunityProspect): number {
-  let c = 0
-  if (p.contactEmail) c += 60
-  if (p.contactName) c += 20
-  if (p.contactTitle) c += 20
-  return c
-}
-
-/**
- * Value weighting for priority: unknown value is neutral-low (0.75); a known
- * value scales logarithmically from 0.75 at $1k to 1.0 at $1M+, so value matters
- * but can't swamp probability and urgency.
- */
-function valueFactor(midCents: number | null): number {
-  if (midCents == null || midCents <= 0) return 0.75
-  const dollars = midCents / 100
-  return Math.max(0.75, Math.min(1, 0.75 + 0.25 * (Math.log10(Math.max(1, dollars / 1000)) / 3)))
-}
-
-const URGENCY_FACTOR = { HIGH: 1, MEDIUM: 0.7, LOW: 0.4 } as const
 
 /** How far back company evidence can disqualify an offer ("in liquidation"). */
 const DISQUALIFIER_WINDOW_DAYS = 180
@@ -203,13 +191,18 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
   }
   const decisionTruth = Boolean(action.reason) && reasons.length > 0
 
-  const timingScore = scores.timingScore
-  const urgency: OpportunityAssessment['urgency'] = timingScore >= 80 ? 'HIGH' : timingScore >= 50 ? 'MEDIUM' : 'LOW'
-  const probability = Math.round((confidence / 100) * (offerEval.score / 100) * 1000) / 1000
-  const minV = offer.dealValueMinCents
-  const maxV = offer.dealValueMaxCents ?? offer.dealValueMinCents
-  const mid = minV != null && maxV != null ? (minV + maxV) / 2 : maxV ?? minV ?? null
-  const priority = Math.round(100 * probability * URGENCY_FACTOR[urgency] * valueFactor(mid))
+  const scorecard = scoreOpportunity({
+    event: chosen,
+    confidence,
+    evidenceConfidence,
+    offerFit: { score: offerEval.score, reason: offerEval.reasons[0] ?? 'No offer-fit evidence' },
+    signalIntent: scores.intentScore,
+    velocity,
+    urgencyMatched: offerEval.urgencyMatched,
+    contact: { name: prospect.contactName, email: prospect.contactEmail, title: prospect.contactTitle, targetTitles: offer.targetBuyerTitles },
+    deal: { minCents: offer.dealValueMinCents, maxCents: offer.dealValueMaxCents, minimumCents: offer.minOpportunityValueCents },
+    now,
+  })
 
   return {
     offerKey: offer.key,
@@ -226,14 +219,18 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     trustworthySignals: chosen.trustworthySignals,
     offerFit: offerEval.score,
     offerFitLevel: offerEval.level,
-    intentScore: scores.intentScore,
-    timingScore,
-    contactability: contactabilityOf(prospect),
-    estimatedValueMinCents: minV,
-    estimatedValueMaxCents: maxV,
-    probability,
-    urgency,
-    priority,
+    intentScore: scorecard.intent.score,
+    timingScore: scorecard.timing.score,
+    contactability: scorecard.contactability.score,
+    competition: scorecard.competition.score,
+    valueScore: scorecard.value.score,
+    estimatedValueMinCents: scorecard.value.rangeMinCents,
+    estimatedValueMaxCents: scorecard.value.rangeMaxCents,
+    expectedValueCents: scorecard.expectedValueCents,
+    probability: scorecard.probability,
+    urgency: scorecard.urgency,
+    priority: scorecard.priority,
+    scorecard,
     buyingStage: stageFor(chosen.family, confidence),
     recommendedBuyer: offer.targetBuyerTitles[0] ?? prospect.contactTitle ?? null,
     recommendedAction: action.action,

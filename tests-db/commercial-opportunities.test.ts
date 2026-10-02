@@ -327,3 +327,28 @@ test('commercial-opportunities API: list, detail, status workflow, refresh — a
   assert.equal(hidden.body.total, 0, 'dismissed is hidden by default')
   assert.equal(hidden.body.counts.DISMISSED, 1)
 })
+
+test('scoring 2.0: the scorecard is persisted and the list sorts by expected value, unknown values last', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const p = await seedProspect(workspace.id)
+  await seedCorroboratedSignals(workspace.id, p.id)
+  const priced = await seedOffer(workspace.id)
+  const unpriced = await seedOffer(workspace.id, { name: 'Unpriced crews', dealValueMinCents: null, dealValueMaxCents: null })
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+
+  const row = await prisma.commercialOpportunity.findFirstOrThrow({ where: { offerId: priced.id } })
+  const card = row.scorecard as Record<string, { score: number; reason: string }>
+  for (const k of ['value', 'intent', 'timing', 'offerFit', 'evidenceConfidence', 'contactability', 'competition']) {
+    assert.ok(card[k] && typeof card[k].score === 'number' && card[k].reason.length > 0, k)
+  }
+  assert.equal(row.competition, card.competition.score)
+  assert.equal(row.expectedValueCents, Math.round(6_000_000 * row.probability))
+  assert.equal((await prisma.commercialOpportunity.findFirstOrThrow({ where: { offerId: unpriced.id } })).expectedValueCents, null)
+
+  const list = await opps.request(`/api/commercial-opportunities?workspaceId=${workspace.id}&sort=expectedValue`, { headers: { Authorization: bearer(user.id) } })
+  assert.equal(list.status, 200)
+  assert.deepEqual(list.body.opportunities.map((o: { offerId: string }) => o.offerId), [priced.id, unpriced.id])
+  assert.equal(list.body.opportunities[0].competition, row.competition)
+  const bad = await opps.request(`/api/commercial-opportunities?workspaceId=${workspace.id}&sort=random`, { headers: { Authorization: bearer(user.id) } })
+  assert.equal(bad.status, 400)
+})

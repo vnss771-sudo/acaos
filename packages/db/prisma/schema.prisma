@@ -1712,6 +1712,12 @@ model CommercialOpportunity {
   intentScore            Int
   timingScore            Int
   contactability         Int
+  // Opportunity Scoring 2.0 (lib/opportunityScoring.ts). Nullable: rows assessed
+  // before scoring 2.0 fill in on their next assessment.
+  competition            Int?
+  valueScore             Int?
+  expectedValueCents     Int?
+  scorecard              Json?
   estimatedValueMinCents Int?
   estimatedValueMaxCents Int?
   probability            Float
@@ -1741,6 +1747,7 @@ model CommercialOpportunity {
 
   @@unique([workspaceId, prospectId, offerKey])
   @@index([workspaceId, status, priority])
+  @@index([workspaceId, status, expectedValueCents])
   @@index([prospectId])
   @@index([offerId])
   @@index([commercialEventId])
