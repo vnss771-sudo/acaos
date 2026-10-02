@@ -173,7 +173,9 @@ commercialOpportunitiesRouter.post(
         take: MAX_REFRESH_PROSPECTS,
         select: { id: true },
       })
-      ids = rows.map(r => r.id)
+      // Row type spelled out so the build also type-checks against the offline
+      // Prisma stub, whose query results are untyped.
+      ids = (rows as Array<{ id: string }>).map(r => r.id)
     }
     const result = await refreshCommercialOpportunities(workspaceId, ids)
     res.json(result)
