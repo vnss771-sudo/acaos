@@ -91,7 +91,7 @@ commercialOpportunitiesRouter.get(
 
 // GET /api/commercial-opportunities/outcomes — the outcome funnel (detected →
 // sent → replied → meeting → quoted → won/lost) and won revenue split by
-// attribution (sourced by an ACAOS send vs influenced). ?since= limits it to
+// attribution (sourced by an ACAOS send vs influenced), and counts per cause. ?since= limits it to
 // opportunities first detected on or after that date. Registered before /:id.
 commercialOpportunitiesRouter.get(
   '/outcomes',
@@ -106,7 +106,8 @@ commercialOpportunitiesRouter.get(
 const idParamsSchema = z.object({ id: idField })
 
 // GET /api/commercial-opportunities/:id/outcome — the opportunity's chain:
-// recommendation → intent → outreach → reply → meeting → quote → won/lost → revenue.
+// recommendation → intent → outreach → reply → meeting → quote → won/lost → revenue,
+// plus the cause it closed or stalled (lib/outcomeCauses.ts; null when won or open).
 commercialOpportunitiesRouter.get(
   '/:id/outcome',
   asyncHandler(async (req, res) => {
@@ -114,9 +115,9 @@ commercialOpportunitiesRouter.get(
     const { id } = parseParams(idParamsSchema, req)
     const { workspaceId } = parseQuery(z.object({ workspaceId: workspaceIdField }), req)
     await assertMember(user.id, workspaceId)
-    const chain = await loadOutcomeChain(workspaceId, id)
-    if (!chain) throw new ApiError(404, 'Opportunity not found')
-    res.json({ chain })
+    const result = await loadOutcomeChain(workspaceId, id)
+    if (!result) throw new ApiError(404, 'Opportunity not found')
+    res.json(result)
   })
 )
 

@@ -37,6 +37,7 @@ The plan has 15 phases, grouped into release trains:
 | 8 Recommendation engine | #323 | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
 | 9 Intelligence → execution | #324 | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
 | 10 Outcome graph | #325 | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
+| 11 Closed-loop learning | (this PR) | Deterministic cause per closed/stalled opportunity (competitor, contact, timing, signal, message); repeated causes become one advisory `OPPORTUNITY_CAUSE` review per workspace — PENDING in every mode, approve changes nothing | `lib/outcomeCauses.ts`, `lib/outcomeLearning.ts` | `ACQUISITION_OS_LEARNING.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -138,6 +139,9 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
   that already retry. One timed out once in CI. A leaked poll timer in
   `settingsSections.ts` was fixed in #325. Read the vitest output for "Unhandled
   Errors" before calling a failure a flake.
+- **One PENDING proposal per type.** `LearningRecommendation` has a partial unique
+  index on `(workspaceId, type) WHERE status = 'PENDING'`. Fold multiple findings
+  into one proposal, as phase 11 does.
 - **Route order.** In `routes/commercialOpportunities.ts`, a static path such as
   `/outcomes` must be registered before `/:id`.
 - **OpenAI in DB tests.** Stub `globalThis.fetch` for OpenAI URLs only, and pass
@@ -146,81 +150,18 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 11: Closed-loop learning (next)
-
-**Goal.** For every opportunity that closed or stalled, say why, and turn repeated
-causes into proposals a human approves.
-
-**Build on:**
-- `lib/outcomeGraph.ts`: `buildOutcomeChain` gives each chain's nodes, final
-  outcome and attribution. `outcomeGraphStore.ts` has batched, workspace-scoped
-  loaders.
-- `CommercialOpportunity`: its `scorecard`, `buyingStageDetail`, `recommendation`
-  (with citations and ages) and `intelligenceGate`, and its `CommercialEvent`
-  status (an ACTIVE event that went STALE suggests the signal was wrong).
-- `OutreachSent`: `replyIntent` is one of INTERESTED, NOT_INTERESTED,
-  NEEDS_MORE_INFO, NOT_NOW, OUT_OF_OFFICE or REFERRAL; `status` includes BOUNCED.
-- `OutreachIntent.grounding`, which records whether the draft that went out was
-  grounded.
-- The existing learning loop:
-  - `LearningRecommendation` model: its types today are ICP_INDUSTRY, ICP_SIZE and
-    SIGNAL_WEIGHT; its statuses are PENDING, APPROVED, REJECTED, SUPERSEDED and
-    APPLIED_AUTOMATICALLY.
-  - `lib/learningDecisions.ts`: the only path that applies a proposal. It's
-    race-safe, stale-safe, expiring and audited.
-  - `apps/worker/src/processors.ts` `calibrateScoring`: gated by
-    `LEARNING_ADAPTATION_MODE` (off, shadow, approved or live).
-  - `routes/workspaces/learning.ts`.
-
-**Suggested shape.** Keep it deterministic, with no model calls.
-
-1. **`lib/outcomeCauses.ts` (pure).** `attributeCause(chain, opportunity, sends)`
-   returns `{ cause, confidence, reasons[] }`. Its causes:
-
-   | Cause | Signs |
-   |---|---|
-   | WRONG_SIGNAL | The event went STALE, the intelligence gate was false, or the stage regressed |
-   | WRONG_TIMING | The reply was NOT_NOW, the send went out before ACTIVE_REQUIREMENT, or the evidence was more than N days old at send |
-   | WRONG_CONTACT | A bounce, a REFERRAL reply, or low contactability |
-   | BAD_MESSAGE | A good opportunity (corroborated, active stage) was sent to and got no reply within N days, or the draft wasn't grounded |
-   | LOST_TO_COMPETITOR | LOST with high competition, or after a quote |
-   | UNKNOWN | None of the above |
-
-   Only closed chains (WON or LOST), or chains stalled past a window, get a cause.
-   WON gets `cause: null`.
-2. **`summarizeCauses` (pure).** Counts per cause, per event kind, per offer and per
-   buying stage, with sample sizes. Below a minimum sample (reuse
-   `learningLoopMinOutcomes()`), report it but don't propose.
-3. **Proposals → `LearningRecommendation`, PENDING only (shadow).** Never
-   APPLIED_AUTOMATICALLY in this phase, even when the mode is `live`.
-   - **Decision needed from the user:** should the new proposal types be
-     advisory or config-writing?
-     - Advisory: approving acknowledges the proposal; nothing changes.
-     - Config-writing: for example an event-kind weight, or the WAIT days per
-       stage. This needs `valueSchemas` and `writeLive` cases in
-       `learningDecisions.ts` and somewhere to store the config.
-   - **Recommendation:** advisory types in phase 11 (e.g. `OPPORTUNITY_CAUSE`), with
-     `evidence` holding the counts and example opportunity ids. Leave config-writing
-     to phase 12, which owns the weights.
-   - **Ask the user before building config-writing types.**
-4. **Hook.** A worker step next to `calibrateScoring`, under the same mode gate
-   (`off` does nothing). Supersede older PENDING proposals of the same type, the
-   way `calibrateScoring` does.
-5. **API.**
-   - Add `cause` to `GET /api/commercial-opportunities/:id/outcome`.
-   - Add cause counts to `GET …/outcomes`.
-   - Proposals show up in the existing learning routes.
-6. **Tests.**
-   - Unit tests: one per cause, the precedence between causes, and summary sample
-     thresholds.
-   - DB tests: seed chains, then run the hook. Check that PENDING proposals appear,
-     that `off` writes nothing, and that `live` still doesn't auto-apply.
-   - Mutation-check the cause rules.
-
-### Phase 12: Signal calibration
+### Phase 12: Signal calibration (next)
 - Conversion rates: signal → opportunity → conversation → quote → win → revenue.
 - Lift for event combinations ("A+B+C is 6.7× more likely than A alone").
 - Use it to calibrate the scoring weights, still through approval.
+- **Inputs.** Start from `loadCausedChains` in `outcomeGraphStore.ts`, which gives
+  each chain with its cause and its opportunity's event kind, offer and stage. The
+  per-signal path goes through the opportunity's `evidence` signal ids.
+- **This phase owns the config-writing proposal types**, such as event-kind
+  weights. Each one needs a `valueSchemas` case and `readLive`/`writeLive` in
+  `learningDecisions.ts`, plus somewhere to store it. Remember the partial unique
+  index: one PENDING proposal per `(workspace, type)`.
+- **Ask the user** before letting any new type auto-apply in `live` mode.
 
 ### Phase 13: Cross-customer intelligence
 - Aggregated and anonymised only.
@@ -254,7 +195,6 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 11
-> (closed-loop learning), following the invariants, workflow and lessons there. Before
-> building config-writing proposal types, ask me (the plan recommends advisory types
-> first). Open a PR and merge it when CI is green. Be conservative with tokens.
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 12
+> (signal calibration), following the invariants, workflow and lessons there. Ask me
+> before letting any new proposal type auto-apply in `live` mode. Open a PR and merge it when CI is green. Be conservative with tokens.

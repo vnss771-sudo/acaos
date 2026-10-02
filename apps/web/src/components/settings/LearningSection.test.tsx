@@ -14,6 +14,15 @@ const pending = {
 }
 const applied = { ...base, id: 'r2', type: 'ICP_SIZE', status: 'APPROVED', decidedAt: '2026-09-02T00:00:00Z', currentValue: {}, proposedValue: { minEmployees: 20, maxEmployees: 80 }, evidence: {} }
 const expired = { ...pending, id: 'r3', expired: true }
+const advisory = {
+  ...base, id: 'r4', type: 'OPPORTUNITY_CAUSE', status: 'PENDING', decidedAt: null, expired: false, currentValue: null,
+  proposedValue: { findings: [
+    { cause: 'WRONG_TIMING', dimension: 'eventType', value: 'HIRING_SURGE', advice: 'Wait for an active requirement and fresher evidence before contacting on these' },
+    { cause: 'WRONG_CONTACT', dimension: 'offerKey', value: 'offer:crews', advice: 'Verify the decision maker before outreach on these' },
+  ] },
+  evidence: { basis: '2 repeated causes across 10 closed or stalled opportunities', attributed: 10 },
+}
+const acknowledged = { ...advisory, id: 'r5', status: 'APPROVED', decidedAt: '2026-09-02T00:00:00Z' }
 
 function apiWith(recs: unknown[]) {
   return vi.fn((path: string, _init?: unknown) =>
@@ -61,5 +70,18 @@ describe('LearningSection', () => {
   test('explains the cold start when there is nothing to suggest', async () => {
     render(<LearningSection api={apiWith([]) as never} workspaceId="ws1" toast={toast as never} canManage />)
     expect(await screen.findByText(/at least 10 recorded wins\/losses/)).toBeInTheDocument()
+  })
+
+  test('advisory cause proposals read as advice, are acknowledged on Accept, and cannot be reverted', async () => {
+    const api = apiWith([advisory, acknowledged])
+    render(<LearningSection api={api as never} workspaceId="ws1" toast={toast as never} canManage />)
+    expect(await screen.findAllByText('Wait for an active requirement and fresher evidence before contacting on these (+1 more)')).not.toHaveLength(0)
+    expect(screen.getAllByText(/Wrong timing for event HIRING_SURGE; Wrong contact for offer offer:crews/).length).toBeGreaterThan(0)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Review evidence' })[0])
+    expect(screen.getByText('2 repeated causes across 10 closed or stalled opportunities')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revert' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/learning-recommendations/r4/approve', expect.objectContaining({ method: 'POST' })))
+    expect(toast.success).toHaveBeenCalledWith('Noted')
   })
 })

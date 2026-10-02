@@ -43,6 +43,7 @@ import {
   generateRuleBasedRecommendation,
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
+import { learnFromOutcomes } from '@acaos/backend-core/lib/outcomeLearning.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft } from './processors.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
@@ -370,6 +371,11 @@ const calibrateWorker = new Worker(
     } else {
       log('calibrate-scoring', `Done workspace=${workspaceId} winRate=${Math.round(stats.baselineWinRate * 100)}%`)
     }
+    // Closed-loop learning (phase 11): advisory cause proposals, never applied.
+    // Best-effort — a failure here never fails the scoring calibration.
+    const causes = await runInWorkspaceContext(workspaceId, () => learnFromOutcomes(workspaceId))
+      .catch((e) => { log('calibrate-scoring', `outcome learning failed: ${(e as Error).message}`); return null })
+    if (causes?.learned) log('calibrate-scoring', `Outcome causes: attributed=${causes.attributed} proposed=${causes.proposed} superseded=${causes.superseded}`)
     return stats
   }),
   { connection, concurrency: 1 }
