@@ -7,6 +7,7 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { COMMERCIAL_OPPORTUNITY_STATUSES, bridgesRecommendation, refreshCommercialOpportunities, retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { proposeIntentForOpportunity } from '@acaos/backend-core/lib/opportunityIntent.js'
+import { loadOutcomeChain, loadOutcomeSummary } from '@acaos/backend-core/lib/outcomeGraphStore.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type { Assert, Extends, UpdateCommercialOpportunityStatusRequest, RefreshCommercialOpportunitiesRequest } from '@acaos/shared'
@@ -88,7 +89,36 @@ commercialOpportunitiesRouter.get(
   })
 )
 
+// GET /api/commercial-opportunities/outcomes — the outcome funnel (detected →
+// sent → replied → meeting → quoted → won/lost) and won revenue split by
+// attribution (sourced by an ACAOS send vs influenced). ?since= limits it to
+// opportunities first detected on or after that date. Registered before /:id.
+commercialOpportunitiesRouter.get(
+  '/outcomes',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const q = parseQuery(z.object({ workspaceId: workspaceIdField, since: z.coerce.date().optional() }), req)
+    await assertMember(user.id, q.workspaceId)
+    res.json({ summary: await loadOutcomeSummary(q.workspaceId, { since: q.since }) })
+  })
+)
+
 const idParamsSchema = z.object({ id: idField })
+
+// GET /api/commercial-opportunities/:id/outcome — the opportunity's chain:
+// recommendation → intent → outreach → reply → meeting → quote → won/lost → revenue.
+commercialOpportunitiesRouter.get(
+  '/:id/outcome',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { id } = parseParams(idParamsSchema, req)
+    const { workspaceId } = parseQuery(z.object({ workspaceId: workspaceIdField }), req)
+    await assertMember(user.id, workspaceId)
+    const chain = await loadOutcomeChain(workspaceId, id)
+    if (!chain) throw new ApiError(404, 'Opportunity not found')
+    res.json({ chain })
+  })
+)
 
 // GET /api/commercial-opportunities/:id — full record: evidence claims, reasons,
 // blockers and signal velocity.

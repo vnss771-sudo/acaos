@@ -21,6 +21,8 @@ export type SettingsSection = keyof typeof SETTINGS_SECTIONS
 // Scroll to a section once it exists. Settings renders some sections only after
 // its data loads, so poll briefly rather than assuming it's already mounted.
 export function scrollToSettingsSection(section: SettingsSection, attempts = 40): void {
+  // The poll can outlive the page (or a test's DOM): stop once there's no document.
+  if (typeof document === 'undefined') return
   const el = document.getElementById(SETTINGS_SECTIONS[section])
   if (el) {
     el.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) // absent in jsdom

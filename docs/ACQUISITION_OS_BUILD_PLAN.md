@@ -35,7 +35,8 @@ The plan has 15 phases, grouped into release trains:
 | 6 Scoring 2.0 | #320 | Scorecard: value, intent, timing, fit, evidence, contactability, competition; probability, expected value, priority | `lib/opportunityScoring.ts` | `ACQUISITION_OS_SCORING.md` |
 | 7 Buying stage | #321 | Seven stages, a move per stage, a stage gate on "contact now", `buyingStageDetail` | `lib/buyingStage.ts` | same |
 | 8 Recommendation engine | #323 | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
-| 9 Intelligence → execution | (this PR) | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
+| 9 Intelligence → execution | #324 | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
+| 10 Outcome graph | (this PR) | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -107,18 +108,13 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 10: Outcome graph
-- Chain each opportunity through recommendation → outreach → reply → meeting → quote →
-  won/lost → revenue.
-- Reuse `ProspectOutcome`, `OutreachSent`, reply attribution, and the opportunity's
-  WON/LOST statuses.
-- The chain's first links exist: `OutreachIntent.commercialOpportunityId` and
-  `.recommendationId`; materialise stamps the intent onto the lead and `OutreachSent`.
-
 ### Phase 11: Closed-loop learning
 - Attribute each outcome to a cause: wrong signal, wrong timing, wrong contact, bad
   message, or lost to a competitor.
 - Proposals go to `LearningRecommendation` (a human approves). Shadow by default.
+- Start from `buildOutcomeChain` (phase 10): the chain says how far each
+  opportunity got and when, so "no reply", "lost after the quote" and so on are
+  readable from it.
 
 ### Phase 12: Signal calibration
 - Conversion rates: signal → opportunity → conversation → quote → win → revenue.
@@ -155,6 +151,6 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 10
-> (outcome graph), following the invariants and workflow there. Open a PR and
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 11
+> (closed-loop learning), following the invariants and workflow there. Open a PR and
 > merge it when CI is green. Be conservative with tokens.
