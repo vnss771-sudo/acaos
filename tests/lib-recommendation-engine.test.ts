@@ -61,7 +61,7 @@ test('corroborated, fresh, contactable → contact now, citing the evidence with
   assert.equal(r.citations[0].claim, 'Hiring 17 field technicians')
   assert.equal(r.citations[0].ageDays, 3)
   assert.equal(r.headline, 'Contact now: hiring 17 field technicians 3 days ago, new depot opened in Brisbane 9 days ago')
-  assert.ok(r.why.some(w => w.includes('9 days ago') && w.includes('news.example.org')))
+  assert.ok(r.why.includes('New depot opened in Brisbane — 9 days ago (news.example.org)'))
   assert.ok(r.nextSteps.includes('Offer a two-week trial crew'))
   assert.equal(r.priority, a.priority)
   assert.deepEqual(r.basis, { buyingStage: 'ACTIVE_REQUIREMENT', stance: 'ENGAGE', nextBestAction: 'CONTACT_NOW' })
