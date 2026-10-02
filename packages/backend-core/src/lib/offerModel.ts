@@ -9,12 +9,17 @@
 // Deterministic: no model call participates.
 import type { CommercialEvent, CommercialEventType } from './commercialEvent.js'
 import { scoreOfferFit } from './offerIntelligence.js'
+import { COMMERCIAL_EVENT_KINDS, type CommercialEventKind } from './commercialEventEngine.js'
 import { textTerms, toRawFromCanonical, type CanonicalSignal } from './signalIntelligence.js'
 
 export const COMMERCIAL_EVENT_TYPES: readonly CommercialEventType[] = [
   'ACTIVE_PROCUREMENT', 'CAPACITY_EXPANSION', 'GROWTH_EVENT', 'ORGANISATIONAL_CHANGE',
   'DIGITAL_CHANGE', 'MARKET_ATTENTION', 'EARLY_BUYING_TRIGGER',
 ] as const
+
+/** What an offer can be triggered by: a specific event kind, or a whole family. */
+export type OfferTrigger = CommercialEventType | CommercialEventKind
+export const OFFER_TRIGGERS: readonly OfferTrigger[] = [...COMMERCIAL_EVENT_KINDS, ...COMMERCIAL_EVENT_TYPES]
 
 export type OfferDefinition = {
   /** Stable key an opportunity is filed under: `offer:<id>` or `mission:<id>`. */
@@ -29,8 +34,8 @@ export type OfferDefinition = {
   /** Who the offer is for, in words (e.g. "electrical contractors"). */
   targetCustomer: string | null
   targetBuyerTitles: string[]
-  /** Events that create demand for this offer. Empty = any clear event. */
-  triggeringEvents: CommercialEventType[]
+  /** Event kinds or families that create demand for this offer. Empty = any clear event. */
+  triggeringEvents: OfferTrigger[]
   qualifyingKeywords: string[]
   disqualifyingKeywords: string[]
   /** Where the offer is sold (state codes, cities, regions). Empty = anywhere. */
@@ -63,7 +68,7 @@ export type OfferRow = {
 }
 
 export function offerFromRow(row: OfferRow): OfferDefinition {
-  const events = new Set<string>(COMMERCIAL_EVENT_TYPES)
+  const events = new Set<string>(OFFER_TRIGGERS)
   return {
     key: `offer:${row.id}`,
     id: row.id,
@@ -73,7 +78,7 @@ export function offerFromRow(row: OfferRow): OfferDefinition {
     problemSolved: row.problemSolved,
     targetCustomer: row.targetCustomer,
     targetBuyerTitles: row.targetBuyerTitles,
-    triggeringEvents: row.triggeringEvents.filter((e): e is CommercialEventType => events.has(e)),
+    triggeringEvents: row.triggeringEvents.filter((e): e is OfferTrigger => events.has(e)),
     qualifyingKeywords: row.qualifyingKeywords,
     disqualifyingKeywords: row.disqualifyingKeywords,
     geographies: row.geographies,
@@ -149,7 +154,19 @@ function level(score: number): OfferEvaluation['level'] {
 
 export function evaluateOffer(
   offer: OfferDefinition,
-  input: { event: CommercialEvent; signals: CanonicalSignal[]; prospect: OfferProspect },
+  input: {
+    event: CommercialEvent
+    /** The specific event kind, when the event engine produced one. */
+    kind?: CommercialEventKind
+    signals: CanonicalSignal[]
+    prospect: OfferProspect
+    /**
+     * Evidence checked for disqualifiers. Defaults to `signals`; the opportunity
+     * engine passes all of the company's recent evidence, since a disqualifier
+     * ("in liquidation") is about the company, not just the event's signals.
+     */
+    disqualifierSignals?: CanonicalSignal[]
+  },
 ): OfferEvaluation {
   const { event, signals, prospect } = input
   const evidenceText = [
@@ -158,7 +175,10 @@ export function evaluateOffer(
   ].join(' ').toLowerCase()
 
   // Disqualifiers and geography apply to both kinds of offer.
-  const disqualifiedBy = offer.disqualifyingKeywords.filter(k => containsPhrase(evidenceText, k))
+  const disqualifierText = input.disqualifierSignals
+    ? [...input.disqualifierSignals.map(s => `${s.title ?? ''} ${s.description ?? ''}`), prospect.description ?? '', prospect.industry ?? ''].join(' ').toLowerCase()
+    : evidenceText
+  const disqualifiedBy = offer.disqualifyingKeywords.filter(k => containsPhrase(disqualifierText, k))
   const location = (prospect.location ?? '').toLowerCase()
   const geoMatch = offer.geographies.length === 0 || !location.trim()
     ? null
@@ -177,7 +197,7 @@ export function evaluateOffer(
     score -= 15
     reasons.push('No clear commercial event to trigger this offer')
   } else if (offer.triggeringEvents.length > 0) {
-    eventTriggered = offer.triggeringEvents.includes(event.type)
+    eventTriggered = offer.triggeringEvents.includes(event.type) || (input.kind != null && offer.triggeringEvents.includes(input.kind))
     if (eventTriggered) {
       score += 25
       reasons.push(`${event.title} is a triggering event for ${offer.name}`)

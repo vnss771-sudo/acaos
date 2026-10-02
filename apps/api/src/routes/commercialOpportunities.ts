@@ -158,7 +158,7 @@ commercialOpportunitiesRouter.post(
     } else {
       await assertWorkspacePermission(user.id, workspaceId, 'prospects:discover')
       // Same candidates the store reassesses: a recent signal, or an OPEN
-      // opportunity that may need expiring. (lastSignalAt isn't set on every
+      // opportunity / ACTIVE event that may need retiring. (lastSignalAt isn't set on every
       // ingest path, so it can't be the filter.)
       const cutoff = new Date(Date.now() - 30 * 86_400_000)
       const rows = await prisma.prospect.findMany({
@@ -167,6 +167,7 @@ commercialOpportunitiesRouter.post(
           OR: [
             { signals: { some: { detectedAt: { gte: cutoff } } } },
             { commercialOpportunities: { some: { status: 'OPEN' } } },
+            { commercialEvents: { some: { status: 'ACTIVE' } } },
           ],
         },
         orderBy: { updatedAt: 'desc' },
