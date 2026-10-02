@@ -27,13 +27,13 @@
     "@opentelemetry/resources": "^2.11.0",
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "@prisma/client": "^5.18.0",
-    "bullmq": "^5.12.12",
-    "imapflow": "^1.0.181",
-    "ioredis": "^5.4.1",
+    "@prisma/client": "^7.10.0",
+    "bullmq": "^6.3.9",
+    "imapflow": "^2.1.2",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^10.0.13",
-    "openai": "^6.0.0",
+    "openai": "^7.23.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
