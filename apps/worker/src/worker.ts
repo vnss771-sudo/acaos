@@ -45,6 +45,7 @@ import {
 } from '@acaos/backend-core/lib/signalEngine.js'
 import { learnFromOutcomes } from '@acaos/backend-core/lib/outcomeLearning.js'
 import { learnSignalCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
+import { computeNetworkBenchmarks } from '@acaos/backend-core/lib/networkIntelligence.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft } from './processors.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
@@ -414,6 +415,12 @@ const retentionWorker = new Worker(
       log('retention-purge', `engagement observation failed: ${(e as Error).message}`); return null
     })
     if (observation) log('retention-purge', `engagement observation: ${JSON.stringify(observation)}`)
+    // Cross-customer intelligence (phase 13): recompute the pooled, anonymised
+    // benchmarks from opted-in workspaces. Best-effort, like the steps above.
+    const network = await computeNetworkBenchmarks().catch((e) => {
+      log('retention-purge', `network benchmarks failed: ${(e as Error).message}`); return null
+    })
+    if (network) log('retention-purge', `network benchmarks: workspaces=${network.workspaces} published=${network.published} withheld=${network.withheld}`)
     if (reconcile) log('retention-purge', `stats reconcile: checked=${reconcile.campaignsChecked} drift=${reconcile.drifted.length} rebuilt=${reconcile.workspacesRebuilt}`)
     log('retention-purge', `Done — purged ${total} row(s): ${JSON.stringify(deleted)}; stale SENDING reclaimed: ${staleRecovered}`)
     return { ...deleted, staleSendsRecovered: staleRecovered, statsReconciled: reconcile?.workspacesRebuilt ?? 0, engagementObserved: observation?.observed ?? 0 }

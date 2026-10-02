@@ -22,7 +22,7 @@ The plan has 15 phases, grouped into release trains:
 | Operator console | 14 |
 | FieldOps loop | 15 |
 
-## Done (merged to `master`; current head is `37bfd21`)
+## Done (merged to `master`; current head is `31587b1`)
 
 | Plan phase | PR | What | Key files | Docs |
 |---|---|---|---|---|
@@ -38,7 +38,8 @@ The plan has 15 phases, grouped into release trains:
 | 9 Intelligence → execution | #324 | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
 | 10 Outcome graph | #325 | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
 | 11 Closed-loop learning | #327 | Deterministic cause per closed/stalled opportunity (competitor, contact, timing, signal, message); repeated causes become one advisory `OPPORTUNITY_CAUSE` review per workspace — PENDING in every mode, approve changes nothing | `lib/outcomeCauses.ts`, `lib/outcomeLearning.ts` | `ACQUISITION_OS_LEARNING.md` |
-| 12 Signal calibration | (this PR) | Funnel per event kind, combination lift, shrunk bounded event-kind weights proposed as `EVENT_KIND_WEIGHT` (approval only, never auto-applied); approved weights scale opportunity probability | `lib/signalCalibration.ts`, `lib/calibrationLearning.ts` | `ACQUISITION_OS_CALIBRATION.md` |
+| 12 Signal calibration | #328 | Funnel per event kind, combination lift, shrunk bounded event-kind weights proposed as `EVENT_KIND_WEIGHT` (approval only, never auto-applied); approved weights scale opportunity probability | `lib/signalCalibration.ts`, `lib/calibrationLearning.ts` | `ACQUISITION_OS_CALIBRATION.md` |
+| 13 Cross-customer intelligence | (this PR) | Opt-in only (`Workspace.networkOptInAt`); per-kind counts pooled daily into the global `NetworkBenchmark` table above a floor of 5 workspaces and 30 closed outcomes; no identifying data stored; read and opt-in APIs | `lib/networkIntelligence.ts` | `ACQUISITION_OS_NETWORK.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -151,20 +152,7 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 13: Cross-customer intelligence (next)
-- Aggregated and anonymised only.
-- No workspace's private data may leak into another workspace.
-- **Natural input:** the per-workspace calibration report (`loadCalibration`):
-  win rates and lift per event kind. Pool only kind-level rates and counts, never
-  company names, evidence text, offers or ids.
-- **Guardrails to design first:** a k-anonymity floor (a minimum number of
-  contributing workspaces and outcomes per aggregate), opt-in per workspace,
-  and a cross-workspace job that runs outside any tenant context. Check how
-  `tenantGuard.ts` handles that context.
-- **Ask the user** about opt-in versus opt-out, and about the minimum k, before
-  building.
-
-### Phase 14: Operator console (web UI)
+### Phase 14: Operator console (web UI) (next)
 The "what should I do today" home screen:
 - opportunities that need attention, with evidence and approve/dismiss actions
 - opportunities to monitor
@@ -172,6 +160,23 @@ The "what should I do today" home screen:
 - pipeline influenced by ACAOS
 
 It reads the `commercial-opportunities` and `evidence-graph` APIs.
+
+**APIs that are ready, all under `/api/commercial-opportunities`:**
+- list and detail (with `recommendation`)
+- `/:id/intent`, which proposes outreach
+- `/:id/outcome`, which returns the chain and its cause
+- `/outcomes`, the funnel plus causes and attributed revenue
+- `/calibration`
+- `/network-benchmarks` and `/network-participation` (no UI yet; add the opt-in
+  toggle here)
+- `/api/evidence-graph/:prospectId`
+
+**Web.**
+- Follow the patterns in `apps/web/src/views` (they use the `route(...)` helper and
+  `@acaos/shared` route types). Check `check:frontend-mutations` for rules on
+  mutations.
+- Put tests in `*.test.tsx` next to the view.
+- Watch for the timer leak and timing issues noted in the lessons.
 
 ### Phase 15: FieldOps loop
 - Quote → won → job → job value feeds back into ACAOS outcomes.
@@ -192,6 +197,5 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 13
-> (cross-customer intelligence), following the invariants, workflow and lessons there.
-> Ask me about opt-in and the anonymity floor before building it. Open a PR and merge it when CI is green. Be conservative with tokens.
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 14
+> (operator console), following the invariants, workflow and lessons there. Open a PR and merge it when CI is green. Be conservative with tokens.

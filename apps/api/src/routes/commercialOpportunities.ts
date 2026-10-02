@@ -9,6 +9,7 @@ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/works
 import { proposeIntentForOpportunity } from '@acaos/backend-core/lib/opportunityIntent.js'
 import { loadOutcomeChain, loadOutcomeSummary } from '@acaos/backend-core/lib/outcomeGraphStore.js'
 import { loadCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
+import { loadNetworkBenchmarks, NetworkAccessError, setNetworkParticipation } from '@acaos/backend-core/lib/networkIntelligence.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type { Assert, Extends, UpdateCommercialOpportunityStatusRequest, RefreshCommercialOpportunitiesRequest } from '@acaos/shared'
@@ -114,6 +115,41 @@ commercialOpportunitiesRouter.get(
     const { workspaceId } = parseQuery(z.object({ workspaceId: workspaceIdField }), req)
     await assertMember(user.id, workspaceId)
     res.json(await loadCalibration(workspaceId))
+  })
+)
+
+// GET /api/commercial-opportunities/network-benchmarks — pooled, anonymised win
+// rates per event kind across opted-in workspaces, beside this workspace's own.
+// Only an opted-in workspace may read them (403 otherwise).
+commercialOpportunitiesRouter.get(
+  '/network-benchmarks',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseQuery(z.object({ workspaceId: workspaceIdField }), req)
+    await assertMember(user.id, workspaceId)
+    try {
+      res.json(await loadNetworkBenchmarks(workspaceId))
+    } catch (e) {
+      if (e instanceof NetworkAccessError) throw new ApiError(e.status, e.message)
+      throw e
+    }
+  })
+)
+
+// PUT /api/commercial-opportunities/network-participation — an admin opts the
+// workspace in to (or out of) cross-customer intelligence. Audited.
+commercialOpportunitiesRouter.put(
+  '/network-participation',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId, optIn } = parseBody(z.object({ workspaceId: workspaceIdField, optIn: z.boolean() }), req)
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    const result = await setNetworkParticipation(workspaceId, optIn)
+    await recordAudit({
+      workspaceId, actorUserId: user.id, type: optIn ? 'network.opt_in' : 'network.opt_out',
+      entityType: 'workspace', entityId: workspaceId, metadata: { optedInAt: result.optedInAt },
+    })
+    res.json(result)
   })
 )
 
