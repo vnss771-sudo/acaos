@@ -22,7 +22,7 @@ The plan has 15 phases, grouped into release trains:
 | Operator console | 14 |
 | FieldOps loop | 15 |
 
-## Done (merged to `master`; current head is `4b7c1e8`)
+## Done (merged to `master`; current head is `37bfd21`)
 
 | Plan phase | PR | What | Key files | Docs |
 |---|---|---|---|---|
@@ -37,7 +37,8 @@ The plan has 15 phases, grouped into release trains:
 | 8 Recommendation engine | #323 | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
 | 9 Intelligence → execution | #324 | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
 | 10 Outcome graph | #325 | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
-| 11 Closed-loop learning | (this PR) | Deterministic cause per closed/stalled opportunity (competitor, contact, timing, signal, message); repeated causes become one advisory `OPPORTUNITY_CAUSE` review per workspace — PENDING in every mode, approve changes nothing | `lib/outcomeCauses.ts`, `lib/outcomeLearning.ts` | `ACQUISITION_OS_LEARNING.md` |
+| 11 Closed-loop learning | #327 | Deterministic cause per closed/stalled opportunity (competitor, contact, timing, signal, message); repeated causes become one advisory `OPPORTUNITY_CAUSE` review per workspace — PENDING in every mode, approve changes nothing | `lib/outcomeCauses.ts`, `lib/outcomeLearning.ts` | `ACQUISITION_OS_LEARNING.md` |
+| 12 Signal calibration | (this PR) | Funnel per event kind, combination lift, shrunk bounded event-kind weights proposed as `EVENT_KIND_WEIGHT` (approval only, never auto-applied); approved weights scale opportunity probability | `lib/signalCalibration.ts`, `lib/calibrationLearning.ts` | `ACQUISITION_OS_CALIBRATION.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -150,22 +151,18 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 12: Signal calibration (next)
-- Conversion rates: signal → opportunity → conversation → quote → win → revenue.
-- Lift for event combinations ("A+B+C is 6.7× more likely than A alone").
-- Use it to calibrate the scoring weights, still through approval.
-- **Inputs.** Start from `loadCausedChains` in `outcomeGraphStore.ts`, which gives
-  each chain with its cause and its opportunity's event kind, offer and stage. The
-  per-signal path goes through the opportunity's `evidence` signal ids.
-- **This phase owns the config-writing proposal types**, such as event-kind
-  weights. Each one needs a `valueSchemas` case and `readLive`/`writeLive` in
-  `learningDecisions.ts`, plus somewhere to store it. Remember the partial unique
-  index: one PENDING proposal per `(workspace, type)`.
-- **Ask the user** before letting any new type auto-apply in `live` mode.
-
-### Phase 13: Cross-customer intelligence
+### Phase 13: Cross-customer intelligence (next)
 - Aggregated and anonymised only.
 - No workspace's private data may leak into another workspace.
+- **Natural input:** the per-workspace calibration report (`loadCalibration`):
+  win rates and lift per event kind. Pool only kind-level rates and counts, never
+  company names, evidence text, offers or ids.
+- **Guardrails to design first:** a k-anonymity floor (a minimum number of
+  contributing workspaces and outcomes per aggregate), opt-in per workspace,
+  and a cross-workspace job that runs outside any tenant context. Check how
+  `tenantGuard.ts` handles that context.
+- **Ask the user** about opt-in versus opt-out, and about the minimum k, before
+  building.
 
 ### Phase 14: Operator console (web UI)
 The "what should I do today" home screen:
@@ -195,6 +192,6 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 12
-> (signal calibration), following the invariants, workflow and lessons there. Ask me
-> before letting any new proposal type auto-apply in `live` mode. Open a PR and merge it when CI is green. Be conservative with tokens.
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 13
+> (cross-customer intelligence), following the invariants, workflow and lessons there.
+> Ask me about opt-in and the anonymity floor before building it. Open a PR and merge it when CI is green. Be conservative with tokens.

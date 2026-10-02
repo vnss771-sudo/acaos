@@ -67,6 +67,16 @@ function describeRecommendation(r: LearningRecommendationDto): { title: string; 
       to: 'advisory — accepting changes nothing',
     }
   }
+  if (r.type === 'EVENT_KIND_WEIGHT') {
+    const kinds = (v: unknown) => Object.entries((v ?? {}) as Record<string, number>)
+    const changed = kinds(r.proposedValue).filter(([k, w]) => ((r.currentValue ?? {}) as Record<string, number>)[k] !== w)
+    const label = (k: string) => k.toLowerCase().replace(/_/g, ' ')
+    return {
+      title: 'Weight commercial events by how often they turned into wins',
+      from: kinds(r.currentValue).length ? `${kinds(r.currentValue).length} calibrated event${kinds(r.currentValue).length === 1 ? '' : 's'}` : 'no calibration yet',
+      to: changed.map(([k, w]) => `${label(k)} ×${w}`).join(', ') || 'no change',
+    }
+  }
   if (r.type === 'ICP_INDUSTRY') return { title: 'Focus on the industries that are converting best', from: list(r.currentValue), to: list(r.proposedValue) }
   if (r.type === 'ICP_SIZE') return { title: 'Adjust the company size you target', from: size(r.currentValue), to: size(r.proposedValue) }
   const n = Object.keys((r.proposedValue ?? {}) as object).length

@@ -277,6 +277,7 @@ async function refreshOne(
   existing: ExistingRow[],
   existingEvents: ExistingEvent[],
   now: Date,
+  eventKindWeights: Record<string, number> | null,
 ): Promise<RefreshResult> {
   const offers = offersForProspect(catalog, prospect.missionId)
   const signals = prospect.signals.map(s => toCanonicalSignal({ ...s, prospectId: prospect.id, prospect: { companyName: prospect.companyName } }))
@@ -289,7 +290,7 @@ async function refreshOne(
 
   for (const offer of offers) {
     seen.add(offer.key)
-    const a = assessOpportunity({ prospect, signals, offer, events: detected, now: now.getTime() })
+    const a = assessOpportunity({ prospect, signals, offer, events: detected, now: now.getTime(), eventKindWeights })
     const row = byKey.get(offer.key)
     if (a) {
       const data = assessmentData(a, idByKind.get(a.eventType) ?? null)
@@ -345,6 +346,9 @@ export async function refreshCommercialOpportunities(
   if (prospectIds.length === 0) return total
   const now = opts.now ?? new Date()
   const catalog = opts.catalog ?? await loadOfferCatalog(workspaceId)
+  // Approved calibration weights (phase 12); none until a human approves some.
+  const model = await prisma.scoringModel.findUnique({ where: { workspaceId }, select: { eventKindWeights: true } }) as { eventKindWeights: unknown } | null
+  const eventKindWeights = (model?.eventKindWeights ?? null) as Record<string, number> | null
   const cutoff = new Date(now.getTime() - REASSESS_SIGNAL_DAYS * 86_400_000)
 
   const prospects = await prisma.prospect.findMany({
@@ -376,7 +380,7 @@ export async function refreshCommercialOpportunities(
   for (const r of existingEvents) eventsByProspect.set(r.prospectId, [...(eventsByProspect.get(r.prospectId) ?? []), r])
 
   for (const p of prospects) {
-    const r = await refreshOne(p, catalog, byProspect.get(p.id) ?? [], eventsByProspect.get(p.id) ?? [], now)
+    const r = await refreshOne(p, catalog, byProspect.get(p.id) ?? [], eventsByProspect.get(p.id) ?? [], now, eventKindWeights)
     total.assessed += r.assessed
     total.upserted += r.upserted
     total.expired += r.expired

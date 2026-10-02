@@ -25,6 +25,7 @@ import { calculateOpportunityScores } from './signalEngine.js'
 import { scoreOpportunity, type OpportunityScorecard } from './opportunityScoring.js'
 import { inferBuyingStage, type BuyingStageAssessment, type BuyingStageV2, type EngagementStage } from './buyingStage.js'
 import { recommendForOpportunity, type OpportunityRecommendation } from './recommendationEngine.js'
+import { eventKindWeight } from './signalCalibration.js'
 import {
   assessSignalQuality, eventDate, signalVelocity, toRawFromCanonical,
   type CanonicalSignal, type SignalVelocity,
@@ -108,6 +109,8 @@ export type AssessOpportunityInput = {
   offer: OfferDefinition
   /** Pre-computed events for these signals (the store detects once per prospect). */
   events?: CommercialEventHypothesis[]
+  /** Approved event-kind calibration weights (ScoringModel.eventKindWeights). */
+  eventKindWeights?: Record<string, number> | null
   now?: number
 }
 
@@ -206,6 +209,7 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     contact: { name: prospect.contactName, email: prospect.contactEmail, title: prospect.contactTitle, targetTitles: offer.targetBuyerTitles },
     deal: { minCents: offer.dealValueMinCents, maxCents: offer.dealValueMaxCents, minimumCents: offer.minOpportunityValueCents },
     now,
+    eventKindWeight: eventKindWeight(input.eventKindWeights, chosen.kind),
   })
 
   const assessment: Omit<OpportunityAssessment, 'recommendation'> = {

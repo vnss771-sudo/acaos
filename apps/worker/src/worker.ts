@@ -44,6 +44,7 @@ import {
   toRawSignal,
 } from '@acaos/backend-core/lib/signalEngine.js'
 import { learnFromOutcomes } from '@acaos/backend-core/lib/outcomeLearning.js'
+import { learnSignalCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft } from './processors.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
@@ -376,6 +377,10 @@ const calibrateWorker = new Worker(
     const causes = await runInWorkspaceContext(workspaceId, () => learnFromOutcomes(workspaceId))
       .catch((e) => { log('calibrate-scoring', `outcome learning failed: ${(e as Error).message}`); return null })
     if (causes?.learned) log('calibrate-scoring', `Outcome causes: attributed=${causes.attributed} proposed=${causes.proposed} superseded=${causes.superseded}`)
+    // Signal calibration (phase 12): event-kind weights, proposed for approval only.
+    const calibration = await runInWorkspaceContext(workspaceId, () => learnSignalCalibration(workspaceId))
+      .catch((e) => { log('calibrate-scoring', `signal calibration failed: ${(e as Error).message}`); return null })
+    if (calibration?.learned) log('calibrate-scoring', `Signal calibration: closed=${calibration.closed} proposed=${calibration.proposed} superseded=${calibration.superseded}`)
     return stats
   }),
   { connection, concurrency: 1 }

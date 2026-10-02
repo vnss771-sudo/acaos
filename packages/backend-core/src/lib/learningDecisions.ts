@@ -19,6 +19,7 @@ import { auditCreateData } from './audit.js'
 import { sameJson } from './learningLoop.js'
 import { DEFAULT_SCORING_WEIGHTS, DEFAULT_SCORING_METRICS } from './scoring.js'
 import { OPPORTUNITY_CAUSE_TYPE } from './outcomeCauses.js'
+import { WEIGHT_MAX, WEIGHT_MIN } from './signalCalibration.js'
 
 /**
  * Advisory proposal types (outcomeLearning.ts): approving one records that a
@@ -47,12 +48,18 @@ const valueSchemas = {
   ICP_INDUSTRY: z.array(z.string().trim().min(1).max(200)).max(50),
   ICP_SIZE: z.object({ minEmployees: z.number().int().min(0).nullable(), maxEmployees: z.number().int().min(0).nullable() }),
   SIGNAL_WEIGHT: z.record(z.string(), z.number().finite().min(0).max(1000)),
+  // Event-kind calibration weights (signalCalibration.ts): bounded multipliers.
+  EVENT_KIND_WEIGHT: z.record(z.string().max(64), z.number().finite().min(WEIGHT_MIN).max(WEIGHT_MAX)),
 } as const
 type RecType = keyof typeof valueSchemas
 
 type Tx = Prisma.TransactionClient
 
 async function readLive(tx: Tx, workspaceId: string, type: RecType): Promise<unknown> {
+  if (type === 'EVENT_KIND_WEIGHT') {
+    const m = await tx.scoringModel.findUnique({ where: { workspaceId }, select: { eventKindWeights: true } })
+    return m?.eventKindWeights ?? {}
+  }
   if (type === 'SIGNAL_WEIGHT') {
     const m = await tx.scoringModel.findUnique({ where: { workspaceId }, select: { signalWeights: true } })
     return m?.signalWeights ?? {}
@@ -69,6 +76,15 @@ async function writeLive(tx: Tx, workspaceId: string, type: RecType, raw: unknow
   const parsed = valueSchemas[type].safeParse(raw)
   if (!parsed.success) throw new DecisionError(422, 'Stored recommendation value is invalid; refusing to apply it')
   const v = parsed.data
+  if (type === 'EVENT_KIND_WEIGHT') {
+    const eventKindWeights = v as Record<string, number>
+    await tx.scoringModel.upsert({
+      where: { workspaceId },
+      create: { workspaceId, weights: DEFAULT_SCORING_WEIGHTS, performanceMetrics: DEFAULT_SCORING_METRICS, eventKindWeights },
+      update: { eventKindWeights, lastWeightUpdate: new Date(), updateCount: { increment: 1 } },
+    })
+    return
+  }
   if (type === 'SIGNAL_WEIGHT') {
     const signalWeights = v as Record<string, number>
     await tx.scoringModel.upsert({
@@ -166,7 +182,7 @@ export async function decideRecommendation(input: {
       throw new DecisionError(409, 'Settings changed since this was applied; reverting would overwrite newer changes')
     }
     await transition(['APPROVED', 'APPLIED_AUTOMATICALLY'], 'REVERTED')
-    await writeLive(tx, workspaceId, type, rec.currentValue ?? (type === 'SIGNAL_WEIGHT' ? {} : type === 'ICP_INDUSTRY' ? [] : { minEmployees: null, maxEmployees: null }))
+    await writeLive(tx, workspaceId, type, rec.currentValue ?? (type === 'SIGNAL_WEIGHT' || type === 'EVENT_KIND_WEIGHT' ? {} : type === 'ICP_INDUSTRY' ? [] : { minEmployees: null, maxEmployees: null }))
     await audit(live, rec.currentValue)
     return { rec, before: live, after: rec.currentValue }
   })
