@@ -201,6 +201,8 @@ model Workspace {
   outreachSelections      OutreachSelection[]
   offers                  Offer[]
   commercialOpportunities CommercialOpportunity[]
+  commercialEvents        CommercialEvent[]
+  evidenceLinks           EvidenceLink[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -1024,6 +1026,7 @@ model Prospect {
   evidenceSources         EvidenceSource[]
   outreachIntents         OutreachIntent[]
   commercialOpportunities CommercialOpportunity[]
+  commercialEvents        CommercialEvent[]
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   // NOTE: a PARTIAL UNIQUE index on (workspaceId, domainKey) WHERE domainKey IS
@@ -1063,6 +1066,7 @@ model Signal {
   workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect          Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   evidenceSource    EvidenceSource? @relation(fields: [evidenceSourceId], references: [id], onDelete: SetNull)
+  evidenceLinks     EvidenceLink[]
   createdAt         DateTime        @default(now())
 
   @@unique([prospectId, fingerprint])
@@ -1684,16 +1688,22 @@ model Offer {
 // Engine-managed statuses: OPEN, EXPIRED. Operator statuses: PURSUING, WON,
 // LOST, DISMISSED — the engine never overwrites an operator status.
 model CommercialOpportunity {
-  id                     String    @id @default(cuid())
+  id                     String           @id @default(cuid())
   workspaceId            String
   prospectId             String
   offerId                String?
   missionId              String?
   // `offer:<id>` or `mission:<id>` — the offer this was assessed against.
   offerKey               String
+  // The specific event kind (lib/commercialEventEngine.ts), e.g. TENDER_OPPORTUNITY.
   eventType              String
+  // Its family (lib/commercialEvent.ts), e.g. ACTIVE_PROCUREMENT.
+  eventFamily            String?
   eventTitle             String
+  implication            String?
   whyNow                 String
+  // The persisted event this opportunity was built on (the evidence graph).
+  commercialEventId      String?
   confidence             Int
   evidenceConfidence     Int
   independentSources     Int
@@ -1717,19 +1727,78 @@ model CommercialOpportunity {
   evidence               Json // EvidenceClaim[]
   velocity               Json // SignalVelocity[]
   intelligenceGate       Boolean
-  status                 String    @default("OPEN")
+  status                 String           @default("OPEN")
   statusChangedAt        DateTime?
   statusChangedByUserId  String?
-  firstDetectedAt        DateTime  @default(now())
-  lastAssessedAt         DateTime  @default(now())
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
-  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  prospect               Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
-  offer                  Offer?    @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  firstDetectedAt        DateTime         @default(now())
+  lastAssessedAt         DateTime         @default(now())
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  workspace              Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect               Prospect         @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  offer                  Offer?           @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  commercialEvent        CommercialEvent? @relation(fields: [commercialEventId], references: [id], onDelete: SetNull)
 
   @@unique([workspaceId, prospectId, offerKey])
   @@index([workspaceId, status, priority])
   @@index([prospectId])
   @@index([offerId])
+  @@index([commercialEventId])
+}
+
+// Evidence graph, layer 1: a commercial event ACAOS believes is happening at a
+// company (lib/commercialEventEngine.ts) — one row per (prospect, kind). ACTIVE
+// while the evidence supports it; STALE once it no longer does (kept, with its
+// links, as history). Every claim is traceable through EvidenceLink.
+model CommercialEvent {
+  id                 String                  @id @default(cuid())
+  workspaceId        String
+  prospectId         String
+  kind               String
+  family             String
+  title              String
+  implication        String
+  whyNow             String
+  confidence         Int
+  independentSources Int
+  trustworthySignals Int
+  corroborated       Boolean
+  status             String                  @default("ACTIVE")
+  firstDetectedAt    DateTime                @default(now())
+  lastConfirmedAt    DateTime                @default(now())
+  lastAssessedAt     DateTime                @default(now())
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  workspace          Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect           Prospect                @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  evidenceLinks      EvidenceLink[]
+  opportunities      CommercialOpportunity[]
+
+  @@unique([workspaceId, prospectId, kind])
+  @@index([workspaceId, status])
+  @@index([prospectId])
+}
+
+// Evidence graph, layer 2: the edge from a signal to the event it supports,
+// with the claim it makes and how good that evidence was when linked.
+model EvidenceLink {
+  id                String          @id @default(cuid())
+  workspaceId       String
+  commercialEventId String
+  signalId          String
+  claim             String
+  sourceKey         String
+  sourceUrl         String?
+  eventDate         DateTime
+  quality           Int
+  grade             String
+  trustworthy       Boolean
+  createdAt         DateTime        @default(now())
+  workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  commercialEvent   CommercialEvent @relation(fields: [commercialEventId], references: [id], onDelete: Cascade)
+  signal            Signal          @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  @@unique([commercialEventId, signalId])
+  @@index([workspaceId])
+  @@index([signalId])
 }

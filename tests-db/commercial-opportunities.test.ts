@@ -7,16 +7,19 @@ import { test, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { offersRouter } from '../apps/api/src/routes/offers.ts'
 import { commercialOpportunitiesRouter } from '../apps/api/src/routes/commercialOpportunities.ts'
+import { evidenceGraphRouter } from '../apps/api/src/routes/evidenceGraph.ts'
 import { refreshCommercialOpportunities } from '../packages/backend-core/src/lib/commercialOpportunityStore.ts'
 import { prisma, resetDb, disconnect, seedUser, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
 let offers: TestServer
 let opps: TestServer
+let graph: TestServer
 before(async () => {
   offers = await startTestServer('/api/offers', offersRouter)
   opps = await startTestServer('/api/commercial-opportunities', commercialOpportunitiesRouter)
+  graph = await startTestServer('/api/evidence-graph', evidenceGraphRouter)
 })
-after(async () => { await offers.close(); await opps.close(); await disconnect() })
+after(async () => { await offers.close(); await opps.close(); await graph.close(); await disconnect() })
 beforeEach(async () => { await resetDb() })
 
 const DAY = 86_400_000
@@ -79,12 +82,96 @@ test('refresh creates a corroborated opportunity with its evidence and recommend
   assert.equal(row.offerKey, `offer:${offer.id}`)
   assert.equal(row.status, 'OPEN')
   assert.equal(row.intelligenceGate, true)
-  assert.equal(row.independentSources, 3)
+  // Built on the strongest triggered event: expansion + hiring, two sources.
+  assert.equal(row.eventType, 'CAPACITY_EXPANSION')
+  assert.equal(row.eventFamily, 'CAPACITY_EXPANSION')
+  assert.equal(row.independentSources, 2)
   assert.equal(row.recommendedAction, 'CONTACT_NOW')
   const evidence = row.evidence as Array<{ signalId: string; sourceUrl: string }>
-  assert.equal(evidence.length, 3)
-  const signalIds = (await prisma.signal.findMany({ where: { prospectId: p.id }, select: { id: true } })).map(s => s.id).sort()
+  const signalIds = (await prisma.signal.findMany({ where: { prospectId: p.id, type: { in: ['EXPANSION', 'HIRING'] } }, select: { id: true } })).map(s => s.id).sort()
   assert.deepEqual(evidence.map(e => e.signalId).sort(), signalIds, 'every claim traces to a stored signal')
+
+  // The opportunity links to the persisted event, whose evidence links are the same signals.
+  assert.ok(row.commercialEventId)
+  const event = await prisma.commercialEvent.findUniqueOrThrow({ where: { id: row.commercialEventId }, include: { evidenceLinks: true } })
+  assert.equal(event.kind, 'CAPACITY_EXPANSION')
+  assert.equal(event.status, 'ACTIVE')
+  assert.deepEqual(event.evidenceLinks.map(l => l.signalId).sort(), signalIds)
+})
+
+test('events are persisted with their evidence links, even with no offer, and go STALE when unsupported', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const p = await seedProspect(workspace.id)
+  await seedCorroboratedSignals(workspace.id, p.id)
+
+  const r = await refreshCommercialOpportunities(workspace.id, [p.id])
+  assert.equal(r.upserted, 0, 'no offer → no opportunity')
+  const events = await prisma.commercialEvent.findMany({ where: { workspaceId: workspace.id }, include: { evidenceLinks: true }, orderBy: { kind: 'asc' } })
+  const kinds = events.map(e => e.kind)
+  for (const k of ['CAPACITY_EXPANSION', 'GEOGRAPHIC_EXPANSION', 'HIRING_SURGE', 'NEW_PROJECT']) assert.ok(kinds.includes(k), `${k} in ${kinds}`)
+  assert.equal(r.events, events.length)
+  for (const e of events) {
+    assert.ok(e.evidenceLinks.length > 0, `${e.kind} has evidence`)
+    assert.ok(e.evidenceLinks.every(l => l.workspaceId === workspace.id && l.claim.length > 0))
+  }
+
+  // Re-running replaces links rather than accumulating them.
+  const linkCount = await prisma.evidenceLink.count({ where: { workspaceId: workspace.id } })
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+  assert.equal(await prisma.evidenceLink.count({ where: { workspaceId: workspace.id } }), linkCount)
+
+  await prisma.signal.updateMany({ where: { prospectId: p.id }, data: { detectedAt: new Date(Date.now() - 120 * DAY) } })
+  const r2 = await refreshCommercialOpportunities(workspace.id, [p.id])
+  assert.equal(r2.staleEvents, events.length)
+  assert.equal(await prisma.commercialEvent.count({ where: { workspaceId: workspace.id, status: 'ACTIVE' } }), 0)
+  assert.equal(await prisma.evidenceLink.count({ where: { workspaceId: workspace.id } }), linkCount, 'stale events keep their history')
+})
+
+test('evidence graph: company → sources → signals → events → opportunities, tenant-scoped', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const other = await seedUserWithWorkspace('other@acme.test')
+  const p = await seedProspect(workspace.id)
+  await seedCorroboratedSignals(workspace.id, p.id)
+  const offer = await seedOffer(workspace.id)
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+
+  const res = await graph.request(`/api/evidence-graph/${p.id}?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
+  assert.equal(res.status, 200)
+  const byKind = (k: string) => res.body.nodes.filter((n: { kind: string }) => n.kind === k)
+  assert.equal(byKind('company').length, 1)
+  assert.equal(byKind('source').length, 3)
+  assert.equal(byKind('signal').length, 3)
+  assert.ok(byKind('event').length >= 3)
+  assert.equal(byKind('opportunity').length, 1)
+  assert.deepEqual(byKind('offer').map((n: { label: string }) => n.label), [offer.name])
+
+  const edge = (k: string) => res.body.edges.filter((e: { kind: string }) => e.kind === k)
+  assert.equal(edge('REPORTED').length, 3)
+  assert.equal(edge('OBSERVED').length, 3)
+  assert.equal(edge('CREATES').length, 1)
+  assert.equal(edge('FOR_OFFER').length, 1)
+  assert.ok(edge('SUPPORTS').every((e: { data: { claim: string } }) => e.data.claim.length > 0))
+  const nodeIds = new Set(res.body.nodes.map((n: { id: string }) => n.id))
+  assert.ok(res.body.edges.every((e: { from: string; to: string }) => nodeIds.has(e.from) && nodeIds.has(e.to)), 'no dangling edges')
+
+  const signal = byKind('signal')[0]
+  assert.equal(typeof signal.data.quality, 'number')
+  assert.ok(['HIGH', 'MEDIUM', 'LOW', 'UNUSABLE'].includes(signal.data.grade))
+  const capacity = res.body.narratives.find((n: { text: string }) => n.text.includes('capacity expansion'))
+  assert.ok(capacity, 'a narrative per active event')
+  assert.match(capacity.text, /^ABC Electrical: capacity expansion \(confidence \d+%\)\./)
+  assert.match(capacity.text, /• Hiring 17 field technicians — jobs\.example\.com, \d{4}-\d{2}-\d{2}/)
+
+  assert.equal((await graph.request(`/api/evidence-graph/${p.id}?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(other.user.id) } })).status, 403)
+  assert.equal((await graph.request(`/api/evidence-graph/${p.id}?workspaceId=${other.workspace.id}`, { headers: { Authorization: bearer(other.user.id) } })).status, 404)
+
+  // Stale events are hidden unless asked for.
+  await prisma.commercialEvent.updateMany({ where: { workspaceId: workspace.id }, data: { status: 'STALE' } })
+  const hidden = await graph.request(`/api/evidence-graph/${p.id}?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
+  assert.equal(hidden.body.nodes.filter((n: { kind: string }) => n.kind === 'event').length, 0)
+  assert.equal(hidden.body.narratives.length, 0)
+  const withStale = await graph.request(`/api/evidence-graph/${p.id}?workspaceId=${workspace.id}&includeStale=true`, { headers: { Authorization: bearer(user.id) } })
+  assert.ok(withStale.body.nodes.filter((n: { kind: string }) => n.kind === 'event').length >= 3)
 })
 
 test('an OPEN opportunity expires when its evidence goes stale, and re-opens on fresh evidence', async () => {
@@ -221,7 +308,7 @@ test('commercial-opportunities API: list, detail, status workflow, refresh — a
 
   const detail = await opps.request(`/api/commercial-opportunities/${id}?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
   assert.equal(detail.status, 200)
-  assert.equal(detail.body.opportunity.evidence.length, 3)
+  assert.equal(detail.body.opportunity.evidence.length, 2)
 
   const foreignDetail = await opps.request(`/api/commercial-opportunities/${id}?workspaceId=${other.workspace.id}`, { headers: { Authorization: bearer(other.user.id) } })
   assert.equal(foreignDetail.status, 404)

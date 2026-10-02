@@ -17,6 +17,7 @@ import { inboxRouter } from './routes/inbox.js'
 import { opportunitiesRouter } from './routes/opportunities.js'
 import { offersRouter } from './routes/offers.js'
 import { commercialOpportunitiesRouter } from './routes/commercialOpportunities.js'
+import { evidenceGraphRouter } from './routes/evidenceGraph.js'
 import { sendsRouter } from './routes/sends.js'
 import { webhooksRouter } from './routes/webhooks.js'
 import { jobsRouter } from './routes/jobs.js'
@@ -223,6 +224,7 @@ app.use('/api/inbox', inboxRouter)
 app.use('/api/opportunities', opportunitiesRouter)
 app.use('/api/offers', offersRouter)
 app.use('/api/commercial-opportunities', commercialOpportunitiesRouter)
+app.use('/api/evidence-graph', evidenceGraphRouter)
 app.use('/api/sends', sendsRouter)
 app.use('/api/webhooks', webhooksRouter)
 app.use('/api/jobs', jobsRouter)

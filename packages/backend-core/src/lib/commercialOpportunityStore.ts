@@ -1,5 +1,10 @@
-// Persistence for the Opportunity Engine: assess each prospect against each
-// offer that applies to it and keep CommercialOpportunity rows in step.
+// Persistence for the evidence graph and the Opportunity Engine. Per prospect:
+//
+// 1. Detect commercial events (commercialEventEngine.ts) and keep CommercialEvent
+//    rows in step — ACTIVE while supported, STALE once not — each with its
+//    EvidenceLink edges to the signals behind it. This runs with or without offers.
+// 2. Assess the prospect against each offer that applies to it and keep
+//    CommercialOpportunity rows in step, linked to the event they were built on.
 //
 // - An assessment upserts the (workspace, prospect, offerKey) row.
 // - When the evidence no longer supports an OPEN opportunity (or its offer is
@@ -12,6 +17,7 @@ import { MAX_SIGNALS_FOR_SCORING } from './signalEngine.js'
 import { toCanonicalSignal } from './signalIntelligence.js'
 import { offerFromMission, offerFromRow, type OfferDefinition, type OfferRow } from './offerModel.js'
 import { assessOpportunity, type OpportunityAssessment } from './opportunityEngine.js'
+import { detectCommercialEvents, type CommercialEventHypothesis } from './commercialEventEngine.js'
 
 export const COMMERCIAL_OPPORTUNITY_STATUSES = ['OPEN', 'PURSUING', 'WON', 'LOST', 'DISMISSED', 'EXPIRED'] as const
 export type CommercialOpportunityStatus = (typeof COMMERCIAL_OPPORTUNITY_STATUSES)[number]
@@ -23,7 +29,7 @@ export function isCommercialOpportunityEngineEnabled(): boolean {
   return process.env.COMMERCIAL_OPPORTUNITIES_ENABLED !== 'false'
 }
 
-/** Only prospects with a signal this recent (or an OPEN opportunity to expire) are reassessed. */
+/** Only prospects with a signal this recent (or an OPEN opportunity / ACTIVE event to retire) are reassessed. */
 const REASSESS_SIGNAL_DAYS = 30
 
 export type OfferCatalog = {
@@ -102,13 +108,16 @@ type ProspectWithSignals = {
 
 type ExistingRow = { id: string; offerKey: string; status: string }
 
-function assessmentData(a: OpportunityAssessment) {
+function assessmentData(a: OpportunityAssessment, commercialEventId: string | null) {
   return {
     offerId: a.offerId,
     missionId: a.missionId,
     eventType: a.eventType,
+    eventFamily: a.eventFamily,
     eventTitle: a.eventTitle,
+    implication: a.implication,
     whyNow: a.whyNow,
+    commercialEventId,
     confidence: a.confidence,
     evidenceConfidence: a.evidenceConfidence,
     independentSources: a.independentSources,
@@ -135,16 +144,70 @@ function assessmentData(a: OpportunityAssessment) {
   }
 }
 
-export type RefreshResult = { assessed: number; upserted: number; expired: number }
+export type RefreshResult = { assessed: number; upserted: number; expired: number; events: number; staleEvents: number }
+
+type ExistingEvent = { id: string; kind: string; status: string }
+
+/**
+ * Upsert one row per detected event kind and replace its evidence links; any
+ * ACTIVE event no longer detected becomes STALE (kept, links and all, as
+ * history). Returns the event id per kind for the opportunities to link to.
+ */
+async function syncEvents(
+  prospect: ProspectWithSignals,
+  detected: CommercialEventHypothesis[],
+  existing: ExistingEvent[],
+  now: Date,
+): Promise<{ idByKind: Map<string, string>; stale: number }> {
+  const idByKind = new Map<string, string>()
+  for (const e of detected) {
+    const data = {
+      family: e.family, title: e.title, implication: e.implication, whyNow: e.whyNow,
+      confidence: e.confidence, independentSources: e.independentSources,
+      trustworthySignals: e.trustworthySignals, corroborated: e.corroborated,
+    }
+    const links = e.evidence
+      .filter((c): c is typeof c & { signalId: string } => c.signalId != null)
+      .map(c => ({
+        workspaceId: prospect.workspaceId, signalId: c.signalId, claim: c.claim, sourceKey: c.sourceKey,
+        sourceUrl: c.sourceUrl, eventDate: new Date(c.eventDate), quality: c.quality, grade: c.grade, trustworthy: c.trustworthy,
+      }))
+    const row = await prisma.$transaction(async (tx) => {
+      const ev = await tx.commercialEvent.upsert({
+        where: { workspaceId_prospectId_kind: { workspaceId: prospect.workspaceId, prospectId: prospect.id, kind: e.kind } },
+        create: { workspaceId: prospect.workspaceId, prospectId: prospect.id, kind: e.kind, ...data, status: 'ACTIVE', firstDetectedAt: now, lastConfirmedAt: now, lastAssessedAt: now },
+        update: { ...data, status: 'ACTIVE', lastConfirmedAt: now, lastAssessedAt: now },
+        select: { id: true },
+      })
+      // The links are a snapshot of the current evidence: replace, don't accumulate.
+      await tx.evidenceLink.deleteMany({ where: { workspaceId: prospect.workspaceId, commercialEventId: ev.id } })
+      if (links.length) await tx.evidenceLink.createMany({ data: links.map(l => ({ ...l, commercialEventId: ev.id })) })
+      return ev
+    })
+    idByKind.set(e.kind, row.id)
+  }
+  const detectedKinds = new Set(detected.map(e => e.kind))
+  const goneStale = existing.filter(r => r.status === 'ACTIVE' && !detectedKinds.has(r.kind as CommercialEventHypothesis['kind']))
+  if (goneStale.length) {
+    await prisma.commercialEvent.updateMany({
+      where: { workspaceId: prospect.workspaceId, id: { in: goneStale.map(r => r.id) } },
+      data: { status: 'STALE', lastAssessedAt: now },
+    })
+  }
+  return { idByKind, stale: goneStale.length }
+}
 
 async function refreshOne(
   prospect: ProspectWithSignals,
   catalog: OfferCatalog,
   existing: ExistingRow[],
+  existingEvents: ExistingEvent[],
   now: Date,
 ): Promise<RefreshResult> {
   const offers = offersForProspect(catalog, prospect.missionId)
   const signals = prospect.signals.map(s => toCanonicalSignal({ ...s, prospectId: prospect.id, prospect: { companyName: prospect.companyName } }))
+  const detected = detectCommercialEvents(signals, { now: now.getTime() })
+  const { idByKind, stale } = await syncEvents(prospect, detected, existingEvents, now)
   const byKey = new Map(existing.map(r => [r.offerKey, r]))
   const seen = new Set<string>()
   let upserted = 0
@@ -152,10 +215,10 @@ async function refreshOne(
 
   for (const offer of offers) {
     seen.add(offer.key)
-    const a = assessOpportunity({ prospect, signals, offer, now: now.getTime() })
+    const a = assessOpportunity({ prospect, signals, offer, events: detected, now: now.getTime() })
     const row = byKey.get(offer.key)
     if (a) {
-      const data = assessmentData(a)
+      const data = assessmentData(a, idByKind.get(a.eventType) ?? null)
       await prisma.commercialOpportunity.upsert({
         where: { workspaceId_prospectId_offerKey: { workspaceId: prospect.workspaceId, prospectId: prospect.id, offerKey: offer.key } },
         create: { workspaceId: prospect.workspaceId, prospectId: prospect.id, offerKey: offer.key, ...data, firstDetectedAt: now, lastAssessedAt: now },
@@ -177,7 +240,7 @@ async function refreshOne(
       expired++
     }
   }
-  return { assessed: offers.length, upserted, expired }
+  return { assessed: offers.length, upserted, expired, events: detected.length, staleEvents: stale }
 }
 
 const PROSPECT_SELECT = {
@@ -200,7 +263,7 @@ export async function refreshCommercialOpportunities(
   prospectIds: string[],
   opts: { now?: Date; catalog?: OfferCatalog } = {},
 ): Promise<RefreshResult & { prospects: number }> {
-  const total = { assessed: 0, upserted: 0, expired: 0, prospects: 0 }
+  const total = { assessed: 0, upserted: 0, expired: 0, events: 0, staleEvents: 0, prospects: 0 }
   if (prospectIds.length === 0) return total
   const now = opts.now ?? new Date()
   const catalog = opts.catalog ?? await loadOfferCatalog(workspaceId)
@@ -214,6 +277,7 @@ export async function refreshCommercialOpportunities(
       OR: [
         { signals: { some: { detectedAt: { gte: cutoff } } } },
         { commercialOpportunities: { some: { status: 'OPEN' } } },
+        { commercialEvents: { some: { status: 'ACTIVE' } } },
       ],
     },
     select: PROSPECT_SELECT,
@@ -226,12 +290,20 @@ export async function refreshCommercialOpportunities(
   }) as Array<ExistingRow & { prospectId: string }>
   const byProspect = new Map<string, ExistingRow[]>()
   for (const r of existing) byProspect.set(r.prospectId, [...(byProspect.get(r.prospectId) ?? []), r])
+  const existingEvents = await prisma.commercialEvent.findMany({
+    where: { workspaceId, prospectId: { in: prospects.map(p => p.id) } },
+    select: { id: true, prospectId: true, kind: true, status: true },
+  }) as Array<ExistingEvent & { prospectId: string }>
+  const eventsByProspect = new Map<string, ExistingEvent[]>()
+  for (const r of existingEvents) eventsByProspect.set(r.prospectId, [...(eventsByProspect.get(r.prospectId) ?? []), r])
 
   for (const p of prospects) {
-    const r = await refreshOne(p, catalog, byProspect.get(p.id) ?? [], now)
+    const r = await refreshOne(p, catalog, byProspect.get(p.id) ?? [], eventsByProspect.get(p.id) ?? [], now)
     total.assessed += r.assessed
     total.upserted += r.upserted
     total.expired += r.expired
+    total.events += r.events
+    total.staleEvents += r.staleEvents
     total.prospects++
   }
   return total

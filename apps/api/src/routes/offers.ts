@@ -4,7 +4,8 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
-import { COMMERCIAL_EVENT_TYPES } from '@acaos/backend-core/lib/offerModel.js'
+import { COMMERCIAL_EVENT_TYPES, OFFER_TRIGGERS } from '@acaos/backend-core/lib/offerModel.js'
+import { COMMERCIAL_EVENT_KINDS } from '@acaos/backend-core/lib/commercialEventEngine.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
@@ -31,7 +32,8 @@ const offerFields = {
   problemSolved: z.string().trim().max(1000).nullable().optional(),
   targetCustomer: z.string().trim().max(300).nullable().optional(),
   targetBuyerTitles: phrases.optional(),
-  triggeringEvents: z.array(z.enum(COMMERCIAL_EVENT_TYPES as unknown as [string, ...string[]])).max(COMMERCIAL_EVENT_TYPES.length).optional(),
+  // A specific event kind (e.g. TENDER_OPPORTUNITY) or a whole family (e.g. ACTIVE_PROCUREMENT).
+  triggeringEvents: z.array(z.enum(OFFER_TRIGGERS as unknown as [string, ...string[]])).max(OFFER_TRIGGERS.length).optional(),
   qualifyingKeywords: phrases.optional(),
   disqualifyingKeywords: phrases.optional(),
   geographies: z.array(z.string().trim().min(2).max(60)).max(30).optional(),
@@ -96,7 +98,7 @@ offersRouter.get(
       orderBy: [{ active: 'desc' }, { createdAt: 'asc' }],
       take: 200,
     })
-    res.json({ offers, commercialEventTypes: COMMERCIAL_EVENT_TYPES })
+    res.json({ offers, commercialEventKinds: COMMERCIAL_EVENT_KINDS, commercialEventFamilies: COMMERCIAL_EVENT_TYPES })
   })
 )
 

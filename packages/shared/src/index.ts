@@ -745,7 +745,7 @@ export interface RouteContracts {
   'POST /api/offers': { body: CreateOfferRequest; response: { offer: unknown } }
   'PUT /api/offers/:id': { params: { id: string }; body: UpdateOfferRequest; response: { offer: unknown } }
   'PATCH /api/commercial-opportunities/:id/status': { params: { id: string }; body: UpdateCommercialOpportunityStatusRequest; response: { success: boolean; status: CommercialOpportunityStatus } }
-  'POST /api/commercial-opportunities/refresh': { body: RefreshCommercialOpportunitiesRequest; response: { prospects: number; assessed: number; upserted: number; expired: number } }
+  'POST /api/commercial-opportunities/refresh': { body: RefreshCommercialOpportunitiesRequest; response: { prospects: number; assessed: number; upserted: number; expired: number; events: number; staleEvents: number } }
   'PUT /api/ops/jobs/:id': { params: { id: string }; body: OpsUpdateJobSiteRequest; response: unknown }
   'POST /api/ops/shifts': { body: OpsCreateShiftRequest; response: unknown }
   'PUT /api/ops/shifts/:id': { params: { id: string }; body: OpsUpdateShiftRequest; response: unknown }

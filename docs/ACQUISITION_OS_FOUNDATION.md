@@ -5,6 +5,11 @@ It implements plan phases 1 (Signal Intelligence Layer), 4 (Offer Intelligence) 
 5 (Opportunity Engine), building on the commercial-event classifier and next-best-action
 policy from phases 2–3 (`ACQUISITION_OS_PHASE2.md`, `ACQUISITION_OS_PHASE3.md`).
 
+> **Update:** events now come from the commercial event engine, and every claim is
+> persisted in the evidence graph. See `ACQUISITION_OS_EVIDENCE_GRAPH.md`. Opportunities
+> are built on the strongest event an offer is triggered by, and `eventType` holds the
+> specific event kind.
+
 ```
 Signals ─▶ quality + velocity ─▶ commercial event ─▶ offer fit ─▶ CommercialOpportunity
             (signalIntelligence)   (commercialEvent)   (offerModel)   (opportunityEngine)
