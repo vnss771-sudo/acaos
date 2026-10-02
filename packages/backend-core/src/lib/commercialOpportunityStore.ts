@@ -18,6 +18,7 @@ import { toCanonicalSignal } from './signalIntelligence.js'
 import { offerFromMission, offerFromRow, type OfferDefinition, type OfferRow } from './offerModel.js'
 import { assessOpportunity, type OpportunityAssessment } from './opportunityEngine.js'
 import { detectCommercialEvents, type CommercialEventHypothesis } from './commercialEventEngine.js'
+import type { EngagementStage } from './buyingStage.js'
 
 export const COMMERCIAL_OPPORTUNITY_STATUSES = ['OPEN', 'PURSUING', 'WON', 'LOST', 'DISMISSED', 'EXPIRED'] as const
 export type CommercialOpportunityStatus = (typeof COMMERCIAL_OPPORTUNITY_STATUSES)[number]
@@ -103,6 +104,7 @@ type ProspectWithSignals = {
   contactName: string | null
   contactEmail: string | null
   contactTitle: string | null
+  outcomeStage: EngagementStage | null
   signals: Array<Parameters<typeof toCanonicalSignal>[0]>
 }
 
@@ -136,6 +138,7 @@ function assessmentData(a: OpportunityAssessment, commercialEventId: string | nu
     urgency: a.urgency,
     priority: a.priority,
     buyingStage: a.buyingStage,
+    buyingStageDetail: a.buyingStageDetail,
     recommendedBuyer: a.recommendedBuyer,
     recommendedAction: a.recommendedAction,
     actionLabel: a.actionLabel,
@@ -249,7 +252,7 @@ async function refreshOne(
 
 const PROSPECT_SELECT = {
   id: true, workspaceId: true, companyName: true, missionId: true, industry: true, employeeCount: true,
-  location: true, description: true, domain: true, contactName: true, contactEmail: true, contactTitle: true,
+  location: true, description: true, domain: true, contactName: true, contactEmail: true, contactTitle: true, outcomeStage: true,
   signals: {
     orderBy: { detectedAt: 'desc' as const },
     take: MAX_SIGNALS_FOR_SCORING,
