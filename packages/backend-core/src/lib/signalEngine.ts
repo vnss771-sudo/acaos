@@ -66,13 +66,22 @@ export function decayedStrength(signal: RawSignal): number {
 // exponential decay used in scoring (so the label always agrees with the score).
 // `remaining` is the fraction of original strength still left after age decay.
 export type Freshness = 'LIVE' | 'RECENT' | 'STALE' | 'EXPIRED'
+
+/** Fraction (0..1) of a signal's original strength left after per-type age decay. */
+export function freshnessRemaining(
+  signal: Pick<RawSignal, 'type' | 'detectedAt'>,
+  now: number = Date.now()
+): number {
+  const ageDays = Math.max(0, (now - signal.detectedAt.getTime()) / 86_400_000)
+  const rate = SIGNAL_DECAY_RATES[signal.type] ?? 0.01
+  return Math.exp(-rate * ageDays) // 1.0 (just observed) → 0 (ancient)
+}
+
 export function freshnessState(
   signal: Pick<RawSignal, 'type' | 'detectedAt'>,
   now: number = Date.now()
 ): Freshness {
-  const ageDays = Math.max(0, (now - signal.detectedAt.getTime()) / 86_400_000)
-  const rate = SIGNAL_DECAY_RATES[signal.type] ?? 0.01
-  const remaining = Math.exp(-rate * ageDays) // 1.0 (just observed) → 0 (ancient)
+  const remaining = freshnessRemaining(signal, now)
   if (remaining >= 0.85) return 'LIVE'
   if (remaining >= 0.5) return 'RECENT'
   if (remaining >= 0.2) return 'STALE'
@@ -408,13 +417,19 @@ export function generateRuleBasedRecommendation(
   return { bestContact, bestTiming, bestChannel, messageAngle, reasoning, actionText, urgency, priority }
 }
 
-// Convert a DB Signal row to RawSignal for scoring functions
+// Convert a DB Signal row to RawSignal for scoring functions. Provenance/text
+// fields are carried through when the row has them (the scores ignore them; the
+// commercial-event, offer-fit and signal-quality layers read them).
 export function toRawSignal(s: {
   type: SignalType
   strength: number
   sourceReliability: number
   industryRelevance: number
   detectedAt: Date
+  source?: string | null
+  evidenceSourceId?: string | null
+  title?: string | null
+  description?: string | null
 }): RawSignal {
   return {
     type: s.type,
@@ -422,6 +437,10 @@ export function toRawSignal(s: {
     sourceReliability: s.sourceReliability,
     industryRelevance: s.industryRelevance,
     detectedAt: s.detectedAt,
+    source: s.source ?? null,
+    evidenceSourceId: s.evidenceSourceId ?? null,
+    title: s.title ?? null,
+    description: s.description ?? null,
   }
 }
 

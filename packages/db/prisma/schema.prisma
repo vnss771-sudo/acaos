@@ -199,6 +199,8 @@ model Workspace {
   learningRecommendations LearningRecommendation[]
   outreachSelectionRuns   OutreachSelectionRun[]
   outreachSelections      OutreachSelection[]
+  offers                  Offer[]
+  commercialOpportunities CommercialOpportunity[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -327,6 +329,7 @@ model Mission {
   campaign       Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   discoveryRuns  DiscoveryRun[]
   prospects      Prospect[]
+  offers         Offer[]
 
   @@index([workspaceId, status])
 }
@@ -966,62 +969,63 @@ model ConsentRecord {
 }
 
 model Prospect {
-  id                String            @id @default(cuid())
-  workspaceId       String
-  companyName       String
-  domain            String?
-  domainKey         String? // normalized domain: lowercased, www-stripped
+  id                      String                  @id @default(cuid())
+  workspaceId             String
+  companyName             String
+  domain                  String?
+  domainKey               String? // normalized domain: lowercased, www-stripped
   // Normalized company name for dedupe (lowercased, punctuation/whitespace
   // collapsed, legal-entity suffix dropped). Nullable: legacy rows stay null.
-  companyNameKey    String?
+  companyNameKey          String?
   // Normalized contact email for dedupe (lowercased, plus-tag folded). Nullable.
-  emailKey          String?
-  industry          String?
-  employeeCount     Int?
-  estimatedRevenue  Int? // cents
-  location          String?
-  description       String?
-  notes             String?
-  contactName       String?
-  contactEmail      String?
-  contactPhone      String?
-  contactTitle      String?
-  linkedinUrl       String?
-  opportunityScore  Int               @default(0)
-  intentScore       Int               @default(0)
-  fitScore          Int               @default(0)
-  timingScore       Int               @default(0)
-  confidenceScore   Int               @default(0)
-  buyingStage       BuyingStage       @default(RESEARCHING)
-  outcomeStage      OutcomeStage      @default(DISCOVERED)
-  expectedDealValue Int? // cents
-  winProbability    Float?
-  lastSignalAt      DateTime?
-  lastContactedAt   DateTime?
-  aiSummary         String?
-  sourceTag         String?
-  isExample         Boolean           @default(false)
+  emailKey                String?
+  industry                String?
+  employeeCount           Int?
+  estimatedRevenue        Int? // cents
+  location                String?
+  description             String?
+  notes                   String?
+  contactName             String?
+  contactEmail            String?
+  contactPhone            String?
+  contactTitle            String?
+  linkedinUrl             String?
+  opportunityScore        Int                     @default(0)
+  intentScore             Int                     @default(0)
+  fitScore                Int                     @default(0)
+  timingScore             Int                     @default(0)
+  confidenceScore         Int                     @default(0)
+  buyingStage             BuyingStage             @default(RESEARCHING)
+  outcomeStage            OutcomeStage            @default(DISCOVERED)
+  expectedDealValue       Int? // cents
+  winProbability          Float?
+  lastSignalAt            DateTime?
+  lastContactedAt         DateTime?
+  aiSummary               String?
+  sourceTag               String?
+  isExample               Boolean                 @default(false)
   // Set once this Prospect has been converted into a workspace Lead (the
   // "Convert to Lead" action — see POST /api/prospects/:id/convert-to-lead).
   // @unique makes the relation strictly 1:1: a Prospect converts to at most
   // one Lead, and a Lead has at most one source Prospect. onDelete: SetNull
   // so deleting the created Lead doesn't cascade into deleting the Prospect
   // it came from — it just un-marks the conversion.
-  convertedLeadId   String?           @unique
-  convertedAt       DateTime?
-  convertedLead     Lead?             @relation(fields: [convertedLeadId], references: [id], onDelete: SetNull)
+  convertedLeadId         String?                 @unique
+  convertedAt             DateTime?
+  convertedLead           Lead?                   @relation(fields: [convertedLeadId], references: [id], onDelete: SetNull)
   // The mission this prospect was discovered for (if any). Lets the mission
   // control plane own its prospects, and carries through to recommendations.
-  missionId         String?
-  workspace         Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  mission           Mission?          @relation(fields: [missionId], references: [id], onDelete: SetNull)
-  signals           Signal[]
-  recommendations   Recommendation[]
-  outcomes          ProspectOutcome[]
-  evidenceSources   EvidenceSource[]
-  outreachIntents   OutreachIntent[]
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  missionId               String?
+  workspace               Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  mission                 Mission?                @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  signals                 Signal[]
+  recommendations         Recommendation[]
+  outcomes                ProspectOutcome[]
+  evidenceSources         EvidenceSource[]
+  outreachIntents         OutreachIntent[]
+  commercialOpportunities CommercialOpportunity[]
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
   // NOTE: a PARTIAL UNIQUE index on (workspaceId, domainKey) WHERE domainKey IS
   // NOT NULL is defined in migration 20260622030000_prospect_domain_unique.
   // Prisma can't express filtered unique indexes, so it lives in raw SQL only;
@@ -1053,6 +1057,9 @@ model Signal {
   fingerprint       String? // dedup key: source:type:title-slug:YYYY-MM
   rawData           Json?
   detectedAt        DateTime        @default(now())
+  // When the source says the event happened (vs detectedAt: when ACAOS saw it).
+  // Freshness in the signal-intelligence layer uses this when known.
+  publishedAt       DateTime?
   workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect          Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   evidenceSource    EvidenceSource? @relation(fields: [evidenceSourceId], references: [id], onDelete: SetNull)
@@ -1633,4 +1640,96 @@ model OutreachSelection {
 
   @@index([workspaceId, runId])
   @@index([leadId])
+}
+
+// What the workspace sells, explicitly (lib/offerModel.ts). The same company can
+// be a strong opportunity for one offer and none for another. Optional mission
+// link: a mission's offers are evaluated for that mission's prospects; offers
+// with no mission apply to every prospect in the workspace.
+model Offer {
+  id                       String                  @id @default(cuid())
+  workspaceId              String
+  missionId                String?
+  name                     String
+  problemSolved            String?
+  targetCustomer           String?
+  targetBuyerTitles        String[]
+  // CommercialEventType values (lib/commercialEvent.ts). Empty = any clear event.
+  triggeringEvents         String[]
+  qualifyingKeywords       String[]
+  disqualifyingKeywords    String[]
+  // State codes / cities / regions. Empty = anywhere.
+  geographies              String[]
+  minOpportunityValueCents Int?
+  dealValueMinCents        Int?
+  dealValueMaxCents        Int?
+  urgencyIndicators        String[]
+  proofPoints              String[]
+  recommendedActions       String[]
+  active                   Boolean                 @default(true)
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  workspace                Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  mission                  Mission?                @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  opportunities            CommercialOpportunity[]
+
+  @@index([workspaceId, active])
+  @@index([missionId])
+}
+
+// The central object (lib/opportunityEngine.ts): a commercially meaningful
+// situation ACAOS believes the workspace can act on — one per (prospect, offer).
+// Distinct from Opportunity, which holds tender / development-application
+// records from public sources for Work discovery.
+// Engine-managed statuses: OPEN, EXPIRED. Operator statuses: PURSUING, WON,
+// LOST, DISMISSED — the engine never overwrites an operator status.
+model CommercialOpportunity {
+  id                     String    @id @default(cuid())
+  workspaceId            String
+  prospectId             String
+  offerId                String?
+  missionId              String?
+  // `offer:<id>` or `mission:<id>` — the offer this was assessed against.
+  offerKey               String
+  eventType              String
+  eventTitle             String
+  whyNow                 String
+  confidence             Int
+  evidenceConfidence     Int
+  independentSources     Int
+  trustworthySignals     Int
+  offerFit               Int
+  intentScore            Int
+  timingScore            Int
+  contactability         Int
+  estimatedValueMinCents Int?
+  estimatedValueMaxCents Int?
+  probability            Float
+  urgency                String
+  priority               Int
+  buyingStage            String
+  recommendedBuyer       String?
+  recommendedAction      String
+  actionLabel            String
+  actionReason           String
+  blockers               Json // string[]
+  reasons                Json // string[]
+  evidence               Json // EvidenceClaim[]
+  velocity               Json // SignalVelocity[]
+  intelligenceGate       Boolean
+  status                 String    @default("OPEN")
+  statusChangedAt        DateTime?
+  statusChangedByUserId  String?
+  firstDetectedAt        DateTime  @default(now())
+  lastAssessedAt         DateTime  @default(now())
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect               Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  offer                  Offer?    @relation(fields: [offerId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, prospectId, offerKey])
+  @@index([workspaceId, status, priority])
+  @@index([prospectId])
+  @@index([offerId])
 }

@@ -31,6 +31,7 @@ only. Booleans are `true`/`false` (string) unless noted.
 | `STRIPE_SECRET_KEY` `STRIPE_WEBHOOK_SECRET` `STRIPE_PRICE_*` | — | api | ✅* | Required for billing. |
 | `APOLLO_API_KEY` `GOOGLE_PLACES_API_KEY` `HUNTER_API_KEY` | — | worker | ⚙️ | Discovery providers (features degrade gracefully if unset). |
 | `OPPORTUNITY_DISCOVERY_ENABLED` / `OPPORTUNITY_DISCOVERY_INTERVAL_MS` | `false` / 6h | worker, api | ⚙️ | Work discovery ("Find work") sweep. Opt-in; min interval 15 min. |
+| `COMMERCIAL_OPPORTUNITIES_ENABLED` | `true` | worker | ⚙️ | Opportunity engine reassessment on each prospect rescore. Local only, never sends; `false` is a kill switch. See `docs/ACQUISITION_OS_FOUNDATION.md`. |
 | `PLANNINGALERTS_API_KEY` | — | worker | ⚙️ | Enables the council development-application source. Commercial use needs a paid PlanningAlerts plan. AusTender needs no key. |
 | `METRICS_TOKEN` | — | api, worker | ⚙️ | Bearer that protects `/metrics`. Set in production. |
 | `ADMIN_EMAIL` | — | api | ⚙️ | One-time, audited, step-up-gated platform-admin bootstrap (not a perpetual backdoor). |

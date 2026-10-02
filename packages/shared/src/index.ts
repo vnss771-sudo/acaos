@@ -317,6 +317,55 @@ export interface CreateJobFromOpportunityRequest {
   jobCode?: string
 }
 
+// ── Offers & commercial opportunities (Acquisition OS) ───────────────────────
+export type CommercialEventType =
+  | 'ACTIVE_PROCUREMENT' | 'CAPACITY_EXPANSION' | 'GROWTH_EVENT' | 'ORGANISATIONAL_CHANGE'
+  | 'DIGITAL_CHANGE' | 'MARKET_ATTENTION' | 'EARLY_BUYING_TRIGGER'
+
+export type CommercialOpportunityStatus = 'OPEN' | 'PURSUING' | 'WON' | 'LOST' | 'DISMISSED' | 'EXPIRED'
+
+interface OfferFields {
+  missionId?: string | null
+  problemSolved?: string | null
+  targetCustomer?: string | null
+  targetBuyerTitles?: string[]
+  triggeringEvents?: string[]
+  qualifyingKeywords?: string[]
+  disqualifyingKeywords?: string[]
+  geographies?: string[]
+  minOpportunityValueCents?: number | null
+  dealValueMinCents?: number | null
+  dealValueMaxCents?: number | null
+  urgencyIndicators?: string[]
+  proofPoints?: string[]
+  recommendedActions?: string[]
+  active?: boolean
+}
+
+// POST /api/offers
+export interface CreateOfferRequest extends OfferFields {
+  workspaceId: string
+  name: string
+}
+
+// PUT /api/offers/:id
+export interface UpdateOfferRequest extends OfferFields {
+  workspaceId: string
+  name?: string
+}
+
+// PATCH /api/commercial-opportunities/:id/status
+export interface UpdateCommercialOpportunityStatusRequest {
+  workspaceId: string
+  status: Exclude<CommercialOpportunityStatus, 'EXPIRED'>
+}
+
+// POST /api/commercial-opportunities/refresh
+export interface RefreshCommercialOpportunitiesRequest {
+  workspaceId: string
+  prospectId?: string
+}
+
 // ── Route contract map ────────────────────────────────────────────────────────
 // The single source of truth that binds METHOD + path → { params, query, body,
 // response }. The web client calls every mutation through a typed helper keyed by
@@ -693,6 +742,10 @@ export interface RouteContracts {
   'PATCH /api/opportunities/:id/status': { params: { id: string }; body: UpdateOpportunityStatusRequest; response: { success: boolean; status: OpportunityStatus } }
   'POST /api/opportunities/:id/create-job': { params: { id: string }; body: CreateJobFromOpportunityRequest; response: { jobSite: { id: string; jobCode: string } } }
   'POST /api/opportunities/run': { body: { workspaceId: string }; response: { queued: boolean } }
+  'POST /api/offers': { body: CreateOfferRequest; response: { offer: unknown } }
+  'PUT /api/offers/:id': { params: { id: string }; body: UpdateOfferRequest; response: { offer: unknown } }
+  'PATCH /api/commercial-opportunities/:id/status': { params: { id: string }; body: UpdateCommercialOpportunityStatusRequest; response: { success: boolean; status: CommercialOpportunityStatus } }
+  'POST /api/commercial-opportunities/refresh': { body: RefreshCommercialOpportunitiesRequest; response: { prospects: number; assessed: number; upserted: number; expired: number } }
   'PUT /api/ops/jobs/:id': { params: { id: string }; body: OpsUpdateJobSiteRequest; response: unknown }
   'POST /api/ops/shifts': { body: OpsCreateShiftRequest; response: unknown }
   'PUT /api/ops/shifts/:id': { params: { id: string }; body: OpsUpdateShiftRequest; response: unknown }
