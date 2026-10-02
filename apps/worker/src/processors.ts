@@ -19,6 +19,7 @@ import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.
 import { SelectionRecorder } from '@acaos/backend-core/lib/selectionTracking.js'
 import { holdoutPercent, isHeldOut } from '@acaos/backend-core/lib/holdout.js'
 import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
+import { isCommercialOpportunityEngineEnabled, loadOfferCatalog, refreshCommercialOpportunities, type OfferCatalog } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { effectiveReplyClassification } from '@acaos/backend-core/lib/replyGating.js'
@@ -135,6 +136,10 @@ export async function scoreProspects(
   const toRecommend: string[] = []
   let cursor: string | undefined
   let updated = 0
+  // Opportunity engine: reassess each scored page against the workspace's offers.
+  // Best-effort — a failure here is logged and never fails the rescore.
+  const opportunitiesEnabled = isCommercialOpportunityEngineEnabled()
+  let offerCatalog: OfferCatalog | null = null
 
   for (;;) {
     const page = await prisma.prospect.findMany({
@@ -169,6 +174,15 @@ export async function scoreProspects(
 
     for (let i = 0; i < updates.length; i += BATCH) {
       await Promise.all(updates.slice(i, i + BATCH))
+    }
+
+    if (opportunitiesEnabled) {
+      try {
+        offerCatalog ??= await loadOfferCatalog(workspaceId)
+        await refreshCommercialOpportunities(workspaceId, page.map(p => p.id), { catalog: offerCatalog })
+      } catch (err) {
+        console.error(`[score-prospects] opportunity refresh failed for workspace ${workspaceId}: ${err instanceof Error ? err.message : err}`)
+      }
     }
 
     updated += page.length

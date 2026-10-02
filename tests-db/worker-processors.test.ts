@@ -48,6 +48,33 @@ test('scoreProspects on an empty workspace updates nothing', async () => {
   assert.equal(result.updated, 0)
 })
 
+test('scoreProspects reassesses commercial opportunities, unless the engine is switched off', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const prospect = await prisma.prospect.create({
+    data: { workspaceId: workspace.id, companyName: 'ABC Electrical', contactName: 'Sam', contactEmail: 'sam@abc.example' },
+  })
+  const at = new Date(Date.now() - 2 * 86_400_000)
+  for (const [type, host] of [['EXPANSION', 'news.example.org'], ['HIRING', 'jobs.example.com']] as const) {
+    await prisma.signal.create({
+      data: { workspaceId: workspace.id, prospectId: prospect.id, type, strength: 85, sourceReliability: 90, industryRelevance: 85, title: `${type} at ABC`, sourceUrl: `https://${host}/a`, source: host, detectedAt: at },
+    })
+  }
+  await prisma.offer.create({ data: { workspaceId: workspace.id, name: 'Field crews', triggeringEvents: ['CAPACITY_EXPANSION'] } })
+
+  process.env.COMMERCIAL_OPPORTUNITIES_ENABLED = 'false'
+  try {
+    await scoreProspects(workspace.id)
+  } finally {
+    delete process.env.COMMERCIAL_OPPORTUNITIES_ENABLED
+  }
+  assert.equal(await prisma.commercialOpportunity.count({ where: { workspaceId: workspace.id } }), 0, 'kill switch honoured')
+
+  await scoreProspects(workspace.id)
+  const row = await prisma.commercialOpportunity.findFirstOrThrow({ where: { workspaceId: workspace.id } })
+  assert.equal(row.prospectId, prospect.id)
+  assert.equal(row.eventType, 'CAPACITY_EXPANSION')
+})
+
 // --- calibrateScoring ---
 
 async function seedOutcome(workspaceId: string, stage: 'WON' | 'LOST', signalType: string) {

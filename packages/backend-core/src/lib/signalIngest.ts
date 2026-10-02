@@ -40,6 +40,8 @@ export type IngestSignalInput = {
   sourceReliability?: number
   industryRelevance?: number
   detectedAt?: Date
+  /** When the source says the event happened, if it says. */
+  publishedAt?: Date | null
   evidence?: SignalEvidenceInput
 }
 
@@ -88,10 +90,12 @@ export async function ingestSignal(input: IngestSignalInput) {
       source: input.source,
       fingerprint: fp,
       detectedAt,
+      publishedAt: input.publishedAt ?? null,
     },
     update: {
       strength: input.strength,
       detectedAt,
+      ...(input.publishedAt ? { publishedAt: input.publishedAt } : {}),
       ...(evidenceSourceId ? { evidenceSourceId } : {}),
     },
   })
