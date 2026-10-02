@@ -5,7 +5,8 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { COMMERCIAL_OPPORTUNITY_STATUSES, bridgesRecommendation, refreshCommercialOpportunities, retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
-import { userBelongsToWorkspace } from '../lib/workspaces.js'
+import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
+import { proposeIntentForOpportunity } from '@acaos/backend-core/lib/opportunityIntent.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type { Assert, Extends, UpdateCommercialOpportunityStatusRequest, RefreshCommercialOpportunitiesRequest } from '@acaos/shared'
@@ -192,5 +193,29 @@ commercialOpportunitiesRouter.post(
     }
     const result = await refreshCommercialOpportunities(workspaceId, ids)
     res.json(result)
+  })
+)
+
+// POST /api/commercial-opportunities/:id/intent — turn the opportunity's live
+// outreach recommendation into a PROPOSED OutreachIntent carrying its evidence
+// and grounding record. Admin, like every other intent write. Nothing is sent:
+// draft → approve → materialise → send stays the existing, gated path.
+// Idempotent: 201 when created, 200 with the existing intent otherwise.
+commercialOpportunitiesRouter.post(
+  '/:id/intent',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { id } = parseParams(idParamsSchema, req)
+    const { workspaceId } = parseBody(z.object({ workspaceId: workspaceIdField }), req)
+    await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+    const result = await proposeIntentForOpportunity({ workspaceId, opportunityId: id })
+    if (!result.ok) throw new ApiError(result.status, result.error)
+    if (result.created) {
+      await recordAudit({
+        workspaceId, actorUserId: user.id, type: 'outreachIntent.propose',
+        entityType: 'outreachIntent', entityId: result.intentId, metadata: { commercialOpportunityId: id },
+      })
+    }
+    res.status(result.created ? 201 : 200).json(result)
   })
 )

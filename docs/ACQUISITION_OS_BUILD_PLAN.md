@@ -34,7 +34,8 @@ The plan has 15 phases, grouped into release trains:
 | 2 Evidence graph | #319 | `CommercialEvent` + `EvidenceLink` tables, `/api/evidence-graph/:prospectId` | `routes/evidenceGraph.ts` | same |
 | 6 Scoring 2.0 | #320 | Scorecard: value, intent, timing, fit, evidence, contactability, competition; probability, expected value, priority | `lib/opportunityScoring.ts` | `ACQUISITION_OS_SCORING.md` |
 | 7 Buying stage | #321 | Seven stages, a move per stage, a stage gate on "contact now", `buyingStageDetail` | `lib/buyingStage.ts` | same |
-| 8 Recommendation engine | (this PR) | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
+| 8 Recommendation engine | #323 | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
+| 9 Intelligence → execution | (this PR) | Operator proposes an `OutreachIntent` from an opportunity; drafts are written from verified facts and checked (claim → evidence → source → confidence); an ungrounded draft can't be approved | `lib/opportunityIntent.ts`, `lib/draftGrounding.ts` | `ACQUISITION_OS_EXECUTION.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -106,19 +107,13 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 9: Intelligence → execution
-- Opportunity → recommendation → `OutreachIntent` → evidence-grounded draft.
-- Start from the bridged `Recommendation` row (`commercialOpportunityId` set), and
-  ground the draft in `CommercialOpportunity.recommendation.citations`.
-- Each draft records a **grounding record**: claim → evidence → source → confidence. No
-  claim without evidence.
-- The existing policy checks, approval mode, suppression and send caps stay in charge.
-
 ### Phase 10: Outcome graph
 - Chain each opportunity through recommendation → outreach → reply → meeting → quote →
   won/lost → revenue.
 - Reuse `ProspectOutcome`, `OutreachSent`, reply attribution, and the opportunity's
   WON/LOST statuses.
+- The chain's first links exist: `OutreachIntent.commercialOpportunityId` and
+  `.recommendationId`; materialise stamps the intent onto the lead and `OutreachSent`.
 
 ### Phase 11: Closed-loop learning
 - Attribute each outcome to a cause: wrong signal, wrong timing, wrong contact, bad
@@ -155,9 +150,11 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 - `syncEvents` rewrites evidence links on every rescore. It's correct but write-heavy;
   skip unchanged events if it shows up in load.
 - Scoring weights are hand-set until phases 11–12.
+- Draft grounding checks specifics (numbers, amounts, percentages) and fact use; a
+  qualitative invented claim with no number isn't caught deterministically.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 9
-> (intelligence → execution), following the invariants and workflow there. Open a PR and
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 10
+> (outcome graph), following the invariants and workflow there. Open a PR and
 > merge it when CI is green. Be conservative with tokens.

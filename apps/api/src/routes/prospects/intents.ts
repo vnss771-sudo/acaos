@@ -4,6 +4,7 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userHasWorkspaceAccess, assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { buildIntentDraftInput } from '@acaos/backend-core/lib/outreachIntent.js'
+import { checkDraftGrounding, type GroundingRecord } from '@acaos/backend-core/lib/draftGrounding.js'
 import { materializeOutreachIntent } from '../../lib/materializeIntent.js'
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
@@ -74,7 +75,9 @@ export function registerIntentRoutes(prospectsRouter: Router) {
         }
       : undefined
 
-    const raw = await generateOutreach(buildIntentDraftInput({ prospect, recommendation, intent, icp }))
+    // An opportunity intent is drafted from its verified facts only, and checked against them.
+    const grounding = intent.grounding as GroundingRecord | null
+    const raw = await generateOutreach(buildIntentDraftInput({ prospect, recommendation, intent, icp, grounding }))
     // Strict, schema-validated parse — fails closed with a 502 (AiSchemaError
     // extends ApiError) if the model returns bad JSON or omits subject/email.
     const parsed = parseAiJson(OutreachDraftOutputSchema, raw, 'intent-draft')
@@ -87,6 +90,15 @@ export function registerIntentRoutes(prospectsRouter: Router) {
         draftFollowup: parsed.followup ?? null,
         draftGeneratedAt: new Date(),
         status: 'DRAFTED',
+        ...(grounding?.facts?.length
+          ? {
+              grounding: checkDraftGrounding(
+                { subject: parsed.subject, body: parsed.email, followup: parsed.followup ?? null },
+                grounding,
+                { now: Date.now(), extraContext: [icp?.businessContext, icp?.offer, prospect.companyName, prospect.location, prospect.contactName] },
+              ),
+            }
+          : {}),
       },
     })
     res.json(updated)
@@ -101,6 +113,11 @@ export function registerIntentRoutes(prospectsRouter: Router) {
     const intent = await loadIntentForWrite(id, intentId, userId)
     if (intent.status !== 'DRAFTED') {
       throw new ApiError(409, `Cannot approve an intent that is ${intent.status.toLowerCase()} — generate a draft first`)
+    }
+    // No claim without evidence: an ungrounded draft can't be approved.
+    const grounding = intent.grounding as GroundingRecord | null
+    if (grounding?.grounded === false) {
+      throw new ApiError(409, `The draft isn't grounded in the evidence — ${grounding.problems.join('; ')}. Regenerate the draft.`)
     }
     // Optionally link the intent to a lead so the send path can stamp its
     // provenance onto the resulting OutreachSent (Stage 5).

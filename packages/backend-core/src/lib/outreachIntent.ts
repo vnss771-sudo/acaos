@@ -5,6 +5,7 @@
 import { prisma } from './prisma.js'
 import { freshnessState, type SignalType } from './signalEngine.js'
 import type { OutreachInput, IcpContext } from '../services/openai.js'
+import { groundedSummary, type GroundingRecord } from './draftGrounding.js'
 
 export type SnapshotSignal = {
   type: SignalType
@@ -70,13 +71,16 @@ export function buildIntentDraftInput(args: {
   recommendation?: { reasoning?: string | null; messageAngle?: string | null } | null
   intent: { messageAngle?: string | null }
   icp?: IcpContext
+  /** An opportunity intent's grounding: the draft is written from its facts only. */
+  grounding?: Pick<GroundingRecord, 'facts'> | null
 }): OutreachInput {
+  const facts = args.grounding?.facts ?? []
   return {
     businessName: args.prospect.companyName,
     category: args.prospect.industry ?? undefined,
     city: args.prospect.location ?? undefined,
     contactName: args.prospect.contactName ?? undefined,
-    aiSummary: args.recommendation?.reasoning ?? undefined,
+    aiSummary: facts.length ? groundedSummary(facts) : args.recommendation?.reasoning ?? undefined,
     outreachAngle: args.intent.messageAngle ?? args.recommendation?.messageAngle ?? undefined,
     icp: args.icp,
   }

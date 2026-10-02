@@ -1145,38 +1145,45 @@ enum OutreachIntentStatus {
 }
 
 model OutreachIntent {
-  id               String               @id @default(cuid())
-  workspaceId      String
-  prospectId       String
-  recommendationId String?              @unique
+  id                      String               @id @default(cuid())
+  workspaceId             String
+  prospectId              String
+  recommendationId        String?              @unique
   // Plain scalar links into the send track (no FK yet) — set when an approved
   // intent is materialised for sending; kept loose to avoid coupling Stage 1.
-  leadId           String?
-  campaignId       String?
-  missionId        String?
-  status           OutreachIntentStatus @default(PROPOSED)
+  leadId                  String?
+  campaignId              String?
+  missionId               String?
+  status                  OutreachIntentStatus @default(PROPOSED)
   // RECOMMENDATION | ONBOARDING — ONBOARDING intents were prepared for a new
   // workspace's first send and did not pass the normal recommendation threshold.
-  origin           String               @default("RECOMMENDATION")
-  messageAngle     String?
-  channel          String?
-  evidenceSnapshot Json?
+  origin                  String               @default("RECOMMENDATION")
+  messageAngle            String?
+  channel                 String?
+  evidenceSnapshot        Json?
   // Draft generated from the intent's evidence (Stage 3). Held on the intent so
   // it stays self-contained until an approved intent is materialised for sending.
-  draftSubject     String?
-  draftBody        String?
-  draftFollowup    String?
-  draftGeneratedAt DateTime?
-  approvedBy       String?
-  approvedAt       DateTime?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  draftSubject            String?
+  draftBody               String?
+  draftFollowup           String?
+  draftGeneratedAt        DateTime?
+  approvedBy              String?
+  approvedAt              DateTime?
+  // Set for an intent proposed from a commercial opportunity (lib/opportunityIntent.ts).
+  commercialOpportunityId String?
+  // Grounding record (lib/draftGrounding.ts): the verified facts the draft may
+  // use and, once drafted, claim → evidence → source → confidence plus problems.
+  grounding               Json?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
 
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  prospect       Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
-  recommendation Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  workspace             Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect              Prospect               @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  recommendation        Recommendation?        @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  commercialOpportunity CommercialOpportunity? @relation(fields: [commercialOpportunityId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, status])
+  @@index([commercialOpportunityId])
   @@index([prospectId])
   @@index([missionId])
 }
@@ -1755,6 +1762,7 @@ model CommercialOpportunity {
   offer                  Offer?           @relation(fields: [offerId], references: [id], onDelete: SetNull)
   commercialEvent        CommercialEvent? @relation(fields: [commercialEventId], references: [id], onDelete: SetNull)
   bridgeRecommendation   Recommendation?
+  outreachIntents        OutreachIntent[]
 
   @@unique([workspaceId, prospectId, offerKey])
   @@index([workspaceId, status, recommendationKind])

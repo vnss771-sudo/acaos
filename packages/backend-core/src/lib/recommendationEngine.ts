@@ -36,6 +36,8 @@ export type RecommendationCitation = {
   sourceUrl: string | null
   eventDate: string
   ageDays: number
+  /** The claim's evidence quality (0..100) — its confidence when cited. */
+  quality: number
 }
 
 export type OpportunityRecommendation = {
@@ -119,6 +121,7 @@ export function citeEvidence(evidence: EvidenceClaim[], now: number): Recommenda
       sourceUrl: c.sourceUrl,
       eventDate: c.eventDate,
       ageDays: Math.max(0, Math.floor((now - Date.parse(c.eventDate)) / DAY)),
+      quality: c.quality,
     }))
 }
 
