@@ -354,3 +354,59 @@ test('scoring 2.0: the scorecard is persisted and the list sorts by expected val
   const bad = await opps.request(`/api/commercial-opportunities?workspaceId=${workspace.id}&sort=random`, { headers: { Authorization: bearer(user.id) } })
   assert.equal(bad.status, 400)
 })
+
+test('phase 8: the recommendation is persisted and bridged to one Recommendation row — nothing is sent', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const p = await seedProspect(workspace.id)
+  await seedCorroboratedSignals(workspace.id, p.id)
+  const offer = await seedOffer(workspace.id, { recommendedActions: ['Offer a two-week trial crew'] })
+
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+  const row = await prisma.commercialOpportunity.findFirstOrThrow({ where: { workspaceId: workspace.id, prospectId: p.id } })
+  assert.equal(row.recommendationKind, 'CONTACT_NOW')
+  const rec = row.recommendation as { kind: string; headline: string; why: string[]; citations: Array<{ signalId: string }>; nextSteps: string[] }
+  assert.equal(rec.kind, 'CONTACT_NOW')
+  assert.ok(rec.citations.length > 0 && rec.citations.every(c => c.signalId))
+  assert.ok(rec.why.length > 0)
+  assert.ok(rec.nextSteps.includes('Offer a two-week trial crew'))
+
+  const bridged = await prisma.recommendation.findMany({ where: { workspaceId: workspace.id, commercialOpportunityId: row.id } })
+  assert.equal(bridged.length, 1)
+  assert.equal(bridged[0].prospectId, p.id)
+  assert.equal(bridged[0].actionText, 'Contact now')
+  assert.equal(bridged[0].messageAngle, rec.headline)
+  assert.ok(bridged[0].expiresAt && bridged[0].expiresAt.getTime() > Date.now())
+  assert.equal(await prisma.outreachIntent.count({ where: { workspaceId: workspace.id } }), 0, 'no intent, no draft, no send')
+
+  // A rescore refreshes the same row in place.
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+  assert.equal(await prisma.recommendation.count({ where: { workspaceId: workspace.id } }), 1)
+
+  // The list API exposes the kind.
+  const list = await opps.request(`/api/commercial-opportunities?workspaceId=${workspace.id}`, { headers: json(user.id) })
+  assert.equal((list.body as { opportunities: Array<{ recommendationKind: string }> }).opportunities[0].recommendationKind, 'CONTACT_NOW')
+
+  // An operator decision retires it at once.
+  const dismissed = await opps.request(`/api/commercial-opportunities/${row.id}/status`, { method: 'PATCH', headers: json(user.id), body: JSON.stringify({ workspaceId: workspace.id, status: 'DISMISSED' }) })
+  assert.equal(dismissed.status, 200)
+  const retired = await prisma.recommendation.findFirstOrThrow({ where: { workspaceId: workspace.id, commercialOpportunityId: row.id } })
+  assert.ok(retired.expiresAt && retired.expiresAt.getTime() <= Date.now())
+
+  // Re-opened: the rescore revives it. Once acted on, it is never rewritten.
+  await opps.request(`/api/commercial-opportunities/${row.id}/status`, { method: 'PATCH', headers: json(user.id), body: JSON.stringify({ workspaceId: workspace.id, status: 'OPEN' }) })
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+  const revived = await prisma.recommendation.findFirstOrThrow({ where: { workspaceId: workspace.id, commercialOpportunityId: row.id } })
+  assert.ok(revived.expiresAt && revived.expiresAt.getTime() > Date.now())
+  await prisma.recommendation.update({ where: { id: revived.id }, data: { actedAt: new Date(), actionText: 'operator note' } })
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+  assert.equal((await prisma.recommendation.findUniqueOrThrow({ where: { id: revived.id } })).actionText, 'operator note')
+
+  // The offer goes inactive → the opportunity expires; a live bridge row is retired with it.
+  await prisma.recommendation.update({ where: { id: revived.id }, data: { actedAt: null } })
+  await refreshCommercialOpportunities(workspace.id, [p.id])
+  await prisma.offer.update({ where: { id: offer.id }, data: { active: false } })
+  const r = await refreshCommercialOpportunities(workspace.id, [p.id])
+  assert.equal(r.expired, 1)
+  const after = await prisma.recommendation.findUniqueOrThrow({ where: { id: revived.id } })
+  assert.ok(after.expiresAt && after.expiresAt.getTime() <= Date.now())
+})

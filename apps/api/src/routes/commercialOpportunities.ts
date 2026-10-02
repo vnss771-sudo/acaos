@@ -4,7 +4,7 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
-import { COMMERCIAL_OPPORTUNITY_STATUSES, refreshCommercialOpportunities } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
+import { COMMERCIAL_OPPORTUNITY_STATUSES, bridgesRecommendation, refreshCommercialOpportunities, retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
@@ -48,7 +48,7 @@ const LIST_SELECT = {
   independentSources: true, offerFit: true, intentScore: true, timingScore: true, contactability: true,
   competition: true, valueScore: true, expectedValueCents: true,
   estimatedValueMinCents: true, estimatedValueMaxCents: true, probability: true, urgency: true,
-  priority: true, buyingStage: true, recommendedBuyer: true, recommendedAction: true, actionLabel: true,
+  priority: true, buyingStage: true, recommendedBuyer: true, recommendedAction: true, actionLabel: true, recommendationKind: true,
   actionReason: true, intelligenceGate: true, status: true, firstDetectedAt: true, lastAssessedAt: true,
   prospect: { select: { id: true, companyName: true, domain: true } },
   offer: { select: { id: true, name: true } },
@@ -133,6 +133,8 @@ commercialOpportunitiesRouter.patch(
         where: { id, workspaceId },
         data: { status, statusChangedAt: new Date(), statusChangedByUserId: user.id },
       })
+      // A decided opportunity's outreach recommendation no longer stands.
+      if (!bridgesRecommendation(status)) await retireBridge(workspaceId, id, new Date())
       await recordAudit({
         workspaceId, actorUserId: user.id, type: 'commercial_opportunity.status',
         entityType: 'commercialOpportunity', entityId: id, metadata: { from: existing.status, to: status },

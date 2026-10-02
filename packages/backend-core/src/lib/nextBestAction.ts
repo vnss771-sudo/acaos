@@ -10,9 +10,9 @@ export type NextBestAction = {
   blockers: string[]
 }
 
-function ageDays(signals: RawSignal[]): number {
+function ageDays(signals: RawSignal[], now: number): number {
   if (!signals.length) return Infinity
-  return Math.max(0, (Date.now() - Math.max(...signals.map(s => s.detectedAt.getTime()))) / 86_400_000)
+  return Math.max(0, (now - Math.max(...signals.map(s => s.detectedAt.getTime()))) / 86_400_000)
 }
 
 /**
@@ -26,9 +26,11 @@ export function chooseNextBestAction(args: {
   hasContact: boolean
   hasEmail: boolean
   opportunityScore: number
+  /** Assessment time; defaults to the clock for callers outside the engine. */
+  now?: number
 }): NextBestAction {
   const { event, offerFit, signals, hasContact, hasEmail, opportunityScore } = args
-  const age = ageDays(signals)
+  const age = ageDays(signals, args.now ?? Date.now())
   const blockers: string[] = []
 
   if (event.type === 'NO_CLEAR_EVENT') blockers.push('No clear commercial event')

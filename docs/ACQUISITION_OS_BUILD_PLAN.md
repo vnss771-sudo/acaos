@@ -34,6 +34,7 @@ The plan has 15 phases, grouped into release trains:
 | 2 Evidence graph | #319 | `CommercialEvent` + `EvidenceLink` tables, `/api/evidence-graph/:prospectId` | `routes/evidenceGraph.ts` | same |
 | 6 Scoring 2.0 | #320 | Scorecard: value, intent, timing, fit, evidence, contactability, competition; probability, expected value, priority | `lib/opportunityScoring.ts` | `ACQUISITION_OS_SCORING.md` |
 | 7 Buying stage | #321 | Seven stages, a move per stage, a stage gate on "contact now", `buyingStageDetail` | `lib/buyingStage.ts` | same |
+| 8 Recommendation engine | (this PR) | Ten explained moves per opportunity, citing evidence; gate 2 withholds what can't be explained; outreach moves bridged to one `Recommendation` row (no intent, no send) | `lib/recommendationEngine.ts` | `ACQUISITION_OS_RECOMMENDATIONS.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -46,7 +47,8 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
    - `scoreOpportunity`
    - `inferBuyingStage`
    - `chooseNextBestAction`, then the gates
-4. upsert `CommercialOpportunity`
+   - `recommendForOpportunity` (gate 2: no explanation, no recommendation)
+4. upsert `CommercialOpportunity`, then sync its bridged `Recommendation` row
 
 ## Invariants (don't break these)
 
@@ -104,25 +106,10 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 8: Recommendation engine
-- Persist a recommendation per opportunity, covering:
-  - contact now
-  - wait N days
-  - find the buyer
-  - research the incumbent
-  - send a case study
-  - ask a qualifying question
-  - don't contact
-  - monitor, escalate, re-engage
-- Each recommendation explains *why*, citing evidence claims ("project awarded 9 days
-  ago, workforce +18%").
-- Derive it from the stage play, the scorecard, the next-best-action and the offer's
-  `recommendedActions` and `proofPoints`.
-- Link it to the existing `Recommendation` / `OutreachIntent` bridge, but don't send.
-- Gate 2: no explanation means no recommendation.
-
 ### Phase 9: Intelligence → execution
 - Opportunity → recommendation → `OutreachIntent` → evidence-grounded draft.
+- Start from the bridged `Recommendation` row (`commercialOpportunityId` set), and
+  ground the draft in `CommercialOpportunity.recommendation.citations`.
 - Each draft records a **grounding record**: claim → evidence → source → confidence. No
   claim without evidence.
 - The existing policy checks, approval mode, suppression and send caps stay in charge.
@@ -171,6 +158,6 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 8
-> (recommendation engine), following the invariants and workflow there. Open a PR and
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 9
+> (intelligence → execution), following the invariants and workflow there. Open a PR and
 > merge it when CI is green. Be conservative with tokens.

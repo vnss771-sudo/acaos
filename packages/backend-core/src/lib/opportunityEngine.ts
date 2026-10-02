@@ -24,6 +24,7 @@ import { evaluateOffer, offerTerms, type OfferDefinition } from './offerModel.js
 import { calculateOpportunityScores } from './signalEngine.js'
 import { scoreOpportunity, type OpportunityScorecard } from './opportunityScoring.js'
 import { inferBuyingStage, type BuyingStageAssessment, type BuyingStageV2, type EngagementStage } from './buyingStage.js'
+import { recommendForOpportunity, type OpportunityRecommendation } from './recommendationEngine.js'
 import {
   assessSignalQuality, eventDate, signalVelocity, toRawFromCanonical,
   type CanonicalSignal, type SignalVelocity,
@@ -82,6 +83,8 @@ export type OpportunityAssessment = {
   evidence: EvidenceClaim[]
   velocity: SignalVelocity[]
   gates: { intelligenceTruth: boolean; decisionTruth: boolean }
+  /** The explained move for this opportunity (recommendationEngine.ts); null when it can't be explained. */
+  recommendation: OpportunityRecommendation | null
 }
 
 export type OpportunityProspect = {
@@ -170,6 +173,7 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     hasContact: Boolean(prospect.contactName || prospect.contactTitle),
     hasEmail: Boolean(prospect.contactEmail),
     opportunityScore: scores.opportunityScore,
+    now,
   })
   let action: NextBestAction = nba
   const stage = inferBuyingStage({ events, engagement: prospect.outcomeStage })
@@ -204,7 +208,7 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     now,
   })
 
-  return {
+  const assessment: Omit<OpportunityAssessment, 'recommendation'> = {
     offerKey: offer.key,
     offerId: offer.id,
     missionId: offer.missionId,
@@ -243,4 +247,6 @@ export function assessOpportunity(input: AssessOpportunityInput): OpportunityAss
     velocity,
     gates: { intelligenceTruth, decisionTruth },
   }
+  const recommendation = recommendForOpportunity({ assessment, offer, engagement: prospect.outcomeStage, now })
+  return { ...assessment, recommendation }
 }
