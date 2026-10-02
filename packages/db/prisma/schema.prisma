@@ -148,6 +148,10 @@ model Workspace {
   subprocessorsAckAt      DateTime?
   subprocessorsAckVersion String?
   dpaAcknowledgedAt       DateTime? // operator reviewed the in-product DPA (see lib/subprocessors.ts dpaDisclosure)
+  // Opted in to cross-customer intelligence (lib/networkIntelligence.ts) at this
+  // time; null = not participating (the default). Only opted-in workspaces
+  // contribute to, or can read, the pooled benchmarks.
+  networkOptInAt          DateTime?
   dpaAckVersion           String?
   targetsCanada           Boolean                  @default(false) // gates the CASL consent check
   // Operator drain switch: when true, the worker halts all sends for THIS workspace
@@ -1831,4 +1835,22 @@ model EvidenceLink {
   @@unique([commercialEventId, signalId])
   @@index([workspaceId])
   @@index([signalId])
+}
+
+// Cross-customer intelligence (lib/networkIntelligence.ts): pooled, anonymised
+// benchmarks per commercial-event kind across opted-in workspaces. Global — not
+// a tenant model — and it holds no workspace id, name, evidence or offer: only
+// counts and rates, published when at least `contributors` >= the anonymity
+// floor (5 workspaces, 30 closed outcomes). Recomputed whole, daily.
+model NetworkBenchmark {
+  id               String   @id @default(cuid())
+  eventType        String   @unique
+  contributors     Int
+  opportunities    Int
+  conversations    Int
+  closed           Int
+  won              Int
+  winRate          Float
+  conversationRate Float?
+  computedAt       DateTime
 }
