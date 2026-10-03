@@ -27,6 +27,7 @@ import { colors } from './styles.js'
 // included) in the initial bundle. React.lazy needs a default export, so adapt
 // each named export.
 const Dashboard = lazy(() => import('./views/Dashboard.js').then(m => ({ default: m.Dashboard })))
+const Today = lazy(() => import('./views/Today.js').then(m => ({ default: m.Today })))
 const Campaigns = lazy(() => import('./views/Campaigns.js').then(m => ({ default: m.Campaigns })))
 const MissionsView = lazy(() => import('./views/Missions.js').then(m => ({ default: m.MissionsView })))
 const ApprovalsView = lazy(() => import('./views/Approvals.js').then(m => ({ default: m.ApprovalsView })))
@@ -283,6 +284,7 @@ export function App() {
     billing: 'Billing',
     settings: 'Settings',
     admin: 'Admin Panel',
+    today: 'Today',
     'ops-dashboard': 'Field Ops',
     'ops-crew': 'Field Ops — Crew',
     'ops-jobs': 'Field Ops — Job Sites',
@@ -447,6 +449,7 @@ export function App() {
           <ErrorBoundary>
             <Suspense fallback={<ViewFallback />}>
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
+            {view === 'today' && <Today {...commonProps} isAdmin={canManage} setView={setView} />}
             {view === 'intelligence' && <Intelligence {...commonProps} setView={setView} />}
             {view === 'prospects' && <ProspectsView {...commonProps} canManage={canManage} />}
             {view === 'missions' && <MissionsView {...commonProps} canManage={canManage} />}

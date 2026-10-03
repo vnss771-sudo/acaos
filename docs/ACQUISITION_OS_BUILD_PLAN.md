@@ -20,7 +20,7 @@ The plan has 15 phases, grouped into release trains:
 | Revenue learning | 10–12 |
 | Network | 13 |
 | FieldOps loop (delivery economics) | 15A–C |
-| Operator console | 14 (next; shows real margins from 15B) |
+| Operator console | 14 (done) |
 
 ## Done (merged to `master`)
 
@@ -42,6 +42,7 @@ The plan has 15 phases, grouped into release trains:
 | 13 Cross-customer intelligence | #329 | Opt-in only (`Workspace.networkOptInAt`); per-kind counts pooled daily into the global `NetworkBenchmark` table above a floor of 5 workspaces and 30 closed outcomes; no identifying data stored; read and opt-in APIs | `lib/networkIntelligence.ts` | `ACQUISITION_OS_NETWORK.md` |
 | 15A Commercial capture | #330 | `Quote` (one per opportunity of either type) and `Job` (1:1 job site); accepted quote → WON + job; closeout freezes economics (unknown never $0, labour vs gross margin); reopen audited; `/api/delivery/*`, all `ops:manage`; backfill of existing sites | `lib/jobEconomics.ts`, `routes/delivery.ts` | `ACQUISITION_OS_DELIVERY.md` |
 | 15B Capture UI + observe | #330 | Quote capture on Find work; *Jobs & margins* view (closeout, reopen, gaps); `/api/delivery/report` (medians with n, withheld below 3); quotes drive outcome attribution | `views/ops/OpsDelivery.tsx`, `components/ops/QuoteCapture.tsx` | same |
+| 14 Operator console | (this PR) | *Today* view (`/today`, Home hub): decisions (pursuing + high-urgency open) with evidence, citations and contact; new this week; worth watching; KPIs (open pipeline, won sourced/influenced, quote→win, admin-only delivered margin with n); pursue / lost / dismiss; admin propose-outreach (nothing sends), quotes on commercial opportunities, network opt-in | `views/Today.tsx` | this file |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -154,32 +155,12 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-**Order decided with the user:** the delivery loop (15A–B) is done; the operator
-console (14) is next, so the console can show expected margin honestly. 15C
-waits on real closed jobs, not on code. Read `docs/ACQUISITION_OS_DELIVERY.md`
+**State:** phases 1–15B and 14 are done. What remains is 15C, which waits on real
+closed jobs rather than on code, and launch (below). Until then, prefer hardening
+and polish driven by real use over new intelligence. Read `docs/ACQUISITION_OS_DELIVERY.md`
 first: its economic truth rules are invariants, like the gates above.
 
-### Phase 14: Operator console (web UI) (next)
-The "what should I do today" home screen:
-- opportunities that need attention, with evidence and approve/dismiss actions
-- opportunities to monitor
-- new signals
-- pipeline influenced by ACAOS, and delivered margin from `/api/delivery/report`
-- a quote form on commercial opportunities (the API already accepts them)
-
-**APIs that are ready:** under `/api/commercial-opportunities`: list and detail
-(with `recommendation`), `/:id/intent`, `/:id/outcome`, `/outcomes`, `/calibration`,
-`/network-benchmarks` and `/network-participation` (no UI yet; add the opt-in toggle
-here); `/api/evidence-graph/:prospectId`; and `/api/delivery/*`.
-
-**Web.**
-- Follow the patterns in `apps/web/src/views` (they use the `route(...)` helper and
-  `@acaos/shared` route types). Check `check:frontend-mutations` for rules on
-  mutations.
-- Put tests in `*.test.tsx` next to the view.
-- Watch for the timer leak and timing issues noted in the lessons.
-
-### Phase 15C: Margin intelligence (advisory)
+### Phase 15C: Margin intelligence (advisory) — when real closed jobs exist
 See `ACQUISITION_OS_DELIVERY.md`. Expected profit = value × P(win) × margin, with
 P(win) counted once; proposals only; every figure with its *n*.
 
@@ -209,6 +190,6 @@ through `docs/GO_LIVE_CHECKLIST.md` top to bottom. In short:
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 14
-> (operator console), following the invariants, economic truth rules, workflow and
-> lessons there. Open a PR and merge it when CI is green. Be conservative with tokens.
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Phases 1–15B and 14 are
+> done; follow the invariants, economic truth rules, workflow and lessons there. Start 15C
+> only once workspaces have real closed jobs. Open a PR and merge it when CI is green. Be conservative with tokens.

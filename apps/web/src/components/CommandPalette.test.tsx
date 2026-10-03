@@ -52,10 +52,10 @@ describe('CommandPalette', () => {
     render(<CommandPalette setView={setView} />)
     openWithCtrlK()
     const input = screen.getByLabelText('Search commands')
-    // First command is Home (dashboard); ArrowDown moves to Missions.
+    // First command is Home (dashboard); ArrowDown moves to Today.
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(setView).toHaveBeenCalledWith('missions')
+    expect(setView).toHaveBeenCalledWith('today')
   })
 
   // Regression: the palette had no Tab-trap — Tab could escape the overlay to

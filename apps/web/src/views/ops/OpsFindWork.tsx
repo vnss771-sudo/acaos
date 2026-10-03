@@ -407,7 +407,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
               )}
 
               {canManage && (o.status === 'PURSUING' || quotes.has(o.id)) && (
-                <QuoteCapture route={route} toast={toast} workspaceId={workspace.id} opportunityId={o.id} quote={quotes.get(o.id) ?? null} onChanged={load} />
+                <QuoteCapture route={route} toast={toast} workspaceId={workspace.id} target={{ opportunityId: o.id }} quote={quotes.get(o.id) ?? null} onChanged={load} />
               )}
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
