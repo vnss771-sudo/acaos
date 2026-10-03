@@ -75,7 +75,11 @@ after launch, in roughly this order:
 | `prisma` / `@prisma/client` 5 → 7 | prod | Largest: generator and client changes; run the DB tier and drift check |
 | `typescript` 5 → 7 | dev | Native compiler; do last, after the rest settle |
 
-`tsx` is pinned exactly at the root (`4.22.4`) and is left for the routine weekly PR.
+`tsx` is pinned exactly at the root (`4.22.4`) and Dependabot ignores it. Newer tsx
+versions (checked up to 4.23.15) change the JavaScript it generates enough that Node's
+coverage counts functions differently: functions drop from about 87% to 77% with every
+test still passing, which fails the coverage gate (commit `72c065f`, PR #341). Upgrade
+it deliberately, together with a review of the coverage thresholds.
 
 ## Open engineering backlog
 

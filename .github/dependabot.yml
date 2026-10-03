@@ -30,6 +30,12 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+    ignore:
+      # tsx is pinned exactly on purpose: newer versions change the JavaScript
+      # it generates enough to shift V8's function-coverage counting, which
+      # fails the unit coverage gate with no test changes (see 72c065f, #341).
+      # Bump it deliberately, together with any coverage-threshold change.
+      - dependency-name: tsx
     commit-message:
       prefix: deps
       include: scope
