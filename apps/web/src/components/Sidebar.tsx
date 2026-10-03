@@ -17,6 +17,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { id: 'dashboard', label: 'Home', icon: '⬡' },
+      { id: 'today', label: 'Today', icon: '☀' },
       { id: 'prospects', label: 'Potential clients', icon: '◎' },
       { id: 'leads', label: 'Leads', icon: '▤' },
       { id: 'campaigns', label: 'Campaigns', icon: '▣' },

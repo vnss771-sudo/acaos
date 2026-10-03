@@ -17,6 +17,7 @@ type Command = {
 
 const COMMANDS: Command[] = [
   { id: 'dashboard', label: 'Home', description: 'Daily command center: next action, hot accounts, signals', icon: '⬡' },
+  { id: 'today', label: 'Today', description: 'Opportunities that need a decision, with evidence, pipeline and margin', icon: '☀' },
   { id: 'missions', label: 'Missions', description: 'Build and run the end-to-end acquisition workflow', icon: '◇' },
   { id: 'prospects', label: 'Prospects', description: 'Account database, scoring, filters, and signals', icon: '◎' },
   { id: 'approvals', label: 'To Review', description: 'Approve AI outreach before it sends', icon: '✓' },

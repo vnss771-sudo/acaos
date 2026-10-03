@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Operator console (phase 14)
+- New *Today* screen: what needs a decision with its evidence and contact, new work this week,
+  work worth watching, and pipeline / won revenue / quote-to-win / delivered margin
+- Propose outreach (nothing sends), quote company-level opportunities, and opt in to
+  cross-customer benchmarks from the console
+
 ### Delivery economics (phase 15A)
 - Quotes on Work-discovery and commercial opportunities; accepting one marks the opportunity won
 - Delivery jobs linked to Field Ops job sites, with live and frozen (closeout) economics:

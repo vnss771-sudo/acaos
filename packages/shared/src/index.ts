@@ -401,6 +401,17 @@ export interface UpdateCommercialOpportunityStatusRequest {
   status: Exclude<CommercialOpportunityStatus, 'EXPIRED'>
 }
 
+// POST /api/commercial-opportunities/:id/intent — propose outreach (nothing is sent)
+export interface ProposeOpportunityIntentRequest {
+  workspaceId: string
+}
+
+// PUT /api/commercial-opportunities/network-participation
+export interface NetworkParticipationRequest {
+  workspaceId: string
+  optIn: boolean
+}
+
 // POST /api/commercial-opportunities/refresh
 export interface RefreshCommercialOpportunitiesRequest {
   workspaceId: string
@@ -791,6 +802,8 @@ export interface RouteContracts {
   'POST /api/offers': { body: CreateOfferRequest; response: { offer: unknown } }
   'PUT /api/offers/:id': { params: { id: string }; body: UpdateOfferRequest; response: { offer: unknown } }
   'PATCH /api/commercial-opportunities/:id/status': { params: { id: string }; body: UpdateCommercialOpportunityStatusRequest; response: { success: boolean; status: CommercialOpportunityStatus } }
+  'POST /api/commercial-opportunities/:id/intent': { params: { id: string }; body: ProposeOpportunityIntentRequest; response: { ok: boolean; created: boolean; intentId: string } }
+  'PUT /api/commercial-opportunities/network-participation': { body: NetworkParticipationRequest; response: { optedInAt: string | null } }
   'POST /api/commercial-opportunities/refresh': { body: RefreshCommercialOpportunitiesRequest; response: { prospects: number; assessed: number; upserted: number; expired: number; events: number; staleEvents: number } }
   'PUT /api/ops/jobs/:id': { params: { id: string }; body: OpsUpdateJobSiteRequest; response: unknown }
   'POST /api/ops/shifts': { body: OpsCreateShiftRequest; response: unknown }

@@ -11,6 +11,7 @@ import { formatCents, parseDollars } from '../../lib/money.js'
 export type QuoteSummary = {
   id: string
   opportunityId: string | null
+  commercialOpportunityId?: string | null
   status: 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'WITHDRAWN'
   amountCents: number
   estimatedHours: number | null
@@ -20,12 +21,14 @@ type Props = {
   route: RouteApi
   toast: ToastHook
   workspaceId: string
-  opportunityId: string
+  // Which opportunity this prices: a Work-discovery one or a commercial one.
+  target: { opportunityId: string } | { commercialOpportunityId: string }
   quote: QuoteSummary | null
   onChanged: () => void
 }
 
-export function QuoteCapture({ route, toast, workspaceId, opportunityId, quote, onChanged }: Props) {
+export function QuoteCapture({ route, toast, workspaceId, target, quote, onChanged }: Props) {
+  const targetId = 'opportunityId' in target ? target.opportunityId : target.commercialOpportunityId
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
   const [hours, setHours] = useState('')
@@ -38,7 +41,7 @@ export function QuoteCapture({ route, toast, workspaceId, opportunityId, quote, 
     if (h !== undefined && (!Number.isFinite(h) || h < 0)) { toast.error('Estimated hours must be a number'); return }
     setBusy(true)
     try {
-      await route('POST /api/delivery/quotes', { body: { workspaceId, opportunityId, amountCents, estimatedHours: h, submit: true } })
+      await route('POST /api/delivery/quotes', { body: { workspaceId, ...target, amountCents, estimatedHours: h, submit: true } })
       toast.success('Quote recorded')
       setOpen(false); setAmount(''); setHours('')
       onChanged()
@@ -80,12 +83,12 @@ export function QuoteCapture({ route, toast, workspaceId, opportunityId, quote, 
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
       <div>
-        <label style={s.label} htmlFor={`q-amt-${opportunityId}`}>Quote amount ($)</label>
-        <input id={`q-amt-${opportunityId}`} style={{ ...s.input, width: 140 }} inputMode="decimal" value={amount} placeholder="60,000" onChange={e => setAmount(e.target.value)} />
+        <label style={s.label} htmlFor={`q-amt-${targetId}`}>Quote amount ($)</label>
+        <input id={`q-amt-${targetId}`} style={{ ...s.input, width: 140 }} inputMode="decimal" value={amount} placeholder="60,000" onChange={e => setAmount(e.target.value)} />
       </div>
       <div>
-        <label style={s.label} htmlFor={`q-hrs-${opportunityId}`}>Estimated labour hours</label>
-        <input id={`q-hrs-${opportunityId}`} style={{ ...s.input, width: 120 }} inputMode="decimal" value={hours} placeholder="400" onChange={e => setHours(e.target.value)} />
+        <label style={s.label} htmlFor={`q-hrs-${targetId}`}>Estimated labour hours</label>
+        <input id={`q-hrs-${targetId}`} style={{ ...s.input, width: 120 }} inputMode="decimal" value={hours} placeholder="400" onChange={e => setHours(e.target.value)} />
       </div>
       <button style={s.btnSm} disabled={busy} onClick={save}>Save quote</button>
       <button style={s.btnGhost} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>

@@ -321,7 +321,7 @@ export type StatsData = {
   usage: UsageData
 }
 
-export type View = 'dashboard' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'approvals' | 'inbox' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
+export type View = 'dashboard' | 'today' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'approvals' | 'inbox' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
   | 'ops-dashboard' | 'ops-crew' | 'ops-jobs' | 'ops-shifts' | 'ops-roster' | 'ops-fatigue' | 'ops-alerts' | 'ops-find-work' | 'ops-delivery'
 
 // ── Ops module (field crew / shift / job-site management) ──────────────────────

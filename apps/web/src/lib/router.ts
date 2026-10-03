@@ -7,6 +7,7 @@ import type { View } from '../types.js'
 // resetting to the dashboard, and a screen shareable by URL.
 const VIEW_PATHS: Record<View, string> = {
   dashboard: '/',
+  today: '/today',
   intelligence: '/analytics',
   prospects: '/prospects',
   missions: '/missions',
