@@ -105,6 +105,10 @@ Refreshed from issue #217 (the five-lens audit) against current code.
 6. **Test gates.** `npm test` and the Redis tier have no coverage threshold (the
    gate lives in `test:coverage`, 84/78/87); the DB tier's branch floor is 68%;
    `e2e` has five happy-path tests. Add failure-mode browser coverage.
+7. **Calibration improvement check (small).** Recommendation drafts record what
+   changed and why, but nothing records whether the baseline win rate improved
+   versus the previous calibration. Closed PR #115 has a pure `diffCalibration()`
+   that can be ported if wanted.
 
 **Resolved since the audit**
 
