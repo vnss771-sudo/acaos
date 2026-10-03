@@ -71,3 +71,17 @@ test('POST approve sets APPROVED and records an audit event', async () => {
   }
   assert.ok(audit, 'approve should record an audit event')
 })
+
+test('POST approve refuses a draft carrying sensitive data (422) and leaves it unapproved', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, businessName: 'Acme', email: 'a@acme.test' } })
+  const draft = await prisma.outreachDraft.create({
+    data: { workspaceId: workspace.id, leadId: lead.id, subject: 'Hi', emailBody: 'Pay with 4111 1111 1111 1111 please', status: 'DRAFTED' },
+  })
+  const res = await server.request(`/api/leads/${lead.id}/drafts/${draft.id}/approve`, {
+    method: 'POST', headers: { Authorization: bearer(user.id) },
+  })
+  assert.equal(res.status, 422)
+  assert.match(String(res.body.error ?? ''), /payment card number/)
+  assert.equal((await prisma.outreachDraft.findUniqueOrThrow({ where: { id: draft.id } })).status, 'DRAFTED')
+})

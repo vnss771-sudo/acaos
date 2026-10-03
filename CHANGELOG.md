@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Sensitive-data guard on outbound email
+- A deterministic scan (`lib/sensitiveData.ts`) stops ACAOS from sending payment card numbers (valid
+  issuer prefix plus Luhn check), secret API or private keys (fixed provider prefixes, PEM headers),
+  passwords, or tax file numbers (TFN checksum next to "TFN"). It is tuned so invoice and job numbers,
+  phone numbers, ABNs and BSB/account details for payment are left alone.
+- Where it applies:
+  - AI drafts that pick one up go to POLICY_REVIEW instead of DRAFTED.
+  - Approving such a draft is refused (422).
+  - A campaign never sends one, even if already approved or edited: it is skipped as `SENSITIVE_DATA`
+    and the draft is held for review.
+  - A follow-up step carrying one is BLOCKED.
+  - An Inbox reply carrying one is refused (422) before anything is sent or recorded.
+- Stored inbound enquiry excerpts use the same redaction, now covering keys, passwords and TFNs as well
+  as card numbers
+
 ### Mailbox sign-in
 - Workspaces can connect Gmail / Google Workspace or Outlook / Microsoft 365 by signing in, with no
   app password needed. IMAP sync and SMTP sending are unchanged, apart from authenticating with

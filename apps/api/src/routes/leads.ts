@@ -15,6 +15,7 @@ import { escCsv } from '../lib/csv.js'
 import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
 import type { Prisma } from '@prisma/client'
+import { describeSensitiveKinds, sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import type { Assert, CreateLeadRequest, Extends, ImportLeadsRequest, LeadStage } from '@acaos/shared'
 
 export const leadsRouter = Router()
@@ -628,6 +629,10 @@ leadsRouter.post(
     if (!draft || draft.leadId !== leadId) throw new ApiError(404, 'Draft not found')
 
     await assertMinimumWorkspaceRole(user.id, draft.workspaceId, 'admin')
+    // A draft carrying a card number, secret key, password or TFN can't be
+    // approved; the send path refuses it too (lib/sensitiveData.ts).
+    const leaked = sensitiveKinds(`${draft.subject}\n${draft.emailBody}\n${draft.followup ?? ''}`)
+    if (leaked.length > 0) throw new ApiError(422, `This draft contains ${describeSensitiveKinds(leaked)}. Edit it out before approving.`)
 
     const updated = await prisma.outreachDraft.update({
       where: { id: draftId },

@@ -17,6 +17,7 @@ import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib
 import { parseAiJson, ReplyDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
 import { generateReplyDraft } from '@acaos/backend-core/services/openai.js'
 import { parseRiskFlags, RISK_FLAG_LABEL } from '@acaos/backend-core/lib/riskEscalation.js'
+import { describeSensitiveKinds, sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
@@ -190,6 +191,11 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
 
     const member = await userBelongsToWorkspace(user.id, workspaceId)
     if (!member) throw new ApiError(403, 'Access denied')
+
+    // Never send a card number, secret key, password or TFN (lib/sensitiveData.ts).
+    // Checked before any send state is recorded, so nothing is left half-sent.
+    const leaked = sensitiveKinds(body)
+    if (leaked.length > 0) throw new ApiError(422, `This reply contains ${describeSensitiveKinds(leaked)}. Remove it before sending.`)
 
     const reply = await prisma.outreachSent.findUnique({
       where: { id: replyId },
