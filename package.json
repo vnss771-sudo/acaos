@@ -81,7 +81,7 @@
     "@vitest/mocker": "^4.1.11"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.60.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
