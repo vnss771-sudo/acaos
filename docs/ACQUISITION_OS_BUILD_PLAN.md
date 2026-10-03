@@ -19,10 +19,10 @@ The plan has 15 phases, grouped into release trains:
 | Autonomous execution | 9 |
 | Revenue learning | 10–12 |
 | Network | 13 |
-| Operator console | 14 |
-| FieldOps loop | 15 |
+| FieldOps loop (delivery economics) | 15A–C |
+| Operator console | 14 (after 15B, so it can show real margins) |
 
-## Done (merged to `master`; current head is `31587b1`)
+## Done (merged to `master`)
 
 | Plan phase | PR | What | Key files | Docs |
 |---|---|---|---|---|
@@ -39,7 +39,8 @@ The plan has 15 phases, grouped into release trains:
 | 10 Outcome graph | #325 | Read model chaining each opportunity through recommendation → intent → send → reply → meeting → quote → won/lost → revenue; sourced vs influenced attribution; funnel summary API | `lib/outcomeGraph.ts`, `lib/outcomeGraphStore.ts` | `ACQUISITION_OS_OUTCOMES.md` |
 | 11 Closed-loop learning | #327 | Deterministic cause per closed/stalled opportunity (competitor, contact, timing, signal, message); repeated causes become one advisory `OPPORTUNITY_CAUSE` review per workspace — PENDING in every mode, approve changes nothing | `lib/outcomeCauses.ts`, `lib/outcomeLearning.ts` | `ACQUISITION_OS_LEARNING.md` |
 | 12 Signal calibration | #328 | Funnel per event kind, combination lift, shrunk bounded event-kind weights proposed as `EVENT_KIND_WEIGHT` (approval only, never auto-applied); approved weights scale opportunity probability | `lib/signalCalibration.ts`, `lib/calibrationLearning.ts` | `ACQUISITION_OS_CALIBRATION.md` |
-| 13 Cross-customer intelligence | (this PR) | Opt-in only (`Workspace.networkOptInAt`); per-kind counts pooled daily into the global `NetworkBenchmark` table above a floor of 5 workspaces and 30 closed outcomes; no identifying data stored; read and opt-in APIs | `lib/networkIntelligence.ts` | `ACQUISITION_OS_NETWORK.md` |
+| 13 Cross-customer intelligence | #329 | Opt-in only (`Workspace.networkOptInAt`); per-kind counts pooled daily into the global `NetworkBenchmark` table above a floor of 5 workspaces and 30 closed outcomes; no identifying data stored; read and opt-in APIs | `lib/networkIntelligence.ts` | `ACQUISITION_OS_NETWORK.md` |
+| 15A Commercial capture | (this PR) | `Quote` (one per opportunity of either type) and `Job` (1:1 job site); accepted quote → WON + job; closeout freezes economics (unknown never $0, labour vs gross margin); reopen audited; `/api/delivery/*`, all `ops:manage`; backfill of existing sites | `lib/jobEconomics.ts`, `routes/delivery.ts` | `ACQUISITION_OS_DELIVERY.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -152,24 +153,29 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-### Phase 14: Operator console (web UI) (next)
+**Order decided with the user:** finish the delivery loop first (15B), then the
+operator console (14), so the console can show expected margin honestly. 15C
+waits on real closed jobs, not on code. Read `docs/ACQUISITION_OS_DELIVERY.md`
+first: its economic truth rules are invariants, like the gates above.
+
+### Phase 15B: Observe + capture UI (next)
+- Web capture at the moments the work already happens: quote on PURSUING, "start
+  the job" on accept, invoice + other costs at closeout (show `gaps`).
+- Delivery report: closed jobs grouped by origin and region, medians with *n*,
+  "not enough jobs yet" below a floor.
+- Outcome graph reads quotes ahead of `ProspectOutcome` where they exist.
+
+### Phase 14: Operator console (web UI)
 The "what should I do today" home screen:
 - opportunities that need attention, with evidence and approve/dismiss actions
 - opportunities to monitor
 - new signals
-- pipeline influenced by ACAOS
+- pipeline influenced by ACAOS, and (once 15B exists) delivered margin
 
-It reads the `commercial-opportunities` and `evidence-graph` APIs.
-
-**APIs that are ready, all under `/api/commercial-opportunities`:**
-- list and detail (with `recommendation`)
-- `/:id/intent`, which proposes outreach
-- `/:id/outcome`, which returns the chain and its cause
-- `/outcomes`, the funnel plus causes and attributed revenue
-- `/calibration`
-- `/network-benchmarks` and `/network-participation` (no UI yet; add the opt-in
-  toggle here)
-- `/api/evidence-graph/:prospectId`
+**APIs that are ready:** under `/api/commercial-opportunities`: list and detail
+(with `recommendation`), `/:id/intent`, `/:id/outcome`, `/outcomes`, `/calibration`,
+`/network-benchmarks` and `/network-participation` (no UI yet; add the opt-in toggle
+here); `/api/evidence-graph/:prospectId`; and `/api/delivery/*`.
 
 **Web.**
 - Follow the patterns in `apps/web/src/views` (they use the `route(...)` helper and
@@ -178,9 +184,20 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 - Put tests in `*.test.tsx` next to the view.
 - Watch for the timer leak and timing issues noted in the lessons.
 
-### Phase 15: FieldOps loop
-- Quote → won → job → job value feeds back into ACAOS outcomes.
-- `Opportunity.opsJobSiteId` already exists for tender records.
+### Phase 15C: Margin intelligence (advisory)
+See `ACQUISITION_OS_DELIVERY.md`. Expected profit = value × P(win) × margin, with
+P(win) counted once; proposals only; every figure with its *n*.
+
+## When funding arrives: shortest path to live
+
+The code side is ready; what remains is accounts, keys and infrastructure. Work
+through `docs/GO_LIVE_CHECKLIST.md` top to bottom. In short:
+1. Postgres (with PITR) and Redis; run `prisma migrate deploy`.
+2. Secrets from `docs/PRODUCTION_ENV_VARS.md` (JWT, encryption key, OpenAI, Stripe,
+   SMTP/IMAP, metrics token).
+3. Domain, TLS, SPF/DKIM.
+4. Deploy api, worker and web images; run `npm run smoke:deploy`.
+5. Start with `SAFE_LAUNCH_MODE=true` for the supervised pilot.
 
 ## Open gaps worth noting
 
@@ -197,5 +214,6 @@ It reads the `commercial-opportunities` and `evidence-graph` APIs.
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 14
-> (operator console), following the invariants, workflow and lessons there. Open a PR and merge it when CI is green. Be conservative with tokens.
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 15B
+> (capture UI + delivery report), following the invariants, economic truth rules, workflow
+> and lessons there. Open a PR and merge it when CI is green. Be conservative with tokens.

@@ -207,6 +207,8 @@ model Workspace {
   commercialOpportunities CommercialOpportunity[]
   commercialEvents        CommercialEvent[]
   evidenceLinks           EvidenceLink[]
+  quotes                  Quote[]
+  jobs                    Job[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -1394,6 +1396,7 @@ model OpsJobSite {
   shifts        OpsShiftRecord[]
   rosterEntries OpsRosterEntry[]
   opportunities Opportunity[]
+  job           Job?
 
   @@unique([workspaceId, jobCode])
   @@index([workspaceId, status])
@@ -1587,6 +1590,7 @@ model Opportunity {
   lastChangedAt         DateTime    @default(now())
   workspace             Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   opsJobSite            OpsJobSite? @relation(fields: [opsJobSiteId], references: [id], onDelete: SetNull)
+  quotes                Quote[]
 
   @@unique([workspaceId, source, externalId])
   @@index([workspaceId, status, score])
@@ -1770,6 +1774,7 @@ model CommercialOpportunity {
   commercialEvent        CommercialEvent? @relation(fields: [commercialEventId], references: [id], onDelete: SetNull)
   bridgeRecommendation   Recommendation?
   outreachIntents        OutreachIntent[]
+  quotes                 Quote[]
 
   @@unique([workspaceId, prospectId, offerKey])
   @@index([workspaceId, status, recommendationKind])
@@ -1853,4 +1858,75 @@ model NetworkBenchmark {
   winRate          Float
   conversationRate Float?
   computedAt       DateTime
+}
+
+// ── Commercial capture (phase 15A, docs/ACQUISITION_OS_DELIVERY.md) ─────────────
+// What the business thought a piece of work was worth, and what it turned out to
+// be worth. Economic truth rules live in that doc; the short version: the Quote
+// owns the estimate, shifts own actual hours, and Job closeout freezes the
+// economics so today's crew rates never rewrite last year's margin.
+
+// A price put to a buyer for ONE opportunity — either a Work-discovery project
+// (Opportunity) or an acquisition hypothesis (CommercialOpportunity), never both
+// (a CHECK constraint in the migration). Both FKs are SetNull so a quote outlives
+// a deleted opportunity: it is economic history. A revision is a new quote; the
+// old one is WITHDRAWN. At most one ACCEPTED quote per opportunity (partial
+// unique indexes in the migration — Prisma's DSL can't express them).
+model Quote {
+  id                      String                 @id @default(cuid())
+  workspaceId             String
+  opportunityId           String?
+  commercialOpportunityId String?
+  amountCents             Int
+  // Labour hours the quote was built on. Nullable: without it there is no hours
+  // variance, only revenue vs quote.
+  estimatedHours          Float?
+  notes                   String?
+  // DRAFT -> SUBMITTED -> ACCEPTED | REJECTED; DRAFT/SUBMITTED -> WITHDRAWN.
+  status                  String                 @default("DRAFT")
+  submittedAt             DateTime?
+  decidedAt               DateTime?
+  createdByUserId         String?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  workspace               Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opportunity             Opportunity?           @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  commercialOpportunity   CommercialOpportunity? @relation(fields: [commercialOpportunityId], references: [id], onDelete: SetNull)
+  job                     Job?
+
+  @@index([workspaceId, status])
+  @@index([opportunityId])
+  @@index([commercialOpportunityId])
+}
+
+// The commercial record of work being delivered. One per Field Ops job site for
+// now (shifts are recorded against the site, so 1:1 keeps hours unambiguous).
+// Actual hours and labour cost are never stored here while ACTIVE — they are
+// derived from OpsShiftRecord. `closeout` is the frozen snapshot written when the
+// job is completed (lib/jobEconomics.ts); reopening clears it (the prior snapshot
+// stays in the audit log) and the next closeout bumps closeoutVersion.
+model Job {
+  id                   String     @id @default(cuid())
+  workspaceId          String
+  opsJobSiteId         String     @unique
+  quoteId              String?    @unique
+  // ACTIVE -> COMPLETE (closeout) -> ACTIVE (reopen); ACTIVE -> CANCELLED.
+  status               String     @default("ACTIVE")
+  // Entered at closeout. Null = unknown, never zero.
+  invoicedRevenueCents Int?
+  otherCostCents       Int?
+  closeout             Json?
+  closeoutVersion      Int        @default(0)
+  startedAt            DateTime   @default(now())
+  completedAt          DateTime?
+  closedByUserId       String?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  workspace            Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  // NoAction (checked at statement end) rather than Restrict: a workspace delete
+  // cascades to both rows in one statement. Sites are archived, never deleted.
+  opsJobSite           OpsJobSite @relation(fields: [opsJobSiteId], references: [id], onDelete: NoAction)
+  quote                Quote?     @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
 }
