@@ -7,7 +7,7 @@ describe('HubTabs', () => {
   test('renders the active hub’s tabs and marks the current one selected', () => {
     render(<HubTabs view="leads" setView={vi.fn()} isAdmin={false} />)
     // The Prospects hub: Prospects · Leads · Analytics
-    expect(screen.getByRole('tab', { name: 'Potential clients' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Campaigns' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Analytics' })).toBeInTheDocument()
     const leads = screen.getByRole('tab', { name: 'Leads' })
     expect(leads).toHaveAttribute('aria-selected', 'true')
@@ -20,9 +20,10 @@ describe('HubTabs', () => {
     expect(setView).toHaveBeenCalledWith('intelligence')
   })
 
-  test('renders nothing for a single-page hub (Inbox)', () => {
-    const { container } = render(<HubTabs view="inbox" setView={vi.fn()} isAdmin={false} />)
-    expect(container).toBeEmptyDOMElement()
+  test('the Work hub lists the contractor loop in order', () => {
+    render(<HubTabs view="ops-find-work" setView={vi.fn()} isAdmin={false} />)
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Find work', 'Clients', 'Jobs & margins'])
+    expect(screen.getByRole('tab', { name: 'Find work' })).toHaveAttribute('aria-selected', 'true')
   })
 
   test('hides the Admin tab from non-admins and shows it to admins', () => {

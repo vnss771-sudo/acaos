@@ -18,7 +18,7 @@ test('AI Tools "Run" sends workspaceId and clears the contract check', async ({ 
   // AI Tools lives under the Outreach hub (5-hub nav, on by default — see
   // apps/web/src/lib/hubs.ts) as a sub-tab, not a top-level sidebar button.
   await page.getByRole('button', { name: 'Outreach' }).click()
-  await page.getByRole('tab', { name: /AI Tools/ }).click()
+  await page.getByRole('tab', { name: /AI tools/i }).click()
   await page.getByPlaceholder('Acme Plumbing Brisbane').fill('Acme Plumbing Brisbane')
 
   const responsePromise = page.waitForResponse(

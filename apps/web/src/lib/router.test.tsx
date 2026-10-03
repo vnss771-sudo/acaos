@@ -45,8 +45,8 @@ describe('useViewRouter', () => {
 
   test('an unrecognized path falls back and rewrites the URL to match', () => {
     window.history.replaceState({}, '', '/not-a-real-page')
-    render(<Probe fallback="dashboard" />)
-    expect(screen.getByTestId('view')).toHaveTextContent('dashboard')
+    render(<Probe fallback="today" />)
+    expect(screen.getByTestId('view')).toHaveTextContent('today')
     expect(window.location.pathname).toBe('/')
   })
 
@@ -94,6 +94,6 @@ describe('useViewRouter', () => {
     // Simulate the browser moving the URL back and firing popstate, as Back does.
     window.history.replaceState({}, '', '/')
     act(() => { window.dispatchEvent(new PopStateEvent('popstate')) })
-    expect(screen.getByTestId('view')).toHaveTextContent('dashboard')
+    expect(screen.getByTestId('view')).toHaveTextContent('today')
   })
 })

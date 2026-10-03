@@ -8,6 +8,8 @@ import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { PLAYBOOKS, type Playbook } from '../lib/playbooks.js'
 import { FirstProspectsForm } from './FirstProspectsForm.js'
+import { ContractorSetup, ContractorDone, CONTRACTOR_LOOP } from './ContractorSetup.js'
+import type { View } from '../types.js'
 
 type Props = {
   workspace: Workspace
@@ -17,6 +19,8 @@ type Props = {
   // Optional: finish onboarding and jump straight to email setup — the one step
   // still required before anything can be sent.
   onConnectEmail?: () => void
+  // Where to land after setup (the contractor path opens Find work).
+  onNavigate?: (view: View) => void
 }
 
 type IcpForm = {
@@ -93,9 +97,10 @@ function StepProgress({ current }: { current: number }) {
   )
 }
 
-export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectEmail }: Props) {
+export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectEmail, onNavigate }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
-  const [step, setStep] = useState(1)
+  // 0: choose the path. 1–5: email outreach setup. CONTRACTOR_*: trade setup.
+  const [step, setStep] = useState(0)
   const [selectedPlaybook, setSelectedPlaybook] = useState<Playbook | null>(null)
   const [icpForm, setIcpForm] = useState<IcpForm>({
     businessType: '',
@@ -126,6 +131,19 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
     } finally {
       setSaving(false)
     }
+  }
+
+  // Contractor path: the discovery profile is saved by ContractorSetup; this
+  // marks onboarding done (no playbook, no example data) and shows the loop.
+  async function handleContractorSaved() {
+    const body: SeedWorkspaceRequest = { playbookId: null, includeExamples: false }
+    await route('POST /api/workspaces/:id/seed', { params: { id: workspace.id }, body })
+    setStep(CONTRACTOR_DONE_STEP)
+  }
+
+  function finishContractor() {
+    onComplete()
+    onNavigate?.('ops-find-work')
   }
 
   async function handleStep2Continue() {
@@ -170,8 +188,15 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
   return (
     <div style={overlayStyle} role="dialog" aria-modal="true" aria-label="Workspace setup">
       <div style={cardStyle}>
-        {(step <= 3 || step === FIRST_PROSPECTS_STEP) && <StepProgress current={Math.min(step, 3)} />}
+        {((step >= 1 && step <= 3) || step === FIRST_PROSPECTS_STEP) && <StepProgress current={Math.min(step, 3)} />}
 
+        {step === 0 && (
+          <PathChoice onContractor={() => setStep(CONTRACTOR_SETUP_STEP)} onOutreach={() => setStep(1)} onSkip={handleSkipSetup} saving={saving} />
+        )}
+        {step === CONTRACTOR_SETUP_STEP && (
+          <ContractorSetup api={api} toast={toast} workspaceId={workspace.id} onSaved={handleContractorSaved} onBack={() => setStep(0)} />
+        )}
+        {step === CONTRACTOR_DONE_STEP && <ContractorDone onGo={finishContractor} />}
         {step === 1 && (
           <Step1 onSelect={selectPlaybook} onSkip={handleSkipSetup} saving={saving} />
         )}
@@ -217,6 +242,54 @@ export function OnboardingWizard({ workspace, api, toast, onComplete, onConnectE
 // Shown after the targeting/examples steps and before the final screen: the
 // customer's own first prospects, which get outreach prepared for them.
 const FIRST_PROSPECTS_STEP = 5
+const CONTRACTOR_SETUP_STEP = 10
+const CONTRACTOR_DONE_STEP = 11
+
+// First screen: which job is ACAOS doing for you first? Both paths stay
+// available later; this only decides what gets set up now.
+function PathChoice({ onContractor, onOutreach, onSkip, saving }: {
+  onContractor: () => void
+  onOutreach: () => void
+  onSkip: () => void
+  saving: boolean
+}) {
+  const card: React.CSSProperties = { background: colors.bgElevated, border: `1px solid ${colors.border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }
+  return (
+    <div>
+      <div style={{ textAlign: 'center', marginBottom: 20 }}>
+        <h1 style={{ color: colors.text, fontSize: 22, fontWeight: 700, margin: '0 0 10px' }}>Welcome to ACAOS</h1>
+        <p style={{ color: colors.textMuted, fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+          Find profitable work, win it, run it, and learn which work actually pays.
+        </p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
+        <div style={card}>
+          <div style={{ color: colors.text, fontSize: 15, fontWeight: 600 }}>⚒ Find and run trade work</div>
+          <div style={{ color: colors.textMuted, fontSize: 12, lineHeight: 1.5 }}>
+            For contractors: {CONTRACTOR_LOOP.map(st => st.title.toLowerCase()).join(' → ')}.
+          </div>
+          <button style={{ ...s.btn, marginTop: 'auto' }} onClick={onContractor} disabled={saving}>I'm a trade contractor →</button>
+        </div>
+        <div style={card}>
+          <div style={{ color: colors.text, fontSize: 15, fontWeight: 600 }}>✉ Win clients by email</div>
+          <div style={{ color: colors.textMuted, fontSize: 12, lineHeight: 1.5 }}>
+            Find companies that fit, draft personalised emails, approve before anything sends, sort the replies.
+          </div>
+          <button style={{ ...s.btnSecondary, marginTop: 'auto' }} onClick={onOutreach} disabled={saving}>Set up email outreach →</button>
+        </div>
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <button
+          onClick={onSkip}
+          disabled={saving}
+          style={{ background: 'none', border: 'none', color: colors.blue, cursor: 'pointer', fontSize: 13, textDecoration: 'underline', fontWeight: 500 }}
+        >
+          Skip setup →
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function Step1({
   onSelect,
@@ -231,10 +304,10 @@ function Step1({
     <div>
       <div style={{ textAlign: 'center', marginBottom: 20 }}>
         <h1 style={{ color: colors.text, fontSize: 22, fontWeight: 700, margin: '0 0 10px' }}>
-          Welcome to ACAOS
+          Win clients by email
         </h1>
         <p style={{ color: colors.textMuted, fontSize: 14, margin: 0, lineHeight: 1.5 }}>
-          ACAOS helps you win new clients by email. Here's how it works:
+          Here's how email outreach works:
         </p>
       </div>
 

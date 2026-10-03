@@ -30,7 +30,7 @@ describe('CommandPalette', () => {
     render(<CommandPalette setView={setView} />)
     openWithCtrlK()
     await userEvent.type(screen.getByLabelText('Search commands'), 'review')
-    const match = screen.getByText('To Review')
+    const match = screen.getByText('To review')
     await userEvent.click(match)
     expect(setView).toHaveBeenCalledWith('approvals')
     // Closes after selection.
@@ -52,10 +52,10 @@ describe('CommandPalette', () => {
     render(<CommandPalette setView={setView} />)
     openWithCtrlK()
     const input = screen.getByLabelText('Search commands')
-    // First command is Home (dashboard); ArrowDown moves to Today.
+    // First command is Today; ArrowDown moves to Find work.
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(setView).toHaveBeenCalledWith('today')
+    expect(setView).toHaveBeenCalledWith('ops-find-work')
   })
 
   // Regression: the palette had no Tab-trap — Tab could escape the overlay to

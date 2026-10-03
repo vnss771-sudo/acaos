@@ -116,7 +116,7 @@ describe('OpsRoster', () => {
 
     const dialog = screen.getByRole('dialog', { name: 'Add Roster Entry' })
     await userEvent.selectOptions(within(dialog).getByLabelText('Crew Member'), 'crew1')
-    await userEvent.selectOptions(within(dialog).getByLabelText('Job Site'), 'site1')
+    await userEvent.selectOptions(within(dialog).getByLabelText('Site'), 'site1')
     fireEvent.change(within(dialog).getByLabelText('Roster Date'), { target: { value: '2026-09-20T08:00' } })
     fireEvent.change(within(dialog).getByLabelText('Start Time'), { target: { value: '2026-09-20T08:00' } })
     fireEvent.change(within(dialog).getByLabelText('End Time'), { target: { value: '2026-09-20T16:00' } })

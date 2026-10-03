@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Contractor-first
+- Positioning, README, pricing and terminology rewritten for trade contractors (`POSITIONING.md`);
+  plans shown as Free / Contractor / Contractor Pro (plan keys and Stripe mapping unchanged)
+- Navigation follows the loop: Today · Work (Find work, Clients, Jobs & margins) · Crew · Outreach · Settings;
+  Today is the landing screen (`/`), the old dashboard is Overview (`/overview`)
+- Onboarding asks first: trade contractor (trades + area → Find work) or email outreach
+- One flow from found work to margin: accepting a quote keeps the card in view and offers
+  "Start the job"; won work waiting to start shows on Today; jobs link to crew rates and shifts
+- Demo script (`docs/DEMO_SCRIPT.md`) and a runnable demo seed (`scripts/demo/seed-contractor.mts`)
+
 ### Fixes from running the app
 - Reloading a page could log the user out: app boot fired a second, concurrent token refresh, which the
   server's refresh-reuse (theft) detection treats as a replay and revokes every session. Boot now shares

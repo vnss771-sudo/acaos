@@ -178,6 +178,8 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
   const now = Date.now()
   const act = all.filter(needsAttention)
   const watch = all.filter(o => o.status === 'OPEN' && !needsAttention(o))
+  // Won through an accepted quote but not started yet: the next step is the job.
+  const toStart = all.filter(o => o.status === 'WON' && quotes.get(o.id)?.status === 'ACCEPTED' && !quotes.get(o.id)?.job)
   const fresh = all.filter(o => now - Date.parse(o.firstDetectedAt) <= NEW_WINDOW_DAYS * DAY)
   const pipelineCents = all.filter(o => o.status === 'OPEN' || o.status === 'PURSUING').reduce((t, o) => t + (o.expectedValueCents ?? 0), 0)
   const won = summary ? summary.wonRevenueCents.sourced + summary.wonRevenueCents.influenced : 0
@@ -248,7 +250,10 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
 
       {isAdmin && (o.status === 'PURSUING' || quotes.has(o.id)) && (
         <div style={{ marginTop: 8 }}>
-          <QuoteCapture route={route} toast={toast} workspaceId={workspace.id} target={{ commercialOpportunityId: o.id }} quote={quotes.get(o.id) ?? null} onChanged={load} />
+          <QuoteCapture
+            route={route} toast={toast} workspaceId={workspace.id} target={{ commercialOpportunityId: o.id }} quote={quotes.get(o.id) ?? null}
+            onChanged={load} onOpenJob={() => setView('ops-delivery')}
+          />
         </div>
       )}
 
@@ -288,6 +293,13 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
           : <div style={{ display: 'grid', gap: 10 }}>{act.map(renderOpp)}</div>}
       </section>
 
+      {toStart.length > 0 && (
+        <section>
+          <h2 style={{ fontSize: 15, color: colors.text, margin: '0 0 8px' }}>Won — start the job ({toStart.length})</h2>
+          <div style={{ display: 'grid', gap: 10 }}>{toStart.map(renderOpp)}</div>
+        </section>
+      )}
+
       {fresh.length > 0 && (
         <section>
           <h2 style={{ fontSize: 15, color: colors.text, margin: '0 0 8px' }}>New this week ({fresh.length})</h2>
@@ -304,7 +316,13 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
       <section>
         <h2 style={{ fontSize: 15, color: colors.text, margin: '0 0 8px' }}>Worth watching ({watch.length})</h2>
         {watch.length === 0
-          ? <div style={{ fontSize: 13, color: colors.textMuted }}>Nothing to monitor yet. <button style={s.btnGhost} onClick={() => setView('prospects')}>Add potential clients</button></div>
+          ? (
+            <div style={{ fontSize: 13, color: colors.textMuted, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              Nothing to watch yet. Jobs found for your trade are in Find work; builders you could work for go in Clients.
+              <button style={s.btnGhost} onClick={() => setView('ops-find-work')}>Open Find work</button>
+              <button style={s.btnGhost} onClick={() => setView('prospects')}>Add clients</button>
+            </div>
+          )
           : <div style={{ display: 'grid', gap: 10 }}>{watch.slice(0, 10).map(renderOpp)}</div>}
       </section>
 

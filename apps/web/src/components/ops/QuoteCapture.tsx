@@ -15,6 +15,8 @@ export type QuoteSummary = {
   status: 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'WITHDRAWN'
   amountCents: number
   estimatedHours: number | null
+  // The delivery job this quote became, once started.
+  job?: { id: string; status: string } | null
 }
 
 type Props = {
@@ -25,9 +27,13 @@ type Props = {
   target: { opportunityId: string } | { commercialOpportunityId: string }
   quote: QuoteSummary | null
   onChanged: () => void
+  // After a decision (e.g. keep a won card in view) — defaults to onChanged.
+  onDecided?: (status: 'ACCEPTED' | 'REJECTED') => void
+  // Take the user to the job (Jobs & margins).
+  onOpenJob?: () => void
 }
 
-export function QuoteCapture({ route, toast, workspaceId, target, quote, onChanged }: Props) {
+export function QuoteCapture({ route, toast, workspaceId, target, quote, onChanged, onDecided, onOpenJob }: Props) {
   const targetId = 'opportunityId' in target ? target.opportunityId : target.commercialOpportunityId
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
@@ -54,9 +60,22 @@ export function QuoteCapture({ route, toast, workspaceId, target, quote, onChang
     setBusy(true)
     try {
       await route('PATCH /api/delivery/quotes/:id/status', { params: { id: quote.id }, body: { workspaceId, status } })
-      toast.success(status === 'ACCEPTED' ? 'Quote accepted — marked as won' : 'Quote marked as declined')
-      onChanged()
+      toast.success(status === 'ACCEPTED' ? 'Won it — start the job when you\'re ready' : 'Quote marked as declined')
+      if (onDecided) onDecided(status)
+      else onChanged()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to update quote') }
+    finally { setBusy(false) }
+  }
+
+  async function startJob() {
+    if (!quote) return
+    setBusy(true)
+    try {
+      await route('POST /api/delivery/quotes/:id/job', { params: { id: quote.id }, body: { workspaceId } })
+      toast.success('Job started — add your crew and log shifts against it')
+      onChanged()
+      onOpenJob?.()
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to start the job') }
     finally { setBusy(false) }
   }
 
@@ -68,6 +87,15 @@ export function QuoteCapture({ route, toast, workspaceId, target, quote, onChang
           {quote.estimatedHours != null && <> · {quote.estimatedHours} h estimated</>}
           {quote.status === 'ACCEPTED' && <span style={{ color: colors.green }}> · accepted</span>}
         </span>
+        {quote.status === 'ACCEPTED' && !quote.job && (
+          <button style={s.btnSm} disabled={busy} onClick={startJob}>Start the job</button>
+        )}
+        {quote.status === 'ACCEPTED' && quote.job && (
+          <>
+            <span style={{ color: colors.green }}>✓ Job started</span>
+            {onOpenJob && <button style={s.btnGhost} onClick={onOpenJob}>Open job</button>}
+          </>
+        )}
         {quote.status === 'SUBMITTED' && (
           <>
             <button style={s.btnSm} disabled={busy} onClick={() => decide('ACCEPTED')}>Client accepted</button>

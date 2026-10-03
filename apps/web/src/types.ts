@@ -469,8 +469,10 @@ export const GOAL_TYPES = ['BOOK_CALL', 'GET_REPLY', 'DRIVE_TRAFFIC', 'OTHER'] a
 
 export const PLAN_LABELS: Record<BillingPlan, string> = {
   free: 'Free',
-  starter: 'Inbox Assistant',
-  growth: 'Growth'
+  // Plan keys stay starter/growth (they map to Stripe prices server-side);
+  // only the names customers see change.
+  starter: 'Contractor',
+  growth: 'Contractor Pro'
 }
 
 export type Signal = {

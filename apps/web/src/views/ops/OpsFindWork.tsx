@@ -182,9 +182,9 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
     setBusyId(o.id)
     try {
       const r = await route('POST /api/opportunities/:id/create-job', { params: { id: o.id }, body: { workspaceId: workspace.id } })
-      toast.success(`Job site ${r.jobSite.jobCode} created`)
+      toast.success(`Job ${r.jobSite.jobCode} started — add your crew and log shifts against it`)
       load()
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to create job site') }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to start the job') }
     finally { setBusyId(null) }
   }
 
@@ -410,7 +410,13 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
               )}
 
               {canManage && (o.status === 'PURSUING' || quotes.has(o.id)) && (
-                <QuoteCapture route={route} toast={toast} workspaceId={workspace.id} target={{ opportunityId: o.id }} quote={quotes.get(o.id) ?? null} onChanged={load} />
+                <QuoteCapture
+                  route={route} toast={toast} workspaceId={workspace.id} target={{ opportunityId: o.id }} quote={quotes.get(o.id) ?? null}
+                  onChanged={load}
+                  // A won card would vanish from "Active"; follow it to "Won" where the job is started.
+                  onDecided={status => (status === 'ACCEPTED' && filter !== 'WON' ? setFilter('WON') : load())}
+                  onOpenJob={() => setView('ops-delivery')}
+                />
               )}
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
@@ -421,9 +427,13 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
                     <button style={s.btnGhost} disabled={busyId === o.id} onClick={() => setStatus(o, 'LOST')}>Lost it</button>
                   </>
                 )}
-                {o.status === 'WON' && (o.opsJobSiteId
-                  ? <span style={{ color: colors.green, fontSize: 13 }}>✓ Job site created</span>
-                  : canManage && <button style={s.btnSm} disabled={busyId === o.id} onClick={() => createJob(o)}>Create job site</button>)}
+                {/* Won without a quote: start the job here (with a quote, QuoteCapture above does it). */}
+                {o.status === 'WON' && quotes.get(o.id)?.status !== 'ACCEPTED' && (o.opsJobSiteId
+                  ? <>
+                      <span style={{ color: colors.green, fontSize: 13, alignSelf: 'center' }}>✓ Job started</span>
+                      {canManage && <button style={s.btnGhost} onClick={() => setView('ops-delivery')}>Open job</button>}
+                    </>
+                  : canManage && <button style={s.btnSm} disabled={busyId === o.id} onClick={() => createJob(o)}>Start the job</button>)}
                 {(o.status === 'NEW' || o.status === 'PURSUING') && <button style={s.btnGhost} disabled={busyId === o.id} onClick={() => setStatus(o, 'DISMISSED')}>Not for us</button>}
                 {(o.status === 'DISMISSED' || o.status === 'LOST') && <button style={s.btnGhost} disabled={busyId === o.id} onClick={() => setStatus(o, 'NEW')}>Reopen</button>}
               </div>

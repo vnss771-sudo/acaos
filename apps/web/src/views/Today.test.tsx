@@ -106,6 +106,23 @@ describe('Today', () => {
   })
 })
 
+describe('Today — won work', () => {
+  test('a won opportunity with an accepted quote waits under "Won — start the job" and starts from there', async () => {
+    const WON = { ...URGENT, id: 'c9', status: 'WON', urgency: 'MEDIUM', prospect: { id: 'p9', companyName: 'Apex Aged Care', domain: null } }
+    const api = vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
+      if (init?.method && init.method !== 'GET') return Promise.resolve({ job: { id: 'j1' } })
+      if (path.startsWith('/api/delivery/quotes')) return Promise.resolve({ quotes: [{ id: 'q9', opportunityId: null, commercialOpportunityId: 'c9', status: 'ACCEPTED', amountCents: 6_800_000, estimatedHours: 380, job: null }] })
+      if (path.startsWith('/api/commercial-opportunities') && !path.includes('/outcomes') && !path.includes('network')) return Promise.resolve({ opportunities: [WON] })
+      return mockApi()(path, init)
+    })
+    render(<Today api={api as never} workspace={workspace} toast={toast as never} isAdmin setView={setView} />)
+    expect(await screen.findByText('Won — start the job (1)')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Start the job' }))
+    expect(writes(api)[0][0]).toBe('/api/delivery/quotes/q9/job')
+    await vi.waitFor(() => expect(setView).toHaveBeenCalledWith('ops-delivery'))
+  })
+})
+
 describe('Today — untrusted evidence links', () => {
   test('a javascript: source URL is never rendered as a link', async () => {
     const api = mockApi()

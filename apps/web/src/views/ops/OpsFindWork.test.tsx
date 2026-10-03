@@ -72,7 +72,7 @@ describe('OpsFindWork', () => {
     expect(screen.getByRole('button', { name: 'Set up Find work' })).toBeInTheDocument()
   })
 
-  test('Pursue → Won it → Create job site walk the workflow', async () => {
+  test('Pursue → Won it → Start the job walk the workflow', async () => {
     const api = mockApi()
     const { unmount } = render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} setView={setView} canManage />)
     await userEvent.click(await screen.findByRole('button', { name: 'Pursue' }))
@@ -83,15 +83,15 @@ describe('OpsFindWork', () => {
     unmount()
     const wonApi = mockApi({ opportunities: [{ ...OPP, status: 'WON' }] })
     render(<OpsFindWork api={wonApi as never} workspace={workspace} toast={toast as never} setView={setView} canManage />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Create job site' }))
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Job site OPP-ABC123 created'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Start the job' }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Job OPP-ABC123 started — add your crew and log shifts against it'))
   })
 
   test('members cannot create job sites or change settings', async () => {
     const api = mockApi({ opportunities: [{ ...OPP, status: 'WON' }] })
     render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} setView={setView} />)
     await screen.findByText('Electrical maintenance — Brisbane office')
-    expect(screen.queryByRole('button', { name: 'Create job site' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start the job' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Search now' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'What we look for' }))
     expect(screen.getByRole('checkbox', { name: 'Electrical' })).toBeDisabled()
@@ -156,5 +156,22 @@ describe('OpsFindWork', () => {
     expect(await screen.findByText('Electrical maintenance — Brisbane office')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Record quote' })).toBeNull()
     expect(api.mock.calls.some(([p]) => String(p).startsWith('/api/delivery'))).toBe(false)
+  })
+
+  test('accepting a quote follows the won card to the Won tab, where the job is started from the quote', async () => {
+    const quotes = [{ id: 'q1', opportunityId: 'o1', status: 'SUBMITTED', amountCents: 6_000_000, estimatedHours: 400, job: null }]
+    const api = mockApi({ opportunities: [{ ...OPP, status: 'PURSUING' }], quotes })
+    render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Client accepted' }))
+    await waitFor(() => expect(api.mock.calls.some(([p]) => String(p).includes('status=WON'))).toBe(true))
+  })
+
+  test('an accepted quote offers Start the job (from the quote), then Open job', async () => {
+    const accepted = { id: 'q1', opportunityId: 'o1', status: 'ACCEPTED', amountCents: 6_000_000, estimatedHours: 400, job: null }
+    const api = mockApi({ opportunities: [{ ...OPP, status: 'WON' }], quotes: [accepted] })
+    render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Start the job' }))
+    await waitFor(() => expect(posts(api).some(([p]) => p === '/api/delivery/quotes/q1/job')).toBe(true))
+    expect(setView).toHaveBeenCalledWith('ops-delivery')
   })
 })

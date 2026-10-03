@@ -100,4 +100,15 @@ describe('OpsDelivery', () => {
     expect(path).toBe('/api/delivery/jobs/j2/reopen')
     expect(JSON.parse((init as { body: string }).body)).toEqual({ workspaceId: 'ws1', reason: 'Late variation invoice' })
   })
+
+  test('an active job links to its next steps: crew rates when one is missing, and shifts', async () => {
+    const withGap = { ...ACTIVE, economics: { ...ECON, gaps: ['1 crew member(s) have no base rate, so labour cost is unknown'] } }
+    const api = vi.fn().mockImplementation((path: string) =>
+      path.startsWith('/api/delivery/report') ? Promise.resolve({ report: REPORT }) : Promise.resolve({ jobs: [withGap] }))
+    render(<OpsDelivery api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Set crew rates' }))
+    expect(setView).toHaveBeenCalledWith('ops-crew')
+    await userEvent.click(screen.getByRole('button', { name: 'Log shifts' }))
+    expect(setView).toHaveBeenCalledWith('ops-shifts')
+  })
 })

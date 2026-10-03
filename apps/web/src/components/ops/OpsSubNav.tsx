@@ -1,31 +1,37 @@
 import React from 'react'
 import type { View } from '../../types.js'
 import { colors } from '../../styles.js'
+import { isHubNavEnabled } from '../../lib/hubs.js'
 
-// Field Ops's own sub-navigation. The sidebar (and, in hub-nav mode, HubTabs)
-// only surface ONE entry point ('ops-dashboard') for all 9 Ops view ids — this
-// strip is what actually switches between them, and unlike HubTabs it is always
-// rendered regardless of hub-nav mode, since the flat/default nav has no other
-// way to move between Ops sub-pages once inside one.
-const TABS: { view: View; label: string }[] = [
-  { view: 'ops-dashboard', label: 'Dashboard' },
-  { view: 'ops-find-work', label: 'Find work' },
-  { view: 'ops-crew', label: 'Crew' },
-  { view: 'ops-jobs', label: 'Job Sites' },
-  { view: 'ops-delivery', label: 'Jobs & margins' },
-  { view: 'ops-shifts', label: 'Shifts' },
-  { view: 'ops-roster', label: 'Roster' },
-  { view: 'ops-fatigue', label: 'Fatigue' },
-  { view: 'ops-alerts', label: 'Alerts' },
+// Sub-navigation for the Work and Crew pages, used only by the flat sidebar nav
+// (the rollback mode). With the hub nav on (the default), HubTabs already shows
+// exactly these tabs for the active hub, so this renders nothing rather than a
+// second, duplicate strip.
+const GROUPS: { label: string; tabs: { view: View; label: string }[] }[] = [
+  { label: 'Work', tabs: [
+    { view: 'ops-find-work', label: 'Find work' },
+    { view: 'ops-delivery', label: 'Jobs & margins' },
+  ] },
+  { label: 'Crew', tabs: [
+    { view: 'ops-dashboard', label: 'Overview' },
+    { view: 'ops-crew', label: 'Crew' },
+    { view: 'ops-shifts', label: 'Shifts' },
+    { view: 'ops-roster', label: 'Roster' },
+    { view: 'ops-jobs', label: 'Sites' },
+    { view: 'ops-fatigue', label: 'Fatigue' },
+    { view: 'ops-alerts', label: 'Alerts' },
+  ] },
 ]
 
-export function OpsSubNav({ view, setView }: { view: View; setView: (v: View) => void }) {
+export function OpsSubNav({ view, setView, force }: { view: View; setView: (v: View) => void; force?: boolean }) {
+  if (!force && isHubNavEnabled()) return null
+  const group = GROUPS.find(g => g.tabs.some(t => t.view === view)) ?? GROUPS[1]
   return (
-    <div role="tablist" aria-label="Field Ops sections" style={{
+    <div role="tablist" aria-label={`${group.label} sections`} style={{
       display: 'flex', gap: 2, marginBottom: 22, overflowX: 'auto',
       borderBottom: `1px solid ${colors.border}`,
     }}>
-      {TABS.map(t => {
+      {group.tabs.map(t => {
         const active = t.view === view
         return (
           <button

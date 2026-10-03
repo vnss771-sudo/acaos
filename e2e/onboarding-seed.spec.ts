@@ -9,6 +9,9 @@ test.afterAll(closeDb)
 test('signup → onboarding seeds example prospects that appear in the UI', async ({ page }) => {
   await signUp(page, uniqueEmail())
 
+  // The first screen asks which path; this spec covers the email-outreach one.
+  await page.getByRole('button', { name: /Set up email outreach/ }).click()
+
   // Step 1: pick the first playbook (Industrial Services). Its "Select" is the
   // first one in the grid, and the backend seeds Industrial example companies.
   await page.getByRole('button', { name: /Select Industrial Services/ }).click()
@@ -25,7 +28,23 @@ test('signup → onboarding seeds example prospects that appear in the UI', asyn
   // Step 4: enter the app without connecting email yet.
   await page.getByRole('button', { name: /Explore first/ }).click()
 
-  // The seeded Industrial example company must be visible on the Potential clients page.
-  await page.getByRole('button', { name: /Potential clients/ }).click()
+  // The seeded Industrial example company must be visible on the Clients page (Work hub).
+  await page.getByRole('button', { name: /^Work$/ }).click()
+  await page.getByRole('tab', { name: 'Clients' }).click()
   await expect(page.getByText('Summit Plant & Equipment')).toBeVisible()
+})
+
+// Flow 1b: a trade contractor's onboarding — trades and area become the Find work
+// profile, and setup lands on Find work, not an empty dashboard.
+test('signup → contractor onboarding sets up Find work and lands on it', async ({ page }) => {
+  await signUp(page, uniqueEmail())
+  await page.getByRole('button', { name: /I'm a trade contractor/ }).click()
+  await page.getByLabel('Electrical').check()
+  await page.getByLabel('QLD').check()
+  await page.getByRole('button', { name: /Start finding work/ }).click()
+  await page.getByRole('button', { name: /Go to Find work/ }).click()
+  await expect(page.getByRole('heading', { name: 'Find work' })).toBeVisible()
+  await expect(page).toHaveURL(/\/ops\/find-work$/)
+  // The profile was saved: the setup prompt is gone.
+  await expect(page.getByText('Tell us what work you want')).toBeHidden()
 })

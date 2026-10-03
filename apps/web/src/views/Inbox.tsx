@@ -222,7 +222,7 @@ export function InboxView({ api, workspace, toast }: Props) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <p style={{ color: colors.textMuted, fontSize: 13, margin: 0, flex: 1, minWidth: 220 }}>
-          Inbox Assistant classifies incoming replies by intent and suggests the best next action. Write and send your reply from your own mailbox.
+          Inbox sorts incoming replies by intent and suggests the best next action. Write and send your reply from your own mailbox.
         </p>
         {/* Contextual AI: analyze an ad-hoc reply (paste-in) right where replies live. */}
         <AiQuickAction kind="reply" api={api} workspace={workspace} toast={toast} />

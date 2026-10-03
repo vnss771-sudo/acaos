@@ -83,7 +83,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
       const d = await route('POST /api/prospects/discover', { body })
       toast.success(d.deduped
         ? 'Discovery already running for this query — results will appear shortly.'
-        : 'Discovery started — new potential clients will appear shortly.')
+        : 'Discovery started — new clients will appear shortly.')
       load()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Discovery failed') }
     finally { setBusy(prev => ({ ...prev, [id]: false })) }
@@ -165,7 +165,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
                     </button>
                     {canManage && (
                       <button style={s.btnSm} disabled={isBusy} onClick={() => discover(m.id)}>
-                        {isBusy ? 'Discovering…' : 'Find potential clients'}
+                        {isBusy ? 'Discovering…' : 'Find clients'}
                       </button>
                     )}
                     {canManage && (m.status === 'PAUSED' || m.status === 'DRAFT' ? (
@@ -206,7 +206,7 @@ export function MissionsView({ api, workspace, toast, canManage = false }: Props
 // on screen — so it guides a new operator without hiding or duplicating anything.
 function MissionGuide({ detail }: { detail: MissionDetail }) {
   const steps = [
-    { label: 'Discover', done: detail.funnel.discovered > 0, hint: 'Use “Find potential clients” to find companies that match your ICP.' },
+    { label: 'Discover', done: detail.funnel.discovered > 0, hint: 'Use “Find clients” to find companies that match your ICP.' },
     { label: 'Score & recommend', done: detail.funnel.recommended > 0, hint: 'Hit “Score & recommend” to turn potential clients into outreach recommendations.' },
     { label: 'Review & approve', done: detail.funnel.approved > 0, hint: 'Generate a draft for each recommendation in the action queue, then approve the keepers.' },
     { label: 'Ready to send', done: detail.sendReadiness.ready, hint: 'Clear the send-readiness checks below (SMTP + compliance details).' },
