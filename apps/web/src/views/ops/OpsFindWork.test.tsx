@@ -61,7 +61,8 @@ describe('OpsFindWork', () => {
     expect(screen.getByText(/they won this contract and may need electrical subcontractors/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '07 5555 0000' })).toHaveAttribute('href', 'tel:0755550000')
     expect(screen.getByRole('link', { name: /View source/ })).toHaveAttribute('target', '_blank')
-    expect(api).toHaveBeenCalledWith('/api/opportunities?workspaceId=ws1')
+    // The default "Active" tab asks for new + pursuing only, matching its count.
+    expect(api).toHaveBeenCalledWith('/api/opportunities?workspaceId=ws1&scope=active')
   })
 
   test('without a profile, admins are asked to set it up', async () => {

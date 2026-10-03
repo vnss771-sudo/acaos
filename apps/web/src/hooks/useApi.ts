@@ -22,14 +22,27 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = DEFA
   }
 }
 
-// Single-flight the refresh: when several requests 401 at once they must share
-// one refresh round-trip, not each fire their own (which would spam /auth/refresh
-// and rotate the cookie repeatedly). Concurrent callers await the same promise.
+// Single-flight the refresh: every caller in this tab — a burst of 401s, and the
+// app's boot (App.tsx) — shares one round-trip. This is not just tidiness: the
+// server rotates the refresh cookie on use and treats a second use of the old
+// one as theft, revoking EVERY session for the user. Two concurrent refreshes
+// (React StrictMode runs the boot effect twice; a 401 can land during boot)
+// therefore log the user out on the next load.
 let inflightRefresh: Promise<string | null> | null = null
 
-async function tryRefresh(): Promise<string | null> {
+// Across tabs, a browser restoring several ACAOS tabs at once would race the
+// same way, so the round-trip also runs under a Web Lock: the next tab waits,
+// then sends the cookie the first tab already rotated. Browsers without the
+// Locks API fall back to per-tab single-flight.
+type LockManagerLike = { request: <T>(name: string, cb: () => Promise<T>) => Promise<T> }
+function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = (typeof navigator !== 'undefined' ? (navigator as { locks?: LockManagerLike }).locks : undefined)
+  return locks?.request ? locks.request('acaos-auth-refresh', fn) : fn()
+}
+
+export async function tryRefresh(): Promise<string | null> {
   if (inflightRefresh) return inflightRefresh
-  inflightRefresh = (async () => {
+  inflightRefresh = withRefreshLock(async () => {
     // The refresh token lives in an HttpOnly cookie (sent automatically with
     // credentials: 'include'); JS never sees it. A custom header satisfies the
     // server's CSRF guard. The new access token comes back in the body.
@@ -45,7 +58,7 @@ async function tryRefresh(): Promise<string | null> {
     } catch {
       return null
     }
-  })()
+  })
   try {
     return await inflightRefresh
   } finally {

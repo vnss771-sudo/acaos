@@ -96,3 +96,35 @@ describe('useApi', () => {
     expect((init.headers as Headers).has('Authorization')).toBe(false)
   })
 })
+
+describe('tryRefresh — one refresh at a time', () => {
+  beforeEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+
+  test('concurrent callers in one tab share a single round-trip (a second would look like token theft)', async () => {
+    const { tryRefresh } = await import('./useApi.js')
+    let release: (v: unknown) => void = () => {}
+    const fetchMock = vi.fn(() => new Promise(r => { release = r }).then(() => ({ status: 200, ok: true, json: async () => ({ token: 'fresh' }) })))
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    const a = tryRefresh()
+    const b = tryRefresh()
+    await Promise.resolve()
+    release(null)
+    expect(await Promise.all([a, b])).toEqual(['fresh', 'fresh'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('the round-trip runs under a cross-tab Web Lock when the browser has one', async () => {
+    const { tryRefresh } = await import('./useApi.js')
+    const request = vi.fn((_name: string, cb: () => Promise<unknown>) => cb())
+    vi.stubGlobal('navigator', { ...navigator, locks: { request } })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => ({ token: 't2' }) })) as unknown as typeof fetch)
+    expect(await tryRefresh()).toBe('t2')
+    expect(request).toHaveBeenCalledWith('acaos-auth-refresh', expect.any(Function))
+  })
+
+  test('a failed refresh resolves to null so the caller shows sign-in', async () => {
+    const { tryRefresh } = await import('./useApi.js')
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 401, ok: false, json: async () => ({}) })) as unknown as typeof fetch)
+    expect(await tryRefresh()).toBeNull()
+  })
+})

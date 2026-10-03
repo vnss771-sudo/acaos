@@ -57,7 +57,10 @@ describe('OpsDelivery', () => {
     expect(screen.getAllByText('22% (n=3, 18% to 30%)').length).toBeGreaterThan(0)
     expect(screen.getByText('Margin unknown')).toBeInTheDocument()
     expect(screen.getByText('No invoiced revenue entered, so margin is unknown')).toBeInTheDocument()
-    expect(screen.getAllByText('+32.5% vs estimate')).toHaveLength(2)
+    // A running job shows progress against the estimate, not a misleading "under" variance.
+    expect(screen.getByText('133% of 400 h estimate used')).toBeInTheDocument()
+    expect(screen.getByText('+32.5% vs estimate')).toBeInTheDocument()
+    expect(screen.getAllByText('From: Development application — DA 2026/123')).toHaveLength(2)
     expect(screen.getByText('Gross margin', { selector: 'span' })).toBeInTheDocument()
     expect(screen.getByText('$12,800')).toBeInTheDocument()
     expect(screen.getByText(/2 shift\(s\) were logged on this site after closeout/)).toBeInTheDocument()

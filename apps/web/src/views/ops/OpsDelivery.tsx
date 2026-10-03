@@ -43,6 +43,25 @@ type Stat = { n: number; median: number; min: number; max: number } | null
 type ReportGroup = { key: string; label: string; jobs: number; hoursVariancePct: Stat; revenueVsQuotePct: Stat; labourMarginPct: Stat; grossMarginPct: Stat }
 type Report = { minJobs: number; overall: ReportGroup; groups: ReportGroup[] }
 
+const ORIGIN_LABEL: Record<string, string> = { DEVELOPMENT_APPLICATION: 'Development application', CONTRACT_AWARD: 'Contract award' }
+
+function originText(j: DeliveryJob): string | null {
+  if (!j.origin) return null
+  const kind = j.origin.type === 'OPPORTUNITY' ? (ORIGIN_LABEL[j.origin.kind] ?? j.origin.kind) : `Signal: ${j.origin.kind.toLowerCase().replace(/_/g, ' ')}`
+  // The site is usually named after the opportunity; only repeat the title when it adds something.
+  return j.origin.title && j.origin.title !== j.site.siteName ? `${kind} — ${j.origin.title}` : kind
+}
+
+// While a job runs, "vs estimate" would read as under-running; show progress instead.
+function hoursHint(j: DeliveryJob, e: Economics): string | undefined {
+  if (j.status === 'ACTIVE' && e.estimatedHours) {
+    const used = Math.round((e.actualHours / e.estimatedHours) * 100)
+    return `${used}% of ${e.estimatedHours} h estimate used${e.openShifts ? ` · ${e.openShifts} shift(s) open` : ''}`
+  }
+  if (e.hoursVariancePct != null) return `${formatPct(e.hoursVariancePct)} vs estimate`
+  return e.openShifts ? `${e.openShifts} shift(s) open` : undefined
+}
+
 const BASIS_LABEL: Record<Economics['marginBasis'], string> = { GROSS: 'Gross margin', LABOUR: 'Labour margin only', UNKNOWN: 'Margin unknown' }
 
 function statText(st: Stat, pct = true): string {
@@ -199,7 +218,7 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                   <div>
                     <div style={{ fontWeight: 600, color: colors.text }}>{j.site.jobCode} · {j.site.siteName}</div>
-                    {j.origin && <div style={{ fontSize: 12, color: colors.textMuted }}>From: {j.origin.title}</div>}
+                    {originText(j) && <div style={{ fontSize: 12, color: colors.textMuted }}>From: {originText(j)}</div>}
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     {e && <Badge color={e.marginBasis === 'GROSS' ? colors.green : e.marginBasis === 'LABOUR' ? colors.amber : colors.textFaint}>{BASIS_LABEL[e.marginBasis]}</Badge>}
@@ -210,7 +229,7 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                 {e && (
                   <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 8 }}>
                     <Figure label="Quoted" value={formatCents(e.quotedCents)} hint={e.estimatedHours != null ? `${e.estimatedHours} h estimated` : undefined} />
-                    <Figure label="Hours" value={`${e.actualHours} h`} hint={e.hoursVariancePct != null ? `${formatPct(e.hoursVariancePct)} vs estimate` : e.openShifts ? `${e.openShifts} shift(s) open` : undefined} />
+                    <Figure label="Hours" value={`${e.actualHours} h`} hint={hoursHint(j, e)} />
                     <Figure label="Labour cost" value={formatCents(e.labourCostCents)} hint={e.onCostPct ? `incl. ${e.onCostPct}% on-costs` : undefined} />
                     <Figure label="Other costs" value={formatCents(e.otherCostCents)} />
                     <Figure label="Revenue" value={formatCents(e.revenueCents)} hint={e.revenueVsQuotePct != null ? `${formatPct(e.revenueVsQuotePct)} vs quote` : undefined} />
@@ -239,11 +258,11 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div>
                       <label style={s.label} htmlFor={`co-rev-${j.id}`}>Invoiced ($)</label>
-                      <input id={`co-rev-${j.id}`} style={{ ...s.input, width: 130 }} inputMode="decimal" value={form.revenue} placeholder="blank = unknown" onChange={ev => setForm(f => ({ ...f, revenue: ev.target.value }))} />
+                      <input id={`co-rev-${j.id}`} style={{ ...s.input, width: 130 }} inputMode="decimal" value={form.revenue} placeholder="unknown" onChange={ev => setForm(f => ({ ...f, revenue: ev.target.value }))} />
                     </div>
                     <div>
                       <label style={s.label} htmlFor={`co-oth-${j.id}`}>Materials &amp; subcontractors ($)</label>
-                      <input id={`co-oth-${j.id}`} style={{ ...s.input, width: 130 }} inputMode="decimal" value={form.other} placeholder="blank = unknown" onChange={ev => setForm(f => ({ ...f, other: ev.target.value }))} />
+                      <input id={`co-oth-${j.id}`} style={{ ...s.input, width: 130 }} inputMode="decimal" value={form.other} placeholder="unknown" onChange={ev => setForm(f => ({ ...f, other: ev.target.value }))} />
                     </div>
                     <div>
                       <label style={s.label} htmlFor={`co-onc-${j.id}`}>Labour on-costs (%)</label>
@@ -251,6 +270,11 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                     </div>
                     <button style={s.btnSm} disabled={busy} onClick={() => closeout(j)}>Close out</button>
                     <button style={s.btnGhost} disabled={busy} onClick={() => setClosing(null)}>Cancel</button>
+                  </div>
+                )}
+                {j.status === 'ACTIVE' && closing === j.id && (
+                  <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 6 }}>
+                    Leave an amount blank if you don't know it yet — it shows as unknown, never as $0.
                   </div>
                 )}
                 {j.status === 'COMPLETE' && reopening !== j.id && <button style={s.btnGhost} onClick={() => { setReopening(j.id); setReason('') }}>Reopen</button>}

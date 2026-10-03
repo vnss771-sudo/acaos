@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import type { User, Workspace, View } from './types.js'
 import { canManageWorkspace } from './types.js'
-import { useApi } from './hooks/useApi.js'
+import { useApi, tryRefresh } from './hooks/useApi.js'
 import { useToast } from './hooks/useToast.js'
 import { ToastContainer } from './components/Toast.js'
 import { Sidebar } from './components/Sidebar.js'
@@ -132,18 +132,13 @@ export function App() {
 
   // Exchange the HttpOnly refresh cookie for a fresh access token. Returns true
   // when a session was (re)established.
+  // Goes through useApi's shared single-flight refresh — never a second,
+  // concurrent one (see tryRefresh for why that would log the user out).
   const refreshAccessToken = useCallback(async () => {
-    try {
-      const res = await fetch(`${API}/api/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'X-CSRF-Protection': '1' }
-      })
-      if (!res.ok) return false
-      const data = await res.json()
-      setToken(data.token)
-      return true
-    } catch { return false }
+    const fresh = await tryRefresh()
+    if (!fresh) return false
+    setToken(fresh)
+    return true
   }, [])
 
   // Demo mode: seed a session from fixtures and skip all auth round-trips.
