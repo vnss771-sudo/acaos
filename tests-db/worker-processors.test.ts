@@ -444,6 +444,18 @@ test('generateOutreachDraft persists a draft with the gated status and tone warn
   assert.equal(drafts[0]!.status, 'DRAFTED', 'auto_draft recommendedAction -> normal DRAFTED flow')
 })
 
+test('generateOutreachDraft holds a draft that picked up sensitive data in POLICY_REVIEW', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const lead = await seedResearchedLead(workspace.id)
+
+  const raw = JSON.stringify({ subject: 'Quick idea for Acme', email: 'Hi there, pay the deposit with 4111 1111 1111 1111.', followup: 'Following up on the deposit.' })
+  await generateOutreachDraft(lead.id, workspace.id, undefined, undefined, { generateOutreach: async () => raw })
+
+  const [draft] = await prisma.outreachDraft.findMany({ where: { leadId: lead.id } })
+  assert.equal(draft!.status, 'POLICY_REVIEW')
+  assert.equal((draft!.policyViolations as { violations: Array<{ code: string }> }).violations[0].code, 'SENSITIVE_DATA')
+})
+
 test('generateOutreachDraft suppresses a poor-fit ("skip") lead without calling the model, and refunds the AI credit', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const lead = await seedResearchedLead(workspace.id, 'skip')

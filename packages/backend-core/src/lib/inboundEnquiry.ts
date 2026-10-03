@@ -17,6 +17,7 @@
 // ignored, so every surfaced card must carry a stated reason.
 
 import { assessRisk, RISK_FLAG_LABEL, type RiskFlag } from './riskEscalation.js'
+import { redactSensitiveData } from './sensitiveData.js'
 import { TRADES, findKeyword, type TradeId } from './opportunityTaxonomy.js'
 
 export const ENQUIRY_SOURCE = 'email'
@@ -91,21 +92,9 @@ export type EnquiryRecord = {
   contentHash: string
 }
 
-/** Mask payment-card numbers (Luhn-valid 13–19 digit runs) before anything is stored. */
+/** Mask card numbers, secret keys, passwords and TFNs (lib/sensitiveData.ts) before anything is stored. */
 export function redactSensitive(text: string): string {
-  return text.replace(/\b(?:\d[ -]?){12,18}\d\b/g, m => (luhnValid(m) ? '[card number removed]' : m))
-}
-
-function luhnValid(candidate: string): boolean {
-  const digits = candidate.replace(/\D/g, '')
-  if (digits.length < 13 || digits.length > 19) return false
-  let sum = 0
-  for (let i = 0; i < digits.length; i++) {
-    let d = Number(digits[digits.length - 1 - i])
-    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9 }
-    sum += d
-  }
-  return sum % 10 === 0
+  return redactSensitiveData(text)
 }
 
 /** The text stored as the Opportunity description: whitespace-collapsed, redacted, capped. */

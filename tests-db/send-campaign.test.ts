@@ -523,3 +523,27 @@ test('holdout: a random share is never contacted, recorded as HELD_OUT, and comp
     if (prev === undefined) delete process.env.LEARNING_HOLDOUT_PERCENT; else process.env.LEARNING_HOLDOUT_PERCENT = prev
   }
 })
+
+test('SENSITIVE_DATA: a draft carrying a card number is never sent and is held for review', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id)
+  const good = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
+  const leaky = await prisma.lead.create({
+    data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Leaky', email: 'leak@buyer.test', stage: 'RESEARCHED' },
+  })
+  const draft = await prisma.outreachDraft.create({
+    data: { leadId: leaky.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Card for the deposit: 4111 1111 1111 1111' },
+  })
+
+  const mailer = recordingMailer()
+  const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
+
+  assert.deepEqual(mailer.sent, ['reach@buyer.test'])
+  assert.equal(result.skippedByReason.SENSITIVE_DATA, 1)
+  assert.equal(await prisma.outreachSent.count({ where: { leadId: leaky.id } }), 0, 'no outbox row, nothing claimed')
+  const held = await prisma.outreachDraft.findUniqueOrThrow({ where: { id: draft.id } })
+  assert.equal(held.status, 'POLICY_REVIEW')
+  assert.equal((held.policyViolations as { violations: Array<{ code: string }> }).violations[0].code, 'SENSITIVE_DATA')
+  assert.equal((await prisma.outreachSent.findFirst({ where: { leadId: good.id } }))!.status, 'SENT')
+})

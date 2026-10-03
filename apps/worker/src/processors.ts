@@ -24,6 +24,7 @@ import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpCo
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { effectiveReplyClassification } from '@acaos/backend-core/lib/replyGating.js'
 import { parseRiskFlags } from '@acaos/backend-core/lib/riskEscalation.js'
+import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
 import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
 import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
@@ -41,7 +42,7 @@ import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPaci
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
-import { checkDraftPolicy, checkClaimGrounding, type DraftPolicyConfig, type DraftPolicyViolation } from '@acaos/backend-core/lib/policyCheck.js'
+import { checkDraftPolicy, checkClaimGrounding, sensitiveDataViolation, type DraftPolicyConfig, type DraftPolicyViolation } from '@acaos/backend-core/lib/policyCheck.js'
 import { assertOutreachTone, OutreachToneError } from '@acaos/backend-core/lib/outreachTone.js'
 import { buildOutreachEmail } from '@acaos/backend-core/lib/emailFooter.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
@@ -99,7 +100,7 @@ type CampaignLeadRow = {
   aiSummary: string | null
   outreachAngle: string | null
   notes: string | null
-  outreachDrafts: Array<{ subject: string; emailBody: string }>
+  outreachDrafts: Array<{ id?: string; subject: string; emailBody: string }>
   score: number
 }
 
@@ -451,6 +452,9 @@ export async function generateOutreachDraft(
   // auditable/reproducible. Best-effort — never blocks draft creation.
   const promptVersionId = await resolvePromptVersionId({ workspaceId: lead.workspaceId, ...outreachGenerationMeta() })
 
+  // A draft that picked up a card number, secret key, password or TFN (from
+  // business context or lead notes) is held for review, never queued as DRAFTED.
+  const leaked = sensitiveKinds([parsed.subject, parsed.email, parsed.followup ?? ''].join('\n'))
   await prisma.outreachDraft.create({
     data: {
       leadId: lead.id,
@@ -460,7 +464,10 @@ export async function generateOutreachDraft(
       followup: parsed.followup ?? null,
       // Gated status: POLICY_REVIEW when research asked for manual review or a
       // human overrode a skip (held for a human); otherwise the normal DRAFTED.
-      status: gate.draftStatus,
+      status: leaked.length > 0 ? 'POLICY_REVIEW' : gate.draftStatus,
+      ...(leaked.length > 0
+        ? { policyViolations: { violations: [sensitiveDataViolation(leaked)].map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue }
+        : {}),
       promptVersionId,
     }
   })
@@ -603,6 +610,7 @@ export type SendSkipReason =
   | 'INVALID_EMAIL'
   | 'NO_APPROVED_DRAFT'
   | 'POLICY_REVIEW'
+  | 'SENSITIVE_DATA'
   | 'AI_LIMIT'
   | 'AI_GENERATION_FAILED'
   | 'DAILY_CAP'
@@ -752,7 +760,7 @@ async function loadPageFastPathSets(
 export type DraftSourceDecision =
   | { action: 'reuse'; subject: string; body: string }
   | { action: 'generate' }
-  | { action: 'skip'; reason: Extract<SendSkipReason, 'POLICY_REVIEW' | 'NO_APPROVED_DRAFT'> }
+  | { action: 'skip'; reason: Extract<SendSkipReason, 'POLICY_REVIEW' | 'NO_APPROVED_DRAFT' | 'SENSITIVE_DATA'> }
 
 /**
  * Decide where a lead's send-batch draft comes from: an existing draft
@@ -765,7 +773,11 @@ export function resolveDraftSource(
   opts: { approvalRequired: boolean; policyReviewLeadIds: Set<string> }
 ): DraftSourceDecision {
   if (lead.outreachDrafts[0]) {
-    return { action: 'reuse', subject: lead.outreachDrafts[0].subject, body: lead.outreachDrafts[0].emailBody }
+    const { subject, emailBody } = lead.outreachDrafts[0]
+    // Last check before anything leaves: a draft (even an approved or hand-edited
+    // one) carrying a card number, secret key, password or TFN is never sent.
+    if (sensitiveKinds(`${subject}\n${emailBody}`).length > 0) return { action: 'skip', reason: 'SENSITIVE_DATA' }
+    return { action: 'reuse', subject, body: emailBody }
   }
   // A draft already flagged POLICY_REVIEW is awaiting human review — skip
   // without regenerating (the selection query excludes it, so it never lands
@@ -1140,7 +1152,7 @@ export async function sendCampaignBatch(
   // Per-reason skip accounting so the result explains WHY leads didn't send.
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
-    POLICY_REVIEW: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
+    POLICY_REVIEW: 0, SENSITIVE_DATA: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
     REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, HOLDOUT: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
@@ -1391,7 +1403,21 @@ export async function sendCampaignBatch(
     // (campaignId, leadId) claim and skips before burning AI quota — no duplicate
     // AI spend and no duplicate draft (the previous order generated first).
     const draftSource = resolveDraftSource(lead, { approvalRequired, policyReviewLeadIds })
-    if (draftSource.action === 'skip') { exclude(draftSource.reason); continue }
+    if (draftSource.action === 'skip') {
+      // Hold the offending draft for review so a person sees why it didn't send.
+      const draftId = lead.outreachDrafts[0]?.id
+      if (draftSource.reason === 'SENSITIVE_DATA' && draftId) {
+        const d = lead.outreachDrafts[0]
+        await prisma.outreachDraft.updateMany({
+          where: { id: draftId, workspaceId },
+          data: {
+            status: 'POLICY_REVIEW',
+            policyViolations: { violations: [sensitiveDataViolation(sensitiveKinds(`${d.subject}\n${d.emailBody}`))].map(v => ({ code: v.code, message: v.message })) } as Prisma.InputJsonValue,
+          },
+        }).catch(() => {})
+      }
+      exclude(draftSource.reason); continue
+    }
     let subject: string | null = draftSource.action === 'reuse' ? draftSource.subject : null
     let body: string | null = draftSource.action === 'reuse' ? draftSource.body : null
     const needGeneration = draftSource.action === 'generate'
@@ -1540,6 +1566,7 @@ export async function sendFollowupTask(
   if (!step || !step.isActive) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'STEP_INACTIVE' })
   const smtpCfg: SmtpConfig | null = wsCfg ?? null
   if (!isMailConfigured(smtpCfg)) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SMTP_NOT_CONFIGURED' })
+  if (sensitiveKinds(`${step.subject ?? ''}\n${step.body}`).length > 0) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SENSITIVE_DATA' })
 
   // Sender-reputation circuit breaker (same modes as the campaign sender). A
   // degraded workspace blocks the follow-up in 'enforce'; 'observe' only logs.

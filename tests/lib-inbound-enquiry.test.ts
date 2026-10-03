@@ -72,7 +72,7 @@ test('a risky email is surfaced at the top for a person, even without a work req
 })
 
 test('excerpt collapses whitespace, masks card numbers and is capped', () => {
-  assert.equal(redactSensitive('card 4111 1111 1111 1111 ok'), 'card [card number removed] ok')
+  assert.equal(redactSensitive('card 4111 1111 1111 1111 ok'), 'card [payment card number removed] ok')
   assert.equal(redactSensitive('invoice 1234567890123 ref'), 'invoice 1234567890123 ref', 'non-Luhn digit runs are kept')
   assert.equal(enquiryExcerpt('a\n\n  b'), 'a b')
   const long = enquiryExcerpt('x'.repeat(2000))

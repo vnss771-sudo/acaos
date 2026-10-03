@@ -445,6 +445,18 @@ test('reply/send: 403 when the reply belongs to a different workspace', async ()
   assert.equal(sent.length, 0)
 })
 
+test('reply/send: 422 when the reply carries sensitive data — nothing sent or recorded', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  await withMailbox(workspace.id)
+  const reply = await seedReply(workspace.id)
+
+  const res = await sendReq(user.id, reply.id, { workspaceId: workspace.id, body: 'Sure, my TFN is 123 456 782', idempotencyKey: 'key-sensitive' })
+  assert.equal(res.status, 422)
+  assert.match(String(res.body.error ?? ''), /tax file number/)
+  assert.equal(sent.length, 0)
+  assert.equal(await prisma.inboxReplySend.count({ where: { outreachSentId: reply.id } }), 0)
+})
+
 test('reply/send: 400 when the reply has not actually received a reply', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   await withMailbox(workspace.id)

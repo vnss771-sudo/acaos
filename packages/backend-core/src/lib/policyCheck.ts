@@ -2,6 +2,7 @@
  * Draft content policy validation.
  * Enforces workspace-defined rules on AI-generated drafts before approval.
  */
+import { describeSensitiveKinds, sensitiveKinds, type SensitiveKind } from './sensitiveData.js'
 
 export interface DraftPolicyViolation {
   code: string
@@ -173,6 +174,10 @@ export function checkDraftPolicy(
     }
   }
 
+  // Never send a card number, secret key, password or TFN — not configurable.
+  const leaked = sensitiveKinds(`${subject}\n${body}`)
+  if (leaked.length > 0) violations.push(sensitiveDataViolation(leaked))
+
   // Check for false claims (simple patterns)
   const riskPatterns = [
     /\b(guaranteed|100% guaranteed)\b/i,
@@ -202,6 +207,14 @@ export function checkDraftPolicy(
   }
 
   return violations
+}
+
+/** The violation recorded when a draft carries sensitive data (lib/sensitiveData.ts). */
+export function sensitiveDataViolation(kinds: readonly SensitiveKind[]): DraftPolicyViolation {
+  return {
+    code: 'SENSITIVE_DATA',
+    message: `Email contains ${describeSensitiveKinds(kinds)} — remove it before this can be sent`,
+  }
 }
 
 export function formatViolations(violations: DraftPolicyViolation[]): string {

@@ -301,3 +301,23 @@ test('FAILED: an SMTP rejection records the failure in the outbox, ledger, and s
   assert.ok(await prisma.contactEvent.findFirst({ where: { leadId: lead.id, type: 'FAILED' } }))
   assert.equal((await prisma.campaignDailyStats.findFirst({ where: { campaignId: campaign.id } }))!.failed, 1)
 })
+
+test('BLOCKED: a follow-up step carrying a password is never sent', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id, true)
+  await prisma.outreachSequenceStep.create({
+    data: { campaignId: campaign.id, stepNumber: 2, delayDays: 3, subject: 'Portal access', body: 'Log in with password: Trade$2026', isActive: true },
+  })
+  const lead = await seedLead(workspace.id, campaign.id)
+  const task = await seedDueTask(workspace.id, campaign.id, lead.id, 2)
+
+  const mailer = recordingMailer()
+  const res = await sendFollowupTask(task.id, { sendMail: mailer.fn })
+
+  assert.equal(res.status, 'BLOCKED')
+  assert.deepEqual(mailer.sent, [])
+  const after = await prisma.followupTask.findUniqueOrThrow({ where: { id: task.id } })
+  assert.equal(after.cancelledReason, 'SENSITIVE_DATA')
+  assert.equal(await prisma.outreachSent.count({ where: { leadId: lead.id } }), 0)
+})
