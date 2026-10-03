@@ -18,6 +18,10 @@ import { parseAiJson, ReplyDraftOutputSchema } from '@acaos/backend-core/lib/aiS
 import { generateReplyDraft } from '@acaos/backend-core/services/openai.js'
 import { parseRiskFlags, RISK_FLAG_LABEL } from '@acaos/backend-core/lib/riskEscalation.js'
 import { describeSensitiveKinds, sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
+import { effectiveReplyClassification, replyClassificationMinConfidence, REPLY_STAGE, replyOutcomeFor } from '@acaos/backend-core/lib/replyGating.js'
+import { computeClassificationAccuracy, type ReviewedReply } from '@acaos/backend-core/lib/classificationAccuracy.js'
+import type { Prisma } from '@prisma/client'
+import type { LeadStage } from '@acaos/shared'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
@@ -71,6 +75,11 @@ const resolveSendSchema = z.object({
   outcome: z.enum(['sent', 'not_sent']),
 })
 
+const accuracyQuerySchema = z.object({
+  workspaceId: workspaceIdField,
+  days: z.coerce.number().int().min(7).max(365).default(90),
+})
+
 const classificationFeedbackSchema = z.object({
   workspaceId: workspaceIdField,
   feedback: z.enum(['correct', 'incorrect', 'unsure']),
@@ -108,6 +117,8 @@ inboxRouter.get(
         replyConfidence: true,
         replyIsAutoReply: true,
         replyRiskFlags: true,
+        replyFeedback: true,
+        replyIntentCorrected: true,
         lead: { select: { id: true, businessName: true, stage: true } },
         // An open (SENDING) Inbox reply on this thread, if any — the UI shows it
         // as in flight or, past the window, asks the user to resolve it.
@@ -593,9 +604,13 @@ inboxRouter.post(
   })
 )
 
-// PATCH /api/inbox/reply/:replyId/feedback — record user feedback on classification
-// This feeds the learning loop to improve future classifications.
-// Returns: { success: true, message: string }
+// PATCH /api/inbox/reply/:replyId/feedback — a person's verdict on the AI label.
+// Stored on the send (the accuracy report reads it) and, when it changes the
+// label, APPLIED: the automation's effect on the lead stage is undone in favour
+// of the person's label (only if nothing else has moved the lead since), and
+// the scoring outcome the analysis recorded is corrected, so the learning loop
+// stops training on a wrong label. 'correct' after an earlier correction
+// restores the AI label; 'unsure' records the verdict and changes nothing.
 inboxRouter.patch(
   '/reply/:replyId/feedback',
   asyncHandler(async (req, res) => {
@@ -609,27 +624,75 @@ inboxRouter.patch(
     const reply = await prisma.outreachSent.findUnique({
       where: { id: replyId },
       select: {
-        id: true,
-        workspaceId: true,
-        replyIntent: true,
-        replyConfidence: true,
-        status: true,
+        id: true, workspaceId: true, leadId: true, status: true, repliedAt: true,
+        replyIntent: true, replyConfidence: true, replyIsAutoReply: true, replyRiskFlags: true,
+        replyIntentCorrected: true,
       },
     })
 
     if (!reply) throw new ApiError(404, 'Reply not found')
     if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
     if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only provide feedback on messages with replies')
+    if (!reply.replyIntent) throw new ApiError(409, 'This reply has not been classified yet')
+    if (feedback === 'incorrect' && (!correctedIntent || correctedIntent === reply.replyIntent)) {
+      throw new ApiError(400, 'Choose the label this reply should have had')
+    }
 
-    // Record the feedback as metadata for the learning loop
-    const correctedIntentValue = feedback === 'incorrect' ? correctedIntent : null
-    const feedbackMessage = feedback === 'correct'
-      ? 'Classification marked as correct'
-      : feedback === 'incorrect'
-        ? `Classification corrected to ${correctedIntentValue || reply.replyIntent}`
-        : 'Classification marked as uncertain'
+    // The label currently in force (a previous correction wins over the AI) and
+    // the stage that label put the lead in, mirroring applyReplyAnalysis
+    // (confidence gating, escalation never kills). Auto-replies were left at the
+    // REPLIED stage mailbox sync set.
+    const previousLabel = reply.replyIntentCorrected ?? reply.replyIntent
+    const escalated = parseRiskFlags(reply.replyRiskFlags as string[] | null | undefined).length > 0
+    const previousStage = reply.replyIntentCorrected
+      ? REPLY_STAGE[reply.replyIntentCorrected]
+      : reply.replyIsAutoReply
+        ? 'REPLIED'
+        : (() => {
+            const s = REPLY_STAGE[effectiveReplyClassification(reply.replyIntent!, reply.replyConfidence)]
+            return escalated && s === 'DEAD' ? 'REPLIED' : s
+          })()
+    const targetLabel = feedback === 'incorrect' ? correctedIntent! : feedback === 'correct' ? reply.replyIntent : previousLabel
+    const labelChanged = targetLabel !== previousLabel
 
-    // Record audit trail for feedback
+    let stageApplied: string | null = null
+    let outcomeCorrected = false
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.outreachSent.update({
+        where: { id: reply.id },
+        data: {
+          replyFeedback: feedback.toUpperCase(),
+          replyIntentCorrected: feedback === 'incorrect' ? correctedIntent! : feedback === 'correct' ? null : reply.replyIntentCorrected,
+          replyFeedbackAt: new Date(),
+          replyFeedbackByUserId: user.id,
+        },
+      })
+      if (!labelChanged || !reply.leadId) return
+
+      const lead = await tx.lead.findFirst({ where: { id: reply.leadId, workspaceId }, select: { stage: true } })
+      const nextStage = REPLY_STAGE[targetLabel]
+      // Only undo what the automation did: if the lead has moved on (booked,
+      // closed, re-contacted), the person's later action stands.
+      if (lead && nextStage && lead.stage === previousStage && lead.stage !== nextStage) {
+        await tx.lead.updateMany({ where: { id: reply.leadId, workspaceId }, data: { stage: nextStage as LeadStage } })
+        stageApplied = nextStage
+      }
+
+      // The outcome analysis recorded for this reply (escalated and auto-replies
+      // never recorded one, so there is nothing to correct for those).
+      if (reply.repliedAt) {
+        const outcome = await tx.scoringOutcome.findFirst({
+          where: { workspaceId, leadId: reply.leadId, recordedAt: { gte: reply.repliedAt } },
+          orderBy: { recordedAt: 'asc' },
+          select: { id: true },
+        })
+        if (outcome) {
+          await tx.scoringOutcome.update({ where: { id: outcome.id }, data: replyOutcomeFor(targetLabel) })
+          outcomeCorrected = true
+        }
+      }
+    })
+
     await recordAudit({
       workspaceId,
       actorUserId: user.id,
@@ -638,15 +701,54 @@ inboxRouter.patch(
       entityId: replyId,
       metadata: {
         originalIntent: reply.replyIntent,
-        correctedIntent: correctedIntentValue,
+        previousLabel,
+        correctedIntent: feedback === 'incorrect' ? correctedIntent : null,
         feedback,
         confidence: reply.replyConfidence,
+        stageApplied,
+        outcomeCorrected,
       },
     })
 
     res.json({
       success: true,
-      message: feedbackMessage,
+      message: feedback === 'correct'
+        ? 'Classification marked as correct'
+        : feedback === 'incorrect'
+          ? `Classification corrected to ${correctedIntent}`
+          : 'Classification marked as uncertain',
+      stageApplied,
+      outcomeCorrected,
     })
+  })
+)
+
+// GET /api/inbox/classification-accuracy — how the reply classifier is doing,
+// from the replies people reviewed in the window (lib/classificationAccuracy.ts).
+inboxRouter.get(
+  '/classification-accuracy',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId, days } = parseQuery(accuracyQuerySchema, req)
+    const member = await userBelongsToWorkspace(user.id, workspaceId)
+    if (!member) throw new ApiError(403, 'Access denied')
+
+    const since = new Date(Date.now() - days * 86_400_000)
+    const rows = await prisma.outreachSent.findMany({
+      where: { workspaceId, replyFeedbackAt: { gte: since }, replyFeedback: { not: null }, replyIntent: { not: null } },
+      select: { replyIntent: true, replyConfidence: true, replyFeedback: true, replyIntentCorrected: true },
+      take: 5000,
+    })
+    type Row = { replyIntent: string | null; replyConfidence: number | null; replyFeedback: string | null; replyIntentCorrected: string | null }
+    const report = computeClassificationAccuracy(
+      (rows as Row[]).map(r => ({
+        predicted: r.replyIntent!,
+        confidence: r.replyConfidence,
+        feedback: r.replyFeedback as ReviewedReply['feedback'],
+        corrected: r.replyIntentCorrected,
+      })),
+      replyClassificationMinConfidence(),
+    )
+    res.json({ days, ...report })
   })
 )

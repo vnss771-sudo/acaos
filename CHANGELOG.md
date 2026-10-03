@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Reply classification corrections that count
+- The Inbox 👎 now asks which label the reply should have had. Previously the verdict was only written
+  to the audit log, and nothing read it back.
+- A correction is applied:
+  - The automation's stage change is undone in favour of the person's label, so a reply wrongly sorted
+    as "not interested" revives its lead. This only happens if nothing else has moved the lead since.
+  - The scoring outcome is corrected, so the learning loop stops training on the wrong label.
+  - Marking it right afterwards restores the AI label.
+- Verdicts are stored on the reply (`replyFeedback`, `replyIntentCorrected`; additive migration), and
+  the Inbox shows the corrected label.
+- New `GET /api/inbox/classification-accuracy` and an Inbox panel (`lib/classificationAccuracy.ts`):
+  - Accuracy from reviewed replies, withheld below 5 with the reason.
+  - The labels it gets wrong most often.
+  - When confident "not interested" calls keep being overturned, a suggested
+    `REPLY_CLASSIFICATION_MIN_CONFIDENCE`, together with how many correct ones would then also wait
+    for a person.
+
 ### Sensitive-data guard on outbound email
 - A deterministic scan (`lib/sensitiveData.ts`) stops ACAOS from sending payment card numbers (valid
   issuer prefix plus Luhn check), secret API or private keys (fixed provider prefixes, PEM headers),
