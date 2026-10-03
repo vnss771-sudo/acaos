@@ -303,7 +303,24 @@ async function liveEconomics(workspaceId: string, jobs: JobRow[]): Promise<Map<s
   return out
 }
 
-function present(job: JobRow, live: Map<string, JobEconomics>) {
+// Shifts logged on a closed job's site after its closeout: the frozen figures
+// don't include them, so the job says so (reopen to include them).
+async function lateShiftCounts(workspaceId: string, jobs: JobRow[]): Promise<Map<string, number>> {
+  const closed = jobs.filter(j => j.closeout != null && j.completedAt)
+  const out = new Map<string, number>()
+  if (closed.length === 0) return out
+  const rows = await prisma.opsShiftRecord.findMany({
+    where: { workspaceId, jobSiteId: { in: closed.map(j => j.opsJobSiteId) } },
+    select: { jobSiteId: true, createdAt: true },
+  }) as Array<{ jobSiteId: string; createdAt: Date }>
+  for (const j of closed) {
+    const n = rows.filter(r => r.jobSiteId === j.opsJobSiteId && r.createdAt > j.completedAt!).length
+    if (n > 0) out.set(j.id, n)
+  }
+  return out
+}
+
+function present(job: JobRow, live: Map<string, JobEconomics>, late: Map<string, number> = new Map()) {
   const { opsJobSite, quote, closeout, ...rest } = job
   return {
     ...rest,
@@ -313,6 +330,7 @@ function present(job: JobRow, live: Map<string, JobEconomics>) {
     // A completed job reports its frozen snapshot; an active one, the live view.
     economics: (closeout as JobEconomics | null) ?? live.get(job.id) ?? null,
     economicsFrozen: closeout != null,
+    shiftsAfterCloseout: late.get(job.id) ?? 0,
   }
 }
 
@@ -334,8 +352,8 @@ deliveryRouter.get(
       take: 200,
       include: jobInclude,
     }) as JobRow[]
-    const live = await liveEconomics(q.workspaceId, jobs)
-    res.json({ jobs: jobs.map(j => present(j, live)) })
+    const [live, late] = await Promise.all([liveEconomics(q.workspaceId, jobs), lateShiftCounts(q.workspaceId, jobs)])
+    res.json({ jobs: jobs.map(j => present(j, live, late)) })
   })
 )
 
@@ -387,7 +405,8 @@ deliveryRouter.get(
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
     await assertWorkspacePermission(user.id, workspaceId, 'ops:manage')
     const job = await loadJob(id, workspaceId)
-    res.json({ job: present(job, await liveEconomics(workspaceId, [job])) })
+    const [live, late] = await Promise.all([liveEconomics(workspaceId, [job]), lateShiftCounts(workspaceId, [job])])
+    res.json({ job: present(job, live, late) })
   })
 )
 

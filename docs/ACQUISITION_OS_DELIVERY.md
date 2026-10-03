@@ -81,6 +81,13 @@ QUOTED, WON and revenue (`ref.type: 'quote'`), and prospect-level PROPOSAL/WON/L
 records are ignored for it (meetings still count). Opportunities without quotes
 behave as before.
 
+**Hardening.** A shift logged on a closed job's site after closeout is reported
+as `shiftsAfterCloseout` on the job (and shown in the view): the frozen figures
+don't include it until the job is reopened. `tests-db/delivery-loop.test.ts`
+walks the whole loop over the real routes (find → quote → win → job → crew and
+shifts via the Field Ops API → closeout → report) and checks the tenant boundary
+on every delivery route.
+
 **Not yet:** grouping by region (only Work-discovery opportunities carry one), and a
 quote form on commercial opportunities in the web app (the API supports it; it
 belongs with the operator console).

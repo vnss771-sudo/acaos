@@ -22,7 +22,7 @@ const ACTIVE = {
 const CLOSED = {
   ...ACTIVE, id: 'j2', status: 'COMPLETE', closeoutVersion: 1, site: { id: 's2', jobCode: 'WH-2', siteName: 'Cool room' },
   economics: { ...ECON, revenueCents: 6_200_000, otherCostCents: 2_500_000, grossMarginCents: 1_280_000, grossMarginPct: 20.6, marginBasis: 'GROSS', gaps: [] },
-  economicsFrozen: true,
+  economicsFrozen: true, shiftsAfterCloseout: 2,
 }
 const STAT = { n: 3, median: 22, min: 18, max: 30 }
 const REPORT = {
@@ -60,6 +60,7 @@ describe('OpsDelivery', () => {
     expect(screen.getAllByText('+32.5% vs estimate')).toHaveLength(2)
     expect(screen.getByText('Gross margin', { selector: 'span' })).toBeInTheDocument()
     expect(screen.getByText('$12,800')).toBeInTheDocument()
+    expect(screen.getByText(/2 shift\(s\) were logged on this site after closeout/)).toBeInTheDocument()
   })
 
   test('close out sends cents, blank as unknown (null), and on-cost %', async () => {

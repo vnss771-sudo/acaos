@@ -5,6 +5,7 @@ import type { ToastHook } from '../../hooks/useToast.js'
 import type { View, Workspace } from '../../types.js'
 import { colors, s } from '../../styles.js'
 import { makeRouteApi } from '../../lib/routeApi.js'
+import { safeExternalUrl } from '../../lib/safeUrl.js'
 import { Card } from '../../components/ui/Card.js'
 import { Badge } from '../../components/ui/Badge.js'
 import { EmptyState } from '../../components/ui/EmptyState.js'
@@ -402,7 +403,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
                   {o.counterpartyName && <span>{o.counterpartyName}{o.counterpartyAbn ? ` · ABN ${o.counterpartyAbn}` : ''}</span>}
                   {o.counterpartyPhone && <a href={`tel:${o.counterpartyPhone.replace(/\s+/g, '')}`} style={{ color: colors.blueLight }}>{o.counterpartyPhone}</a>}
                   {o.counterpartyEmail && <a href={`mailto:${o.counterpartyEmail}`} style={{ color: colors.blueLight }}>{o.counterpartyEmail}</a>}
-                  {o.sourceUrl && <a href={o.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: colors.blueLight }}>View source ↗</a>}
+                  {safeExternalUrl(o.sourceUrl) && <a href={safeExternalUrl(o.sourceUrl)!} target="_blank" rel="noopener noreferrer" style={{ color: colors.blueLight }}>View source ↗</a>}
                 </div>
               )}
 

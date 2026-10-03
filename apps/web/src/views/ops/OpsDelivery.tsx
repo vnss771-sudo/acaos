@@ -36,6 +36,7 @@ type DeliveryJob = {
   quote: { id: string; amountCents: number; estimatedHours: number | null } | null
   origin: { type: string; kind: string; title: string } | null
   economics: Economics | null; economicsFrozen: boolean
+  shiftsAfterCloseout?: number
 }
 
 type Stat = { n: number; median: number; min: number; max: number } | null
@@ -218,6 +219,12 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                       value={e.marginBasis === 'GROSS' ? formatCents(e.grossMarginCents) : formatCents(e.labourMarginCents)}
                       hint={e.marginBasis === 'GROSS' ? (e.grossMarginPct != null ? `${e.grossMarginPct}%` : undefined) : (e.labourMarginPct != null ? `${e.labourMarginPct}%` : undefined)}
                     />
+                  </div>
+                )}
+
+                {(j.shiftsAfterCloseout ?? 0) > 0 && (
+                  <div role="status" style={{ fontSize: 12, color: colors.amber, marginBottom: 8 }}>
+                    {j.shiftsAfterCloseout} shift(s) were logged on this site after closeout and aren't in these figures — reopen the job to include them.
                   </div>
                 )}
 

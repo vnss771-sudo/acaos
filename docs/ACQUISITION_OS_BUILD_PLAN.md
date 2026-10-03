@@ -43,6 +43,7 @@ The plan has 15 phases, grouped into release trains:
 | 15A Commercial capture | #330 | `Quote` (one per opportunity of either type) and `Job` (1:1 job site); accepted quote → WON + job; closeout freezes economics (unknown never $0, labour vs gross margin); reopen audited; `/api/delivery/*`, all `ops:manage`; backfill of existing sites | `lib/jobEconomics.ts`, `routes/delivery.ts` | `ACQUISITION_OS_DELIVERY.md` |
 | 15B Capture UI + observe | #330 | Quote capture on Find work; *Jobs & margins* view (closeout, reopen, gaps); `/api/delivery/report` (medians with n, withheld below 3); quotes drive outcome attribution | `views/ops/OpsDelivery.tsx`, `components/ops/QuoteCapture.tsx` | same |
 | 14 Operator console | (this PR) | *Today* view (`/today`, Home hub): decisions (pursuing + high-urgency open) with evidence, citations and contact; new this week; worth watching; KPIs (open pipeline, won sourced/influenced, quote→win, admin-only delivered margin with n); pursue / lost / dismiss; admin propose-outreach (nothing sends), quotes on commercial opportunities, network opt-in | `views/Today.tsx` | this file |
+| Hardening pass | (this PR) | Untrusted source URLs only render as links when http(s) (React 18 renders `javascript:` hrefs) in Today, Find work and the lead brief; shifts logged after closeout are flagged; end-to-end loop and tenant-boundary DB tests | `lib/safeUrl.ts`, `tests-db/delivery-loop.test.ts` | `ACQUISITION_OS_DELIVERY.md` |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -176,6 +177,8 @@ through `docs/GO_LIVE_CHECKLIST.md` top to bottom. In short:
 5. Start with `SAFE_LAUNCH_MODE=true` for the supervised pilot.
 
 ## Open gaps worth noting
+
+- Any new link built from data must go through `safeExternalUrl` (`apps/web/src/lib/safeUrl.ts`).
 
 - No ingest path sets `Signal.publishedAt` yet.
 - Competition is inferred from the event kind, not real bidder counts.
