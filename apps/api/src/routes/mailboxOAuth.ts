@@ -7,7 +7,7 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import {
   AUTH_METHOD, AUTH_METHOD_PASSWORD, MAIL_OAUTH_PROVIDERS, buildMailOAuthUrl, configuredMailOAuthProviders,
   exchangeMailOAuthCode, mailOAuthServers, primeMailAccessToken, providerForAuthMethod, revokeMailOAuth,
-  signMailOAuthState, verifyMailOAuthState, type FetchLike, type MailOAuthState,
+  signMailboxConnectState, verifyMailboxConnectState, type FetchLike, type MailboxConnectState,
 } from '@acaos/backend-core/lib/mailOAuth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, workspaceIdField } from '../lib/validate.js'
@@ -36,7 +36,7 @@ mailboxOAuthRouter.post(
     const { workspaceId, provider } = parseBody(startSchema, req)
     await assertWorkspacePermission(user.id, workspaceId, 'email_config:manage')
     if (!configuredMailOAuthProviders().includes(provider)) throw new ApiError(503, 'This sign-in option is not configured')
-    res.json({ url: buildMailOAuthUrl(provider, signMailOAuthState({ userId: user.id, workspaceId, provider })) })
+    res.json({ url: buildMailOAuthUrl(provider, signMailboxConnectState({ userId: user.id, workspaceId, provider })) })
   })
 )
 
@@ -52,8 +52,8 @@ export function createMailOAuthCallbackHandler(deps: { fetch?: FetchLike } = {})
     const q = req.query as Record<string, unknown>
     if (typeof q.error === 'string') return back(q.error === 'access_denied' ? 'cancelled' : 'provider_error')
 
-    let state: MailOAuthState
-    try { state = verifyMailOAuthState(String(q.state ?? '')) } catch { return back('expired') }
+    let state: MailboxConnectState
+    try { state = verifyMailboxConnectState(String(q.state ?? '')) } catch { return back('expired') }
     const code = typeof q.code === 'string' ? q.code : ''
     if (!code) return back('provider_error')
 

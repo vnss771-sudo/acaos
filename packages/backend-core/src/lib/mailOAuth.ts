@@ -119,7 +119,7 @@ export function mailOAuthRedirectUri(): string {
 // signed with HMAC (key separated from session JWTs) and valid for 10 minutes.
 // The callback still re-checks that this user may manage the workspace's email.
 
-export type MailOAuthState = { userId: string; workspaceId: string; provider: MailOAuthProvider }
+export type MailboxConnectState = { userId: string; workspaceId: string; provider: MailOAuthProvider }
 const STATE_TTL_MS = 10 * 60_000
 
 // A dedicated signing key derived from the JWT secret with HKDF (RFC 5869), so
@@ -128,7 +128,7 @@ function stateKey(): Buffer {
   return Buffer.from(hkdfSync('sha256', getJwtSecret(), Buffer.alloc(0), 'acaos:mail-oauth-state:v1', 32))
 }
 
-export function signMailOAuthState(s: MailOAuthState, now: number = Date.now()): string {
+export function signMailboxConnectState(s: MailboxConnectState, now: number = Date.now()): string {
   const body = Buffer.from(JSON.stringify({
     u: s.userId, w: s.workspaceId, p: s.provider, n: randomBytes(12).toString('base64url'), exp: now + STATE_TTL_MS,
   })).toString('base64url')
@@ -136,7 +136,7 @@ export function signMailOAuthState(s: MailOAuthState, now: number = Date.now()):
   return `${body}.${sig}`
 }
 
-export function verifyMailOAuthState(state: string, now: number = Date.now()): MailOAuthState {
+export function verifyMailboxConnectState(state: string, now: number = Date.now()): MailboxConnectState {
   const [body, sig, extra] = String(state ?? '').split('.')
   if (!body || !sig || extra !== undefined) throw new ApiError(400, 'Invalid sign-in state')
   const expected = createHmac('sha256', stateKey()).update(body).digest()

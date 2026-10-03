@@ -5,7 +5,7 @@ import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildMailOAuthUrl, clearMailAccessTokenCache, configuredMailOAuthProviders, exchangeMailOAuthCode,
-  getMailAccessToken, signMailOAuthState, verifyMailOAuthState, RECONNECT_MESSAGE, type FetchLike,
+  getMailAccessToken, signMailboxConnectState, verifyMailboxConnectState, RECONNECT_MESSAGE, type FetchLike,
 } from '../packages/backend-core/src/lib/mailOAuth.ts'
 import { buildTransport, isMailConfigured, isMailboxConfigured } from '../packages/backend-core/src/services/mail.ts'
 
@@ -41,14 +41,14 @@ test('providers are offered only with client credentials and API_URL', () => {
 test('state round-trips and rejects tampering, expiry and junk', () => {
   const s = { userId: 'u1', workspaceId: 'w1', provider: 'google' as const }
   const now = 1_000_000
-  const state = signMailOAuthState(s, now)
-  assert.deepEqual(verifyMailOAuthState(state, now + 60_000), s)
-  assert.throws(() => verifyMailOAuthState(state, now + 11 * 60_000), /too long/)
+  const state = signMailboxConnectState(s, now)
+  assert.deepEqual(verifyMailboxConnectState(state, now + 60_000), s)
+  assert.throws(() => verifyMailboxConnectState(state, now + 11 * 60_000), /too long/)
   const [body, sig] = state.split('.')
   const forged = Buffer.from(JSON.stringify({ u: 'attacker', w: 'w1', p: 'google', n: 'x', exp: now + 1e6 })).toString('base64url')
-  assert.throws(() => verifyMailOAuthState(`${forged}.${sig}`, now), /Invalid/)
-  assert.throws(() => verifyMailOAuthState(`${body}.${sig}x`, now), /Invalid/)
-  assert.throws(() => verifyMailOAuthState('nonsense', now), /Invalid/)
+  assert.throws(() => verifyMailboxConnectState(`${forged}.${sig}`, now), /Invalid/)
+  assert.throws(() => verifyMailboxConnectState(`${body}.${sig}x`, now), /Invalid/)
+  assert.throws(() => verifyMailboxConnectState('nonsense', now), /Invalid/)
 })
 
 test('authorization URL asks for offline IMAP/SMTP access with the registered redirect', () => {
@@ -57,14 +57,14 @@ test('authorization URL asks for offline IMAP/SMTP access with the registered re
   assert.equal(g.searchParams.get('redirect_uri'), 'https://api.acaos.test/api/mailbox/oauth/callback')
   assert.equal(g.searchParams.get('access_type'), 'offline')
   assert.equal(g.searchParams.get('prompt'), 'consent')
-  assert.ok(g.searchParams.get('scope')!.split(' ').includes('https://mail.google.com/'))
+  assert.deepEqual(g.searchParams.get('scope')!.split(' '), ['openid', 'email', 'https://mail.google.com/'])
   assert.equal(g.searchParams.get('state'), 'st')
   const m = new URL(buildMailOAuthUrl('microsoft', 'st'))
   assert.equal(m.origin + m.pathname, 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
-  const msScopes = m.searchParams.get('scope')!.split(' ')
-  for (const scope of ['offline_access', 'https://outlook.office.com/IMAP.AccessAsUser.All', 'https://outlook.office.com/SMTP.Send']) {
-    assert.ok(msScopes.includes(scope), scope)
-  }
+  assert.deepEqual(m.searchParams.get('scope')!.split(' '), [
+    'openid', 'email', 'offline_access',
+    'https://outlook.office.com/IMAP.AccessAsUser.All', 'https://outlook.office.com/SMTP.Send',
+  ])
 })
 
 test('code exchange returns the mailbox address and tokens', async () => {

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { Router } from 'express'
 import { mailboxOAuthRouter, createMailOAuthCallbackHandler, createMailOAuthDisconnectHandler } from '../apps/api/src/routes/mailboxOAuth.ts'
 import { requireAuth, requireVerifiedForMutation } from '../apps/api/src/middleware/auth.ts'
-import { signMailOAuthState, clearMailAccessTokenCache, type FetchLike } from '../packages/backend-core/src/lib/mailOAuth.ts'
+import { signMailboxConnectState, clearMailAccessTokenCache, type FetchLike } from '../packages/backend-core/src/lib/mailOAuth.ts'
 import { decryptSecret } from '../packages/backend-core/src/lib/encrypt.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, seedUser, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
@@ -70,7 +70,7 @@ test('callback connects the mailbox: provider servers, encrypted token, cursor r
   const { user, workspace } = await seedUserWithWorkspace()
   await prisma.workspaceEmailConfig.create({ data: { workspaceId: workspace.id, imapHost: 'imap.old.test', imapUser: 'old@old.test', imapPass: 'x', lastSyncedUid: 500, lastUidValidity: 7 } })
 
-  const res = await callback(signMailOAuthState({ userId: user.id, workspaceId: workspace.id, provider: 'google' }))
+  const res = await callback(signMailboxConnectState({ userId: user.id, workspaceId: workspace.id, provider: 'google' }))
   assert.equal(res.status, 303)
   assert.equal(res.headers.get('location'), 'https://app.acaos.test/settings?mailbox=connected')
 
@@ -92,12 +92,12 @@ test('callback connects the mailbox: provider servers, encrypted token, cursor r
 
 test('callback rejects a tampered state, a non-admin, a cancelled sign-in and a failed exchange', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
-  const good = signMailOAuthState({ userId: user.id, workspaceId: workspace.id, provider: 'google' })
+  const good = signMailboxConnectState({ userId: user.id, workspaceId: workspace.id, provider: 'google' })
   assert.equal((await callback(`${good}x`)).headers.get('location'), `${ERR}expired`)
 
   const member = await seedUser('member@x.test')
   await prisma.membership.create({ data: { userId: member.id, workspaceId: workspace.id, role: 'member' } })
-  const memberState = signMailOAuthState({ userId: member.id, workspaceId: workspace.id, provider: 'google' })
+  const memberState = signMailboxConnectState({ userId: member.id, workspaceId: workspace.id, provider: 'google' })
   assert.equal((await callback(memberState)).headers.get('location'), `${ERR}forbidden`)
 
   const cancelled = await server.request(`/api/mailbox/oauth/callback?error=access_denied&state=${encodeURIComponent(good)}`, { redirect: 'manual' })
@@ -111,7 +111,7 @@ test('callback rejects a tampered state, a non-admin, a cancelled sign-in and a 
 
 test('disconnect revokes at Google and clears the mailbox', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
-  await callback(signMailOAuthState({ userId: user.id, workspaceId: workspace.id, provider: 'google' }))
+  await callback(signMailboxConnectState({ userId: user.id, workspaceId: workspace.id, provider: 'google' }))
   providerCalls = []
 
   const res = await server.request('/api/mailbox/oauth/disconnect', {
