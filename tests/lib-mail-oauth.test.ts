@@ -57,21 +57,23 @@ test('authorization URL asks for offline IMAP/SMTP access with the registered re
   assert.equal(g.searchParams.get('redirect_uri'), 'https://api.acaos.test/api/mailbox/oauth/callback')
   assert.equal(g.searchParams.get('access_type'), 'offline')
   assert.equal(g.searchParams.get('prompt'), 'consent')
-  assert.match(g.searchParams.get('scope')!, /https:\/\/mail\.google\.com\//)
+  assert.ok(g.searchParams.get('scope')!.split(' ').includes('https://mail.google.com/'))
   assert.equal(g.searchParams.get('state'), 'st')
   const m = new URL(buildMailOAuthUrl('microsoft', 'st'))
-  assert.match(m.pathname, /\/common\/oauth2\/v2\.0\/authorize$/)
-  assert.match(m.searchParams.get('scope')!, /offline_access/)
-  assert.match(m.searchParams.get('scope')!, /IMAP\.AccessAsUser\.All/)
-  assert.match(m.searchParams.get('scope')!, /SMTP\.Send/)
+  assert.equal(m.origin + m.pathname, 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
+  const msScopes = m.searchParams.get('scope')!.split(' ')
+  for (const scope of ['offline_access', 'https://outlook.office.com/IMAP.AccessAsUser.All', 'https://outlook.office.com/SMTP.Send']) {
+    assert.ok(msScopes.includes(scope), scope)
+  }
 })
 
 test('code exchange returns the mailbox address and tokens', async () => {
   const { fn, calls } = fakeFetch([{ json: { access_token: 'at', refresh_token: 'rt', expires_in: 3600, id_token: jwt({ email: 'Jo@Gmail.com' }) } }])
   const grant = await exchangeMailOAuthCode('google', 'code1', fn, 0)
   assert.deepEqual(grant, { accountEmail: 'jo@gmail.com', refreshToken: 'rt', accessToken: 'at', expiresAt: 3_600_000 })
-  assert.match(calls[0].body, /grant_type=authorization_code/)
-  assert.match(calls[0].body, /client_secret=gsecret/)
+  const form = new URLSearchParams(calls[0].body)
+  assert.equal(form.get('grant_type'), 'authorization_code')
+  assert.equal(form.get('client_secret'), 'gsecret')
 })
 
 test('code exchange fails closed without a refresh token or an address', async () => {
@@ -91,7 +93,9 @@ test('access tokens are cached until near expiry, then refreshed', async () => {
   t = 59 * 60_000
   assert.equal(await getMailAccessToken(cfg, deps), 'a2', 'refreshed inside the 2-minute margin')
   assert.equal(calls.length, 2)
-  assert.match(calls[0].body, /grant_type=refresh_token&refresh_token=rt-plain|refresh_token=rt-plain/)
+  const refreshForm = new URLSearchParams(calls[0].body)
+  assert.equal(refreshForm.get('grant_type'), 'refresh_token')
+  assert.equal(refreshForm.get('refresh_token'), 'rt-plain')
 })
 
 test('a rotated refresh token is persisted encrypted', async () => {

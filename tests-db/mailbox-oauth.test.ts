@@ -41,6 +41,7 @@ beforeEach(async () => {
   tokenResponse = { status: 200, json: { access_token: 'at', refresh_token: 'rt-secret', expires_in: 3600, id_token: jwt({ email: 'jo@gmail.com' }) } }
 })
 
+const ERR = 'https://app.acaos.test/settings?mailbox=error&reason='
 const callback = (state: string, extra = '') =>
   server.request(`/api/mailbox/oauth/callback?code=c1&state=${encodeURIComponent(state)}${extra}`, { redirect: 'manual' })
 
@@ -92,18 +93,18 @@ test('callback connects the mailbox: provider servers, encrypted token, cursor r
 test('callback rejects a tampered state, a non-admin, a cancelled sign-in and a failed exchange', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const good = signMailOAuthState({ userId: user.id, workspaceId: workspace.id, provider: 'google' })
-  assert.match((await callback(`${good}x`)).headers.get('location')!, /reason=expired$/)
+  assert.equal((await callback(`${good}x`)).headers.get('location'), `${ERR}expired`)
 
   const member = await seedUser('member@x.test')
   await prisma.membership.create({ data: { userId: member.id, workspaceId: workspace.id, role: 'member' } })
   const memberState = signMailOAuthState({ userId: member.id, workspaceId: workspace.id, provider: 'google' })
-  assert.match((await callback(memberState)).headers.get('location')!, /reason=forbidden$/)
+  assert.equal((await callback(memberState)).headers.get('location'), `${ERR}forbidden`)
 
   const cancelled = await server.request(`/api/mailbox/oauth/callback?error=access_denied&state=${encodeURIComponent(good)}`, { redirect: 'manual' })
-  assert.match(cancelled.headers.get('location')!, /reason=cancelled$/)
+  assert.equal(cancelled.headers.get('location'), `${ERR}cancelled`)
 
   tokenResponse = { status: 400, json: { error: 'invalid_grant' } }
-  assert.match((await callback(good)).headers.get('location')!, /reason=exchange_failed$/)
+  assert.equal((await callback(good)).headers.get('location'), `${ERR}exchange_failed`)
 
   assert.equal(await prisma.workspaceEmailConfig.count({ where: { workspaceId: workspace.id } }), 0, 'nothing saved on any failure')
 })

@@ -15,7 +15,7 @@
 // A refresh token the provider rejects (revoked, password changed, expired)
 // marks the config with oauthError so Settings can ask the user to reconnect.
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { ApiError } from './errors.js'
 import { prisma } from './prisma.js'
 import { decryptSecret, encryptSecret, isEncrypted } from './encrypt.js'
@@ -122,8 +122,10 @@ export function mailOAuthRedirectUri(): string {
 export type MailOAuthState = { userId: string; workspaceId: string; provider: MailOAuthProvider }
 const STATE_TTL_MS = 10 * 60_000
 
+// A dedicated signing key derived from the JWT secret with HKDF (RFC 5869), so
+// a state signature can never double as a session token or vice versa.
 function stateKey(): Buffer {
-  return createHmac('sha256', getJwtSecret()).update('acaos:mail-oauth-state:v1').digest()
+  return Buffer.from(hkdfSync('sha256', getJwtSecret(), Buffer.alloc(0), 'acaos:mail-oauth-state:v1', 32))
 }
 
 export function signMailOAuthState(s: MailOAuthState, now: number = Date.now()): string {
