@@ -721,6 +721,15 @@ model WorkspaceEmailConfig {
   imapSecure            Boolean   @default(true)
   imapUser              String?
   imapPass              String?
+  // How the mailbox authenticates: PASSWORD (smtpPass/imapPass), or signed in
+  // with GOOGLE_OAUTH / MICROSOFT_OAUTH (lib/mailOAuth.ts): IMAP/SMTP over
+  // XOAUTH2 with the encrypted refresh token below. oauthError is set when the
+  // provider rejects the refresh token, so Settings can ask for a reconnect.
+  authMethod            String    @default("PASSWORD")
+  oauthAccountEmail     String?
+  oauthRefreshToken     String?
+  oauthConnectedAt      DateTime?
+  oauthError            String?
   // Reply-sync cursor: the highest IMAP UID processed for this workspace. Sync
   // fetches strictly above it (no fixed 200-message window), so a reply can never
   // be silently skipped after an outage or on a busy inbox. lastUidValidity pins

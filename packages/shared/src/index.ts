@@ -769,6 +769,8 @@ export interface RouteContracts {
   'POST /api/workspaces/:id/learning-recommendations/:recId/revert': { params: { id: string; recId: string }; response: { recommendation: LearningRecommendationDto } }
   'POST /api/workspaces/:id/seed': { params: { id: string }; body: SeedWorkspaceRequest; response: unknown }
   'PUT /api/workspaces/:id/email-config': { params: { id: string }; body: EmailConfigRequest; response: unknown }
+  'POST /api/mailbox/oauth/start': { body: { workspaceId: string; provider: 'google' | 'microsoft' }; response: { url: string } }
+  'POST /api/mailbox/oauth/disconnect': { body: { workspaceId: string }; response: { ok: boolean } }
   'POST /api/workspaces/:id/members': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }
   'DELETE /api/workspaces/:id/members/:userId': { params: { id: string; userId: string }; response: unknown }
   'POST /api/workspaces/:id/invites': { params: { id: string }; body: WorkspaceMemberInviteRequest; response: unknown }

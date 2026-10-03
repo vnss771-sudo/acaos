@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Mailbox sign-in
+- Workspaces can connect Gmail / Google Workspace or Outlook / Microsoft 365 by signing in, with no
+  app password needed. IMAP sync and SMTP sending are unchanged, apart from authenticating with
+  OAuth2 (XOAUTH2). The refresh token is stored encrypted and included in key rotation. A revoked grant
+  shows a Reconnect prompt in Settings. Setup guide: `docs/MAILBOX_SIGN_IN.md`
+
 ### Inbound enquiries and risk escalation
 - Emails that ask for work from someone who isn't a lead and isn't replying to an outreach email
   (previously recorded as "unmatched" and dropped) now appear in Find work as **Emailed you** cards,

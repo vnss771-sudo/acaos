@@ -8,6 +8,7 @@ import { billingRouter } from './routes/billing.js'
 import { assertStripePricesConfigured } from './services/stripe.js'
 import { aiRouter } from './routes/ai.js'
 import { mailboxRouter } from './routes/mailbox.js'
+import { mailboxOAuthRouter } from './routes/mailboxOAuth.js'
 import { workspaceRouter } from './routes/workspaces.js'
 import { campaignsRouter } from './routes/campaigns.js'
 import { missionsRouter } from './routes/missions.js'
@@ -215,6 +216,8 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api/auth', authRouter)
 app.use('/api/billing', billingRouter)
 app.use('/api/ai', aiRouter)
+// Before mailboxRouter: the OAuth callback is unauthenticated (signed state).
+app.use('/api/mailbox/oauth', mailboxOAuthRouter)
 app.use('/api/mailbox', mailboxRouter)
 app.use('/api/workspaces', workspaceRouter)
 app.use('/api/campaigns', campaignsRouter)

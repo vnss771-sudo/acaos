@@ -47,27 +47,22 @@ export async function rewrapAllSecrets(opts: { apply: boolean }): Promise<Rewrap
   }
 
   const configs = await prisma.workspaceEmailConfig.findMany({
-    where: { OR: [{ smtpPass: { not: null } }, { imapPass: { not: null } }] },
-    select: { id: true, smtpPass: true, imapPass: true },
+    where: { OR: [{ smtpPass: { not: null } }, { imapPass: { not: null } }, { oauthRefreshToken: { not: null } }] },
+    select: { id: true, smtpPass: true, imapPass: true, oauthRefreshToken: true },
   })
-  for (const config of configs as Array<{ id: string; smtpPass: string | null; imapPass: string | null }>) {
+  for (const config of configs as Array<{ id: string; smtpPass: string | null; imapPass: string | null; oauthRefreshToken: string | null }>) {
     summary.workspaceEmailConfigsChecked += 1
-    // smtpPass and imapPass are independent columns: a corrupt/unparseable blob
+    // smtpPass, imapPass and oauthRefreshToken are independent columns: a corrupt/unparseable blob
     // in one must not discard an already-computed valid rewrap of the other, so
     // each is checked in its own try/catch rather than one for the whole row.
-    const data: { smtpPass?: string; imapPass?: string } = {}
-    if (config.smtpPass) {
+    const data: { smtpPass?: string; imapPass?: string; oauthRefreshToken?: string } = {}
+    for (const field of ['smtpPass', 'imapPass', 'oauthRefreshToken'] as const) {
+      const blob = config[field]
+      if (!blob) continue
       try {
-        if (needsReencryption(config.smtpPass)) data.smtpPass = rewrapSecret(config.smtpPass)
+        if (needsReencryption(blob)) data[field] = rewrapSecret(blob)
       } catch (err) {
-        summary.errors.push({ model: 'WorkspaceEmailConfig', id: config.id, error: `smtpPass: ${err instanceof Error ? err.message : String(err)}` })
-      }
-    }
-    if (config.imapPass) {
-      try {
-        if (needsReencryption(config.imapPass)) data.imapPass = rewrapSecret(config.imapPass)
-      } catch (err) {
-        summary.errors.push({ model: 'WorkspaceEmailConfig', id: config.id, error: `imapPass: ${err instanceof Error ? err.message : String(err)}` })
+        summary.errors.push({ model: 'WorkspaceEmailConfig', id: config.id, error: `${field}: ${err instanceof Error ? err.message : String(err)}` })
       }
     }
     if (Object.keys(data).length === 0) continue

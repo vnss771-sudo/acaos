@@ -18,6 +18,7 @@ import type { LeadStage } from '@acaos/shared'
 import { createHash } from 'node:crypto'
 import { assessRisk } from '../lib/riskEscalation.js'
 import { isFeatureEnabled } from '../lib/launchControls.js'
+import { getMailAccessToken, isOAuthMailConfig, providerForAuthMethod, type OAuthMailConfig } from '../lib/mailOAuth.js'
 import {
   assessInboundEnquiry, enquiryExcerpt, parseHeaderBlock, ENQUIRY_KIND, ENQUIRY_SOURCE, type EnquiryRecord,
 } from '../lib/inboundEnquiry.js'
@@ -219,7 +220,9 @@ function getRequiredEnv(key: string) {
   return value
 }
 
-export type SmtpConfig = {
+// Both configs may carry the OAuth fields (a full WorkspaceEmailConfig row does):
+// a signed-in mailbox authenticates with an access token instead of a password.
+export type SmtpConfig = OAuthMailConfig & {
   smtpHost?: string | null
   smtpPort?: number | null
   smtpSecure?: boolean | null
@@ -228,7 +231,7 @@ export type SmtpConfig = {
   smtpFrom?: string | null
 }
 
-export type ImapConfig = {
+export type ImapConfig = OAuthMailConfig & {
   imapHost?: string | null
   imapPort?: number | null
   imapSecure?: boolean | null
@@ -236,11 +239,20 @@ export type ImapConfig = {
   imapPass?: string | null
 }
 
+// A signed-in config whose refresh token is gone can't authenticate — and must
+// not fall back to the platform credentials (it would send as someone else).
+function oauthWithoutToken(cfg?: OAuthMailConfig | null): boolean {
+  return Boolean(providerForAuthMethod(cfg?.authMethod)) && !cfg?.oauthRefreshToken
+}
+
 export function isMailConfigured(cfg?: SmtpConfig | null) {
+  if (oauthWithoutToken(cfg)) return false
   return Boolean((cfg?.smtpHost || process.env.SMTP_HOST) && (cfg?.smtpFrom || process.env.SMTP_FROM))
 }
 
 export function isMailboxConfigured(cfg?: ImapConfig | null) {
+  if (oauthWithoutToken(cfg)) return false
+  if (isOAuthMailConfig(cfg)) return Boolean(cfg?.imapHost && cfg?.imapUser)
   return Boolean(
     (cfg?.imapHost || process.env.IMAP_HOST) &&
     (cfg?.imapUser || process.env.IMAP_USER) &&
@@ -262,7 +274,7 @@ function maybeDecrypt(s: string | null | undefined): string | undefined {
 // and per-workspace credentials must not share a connection pool.
 let systemTransport: ReturnType<typeof nodemailer.createTransport> | null = null
 
-export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
+export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost, accessToken?: string) {
   // `pin` (set for workspace-supplied hosts) carries the SSRF-validated IP to
   // dial plus the original hostname for TLS SNI/cert verification, so nodemailer
   // performs no second DNS lookup that could rebind to a private address.
@@ -277,7 +289,8 @@ export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost) {
 
   const transporter = nodemailer.createTransport({
     host, port, secure,
-    auth: user ? { user, pass } : undefined,
+    // A signed-in mailbox authenticates with SASL XOAUTH2 (lib/mailOAuth.ts).
+    auth: accessToken && user ? { type: 'OAuth2' as const, user, accessToken } : user ? { user, pass } : undefined,
     ...(pin?.servername ? { tls: { servername: pin.servername } } : {}),
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
@@ -307,7 +320,8 @@ export async function sendMail(to: string, subject: string, html: string, cfg?: 
   // check and the connect can't disagree (DNS-rebinding TOCTOU). Env-configured
   // system hosts are trusted and skipped.
   const pin = cfg?.smtpHost ? await resolvePublicMailHost(cfg.smtpHost, 'smtpHost') : undefined
-  const transporter = buildTransport(cfg, pin)
+  const accessToken = isOAuthMailConfig(cfg) ? await getMailAccessToken(cfg!) : undefined
+  const transporter = buildTransport(cfg, pin, accessToken)
   const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
   return transporter.sendMail({
     from,
@@ -560,7 +574,7 @@ function buildEnquiry(
 export async function syncMailboxOnce(
   cfg?: ImapConfig | null,
   workspaceId?: string,
-  deps: { ImapFlow?: unknown; recordProcessedReply?: typeof recordProcessedReply } = {},
+  deps: { ImapFlow?: unknown; recordProcessedReply?: typeof recordProcessedReply; getAccessToken?: typeof getMailAccessToken } = {},
 ): Promise<{
   inspected: number
   matched: number
@@ -589,12 +603,14 @@ export async function syncMailboxOnce(
   const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
   const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
   const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')
-  const pass = maybeDecrypt(cfg?.imapPass) || getRequiredEnv('IMAP_PASS')
+  const oauth = isOAuthMailConfig(cfg)
+  const pass = oauth ? undefined : maybeDecrypt(cfg?.imapPass) || getRequiredEnv('IMAP_PASS')
+  const accessToken = oauth ? await (deps.getAccessToken ?? getMailAccessToken)({ ...cfg!, workspaceId: cfg?.workspaceId ?? workspaceId }) : undefined
 
   const client = new ImapFlow({
     host, port, secure,
     ...(pin?.servername ? { servername: pin.servername } : {}),
-    auth: { user, pass },
+    auth: accessToken ? { user, accessToken } : { user, pass },
     logger: false,
     socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 30_000),
     greetingTimeout: 10_000,
