@@ -11,11 +11,21 @@ updates:
     labels:
       - dependencies
       - npm
+    # Minor and patch updates are grouped so they land in one routine PR. Major
+    # updates are left out of the groups on purpose: each one arrives as its own
+    # PR, so a single breaking upgrade (Prisma, Express, React, TypeScript...)
+    # can't block every other bump in its group.
     groups:
       node-prod:
         dependency-type: production
+        update-types:
+          - minor
+          - patch
       node-dev:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
       node-security:
         applies-to: security-updates
         patterns:
