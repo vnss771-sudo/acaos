@@ -100,7 +100,7 @@ The bundled secrets are local-only throwaways. For a hot-reloading dev loop
 ```bash
 npm run build          # compile api + worker + web
 npm run test           # fast API/unit suite (no services required)
-npm run test:coverage  # same, with the 80/65/80 coverage gate
+npm run test:coverage  # same, with the 84/78/87 coverage gate (lines/branches/functions)
 npm run test:db        # DB-backed suite (needs Postgres)
 npm run test:redis     # queue/Redis suite (needs Redis)
 npm test -w @acaos/web # frontend test suite
@@ -146,47 +146,12 @@ GitHub staged rollout checks read `SMOKE_API_URL` / `SMOKE_WORKER_URL` from the 
 - Local release preflight: `npm run release:preflight -- v1.2.3`
 
 
-## Known issues — remaining work before public launch
+## Open work
 
-These are open items from the engineering release-gate review. Fixed items are not listed here.
-
-### High priority (fix before onboarding paying users)
-
-**1. Mission Builder — now an actionable control plane (deepening continues)**
-A `Mission` model + `/api/missions` API + Missions view exist; creating a mission provisions its linked execution campaign. The mission detail is now a working **operator-loop hub** spanning the whole loop: a discovered → recommended → drafted → approved → sent funnel strip, a **Score & recommend** action (`POST /api/missions/:id/score`), inline **Generate draft / Approve / Reject** on each outreach intent (with the recommendation reasoning shown as evidence), a live **send-readiness** check, and the loop tail — an **Engagement** panel (sent / replied / bounced + reply rate and recent replies) and a **Learning** summary (scoring-model updates from recorded outcomes) — all without leaving the mission. A **guided stepper** at the top orients the operator through the loop (Discover → Score → Review → Ready → Engaged), deriving each step's state from the live funnel/readiness/engagement data and pointing at the next action. A mission's **target customer and offer now shape the outreach copy it generates** — merged over the workspace ICP in both the campaign-send and per-intent draft paths — so different missions speak to different segments. Remaining (optional): a full modal walkthrough on top of these primitives.
-
-**2. Approval workflow — now first-class**
-Drafts have a status (`DRAFTED | APPROVED | REJECTED | SENT | SKIPPED`), and a **Review Queue** (`/api/leads/approvals/pending` + the Approvals view) lets the team edit copy and approve/reject before anything sends; `approvalMode` gates campaign sends to `APPROVED` drafts. Approvals/edits are audit-logged.
-
-**3. Example data excluded from intelligence endpoints — Resolved ✓**
-Once any real prospect exists, example/seed prospects are filtered out everywhere it matters: `/api/intelligence/opportunities`, `/forecast` (including won-revenue, via the prospect relation), and `/stats` (prospect counts, tier buckets, stage distribution, and signal breakdown through the prospect relation) all apply the same `isExample: false` gate. The learning loop aggregates `ScoringOutcome` rows, which are only ever recorded against real in-workspace prospects, so calibration is unaffected by demo data. ✓ Resolved.
-
-**4. Compliance footer — Resolved ✓**
-Outbound emails carry a full compliance footer: an unsubscribe link plus the
-workspace `senderBusinessName` and `senderPostalAddress` (CAN-SPAM / GDPR sender
-identity + physical address) when configured. Those fields are editable in
-Settings (`PATCH /api/workspaces/:id`, validated), persisted on the `Workspace`
-model, and the send-readiness check + getting-started checklist flag them as
-required before launch. ✓ Resolved.
-
-**5. Discovery source errors — partially addressed**
-A `DiscoveryRun` model records every run (status, counts, error code/message); both Apollo and Google Places now throw on provider failure (no swallowed `[]`), failures surface as a `502` with a clear message (not a misleading "no results"), `GET /api/prospects/discovery-runs` exposes history, and the Prospects view shows a **discovery-history panel** flagging failed runs and their reasons. ✓ Resolved.
-
-### Medium priority (important before scaling)
-
-**6. Worker shares backend code via cross-package file imports — Resolved ✓**
-Shared backend runtime logic (`prisma`, `scoring`, `signalEngine`, `mail`, `suppressions`, etc.) now lives in the `packages/backend-core` workspace, which both `api` and `worker` depend on. The worker no longer reaches into `apps/api/src/`; `npm run check:boundaries` enforces this in CI. (Typed request contracts live in `packages/shared`.) ✓ Resolved.
-
-**7. Discovery providers use platform-level API keys — quota enforced + surfaced**
-Apollo, Google Places, and Hunter keys are set once for the whole platform, but discovery is metered per workspace with a monthly quota (`checkAndIncrementDiscoveryUsage`: free 25 / starter 500 / growth unlimited; `429` when exceeded) and every run is recorded in `DiscoveryRun`. Usage vs. plan limits (AI, discovery, leads) is shown on the Billing page, and **per-provider cost weighting** now estimates weighted discovery spend (Apollo > Places > Hunter) and surfaces it on Billing. ✓ Resolved.
-
-### Low priority (polish)
-
-**8. Mission workflow — operator loop now drivable from the mission**
-`Mission` is a first-class model and API (`/api/missions`) with a Missions view; creating a mission provisions its linked execution `Campaign`, the list surfaces per-mission deliverability + pending-review + discovery stats, and discovery runs can be scoped to a mission. Recommendations and the approval queue are now wired **directly into the mission control plane**: the detail panel drives discover → score/recommend → review evidence → approve/reject draft → send-readiness, and now closes the loop with per-mission **engagement** (deliverability + replies) and **learning** (scoring-model adaptation), fronted by a **guided stepper** that shows where the mission is in the loop and what to do next (see #1). Still to deepen: per-mission ICP/playbook overrides.
-
-**9. Observability — Resolved ✓**
-Request IDs + structured JSON logging, an `AuditEvent` log (surfaced in the Admin Recent Activity view + `GET /api/admin/audit`), DB+Redis-aware health/readiness probes, a Prometheus `GET /metrics` endpoint, and a pluggable error-capture seam with an optional Sentry transport (`SENTRY_DSN`) all exist. The monitoring stack is shipped end-to-end in [`ops/monitoring/`](ops/monitoring/): a Grafana dashboard, Prometheus alert rules, **external uptime/synthetic probes** (blackbox exporter), and **Alertmanager routing** (PagerDuty for critical, Slack for all) — backed by documented [SLOs + error budget](docs/SLO.md) and per-alert [runbooks](docs/RUNBOOKS.md). ✓ Resolved. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+Open engineering work, pending decisions and the launch path are kept in one place:
+[`docs/HANDOVER.md`](docs/HANDOVER.md). Items resolved from the earlier release-gate
+review (approval workflow, compliance footer, discovery errors, backend-core split,
+observability and others) are in the git history.
 
 ---
 

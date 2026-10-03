@@ -51,7 +51,7 @@ platform starts conservative.
 | `SAFE_LAUNCH_DAILY_SEND_CAP` | `20` | api, worker | The clamp applied while safe-launch is on. |
 | `ENFORCE_SEND_READINESS` | on (off only in `development`/`test`) | api | Gate sends on SMTP + CAN-SPAM sender identity. Fails **closed** for staging/preview; `false`/`0` disables. |
 | `COMPLIANCE_GATE_ENABLED` | `false` | api | Require lawful-basis / CASL consent before sending (ships dormant until legal copy is signed). |
-| `TENANT_GUARD_MODE` | `off` | api, worker | `off` \| `observe` (log unscoped queries) \| `enforce` (throw). Defense-in-depth over the per-query `workspaceId` filters. |
+| `TENANT_GUARD_MODE` | `observe` in production, `off` elsewhere | api, worker | `off` \| `observe` (log unscoped queries) \| `enforce` (throw). Defense-in-depth over the per-query `workspaceId` filters. |
 | `FOLLOWUPS_ENABLED` | `false` | worker | Master switch for multi-step follow-up sending (opt-in dormant). |
 | `FOLLOWUP_SCAN_INTERVAL_MS` | `60000` | worker | Due-follow-up scan cadence. |
 | `FEATURE_SEND` / `FEATURE_AI` / … | on | api, worker | Per-capability kill-switches (`isFeatureEnabled`). |
@@ -63,7 +63,7 @@ platform starts conservative.
 
 | Var | Default | Scope | Notes |
 |---|---|---|---|
-| `REPUTATION_GUARD_MODE` | `''` (off) | worker | `observe` (warn) \| `enforce` (block sends) on bounce/complaint thresholds. |
+| `REPUTATION_GUARD_MODE` | `observe` | worker | `off` \| `observe` (warn) \| `enforce` (block sends) on bounce/complaint thresholds. |
 | `REPUTATION_MAX_BOUNCE_RATE` | `0.05` | worker | Trailing bounce-rate ceiling. |
 | `REPUTATION_MAX_COMPLAINT_RATE` | `0.003` | worker | Trailing complaint-rate ceiling. |
 | `REPUTATION_MIN_SENDS` | `50` | worker | Minimum sends in-window before the guard evaluates a workspace. |
