@@ -6,6 +6,7 @@ import type { View, Workspace } from '../types.js'
 import { colors, s } from '../styles.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import { formatCents } from '../lib/money.js'
+import { safeExternalUrl } from '../lib/safeUrl.js'
 import { Card } from '../components/ui/Card.js'
 import { Badge } from '../components/ui/Badge.js'
 import { EmptyState } from '../components/ui/EmptyState.js'
@@ -225,7 +226,7 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
                 {(detail.recommendation?.citations ?? []).map(c => (
                   <li key={`${c.source}-${c.claim}`}>
                     {c.claim} <span style={{ color: colors.textFaint }}>· {c.source}, {c.ageDays}d ago</span>
-                    {c.sourceUrl && <> · <a href={c.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: colors.blueLight }}>source ↗</a></>}
+                    {safeExternalUrl(c.sourceUrl) && <> · <a href={safeExternalUrl(c.sourceUrl)!} target="_blank" rel="noopener noreferrer" style={{ color: colors.blueLight }}>source ↗</a></>}
                   </li>
                 ))}
                 {(detail.recommendation?.citations ?? []).length === 0 && <li>No citable evidence — treat this as a lead to check, not a fact.</li>}

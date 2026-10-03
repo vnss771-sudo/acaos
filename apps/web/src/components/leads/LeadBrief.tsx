@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Lead, LeadIntelligence, LeadEvidenceRow } from '../../types.js'
 import { s, colors } from '../../styles.js'
+import { safeExternalUrl } from '../../lib/safeUrl.js'
 
 const CONFIDENCE_COLOR: Record<string, string> = {
   high: colors.green,
@@ -81,8 +82,8 @@ export function LeadBrief({ lead, intel, rows }: { lead: Lead; intel: LeadIntell
           <ul style={briefList}>
             {reasons.map((r, i) => (
               <li key={i}>
-                {r.sourceUrl
-                  ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" style={{ color: colors.blueLight }}>{r.text}</a>
+                {safeExternalUrl(r.sourceUrl)
+                  ? <a href={safeExternalUrl(r.sourceUrl)!} target="_blank" rel="noopener noreferrer" style={{ color: colors.blueLight }}>{r.text}</a>
                   : r.text}
               </li>
             ))}

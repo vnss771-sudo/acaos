@@ -105,3 +105,16 @@ describe('Today', () => {
     expect(await screen.findByRole('button', { name: 'Stop sharing' })).toBeInTheDocument()
   })
 })
+
+describe('Today — untrusted evidence links', () => {
+  test('a javascript: source URL is never rendered as a link', async () => {
+    const api = mockApi()
+    const evil = { ...DETAIL, recommendation: { ...DETAIL.recommendation, citations: [{ ...DETAIL.recommendation.citations[0], sourceUrl: 'javascript:alert(1)' }] } }
+    api.mockImplementation((path: string, init?: { method?: string }) =>
+      path.startsWith('/api/commercial-opportunities/c1') && !init?.method ? Promise.resolve({ opportunity: evil }) : mockApi()(path, init))
+    render(<Today api={api as never} workspace={workspace} toast={toast as never} setView={setView} />)
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Why? Show evidence' }))[0])
+    expect(await screen.findByText(/Hiring 17 field technicians/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'source ↗' })).toBeNull()
+  })
+})

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Hardening
+- Links built from external data (tender feeds, evidence, AI research) only render for http(s) URLs
+- Jobs flag shifts logged after closeout instead of silently leaving them out
+- End-to-end test of the whole find → quote → job → closeout → report loop, and of the tenant boundary
+
 ### Operator console (phase 14)
 - New *Today* screen: what needs a decision with its evidence and contact, new work this week,
   work worth watching, and pipeline / won revenue / quote-to-win / delivered margin
