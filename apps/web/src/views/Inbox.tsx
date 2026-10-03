@@ -26,6 +26,8 @@ type Reply = {
   replyUrgency: string | null
   replyConfidence: number | null
   replyIsAutoReply: boolean | null
+  // Deterministic risk flags (legal, payment dispute, ...): a person answers; no AI draft.
+  replyRiskFlags?: string[]
   lead: { id: string; businessName: string; stage: string } | null
   // An Inbox reply on this thread that hasn't finished. outcomeUnknown: it may or
   // may not have been delivered, and the user must say which before replying again.
@@ -56,6 +58,15 @@ function ConfidenceBar({ value }: { value: number }) {
       <span style={{ color: colors.textFaint, minWidth: 32 }}>{percent}%</span>
     </div>
   )
+}
+
+// Mirrors RISK_FLAG_LABEL in backend-core lib/riskEscalation.ts.
+const RISK_LABEL: Record<string, string> = {
+  LEGAL: 'Mentions legal action',
+  PAYMENT_DISPUTE: 'Refund or payment dispute',
+  COMPLAINT: 'Complaint',
+  DAMAGE_CLAIM: 'Says your work caused damage or injury',
+  DATA_BREACH: 'Mentions a data breach',
 }
 
 const URGENCY_LABEL: Record<string, string> = {
@@ -249,6 +260,8 @@ export function InboxView({ api, workspace, toast }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {data.replies.map(r => {
             const meta = r.replyIntent ? CLASS_META[r.replyIntent] : null
+            const risks = (r.replyRiskFlags ?? []).filter(f => RISK_LABEL[f])
+            const escalated = risks.length > 0
             return (
               <Card key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
@@ -256,6 +269,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                     <span style={{ color: colors.text, fontWeight: 700, fontSize: 14 }}>{r.lead?.businessName || r.toEmail}</span>
                     {meta && <Badge color={meta.color}>{meta.label}</Badge>}
                     {r.replyIsAutoReply && <span style={{ color: colors.textFaint, fontSize: 11 }}>auto-reply</span>}
+                    {escalated && <Badge color={colors.red}>Needs you</Badge>}
                   </span>
                   <span style={{ color: colors.textFaint, fontSize: 12 }}>
                     {r.replyUrgency && URGENCY_LABEL[r.replyUrgency] ? `${URGENCY_LABEL[r.replyUrgency]} · ` : ''}
@@ -263,6 +277,11 @@ export function InboxView({ api, workspace, toast }: Props) {
                   </span>
                 </div>
                 <div style={{ color: colors.textMuted, fontSize: 13 }}>{r.subject}</div>
+                {escalated && (
+                  <div role="note" style={{ color: colors.red, fontSize: 13 }}>
+                    {risks.map(f => RISK_LABEL[f]).join(' · ')} — answer this one yourself. It won't be marked dead or drafted automatically.
+                  </div>
+                )}
                 {r.replySummary && <div style={{ color: colors.text, fontSize: 13 }}>{r.replySummary}</div>}
                 {r.replyKeyQuote && (
                   <div style={{ borderLeft: `2px solid ${colors.border}`, paddingLeft: 10, color: colors.textFaint, fontSize: 13, fontStyle: 'italic' }}>
@@ -375,7 +394,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button
+                      {!escalated && <button
                         onClick={() => handleDraftReply(r.id)}
                         disabled={draftingHere || sendingReplyId === r.id || !!customBody.trim()}
                         title={customBody.trim() ? 'Clear the box to draft again' : 'Draft a reply you can edit before sending'}
@@ -386,7 +405,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                         }}
                       >
                         {draftingHere ? 'Drafting...' : 'Draft with AI'}
-                      </button>
+                      </button>}
                       <button
                         onClick={() => handleSendReply(r.id, customBody, composeKey)}
                         disabled={sendingReplyId === r.id || draftingHere || !customBody.trim()}
@@ -421,7 +440,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                     >
                       Reply
                     </button>
-                    <button
+                    {!escalated && <button
                       onClick={() => { openComposer(r.id); void handleDraftReply(r.id) }}
                       disabled={sendingReplyId === r.id}
                       style={{
@@ -430,7 +449,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                       }}
                     >
                       Draft reply with AI
-                    </button>
+                    </button>}
                   </div>
                 )}
               </Card>

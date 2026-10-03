@@ -15,6 +15,12 @@ import { campaignDailyStatsUpsertArgs } from '../lib/campaignStats.js'
 import { cancelPendingFollowups } from '../services/followups.js'
 import { transitionLeadStage } from '../services/leadStageMachine.js'
 import type { LeadStage } from '@acaos/shared'
+import { createHash } from 'node:crypto'
+import { assessRisk } from '../lib/riskEscalation.js'
+import { isFeatureEnabled } from '../lib/launchControls.js'
+import {
+  assessInboundEnquiry, enquiryExcerpt, parseHeaderBlock, ENQUIRY_KIND, ENQUIRY_SOURCE, type EnquiryRecord,
+} from '../lib/inboundEnquiry.js'
 
 const BOUNCE_SENDER = /(mailer-daemon|postmaster|mail delivery|maild?(a|ae)mon)/i
 const BOUNCE_SUBJECT = /(undeliverable|delivery status notification|mail delivery (failed|subsystem)|returned mail|failure notice|delivery has failed|message not delivered|delivery incomplete)/i
@@ -367,8 +373,13 @@ export async function recordProcessedReply(params: {
   fromEmailKey?: string
   workspaceId: string
   lead: { id: string; stage: string; email?: string | null } | null
-}): Promise<{ advanced: boolean }> {
-  const { uid, messageId, inReplyTo, fromAddress, workspaceId, lead } = params
+  /** Deterministic risk flags on the message (lib/riskEscalation.ts). */
+  riskFlags?: string[]
+  /** Set when the message reads as a job enquiry; persisted only if it matches no outreach. */
+  enquiry?: EnquiryRecord | null
+}): Promise<{ advanced: boolean; enquiryCreated?: boolean }> {
+  const { uid, messageId, inReplyTo, fromAddress, workspaceId, lead, riskFlags = [], enquiry = null } = params
+  let enquiryCreated = false
   const advance = Boolean(lead) && !['BOOKED', 'CLOSED', 'DEAD'].includes(lead!.stage)
 
   try {
@@ -417,6 +428,38 @@ export async function recordProcessedReply(params: {
       // the ledger event + stat: a second reply email (a new uid that passes the
       // idempotency gate) re-attributes to the same now-REPLIED send and flips 0
       // rows, so it must NOT double-count the reply.
+      // An unknown sender replying to nothing we sent: a job enquiry, if the
+      // caller judged it one. Recorded in this transaction so the processed-row
+      // dedup and the enquiry can never disagree (no lost or doubled enquiry on
+      // a re-sync). Skipped if the same Message-ID already landed as an enquiry.
+      if (!lead && !match.outreachSentId && enquiry) {
+        const externalId = String(enquiry.externalId)
+        const existing = await tx.opportunity.findUnique({
+          where: { workspaceId_source_externalId: { workspaceId, source: ENQUIRY_SOURCE, externalId } },
+          select: { id: true },
+        })
+        if (!existing) {
+          await tx.opportunity.create({ data: { ...enquiry, workspaceId, source: ENQUIRY_SOURCE } })
+          enquiryCreated = true
+        }
+      }
+
+      // Escalation flags go on the attributed send whether or not this message is
+      // the one that flipped it (a later angry reply still counts); only ever
+      // added, never cleared by a calmer message.
+      if (match.outreachSentId && riskFlags.length > 0) {
+        const current = await tx.outreachSent.findFirst({
+          where: { id: match.outreachSentId, workspaceId },
+          select: { replyRiskFlags: true },
+        })
+        if (current) {
+          await tx.outreachSent.updateMany({
+            where: { id: match.outreachSentId, workspaceId },
+            data: { replyRiskFlags: [...new Set([...(current.replyRiskFlags ?? []), ...riskFlags])] },
+          })
+        }
+      }
+
       if (match.outreachSentId) {
         const flip = await tx.outreachSent.updateMany({
           where: { id: match.outreachSentId, workspaceId, status: 'SENT' },
@@ -448,7 +491,7 @@ export async function recordProcessedReply(params: {
     throw err
   }
 
-  return { advanced: advance }
+  return { advanced: advance, enquiryCreated }
 }
 
 // Where a mailbox sync should start fetching, by IMAP UID. With a live cursor we
@@ -467,6 +510,50 @@ export function computeMailboxFetchStart(opts: {
   return Math.max(1, top - recentWindow)
 }
 
+// "Jo Smith <jo@x.com>" | "jo@x.com" → "jo@x.com" (lower-cased), else ''.
+function extractAddress(value: string | null | undefined): string {
+  const v = (value ?? '').trim()
+  const m = v.match(/<([^>]+)>/)
+  const addr = (m ? m[1] : v).trim().toLowerCase()
+  return addr.includes('@') ? addr : ''
+}
+
+// The Opportunity row for an inbound message that reads as a job enquiry, or
+// null. Whether it is persisted is decided inside recordProcessedReply (only if
+// the message matched no outreach send).
+function buildEnquiry(
+  msg: { uid: number; messageId: string | null; fromAddress: string; fromName: string | null; receivedAt: Date | null; headers: Record<string, string>; subject: string; body: string },
+  ownAddresses: string[],
+  uidValidity: number | null,
+): EnquiryRecord | null {
+  const a = assessInboundEnquiry({
+    fromAddress: msg.fromAddress, fromName: msg.fromName, subject: msg.subject, body: msg.body,
+    headers: msg.headers, ownAddresses,
+  })
+  if (!a.enquiry) return null
+  const externalId = msg.messageId ? `mid:${msg.messageId}` : `uid:${uidValidity ?? 0}:${msg.uid}`
+  const title = msg.subject.trim().slice(0, 200) || `Enquiry from ${msg.fromName || msg.fromAddress}`
+  const now = new Date()
+  return {
+    externalId,
+    kind: ENQUIRY_KIND,
+    title,
+    description: enquiryExcerpt(msg.body) || null,
+    region: a.region ?? null,
+    postcode: a.postcode ?? null,
+    publishedAt: msg.receivedAt && !Number.isNaN(msg.receivedAt.getTime()) ? msg.receivedAt : now,
+    counterpartyName: msg.fromName || msg.fromAddress,
+    counterpartyEmail: msg.fromAddress,
+    counterpartyPhone: a.phone,
+    score: a.score,
+    matchedTrades: a.matchedTrades,
+    reasons: a.reasons,
+    recommendedAction: a.recommendedAction,
+    rawData: { messageId: msg.messageId, riskFlags: a.riskFlags },
+    contentHash: createHash('sha256').update(`${externalId}\n${title}`).digest('hex'),
+  }
+}
+
 // `deps` is a test seam (mirrors the worker's sendMail injection): tests pass a
 // fake ImapFlow and/or a failing recordProcessedReply to exercise cursor
 // durability without an IMAP server.
@@ -481,6 +568,7 @@ export async function syncMailboxOnce(
   skipped: number
   bounced: number
   complained: number
+  enquiries: number
 }> {
   const recordProcessed = deps.recordProcessedReply ?? recordProcessedReply
   let ImapFlow: any = deps.ImapFlow
@@ -554,6 +642,9 @@ export async function syncMailboxOnce(
       messageId: string | null
       inReplyTo: string | null
       fromAddress: string
+      fromName: string | null
+      receivedAt: Date | null
+      headers: Record<string, string>
       subject: string
       body: string
       bounceRecipients: string[]
@@ -594,7 +685,10 @@ export async function syncMailboxOnce(
       // Keep bounces/complaints even if their reply text is trivial; otherwise skip empties.
       if (bounceRecipients.length === 0 && complaintRecipients.length === 0 && replyBody.length < 5) continue
 
-      toProcess.push({ uid, messageId, inReplyTo, fromAddress, subject, body: replyBody, bounceRecipients, bounceType, complaintRecipients })
+      const fromName: string | null = msg.envelope?.from?.[0]?.name?.trim() || null
+      const receivedAt: Date | null = msg.envelope?.date ? new Date(msg.envelope.date) : null
+      const headers = msg.source ? parseHeaderBlock(msg.source) : {}
+      toProcess.push({ uid, messageId, inReplyTo, fromAddress, fromName, receivedAt, headers, subject, body: replyBody, bounceRecipients, bounceType, complaintRecipients })
     }
 
     // Advance the persisted cursor to the highest UID inspected — but ONLY once
@@ -620,7 +714,7 @@ export async function syncMailboxOnce(
 
     if (toProcess.length === 0) {
       await advanceCursor()
-      return { inspected, matched: 0, queued: 0, skipped: 0, bounced: 0, complained: 0 }
+      return { inspected, matched: 0, queued: 0, skipped: 0, bounced: 0, complained: 0, enquiries: 0 }
     }
 
     // ── Bounce handling ────────────────────────────────────────────────────────
@@ -672,23 +766,33 @@ export async function syncMailboxOnce(
 
     let matched = 0
     let queued = 0
+    let enquiries = 0
+    const enquiriesOn = isFeatureEnabled('enquiries')
+    const ownAddresses = [extractAddress(user)].filter(Boolean)
 
     for (const msg of replyMsgs) {
       const lead = emailToLead.get(msg.fromAddress) ?? null
       if (lead) matched++
+      const riskFlags = assessRisk(`${msg.subject}\n${msg.body}`).flags
+      const enquiry = !lead && enquiriesOn
+        ? buildEnquiry(msg, ownAddresses, uidValidity)
+        : null
 
       // Record the processed email and advance the lead in one transaction, so a
       // crash can never leave a lead advanced without its processed-row (which
       // would reprocess the same email and double-spend AI on the next sync).
-      const { advanced } = await recordProcessed({
+      const { advanced, enquiryCreated } = await recordProcessed({
         uid: msg.uid,
         messageId: msg.messageId,
         inReplyTo: msg.inReplyTo,
         fromAddress: msg.fromAddress,
         workspaceId: workspaceId,
         lead,
+        riskFlags,
+        enquiry,
       })
       processedUids.push(msg.uid)
+      if (enquiryCreated) enquiries++
 
       if (advanced) {
         // Meter before enqueueing — this is the only call site for reply
@@ -721,7 +825,7 @@ export async function syncMailboxOnce(
       }
     }
 
-    return { inspected, matched, queued, skipped: replyMsgs.length - matched, bounced, complained }
+    return { inspected, matched, queued, skipped: replyMsgs.length - matched, bounced, complained, enquiries }
   } finally {
     try { await client.logout() } catch { client.close() }
   }

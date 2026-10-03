@@ -23,6 +23,7 @@ import { isCommercialOpportunityEngineEnabled, loadOfferCatalog, refreshCommerci
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { effectiveReplyClassification } from '@acaos/backend-core/lib/replyGating.js'
+import { parseRiskFlags } from '@acaos/backend-core/lib/riskEscalation.js'
 import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
 import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
 import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
@@ -1856,8 +1857,13 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   const target = await prisma.outreachSent.findFirst({
     where: { leadId, workspaceId: lead.workspaceId, status: 'REPLIED' },
     orderBy: { repliedAt: 'desc' },
-    select: { id: true, messageRelevanceScore: true, timingFitScore: true },
+    select: { id: true, messageRelevanceScore: true, timingFitScore: true, replyRiskFlags: true },
   })
+  // Risk flags were set deterministically at sync time (lib/riskEscalation.ts).
+  // An escalated reply — legal action, a payment dispute, a complaint, a damage
+  // claim — is a person's call: the AI label is still recorded for the Inbox, but
+  // it never drives the irreversible DEAD transition or teaches the scorer.
+  const escalated = parseRiskFlags(target?.replyRiskFlags).length > 0
   if (target) {
     await prisma.outreachSent.update({
       where: { id: target.id },
@@ -1896,10 +1902,15 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
     REFERRAL: 'REPLIED',
     OUT_OF_OFFICE: 'OUTREACH_SENT',
   }
-  const newStage = stageMap[effectiveClassification]
+  const mapped = stageMap[effectiveClassification]
+  const newStage = escalated && mapped === 'DEAD' ? 'REPLIED' : mapped
   if (newStage) {
     await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
   }
+
+  // The label on an escalated reply isn't trustworthy evidence of buying intent
+  // either way; keep it out of the learning loop.
+  if (escalated) return
 
   // Common path is a read: the scoring model almost always already exists. The
   // @unique(workspaceId) means a concurrent first-reply race can lose the create

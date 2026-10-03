@@ -555,6 +555,19 @@ test('draft: returns the AI draft built from the reply analysis and business con
   assert.equal(await prisma.inboxReplySend.count({ where: { outreachSentId: reply.id } }), 0)
 })
 
+test('draft: an escalated reply (legal, dispute, ...) gets no AI draft and spends no AI', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const reply = await seedReply(workspace.id, { replyRiskFlags: ['LEGAL'] })
+
+  const res = await draftServer.request(`/api/inbox/reply/${reply.id}/draft`, {
+    method: 'POST', headers: jsonAuth(user.id), body: JSON.stringify({ workspaceId: workspace.id }),
+  })
+  assert.equal(res.status, 409)
+  assert.match(String(res.body.error ?? res.body.message ?? ''), /personal answer/)
+  assert.equal(draftCalls.length, 0)
+  assert.equal(await aiUsage(workspace.id), 0)
+})
+
 test('draft: refunds the AI call when generation fails', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const reply = await seedReply(workspace.id)

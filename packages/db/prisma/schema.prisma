@@ -490,6 +490,10 @@ model OutreachSent {
   replyUrgency            String?
   replyConfidence         Int?
   replyIsAutoReply        Boolean?
+  // Deterministic risk flags on the reply (lib/riskEscalation.ts), set at sync
+  // time before any AI runs. Non-empty = a person must handle it: no DEAD
+  // transition, no scoring outcome, no AI draft.
+  replyRiskFlags          String[]         @default([])
   unsubscribeToken        String?          @unique
   // Intelligence provenance (Stage 5): what intent/recommendation + evidence this
   // send was based on, snapshotted at send time so the record is self-auditable.

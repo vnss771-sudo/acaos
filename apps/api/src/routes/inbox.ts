@@ -16,6 +16,7 @@ import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { parseAiJson, ReplyDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
 import { generateReplyDraft } from '@acaos/backend-core/services/openai.js'
+import { parseRiskFlags, RISK_FLAG_LABEL } from '@acaos/backend-core/lib/riskEscalation.js'
 
 // GET /api/inbox — the replies surface. Lists sends that received a reply, with
 // the AI-derived classification metadata stamped on by the analyze-reply worker.
@@ -105,6 +106,7 @@ inboxRouter.get(
         replyUrgency: true,
         replyConfidence: true,
         replyIsAutoReply: true,
+        replyRiskFlags: true,
         lead: { select: { id: true, businessName: true, stage: true } },
         // An open (SENDING) Inbox reply on this thread, if any — the UI shows it
         // as in flight or, past the window, asks the user to resolve it.
@@ -466,12 +468,19 @@ export function createInboxReplyDraftHandler(deps: { generateReplyDraft?: typeof
         replySummary: true,
         replyKeyQuote: true,
         replySuggestedAction: true,
+        replyRiskFlags: true,
         lead: { select: { businessName: true, contactName: true } },
       },
     })
     if (!reply) throw new ApiError(404, 'Reply not found')
     if (reply.workspaceId !== workspaceId) throw new ApiError(403, 'Reply belongs to different workspace')
     if (reply.status !== 'REPLIED') throw new ApiError(400, 'Can only draft replies to messages that have received a reply')
+    // Escalated replies (legal, payment dispute, complaint, damage claim) get a
+    // personal answer, never an AI draft. Checked before any AI spend.
+    const riskFlags = parseRiskFlags(reply.replyRiskFlags as string[] | null | undefined)
+    if (riskFlags.length > 0) {
+      throw new ApiError(409, `This reply needs a personal answer (${riskFlags.map(f => RISK_FLAG_LABEL[f].toLowerCase()).join(', ')}), so no draft is generated.`)
+    }
 
     const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { businessContext: true, outreachTone: true } })
 

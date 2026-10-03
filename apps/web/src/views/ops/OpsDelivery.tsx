@@ -43,7 +43,7 @@ type Stat = { n: number; median: number; min: number; max: number } | null
 type ReportGroup = { key: string; label: string; jobs: number; hoursVariancePct: Stat; revenueVsQuotePct: Stat; labourMarginPct: Stat; grossMarginPct: Stat }
 type Report = { minJobs: number; overall: ReportGroup; groups: ReportGroup[] }
 
-const ORIGIN_LABEL: Record<string, string> = { DEVELOPMENT_APPLICATION: 'Development application', CONTRACT_AWARD: 'Contract award' }
+const ORIGIN_LABEL: Record<string, string> = { DEVELOPMENT_APPLICATION: 'Development application', CONTRACT_AWARD: 'Contract award', DIRECT_ENQUIRY: 'Direct enquiry' }
 
 function originText(j: DeliveryJob): string | null {
   if (!j.origin) return null

@@ -56,6 +56,7 @@ on the next request/job, no restart:
 - `FEATURE_AI` — disable AI (research/outreach/reply-analysis jobs skip).
 - `FEATURE_MAILBOX_SYNC` — disable IMAP sync.
 - `FEATURE_DISCOVERY` — disable prospect discovery.
+- `FEATURE_INBOUND_ENQUIRIES` — stop creating Find work enquiries from inbound mail (replies are unaffected).
 - `SAFE_LAUNCH_MODE=true` — force human approval of every outbound draft, no
   auto-send, and clamp every workspace's daily send cap to a low ceiling
   (`SAFE_LAUNCH_DAILY_SEND_CAP`, default 20).

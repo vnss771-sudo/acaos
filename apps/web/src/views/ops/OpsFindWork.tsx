@@ -24,7 +24,7 @@ type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canM
 type Opportunity = {
   id: string
   source: string
-  kind: 'CONTRACT_AWARD' | 'DEVELOPMENT_APPLICATION'
+  kind: 'CONTRACT_AWARD' | 'DEVELOPMENT_APPLICATION' | 'DIRECT_ENQUIRY'
   title: string
   description: string | null
   address: string | null
@@ -69,6 +69,7 @@ type ProfileResponse = {
 const KIND_LABEL: Record<Opportunity['kind'], string> = {
   CONTRACT_AWARD: 'Contract awarded',
   DEVELOPMENT_APPLICATION: 'Development application',
+  DIRECT_ENQUIRY: 'Emailed you',
 }
 
 const FILTERS: { status: OpportunityStatus | null; label: string }[] = [
@@ -358,7 +359,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
         <ErrorBanner message="Failed to load opportunities." onRetry={load} />
       ) : loading && !data ? (
         <div style={{ display: 'grid', gap: 12 }}>{[0, 1, 2].map(i => <Skeleton key={i} height={120} />)}</div>
-      ) : !profile ? (
+      ) : !profile && opportunities.length === 0 ? (
         <EmptyState
           title="Tell us what work you want"
           description="Choose your trades and where you work, and we'll search government contracts and council development applications for jobs you could win."
@@ -376,7 +377,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
               <div style={{ ...s.flexBetween, gap: 12, alignItems: 'flex-start' }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <Badge color={o.kind === 'CONTRACT_AWARD' ? colors.purple : colors.blueLight}>{KIND_LABEL[o.kind]}</Badge>
+                    <Badge color={o.kind === 'CONTRACT_AWARD' ? colors.purple : o.kind === 'DIRECT_ENQUIRY' ? colors.green : colors.blueLight}>{KIND_LABEL[o.kind]}</Badge>
                     {o.valueAmount != null && <span style={{ color: colors.text, fontWeight: 600, fontSize: 13 }}>{formatValue(o.valueAmount)}</span>}
                     <span style={{ color: colors.textFaint, fontSize: 12 }}>
                       {[o.address ?? [o.locality, o.region].filter(Boolean).join(', '), o.distanceKm != null ? `${Math.round(o.distanceKm)} km away` : null].filter(Boolean).join(' · ')}
@@ -389,6 +390,12 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
                   <div style={{ color: colors.textFaint, fontSize: 11 }}>match</div>
                 </div>
               </div>
+
+              {o.kind === 'DIRECT_ENQUIRY' && o.description && (
+                <blockquote style={{ margin: 0, padding: '6px 10px', borderLeft: `3px solid ${colors.border}`, color: colors.textMuted, fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                  {o.description}
+                </blockquote>
+              )}
 
               <ul aria-label="Why this was found" style={{ margin: 0, paddingLeft: 18, color: colors.textMuted, fontSize: 13, display: 'grid', gap: 2 }}>
                 {o.reasons.map((r, i) => <li key={i}>{r}</li>)}

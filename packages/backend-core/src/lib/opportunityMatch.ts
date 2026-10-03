@@ -19,6 +19,9 @@ export const MIN_OPPORTUNITY_SCORE = 30
 export const MAX_AGE_DAYS: Record<OpportunityCandidate['kind'], number> = {
   CONTRACT_AWARD: 120,
   DEVELOPMENT_APPLICATION: 365,
+  // Direct enquiries never pass through the matcher (lib/inboundEnquiry.ts
+  // assesses them); a customer who emailed has usually moved on within a month.
+  DIRECT_ENQUIRY: 30,
 }
 
 // UNSPSC segment 72: Building and Facility Construction and Maintenance Services.
