@@ -59,6 +59,7 @@ All read live from the environment — flipping any of these takes effect on the
 - FEATURE_INBOUND_ENQUIRIES — surface unmatched inbound mail that asks for work as Find work enquiries. Default `true`.
 - GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET — enable *Sign in with Google* for workspace mailboxes. Optional. See `docs/MAILBOX_SIGN_IN.md`.
 - MICROSOFT_OAUTH_CLIENT_ID / MICROSOFT_OAUTH_CLIENT_SECRET / MICROSOFT_OAUTH_TENANT (default `common`) — enable *Sign in with Microsoft*. Optional. Both sign-in options also require `API_URL` (it builds the redirect URI).
+- MICROSOFT_SEND_VIA_GRAPH — send from signed-in Microsoft 365 mailboxes through Microsoft Graph instead of SMTP. Default `true`; `false` = SMTP only.
 
 ### Safe launch (default OFF — conservative controlled rollout)
 - SAFE_LAUNCH_MODE — forces human approval of every outbound draft and clamps every workspace's daily send cap to a low ceiling. Default `false`.

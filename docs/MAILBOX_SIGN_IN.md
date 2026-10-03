@@ -33,14 +33,22 @@ Plan verification before launch.
 
 1. Microsoft Entra admin center → App registrations → New registration. Supported account types: *any organizational directory and personal Microsoft accounts* (or your own tenant only). Add the redirect URI as a *Web* platform.
 2. Certificates & secrets → new client secret.
-3. API permissions (delegated): `offline_access`, `openid`, `email`, and from *Office 365 Exchange Online*: `IMAP.AccessAsUser.All`, `SMTP.Send`.
+3. API permissions (delegated): `offline_access`, `openid`, `email`; from *Office 365 Exchange Online*: `IMAP.AccessAsUser.All`, `SMTP.Send`; and from *Microsoft Graph*: `Mail.Send`.
 4. Set `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, and optionally `MICROSOFT_OAUTH_TENANT` (default `common`).
 
-Sending uses SMTP AUTH on `smtp.office365.com:587`. Tenants with security
-defaults (and many others) have SMTP AUTH turned off, and the send then fails
-with `5.7.139`. The tenant admin must enable *Authenticated SMTP* for that
-mailbox (Microsoft 365 admin center → user → Mail → Manage email apps).
-Receiving over IMAP is unaffected.
+Sending goes through **Microsoft Graph** (`POST /me/sendMail` with the full MIME
+message, so List-Unsubscribe, threading headers and our Message-ID are kept).
+It works even where the tenant has SMTP AUTH turned off, which is the default
+under security defaults. Receiving stays on IMAP.
+
+- Mailboxes connected **before** Graph sending was added have no `Mail.Send`
+  consent. They keep sending over SMTP (`smtp.office365.com:587`) until they are
+  reconnected; nothing is marked broken.
+- ACAOS falls back to SMTP only when Graph certainly did not send (no consent,
+  401, 403 or 429). A 5xx or timeout fails the send rather than risk a duplicate.
+- If SMTP is the path and the tenant has SMTP AUTH off (`5.7.139`), the error
+  tells the user to reconnect, which adds Graph consent.
+- `MICROSOFT_SEND_VIA_GRAPH=false` turns Graph sending off (SMTP only).
 
 ## Tokens and failure modes
 

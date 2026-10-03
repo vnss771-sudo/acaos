@@ -64,6 +64,7 @@ test('authorization URL asks for offline IMAP/SMTP access with the registered re
   assert.deepEqual(m.searchParams.get('scope')!.split(' '), [
     'openid', 'email', 'offline_access',
     'https://outlook.office.com/IMAP.AccessAsUser.All', 'https://outlook.office.com/SMTP.Send',
+    'https://graph.microsoft.com/Mail.Send',
   ])
 })
 

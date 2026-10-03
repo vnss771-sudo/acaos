@@ -47,6 +47,24 @@ type ProviderSpec = {
   servers: MailServers
 }
 
+// An access token is issued for one resource. Microsoft needs the resource's
+// scopes on every token request; Google's single scope covers IMAP and SMTP.
+export type MailTokenAudience = 'mail' | 'graph'
+const MICROSOFT_AUDIENCE_SCOPES: Record<MailTokenAudience, string[]> = {
+  mail: ['https://outlook.office.com/IMAP.AccessAsUser.All', 'https://outlook.office.com/SMTP.Send'],
+  graph: ['https://graph.microsoft.com/Mail.Send'],
+}
+
+function audienceScope(p: MailOAuthProvider, audience: MailTokenAudience): Record<string, string> {
+  return p === 'microsoft' ? { scope: [...MICROSOFT_AUDIENCE_SCOPES[audience], 'offline_access'].join(' ') } : {}
+}
+
+/** Send Microsoft 365 mail through Graph (default on; MICROSOFT_SEND_VIA_GRAPH=false uses SMTP only). */
+export function microsoftGraphSendEnabled(): boolean {
+  const v = (process.env.MICROSOFT_SEND_VIA_GRAPH ?? '').trim().toLowerCase()
+  return !['false', '0', 'off', 'no'].includes(v)
+}
+
 function microsoftTenant(): string {
   const t = (process.env.MICROSOFT_OAUTH_TENANT || 'common').trim()
   return /^[A-Za-z0-9.-]{1,100}$/.test(t) ? t : 'common'
@@ -71,10 +89,13 @@ const PROVIDERS: Record<MailOAuthProvider, ProviderSpec> = {
     clientSecretEnv: 'MICROSOFT_OAUTH_CLIENT_SECRET',
     authUrl: () => `https://login.microsoftonline.com/${microsoftTenant()}/oauth2/v2.0/authorize`,
     tokenUrl: () => `https://login.microsoftonline.com/${microsoftTenant()}/oauth2/v2.0/token`,
+    // Consent covers both resources in one sign-in: Exchange (IMAP sync, SMTP
+    // fallback) and Microsoft Graph Mail.Send, which sends even where the tenant
+    // has turned SMTP AUTH off. Each token is then requested per resource.
     scopes: [
       'openid', 'email', 'offline_access',
-      'https://outlook.office.com/IMAP.AccessAsUser.All',
-      'https://outlook.office.com/SMTP.Send',
+      ...MICROSOFT_AUDIENCE_SCOPES.mail,
+      ...MICROSOFT_AUDIENCE_SCOPES.graph,
     ],
     extraAuthParams: { prompt: 'select_account' },
     // Port 587 STARTTLS is the only SMTP endpoint Microsoft supports for OAuth.
@@ -172,6 +193,13 @@ const defaultFetch: FetchLike = (url, init) => fetchWithTimeout(url, init, 15_00
 /** The provider refused the grant: the user must sign in again. */
 export class MailOAuthGrantError extends Error {}
 
+/**
+ * The grant is fine but doesn't cover this resource yet: a Microsoft mailbox
+ * connected before Graph sending was added. Not a reason to disconnect it; the
+ * caller falls back (SMTP) and a reconnect adds the consent.
+ */
+export class MailOAuthConsentError extends Error {}
+
 type TokenResponse = { access_token?: string; refresh_token?: string; expires_in?: number; id_token?: string; error?: string; error_description?: string }
 
 async function tokenRequest(p: MailOAuthProvider, form: Record<string, string>, fetchImpl: FetchLike): Promise<TokenResponse> {
@@ -185,6 +213,11 @@ async function tokenRequest(p: MailOAuthProvider, form: Record<string, string>, 
   let json: TokenResponse = {}
   try { json = (await res.json()) as TokenResponse } catch { /* non-JSON error body */ }
   if (!res.ok || !json.access_token) {
+    // AADSTS65001: the user never consented to this resource (checked first:
+    // Microsoft reports it as invalid_grant too).
+    if (json.error === 'consent_required' || /AADSTS65001\b/.test(json.error_description ?? '')) {
+      throw new MailOAuthConsentError(json.error_description || 'consent_required')
+    }
     // invalid_grant = revoked/expired/consumed; nothing but a new sign-in fixes it.
     if (json.error === 'invalid_grant') throw new MailOAuthGrantError(json.error_description || 'invalid_grant')
     throw new Error(`${PROVIDERS[p].label} token request failed (${res.status}${json.error ? ` ${json.error}` : ''})`)
@@ -209,7 +242,9 @@ function accountEmailFromIdToken(idToken: string | undefined): string | null {
 export type MailOAuthGrant = { accountEmail: string; refreshToken: string; accessToken: string; expiresAt: number }
 
 export async function exchangeMailOAuthCode(p: MailOAuthProvider, code: string, fetchImpl: FetchLike = defaultFetch, now: number = Date.now()): Promise<MailOAuthGrant> {
-  const json = await tokenRequest(p, { grant_type: 'authorization_code', code, redirect_uri: mailOAuthRedirectUri() }, fetchImpl)
+  // Ask for the IMAP/SMTP resource explicitly, so the token from sign-in is the
+  // 'mail' one primed into the cache (Graph tokens come from the refresh token).
+  const json = await tokenRequest(p, { grant_type: 'authorization_code', code, redirect_uri: mailOAuthRedirectUri(), ...audienceScope(p, 'mail') }, fetchImpl)
   if (!json.refresh_token) throw new ApiError(502, `${PROVIDERS[p].label} did not grant offline access — please try again`)
   const accountEmail = accountEmailFromIdToken(json.id_token)
   if (!accountEmail) throw new ApiError(502, `${PROVIDERS[p].label} did not return the mailbox address`)
@@ -238,7 +273,7 @@ const tokenCache = new Map<string, CachedToken>()
 
 /** Seed the cache with the token from a fresh sign-in (saves one refresh). */
 export function primeMailAccessToken(workspaceId: string, refreshBlob: string, accessToken: string, expiresAt: number): void {
-  tokenCache.set(workspaceId, { accessToken, expiresAt, refreshBlob })
+  tokenCache.set(`${workspaceId}:mail`, { accessToken, expiresAt, refreshBlob })
 }
 
 /** Test seam. */
@@ -261,26 +296,30 @@ const REFRESH_MARGIN_MS = 2 * 60_000
 export const RECONNECT_MESSAGE = 'Mailbox sign-in has expired or was revoked — reconnect it in Settings'
 
 /**
- * A valid access token for an OAuth mailbox config, refreshing when the cached
- * one is missing or within two minutes of expiry. A rejected refresh token
- * records oauthError (shown in Settings) and throws a 409 the caller surfaces.
+ * A valid access token for an OAuth mailbox config and resource ('mail' for
+ * IMAP/SMTP, 'graph' for Microsoft Graph), refreshing when the cached one is
+ * missing or within two minutes of expiry. A rejected refresh token records
+ * oauthError (shown in Settings) and throws a 409 the caller surfaces; a grant
+ * that simply lacks consent for the resource throws MailOAuthConsentError.
  */
-export async function getMailAccessToken(cfg: OAuthMailConfig, deps: AccessTokenDeps = {}): Promise<string> {
+export async function getMailAccessToken(cfg: OAuthMailConfig, deps: AccessTokenDeps = {}, audience: MailTokenAudience = 'mail'): Promise<string> {
   const provider = providerForAuthMethod(cfg.authMethod)
   const workspaceId = cfg.workspaceId
   if (!provider || !cfg.oauthRefreshToken || !workspaceId) throw new ApiError(409, 'Mailbox is not connected by sign-in')
   const now = (deps.now ?? Date.now)()
-  const cached = tokenCache.get(workspaceId)
+  const cacheKey = `${workspaceId}:${audience}`
+  const cached = tokenCache.get(cacheKey)
   if (cached && cached.refreshBlob === cfg.oauthRefreshToken && cached.expiresAt - REFRESH_MARGIN_MS > now) return cached.accessToken
 
   const refreshToken = isEncrypted(cfg.oauthRefreshToken) ? decryptSecret(cfg.oauthRefreshToken) : cfg.oauthRefreshToken
   const persist = deps.persist ?? defaultPersist
   let json: TokenResponse
   try {
-    json = await tokenRequest(provider, { grant_type: 'refresh_token', refresh_token: refreshToken }, deps.fetch ?? defaultFetch)
+    json = await tokenRequest(provider, { grant_type: 'refresh_token', refresh_token: refreshToken, ...audienceScope(provider, audience) }, deps.fetch ?? defaultFetch)
   } catch (err) {
     if (err instanceof MailOAuthGrantError) {
-      tokenCache.delete(workspaceId)
+      tokenCache.delete(`${workspaceId}:mail`)
+      tokenCache.delete(`${workspaceId}:graph`)
       await persist(workspaceId, { oauthError: RECONNECT_MESSAGE }).catch(() => {})
       throw new ApiError(409, RECONNECT_MESSAGE)
     }
@@ -293,13 +332,16 @@ export async function getMailAccessToken(cfg: OAuthMailConfig, deps: AccessToken
     refreshBlob = encryptSecret(json.refresh_token)
     await persist(workspaceId, { oauthRefreshToken: refreshBlob, oauthError: null })
   }
-  tokenCache.set(workspaceId, { accessToken: json.access_token!, expiresAt: now + (json.expires_in ?? 3600) * 1000, refreshBlob })
+  tokenCache.set(cacheKey, { accessToken: json.access_token!, expiresAt: now + (json.expires_in ?? 3600) * 1000, refreshBlob })
   return json.access_token!
 }
 
 /** Best-effort revocation on disconnect (Google only; Microsoft has no revoke endpoint). */
 export async function revokeMailOAuth(cfg: OAuthMailConfig, fetchImpl: FetchLike = defaultFetch): Promise<void> {
-  if (cfg.workspaceId) tokenCache.delete(cfg.workspaceId)
+  if (cfg.workspaceId) {
+    tokenCache.delete(`${cfg.workspaceId}:mail`)
+    tokenCache.delete(`${cfg.workspaceId}:graph`)
+  }
   if (providerForAuthMethod(cfg.authMethod) !== 'google' || !cfg.oauthRefreshToken) return
   const token = isEncrypted(cfg.oauthRefreshToken) ? decryptSecret(cfg.oauthRefreshToken) : cfg.oauthRefreshToken
   try {
