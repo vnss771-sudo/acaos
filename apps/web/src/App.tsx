@@ -46,6 +46,7 @@ const OpsRoster = lazy(() => import('./views/ops/OpsRoster.js').then(m => ({ def
 const OpsFatigue = lazy(() => import('./views/ops/OpsFatigue.js').then(m => ({ default: m.OpsFatigue })))
 const OpsAlerts = lazy(() => import('./views/ops/OpsAlerts.js').then(m => ({ default: m.OpsAlerts })))
 const OpsFindWork = lazy(() => import('./views/ops/OpsFindWork.js').then(m => ({ default: m.OpsFindWork })))
+const OpsDelivery = lazy(() => import('./views/ops/OpsDelivery.js').then(m => ({ default: m.OpsDelivery })))
 
 function ViewFallback() {
   return (
@@ -290,6 +291,7 @@ export function App() {
     'ops-fatigue': 'Field Ops — Fatigue',
     'ops-alerts': 'Field Ops — Alerts',
     'ops-find-work': 'Field Ops — Find work',
+    'ops-delivery': 'Field Ops — Jobs & margins',
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
@@ -472,6 +474,7 @@ export function App() {
             {view === 'ops-fatigue' && <OpsFatigue {...commonProps} setView={setView} />}
             {view === 'ops-alerts' && <OpsAlerts {...commonProps} canManage={canManage} setView={setView} />}
             {view === 'ops-find-work' && <OpsFindWork {...commonProps} canManage={canManage} setView={setView} />}
+            {view === 'ops-delivery' && <OpsDelivery {...commonProps} canManage={canManage} setView={setView} />}
             </Suspense>
           </ErrorBoundary>
         </main>

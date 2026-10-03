@@ -30,6 +30,7 @@ function install(opps: ReturnType<typeof opp>[], extra: Record<string, unknown> 
     outreachIntent: { findMany: async () => [{ id: 'i1', status: 'SENT', createdAt: new Date(NOW.getTime() - 18 * DAY), approvedAt: new Date(NOW.getTime() - 18 * DAY), commercialOpportunityId: 'o1', grounding: { grounded: true } }] },
     outreachSent: { findMany: async () => [{ id: 's1', outreachIntentId: 'i1', status: 'SENT', sentAt: new Date(NOW.getTime() - 30 * DAY), repliedAt: null, replyIntent: null, replyIsAutoReply: null }] },
     prospectOutcome: { findMany: async () => [] },
+    quote: { findMany: async () => [] },
     commercialEvent: { findMany: async () => opps.map(o => ({ prospectId: o.prospectId, kind: o.eventType, firstDetectedAt: o.firstDetectedAt })) },
     scoringModel: { findUnique: async () => null },
     learningRecommendation: { findMany: async () => [], create: async () => ({}), updateMany: async () => ({ count: 0 }) },

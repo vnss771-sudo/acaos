@@ -112,3 +112,23 @@ test('summary: funnel, implied stages, conversion and attributed revenue', () =>
   const empty = summarizeOutcomes([])
   assert.equal(empty.conversion.detectedToSent, null)
 })
+
+test('quotes on the opportunity are authoritative: prospect-level PROPOSAL/WON are ignored, meetings kept', () => {
+  const c = buildOutcomeChain({
+    opportunity: { ...opportunity, status: 'WON', statusChangedAt: at(15) }, intents, sends: [send()],
+    outcomes: [
+      { id: 'o1', stage: 'MEETING', recordedAt: at(8), dealValue: null },
+      // A win on ANOTHER of this prospect's opportunities — must not count here.
+      { id: 'o2', stage: 'WON', recordedAt: at(9), dealValue: 9_999_999 },
+    ],
+    quotes: [
+      { id: 'q1', status: 'REJECTED', amountCents: 5_000_000, createdAt: at(10), submittedAt: at(10), decidedAt: at(12) },
+      { id: 'q2', status: 'ACCEPTED', amountCents: 4_500_000, createdAt: at(13), submittedAt: at(13), decidedAt: at(15) },
+    ],
+  })
+  assert.deepEqual(c.nodes.map(n => n.stage), ['DETECTED', 'PROPOSED', 'APPROVED', 'SENT', 'MEETING', 'QUOTED', 'WON'])
+  assert.equal(c.revenueCents, 4_500_000)
+  assert.deepEqual(c.nodes.find(n => n.stage === 'QUOTED')?.ref, { type: 'quote', id: 'q1' })
+  assert.deepEqual(c.nodes.find(n => n.stage === 'WON')?.ref, { type: 'quote', id: 'q2' })
+  assert.equal(c.daysToOutcome, 15)
+})

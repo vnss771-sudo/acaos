@@ -15,6 +15,7 @@ import { leadsRouter } from './routes/leads.js'
 import { statsRouter } from './routes/stats.js'
 import { inboxRouter } from './routes/inbox.js'
 import { opportunitiesRouter } from './routes/opportunities.js'
+import { deliveryRouter } from './routes/delivery.js'
 import { offersRouter } from './routes/offers.js'
 import { commercialOpportunitiesRouter } from './routes/commercialOpportunities.js'
 import { evidenceGraphRouter } from './routes/evidenceGraph.js'
@@ -222,6 +223,7 @@ app.use('/api/leads', leadsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/inbox', inboxRouter)
 app.use('/api/opportunities', opportunitiesRouter)
+app.use('/api/delivery', deliveryRouter)
 app.use('/api/offers', offersRouter)
 app.use('/api/commercial-opportunities', commercialOpportunitiesRouter)
 app.use('/api/evidence-graph', evidenceGraphRouter)

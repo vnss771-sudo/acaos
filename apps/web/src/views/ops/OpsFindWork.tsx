@@ -11,6 +11,7 @@ import { EmptyState } from '../../components/ui/EmptyState.js'
 import { ErrorBanner } from '../../components/ui/ErrorBanner.js'
 import { Skeleton } from '../../components/ui/Skeleton.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
+import { QuoteCapture, type QuoteSummary } from '../../components/ops/QuoteCapture.js'
 
 // "Find work": jobs the discovery sweep found for this business (government
 // contracts a head contractor just won, development applications nearby), each
@@ -121,6 +122,8 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [form, setForm] = useState<ProfileForm>(toForm(null))
   const [saving, setSaving] = useState(false)
+  // Latest live quote per opportunity (admins only — quotes are commercial data).
+  const [quotes, setQuotes] = useState<Map<string, QuoteSummary>>(new Map())
 
   const reqRef = useRef(0)
   const load = useCallback(() => {
@@ -133,11 +136,21 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
     Promise.all([
       api<ListResponse>(`/api/opportunities?${params}`),
       api<ProfileResponse>(`/api/opportunities/profile?workspaceId=${workspace.id}`),
+      // Quotes are an enhancement here: if they fail to load, the work list still shows.
+      canManage
+        ? api<{ quotes: QuoteSummary[] }>(`/api/delivery/quotes?workspaceId=${workspace.id}`).catch(() => ({ quotes: [] as QuoteSummary[] }))
+        : Promise.resolve({ quotes: [] as QuoteSummary[] }),
     ])
-      .then(([list, profile]) => {
+      .then(([list, profile, quoteList]) => {
         if (reqId !== reqRef.current) return
         setData(list)
         setMeta(profile)
+        // Newest first from the API, so the first live quote per opportunity wins.
+        const latest = new Map<string, QuoteSummary>()
+        for (const q of quoteList.quotes ?? []) {
+          if (q.opportunityId && !latest.has(q.opportunityId) && q.status !== 'WITHDRAWN' && q.status !== 'REJECTED') latest.set(q.opportunityId, q)
+        }
+        setQuotes(latest)
       })
       .catch(e => {
         if (reqId !== reqRef.current) return
@@ -145,7 +158,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
         setLoadError(true)
       })
       .finally(() => { if (reqId === reqRef.current) setLoading(false) })
-  }, [workspace?.id, filter])
+  }, [workspace?.id, filter, canManage])
 
   useEffect(() => { load() }, [load])
 
@@ -391,6 +404,10 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
                   {o.counterpartyEmail && <a href={`mailto:${o.counterpartyEmail}`} style={{ color: colors.blueLight }}>{o.counterpartyEmail}</a>}
                   {o.sourceUrl && <a href={o.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: colors.blueLight }}>View source ↗</a>}
                 </div>
+              )}
+
+              {canManage && (o.status === 'PURSUING' || quotes.has(o.id)) && (
+                <QuoteCapture route={route} toast={toast} workspaceId={workspace.id} opportunityId={o.id} quote={quotes.get(o.id) ?? null} onChanged={load} />
               )}
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>

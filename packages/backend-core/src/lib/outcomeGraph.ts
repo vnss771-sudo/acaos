@@ -26,7 +26,7 @@ const PROGRESS_STAGES: ReadonlySet<OutcomeGraphStage> = new Set(['REPLIED', 'MEE
 export type OutcomeNode = {
   stage: OutcomeGraphStage
   at: string
-  ref: { type: 'commercialOpportunity' | 'recommendation' | 'outreachIntent' | 'outreachSent' | 'prospectOutcome'; id: string }
+  ref: { type: 'commercialOpportunity' | 'recommendation' | 'outreachIntent' | 'outreachSent' | 'prospectOutcome' | 'quote'; id: string }
   detail: string | null
 }
 
@@ -63,6 +63,10 @@ export type OutcomeSend = {
   replyIsAutoReply: boolean | null
 }
 export type OutcomeRecord = { id: string; stage: string; recordedAt: Date; dealValue: number | null }
+// A quote priced against THIS opportunity (phase 15A). Exact attribution, so
+// when an opportunity has any, they replace the prospect-level PROPOSAL/WON/LOST
+// records (which count one win toward every opportunity of the prospect).
+export type OutcomeQuote = { id: string; status: string; amountCents: number; createdAt: Date; submittedAt: Date | null; decidedAt: Date | null }
 
 const DAY = 86_400_000
 const SENT_STATUSES = new Set(['SENT', 'REPLIED'])
@@ -77,6 +81,7 @@ export function buildOutcomeChain(input: {
   intents?: OutcomeIntent[]
   sends?: OutcomeSend[]
   outcomes?: OutcomeRecord[]
+  quotes?: OutcomeQuote[]
 }): OutcomeChain {
   const opp = input.opportunity
   const detectedAt = opp.firstDetectedAt.getTime()
@@ -106,12 +111,24 @@ export function buildOutcomeChain(input: {
     .sort((a, b) => a.repliedAt!.getTime() - b.repliedAt!.getTime())[0]
   if (reply) add({ stage: 'REPLIED', at: reply.repliedAt!.toISOString(), ref: { type: 'outreachSent', id: reply.id }, detail: reply.replyIntent })
 
-  // Recorded outcomes for the prospect, from the moment the opportunity was detected.
-  const records = [...(input.outcomes ?? [])]
-    .filter(o => o.recordedAt.getTime() >= detectedAt && RECORD_STAGE[o.stage])
-    .sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime())
   const seen = new Set<OutcomeGraphStage>()
   let revenueCents: number | null = null
+  const quotes = input.quotes ?? []
+  if (quotes.length) {
+    const submitted = quotes.filter(q => q.submittedAt).sort((a, b) => a.submittedAt!.getTime() - b.submittedAt!.getTime())[0]
+    if (submitted) { seen.add('QUOTED'); add({ stage: 'QUOTED', at: submitted.submittedAt!.toISOString(), ref: { type: 'quote', id: submitted.id }, detail: `${submitted.amountCents}` }) }
+    const accepted = quotes.find(q => q.status === 'ACCEPTED')
+    if (accepted) {
+      seen.add('WON')
+      revenueCents = accepted.amountCents
+      add({ stage: 'WON', at: (accepted.decidedAt ?? accepted.createdAt).toISOString(), ref: { type: 'quote', id: accepted.id }, detail: `${accepted.amountCents}` })
+    }
+  }
+  // Recorded outcomes for the prospect, from the moment the opportunity was
+  // detected. With quotes, only MEETING still comes from here.
+  const records = [...(input.outcomes ?? [])]
+    .filter(o => o.recordedAt.getTime() >= detectedAt && RECORD_STAGE[o.stage] && (!quotes.length || o.stage === 'MEETING'))
+    .sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime())
   for (const o of records) {
     const stage = RECORD_STAGE[o.stage]!
     if (stage === 'WON' && o.dealValue != null) revenueCents = o.dealValue

@@ -317,6 +317,47 @@ export interface CreateJobFromOpportunityRequest {
   jobCode?: string
 }
 
+// ── Commercial capture (phase 15A): quotes and delivery jobs ─────────────────
+export type QuoteStatus = 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'WITHDRAWN'
+
+// POST /api/delivery/quotes — exactly one of opportunityId / commercialOpportunityId.
+export interface CreateQuoteRequest {
+  workspaceId: string
+  opportunityId?: string
+  commercialOpportunityId?: string
+  amountCents: number
+  estimatedHours?: number
+  notes?: string
+  // Create straight into SUBMITTED (the common case: the price has gone out).
+  submit?: boolean
+}
+
+// PATCH /api/delivery/quotes/:id/status
+export interface UpdateQuoteStatusRequest {
+  workspaceId: string
+  status: Exclude<QuoteStatus, 'DRAFT'>
+}
+
+// POST /api/delivery/quotes/:id/job
+export interface CreateJobFromQuoteRequest {
+  workspaceId: string
+  jobCode?: string
+}
+
+// POST /api/delivery/jobs/:id/closeout — null/absent money = unknown, never zero.
+export interface CloseoutJobRequest {
+  workspaceId: string
+  invoicedRevenueCents?: number | null
+  otherCostCents?: number | null
+  onCostPct?: number
+}
+
+// POST /api/delivery/jobs/:id/reopen
+export interface ReopenJobRequest {
+  workspaceId: string
+  reason: string
+}
+
 // ── Offers & commercial opportunities (Acquisition OS) ───────────────────────
 export type CommercialEventType =
   | 'ACTIVE_PROCUREMENT' | 'CAPACITY_EXPANSION' | 'GROWTH_EVENT' | 'ORGANISATIONAL_CHANGE'
@@ -742,6 +783,11 @@ export interface RouteContracts {
   'PATCH /api/opportunities/:id/status': { params: { id: string }; body: UpdateOpportunityStatusRequest; response: { success: boolean; status: OpportunityStatus } }
   'POST /api/opportunities/:id/create-job': { params: { id: string }; body: CreateJobFromOpportunityRequest; response: { jobSite: { id: string; jobCode: string } } }
   'POST /api/opportunities/run': { body: { workspaceId: string }; response: { queued: boolean } }
+  'POST /api/delivery/quotes': { body: CreateQuoteRequest; response: { quote: unknown } }
+  'PATCH /api/delivery/quotes/:id/status': { params: { id: string }; body: UpdateQuoteStatusRequest; response: { quote: unknown } }
+  'POST /api/delivery/quotes/:id/job': { params: { id: string }; body: CreateJobFromQuoteRequest; response: { job: unknown } }
+  'POST /api/delivery/jobs/:id/closeout': { params: { id: string }; body: CloseoutJobRequest; response: { job: unknown } }
+  'POST /api/delivery/jobs/:id/reopen': { params: { id: string }; body: ReopenJobRequest; response: { job: unknown } }
   'POST /api/offers': { body: CreateOfferRequest; response: { offer: unknown } }
   'PUT /api/offers/:id': { params: { id: string }; body: UpdateOfferRequest; response: { offer: unknown } }
   'PATCH /api/commercial-opportunities/:id/status': { params: { id: string }; body: UpdateCommercialOpportunityStatusRequest; response: { success: boolean; status: CommercialOpportunityStatus } }

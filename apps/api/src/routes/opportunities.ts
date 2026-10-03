@@ -245,6 +245,9 @@ opportunitiesRouter.post(
         // Guarded so two concurrent clicks can't both link a site.
         const linked = await tx.opportunity.updateMany({ where: { id, workspaceId, opsJobSiteId: null }, data: { opsJobSiteId: site.id } })
         if (linked.count === 0) throw new ApiError(409, 'A job site was already created for this opportunity')
+        // The delivery Job (phase 15A), carrying the accepted quote when there is one.
+        const accepted = await tx.quote.findFirst({ where: { workspaceId, opportunityId: id, status: 'ACCEPTED', job: { is: null } }, select: { id: true } })
+        await tx.job.create({ data: { workspaceId, opsJobSiteId: site.id, quoteId: accepted?.id ?? null } })
         return site
       })
     } catch (err) {
