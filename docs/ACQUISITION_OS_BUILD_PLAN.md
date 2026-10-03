@@ -20,7 +20,7 @@ The plan has 15 phases, grouped into release trains:
 | Revenue learning | 10–12 |
 | Network | 13 |
 | FieldOps loop (delivery economics) | 15A–C |
-| Operator console | 14 (after 15B, so it can show real margins) |
+| Operator console | 14 (next; shows real margins from 15B) |
 
 ## Done (merged to `master`)
 
@@ -40,7 +40,8 @@ The plan has 15 phases, grouped into release trains:
 | 11 Closed-loop learning | #327 | Deterministic cause per closed/stalled opportunity (competitor, contact, timing, signal, message); repeated causes become one advisory `OPPORTUNITY_CAUSE` review per workspace — PENDING in every mode, approve changes nothing | `lib/outcomeCauses.ts`, `lib/outcomeLearning.ts` | `ACQUISITION_OS_LEARNING.md` |
 | 12 Signal calibration | #328 | Funnel per event kind, combination lift, shrunk bounded event-kind weights proposed as `EVENT_KIND_WEIGHT` (approval only, never auto-applied); approved weights scale opportunity probability | `lib/signalCalibration.ts`, `lib/calibrationLearning.ts` | `ACQUISITION_OS_CALIBRATION.md` |
 | 13 Cross-customer intelligence | #329 | Opt-in only (`Workspace.networkOptInAt`); per-kind counts pooled daily into the global `NetworkBenchmark` table above a floor of 5 workspaces and 30 closed outcomes; no identifying data stored; read and opt-in APIs | `lib/networkIntelligence.ts` | `ACQUISITION_OS_NETWORK.md` |
-| 15A Commercial capture | (this PR) | `Quote` (one per opportunity of either type) and `Job` (1:1 job site); accepted quote → WON + job; closeout freezes economics (unknown never $0, labour vs gross margin); reopen audited; `/api/delivery/*`, all `ops:manage`; backfill of existing sites | `lib/jobEconomics.ts`, `routes/delivery.ts` | `ACQUISITION_OS_DELIVERY.md` |
+| 15A Commercial capture | #330 | `Quote` (one per opportunity of either type) and `Job` (1:1 job site); accepted quote → WON + job; closeout freezes economics (unknown never $0, labour vs gross margin); reopen audited; `/api/delivery/*`, all `ops:manage`; backfill of existing sites | `lib/jobEconomics.ts`, `routes/delivery.ts` | `ACQUISITION_OS_DELIVERY.md` |
+| 15B Capture UI + observe | #330 | Quote capture on Find work; *Jobs & margins* view (closeout, reopen, gaps); `/api/delivery/report` (medians with n, withheld below 3); quotes drive outcome attribution | `views/ops/OpsDelivery.tsx`, `components/ops/QuoteCapture.tsx` | same |
 
 **Pipeline per prospect.** It runs in `refreshCommercialOpportunities`, called from the
 worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=false`.
@@ -153,24 +154,18 @@ worker's `scoreProspects`. The kill switch is `COMMERCIAL_OPPORTUNITIES_ENABLED=
 
 ## Next phases (to do)
 
-**Order decided with the user:** finish the delivery loop first (15B), then the
-operator console (14), so the console can show expected margin honestly. 15C
+**Order decided with the user:** the delivery loop (15A–B) is done; the operator
+console (14) is next, so the console can show expected margin honestly. 15C
 waits on real closed jobs, not on code. Read `docs/ACQUISITION_OS_DELIVERY.md`
 first: its economic truth rules are invariants, like the gates above.
 
-### Phase 15B: Observe + capture UI (next)
-- Web capture at the moments the work already happens: quote on PURSUING, "start
-  the job" on accept, invoice + other costs at closeout (show `gaps`).
-- Delivery report: closed jobs grouped by origin and region, medians with *n*,
-  "not enough jobs yet" below a floor.
-- Outcome graph reads quotes ahead of `ProspectOutcome` where they exist.
-
-### Phase 14: Operator console (web UI)
+### Phase 14: Operator console (web UI) (next)
 The "what should I do today" home screen:
 - opportunities that need attention, with evidence and approve/dismiss actions
 - opportunities to monitor
 - new signals
-- pipeline influenced by ACAOS, and (once 15B exists) delivered margin
+- pipeline influenced by ACAOS, and delivered margin from `/api/delivery/report`
+- a quote form on commercial opportunities (the API already accepts them)
 
 **APIs that are ready:** under `/api/commercial-opportunities`: list and detail
 (with `recommendation`), `/:id/intent`, `/:id/outcome`, `/outcomes`, `/calibration`,
@@ -214,6 +209,6 @@ through `docs/GO_LIVE_CHECKLIST.md` top to bottom. In short:
 
 ## Kick-off prompt for the next session
 
-> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 15B
-> (capture UI + delivery report), following the invariants, economic truth rules, workflow
-> and lessons there. Open a PR and merge it when CI is green. Be conservative with tokens.
+> Read `docs/ACQUISITION_OS_BUILD_PLAN.md` and the docs it links. Continue with phase 14
+> (operator console), following the invariants, economic truth rules, workflow and
+> lessons there. Open a PR and merge it when CI is green. Be conservative with tokens.

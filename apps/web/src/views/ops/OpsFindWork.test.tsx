@@ -29,8 +29,9 @@ const OPP = {
   status: 'NEW', opsJobSiteId: null,
 }
 
-function mockApi(opts: { profile?: unknown; opportunities?: unknown[]; enabled?: boolean } = {}) {
+function mockApi(opts: { profile?: unknown; opportunities?: unknown[]; enabled?: boolean; quotes?: unknown[] } = {}) {
   return vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
+    if (path.startsWith('/api/delivery/quotes') && !init?.method) return Promise.resolve({ quotes: opts.quotes ?? [] })
     if (init?.method && init.method !== 'GET') {
       if (path.endsWith('/create-job')) return Promise.resolve({ jobSite: { id: 'j1', jobCode: 'OPP-ABC123' } })
       return Promise.resolve({ success: true, profile: PROFILE, queued: true })
@@ -121,5 +122,38 @@ describe('OpsFindWork', () => {
     const api = mockApi({ enabled: false })
     render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} setView={setView} />)
     expect(await screen.findByText(/Automatic searching is switched off/)).toBeInTheDocument()
+  })
+
+  test('admins record a quote on work they are pursuing (cents, straight to submitted)', async () => {
+    const api = mockApi({ opportunities: [{ ...OPP, status: 'PURSUING' }] })
+    render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Record quote' }))
+    await userEvent.type(screen.getByLabelText(/Quote amount/), '60,000')
+    await userEvent.type(screen.getByLabelText(/Estimated labour hours/), '400')
+    await userEvent.click(screen.getByRole('button', { name: 'Save quote' }))
+    const [path, init] = posts(api)[0]
+    expect(path).toBe('/api/delivery/quotes')
+    expect(JSON.parse((init as { body: string }).body)).toEqual({ workspaceId: 'ws1', opportunityId: 'o1', amountCents: 6_000_000, estimatedHours: 400, submit: true })
+  })
+
+  test('a submitted quote shows its figures and can be accepted', async () => {
+    const api = mockApi({
+      opportunities: [{ ...OPP, status: 'PURSUING' }],
+      quotes: [{ id: 'q1', opportunityId: 'o1', status: 'SUBMITTED', amountCents: 6_000_000, estimatedHours: 400 }],
+    })
+    render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    expect(await screen.findByText('$60,000')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Client accepted' }))
+    const [path, init] = posts(api)[0]
+    expect(path).toBe('/api/delivery/quotes/q1/status')
+    expect(JSON.parse((init as { body: string }).body)).toEqual({ workspaceId: 'ws1', status: 'ACCEPTED' })
+  })
+
+  test('members never load or see quotes', async () => {
+    const api = mockApi({ opportunities: [{ ...OPP, status: 'PURSUING' }] })
+    render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} setView={setView} />)
+    expect(await screen.findByText('Electrical maintenance — Brisbane office')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Record quote' })).toBeNull()
+    expect(api.mock.calls.some(([p]) => String(p).startsWith('/api/delivery'))).toBe(false)
   })
 })

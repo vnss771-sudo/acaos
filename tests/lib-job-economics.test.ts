@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeJobEconomics, canTransitionQuote, type EconomicsShift } from '../packages/backend-core/src/lib/jobEconomics.ts'
+import { computeJobEconomics, canTransitionQuote, buildDeliveryReport, type EconomicsShift, type ReportJob } from '../packages/backend-core/src/lib/jobEconomics.ts'
 
 const done = new Date('2026-10-01T16:00:00Z')
 const shift = (crewMemberId: string, totalHours: number, endTime: Date | null = done): EconomicsShift => ({ crewMemberId, totalHours, endTime })
@@ -82,4 +82,32 @@ test('quote transitions follow the lifecycle; terminal states are final', () => 
   assert.equal(canTransitionQuote('ACCEPTED', 'WITHDRAWN'), false)
   assert.equal(canTransitionQuote('WITHDRAWN', 'SUBMITTED'), false)
   assert.equal(canTransitionQuote('bogus', 'SUBMITTED'), false)
+})
+
+function closedJob(originKey: string, revenue: number, labourHours: number, estHours: number, other: number | null): ReportJob {
+  return {
+    originKey, originLabel: originKey,
+    economics: computeJobEconomics({ shifts: [shift('a', labourHours)], rates, quote: { amountCents: revenue, estimatedHours: estHours }, revenueCents: revenue, otherCostCents: other }),
+  }
+}
+
+test('delivery report: medians with n per origin, withheld below the floor, gross only where gross is known', () => {
+  const jobs = [
+    closedJob('DA', 1_000_000, 100, 100, 200_000),
+    closedJob('DA', 1_000_000, 120, 100, 300_000),
+    closedJob('DA', 1_000_000, 80, 100, null),
+    closedJob('TENDER', 1_000_000, 100, 100, 100_000),
+  ]
+  const r = buildDeliveryReport(jobs, 3)
+  assert.equal(r.overall.jobs, 4)
+  const da = r.groups.find(g => g.key === 'DA')!
+  assert.equal(r.groups[0].key, 'DA', 'largest group first')
+  assert.deepEqual(da.hoursVariancePct, { n: 3, median: 0, min: -20, max: 20 })
+  // Labour cost 5,000/6,000/4,000 dollars on 10,000 revenue → 50/40/60 %.
+  assert.deepEqual(da.labourMarginPct, { n: 3, median: 50, min: 40, max: 60 })
+  assert.equal(da.grossMarginPct, null, 'only 2 DA jobs have gross basis')
+  assert.equal(r.groups.find(g => g.key === 'TENDER')!.hoursVariancePct, null, 'one job is not a pattern')
+  assert.equal(r.overall.grossMarginPct!.n, 3)
+  assert.equal(r.overall.grossMarginPct!.median, 30)
+  assert.deepEqual(buildDeliveryReport([]).groups, [])
 })

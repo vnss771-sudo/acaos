@@ -5,6 +5,7 @@ import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { deliveryRouter } from '../apps/api/src/routes/delivery.ts'
 import { opportunitiesRouter } from '../apps/api/src/routes/opportunities.ts'
+import { loadOutcomeChain } from '../packages/backend-core/src/lib/outcomeGraphStore.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 
 let server: TestServer
@@ -234,4 +235,42 @@ test('migration constraints: one opportunity per quote, non-negative money', asy
   const q = await prisma.quote.create({ data: { workspaceId: workspace.id, opportunityId: opp.id, amountCents: 10 } })
   await prisma.opportunity.delete({ where: { id: opp.id } })
   assert.equal((await prisma.quote.findUnique({ where: { id: q.id } }))!.opportunityId, null)
+})
+
+test('report: closed jobs grouped by origin with medians and n; admin-only', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const crew = await prisma.opsCrewMember.create({ data: { workspaceId: workspace.id, employeeCode: 'R1', fullName: 'R', role: 'Electrician', baseRate: 100 } })
+  for (const hours of [90, 100, 110]) {
+    const opp = await seedOpportunity(workspace.id)
+    const quoteId = await acceptedQuote(user.id, workspace.id, { opportunityId: opp.id }, 2_000_000, 100)
+    const made = await req(user.id, 'POST', `/quotes/${quoteId}/job`, { workspaceId: workspace.id })
+    await seedShift(workspace.id, crew.id, made.body.job.opsJobSiteId, hours)
+    const closed = await req(user.id, 'POST', `/jobs/${made.body.job.id}/closeout`, { workspaceId: workspace.id, invoicedRevenueCents: 2_000_000, otherCostCents: 500_000 })
+    assert.equal(closed.status, 200)
+  }
+  const r = await req(user.id, 'GET', `/report?workspaceId=${workspace.id}`)
+  assert.equal(r.status, 200)
+  const da = r.body.report.groups[0]
+  assert.equal(da.label, 'Development applications')
+  assert.equal(da.jobs, 3)
+  assert.deepEqual(da.hoursVariancePct, { n: 3, median: 0, min: -10, max: 10 })
+  // Revenue 20,000; labour 10,000 at 100h; other 5,000 → 25 % gross.
+  assert.equal(da.grossMarginPct.median, 25)
+
+  const member = await seedUserWithWorkspace()
+  await prisma.membership.create({ data: { userId: member.user.id, workspaceId: workspace.id, role: 'member' } })
+  assert.equal((await req(member.user.id, 'GET', `/report?workspaceId=${workspace.id}`)).status, 403)
+})
+
+test('outcome graph: an accepted quote is the win and revenue for exactly that commercial opportunity', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const co = await seedCommercialOpportunity(workspace.id)
+  // A prospect-level win recorded for some other deal must not count as this one's revenue.
+  await prisma.prospectOutcome.create({ data: { workspaceId: workspace.id, prospectId: co.prospectId, stage: 'WON', dealValue: 9_999_900 } })
+  await acceptedQuote(user.id, workspace.id, { commercialOpportunityId: co.id }, 4_500_000)
+  const result = await loadOutcomeChain(workspace.id, co.id) as { chain: { final: string; revenueCents: number; nodes: Array<{ stage: string; ref: { type: string } }> } } | null
+  assert.ok(result)
+  assert.equal(result.chain.final, 'WON')
+  assert.equal(result.chain.revenueCents, 4_500_000)
+  assert.equal(result.chain.nodes.find(n => n.stage === 'WON')!.ref.type, 'quote')
 })

@@ -147,3 +147,63 @@ const QUOTE_TRANSITIONS: Record<QuoteStatus, readonly QuoteStatus[]> = {
 export function canTransitionQuote(from: string, to: QuoteStatus): boolean {
   return (QUOTE_TRANSITIONS[from as QuoteStatus] ?? []).includes(to)
 }
+
+// ── Delivery report (phase 15B) ──────────────────────────────────────────────
+// Closed jobs grouped by where the work came from. Medians, not means (a few
+// jobs, outliers); every figure carries its n; below the floor a metric is
+// withheld rather than guessed (truth rule 7).
+
+export const DELIVERY_REPORT_MIN_JOBS = 3
+
+export interface ReportJob {
+  originKey: string
+  originLabel: string
+  economics: JobEconomics
+}
+
+export interface ReportStat { n: number; median: number; min: number; max: number }
+
+export interface ReportGroup {
+  key: string
+  label: string
+  jobs: number
+  hoursVariancePct: ReportStat | null
+  revenueVsQuotePct: ReportStat | null
+  labourMarginPct: ReportStat | null
+  grossMarginPct: ReportStat | null
+}
+
+export interface DeliveryReport {
+  minJobs: number
+  overall: ReportGroup
+  groups: ReportGroup[]
+}
+
+function stat(values: Array<number | null>, minJobs: number): ReportStat | null {
+  const v = values.filter((x): x is number => x != null && Number.isFinite(x)).sort((a, b) => a - b)
+  if (v.length < minJobs) return null
+  const mid = Math.floor(v.length / 2)
+  const median = v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2
+  return { n: v.length, median: Math.round(median * 10) / 10, min: v[0], max: v[v.length - 1] }
+}
+
+function group(key: string, label: string, jobs: ReportJob[], minJobs: number): ReportGroup {
+  const e = jobs.map(j => j.economics)
+  return {
+    key, label, jobs: jobs.length,
+    hoursVariancePct: stat(e.map(x => x.hoursVariancePct), minJobs),
+    revenueVsQuotePct: stat(e.map(x => x.revenueVsQuotePct), minJobs),
+    // Labour margin is only comparable where labour cost is known; gross only where GROSS.
+    labourMarginPct: stat(e.map(x => x.labourMarginPct), minJobs),
+    grossMarginPct: stat(e.filter(x => x.marginBasis === 'GROSS').map(x => x.grossMarginPct), minJobs),
+  }
+}
+
+export function buildDeliveryReport(jobs: ReportJob[], minJobs = DELIVERY_REPORT_MIN_JOBS): DeliveryReport {
+  const byKey = new Map<string, ReportJob[]>()
+  for (const j of jobs) byKey.set(j.originKey, [...(byKey.get(j.originKey) ?? []), j])
+  const groups = [...byKey.entries()]
+    .map(([key, list]) => group(key, list[0].originLabel, list, minJobs))
+    .sort((a, b) => b.jobs - a.jobs || a.label.localeCompare(b.label))
+  return { minJobs, overall: group('ALL', 'All closed jobs', jobs, minJobs), groups }
+}

@@ -9,8 +9,8 @@ Phase 15 ships in three parts, and each one waits on real data from the one befo
 | Part | What | Status |
 |---|---|---|
 | **15A Capture** | `Quote`, `Job`, accepted quote → job, closeout that freezes the economics | Done (API) |
-| **15B Observe** | Quoted vs delivered per job and per origin (source, kind, region); capture prompts in the web UI | Next |
-| **15C Learn** | Margin by origin feeds an advisory `LearningRecommendation`, with minimum samples, never applied automatically | After 15B *and* real closed jobs |
+| **15B Observe** | Capture screens in the web app; quoted vs delivered per job and per origin; quotes drive outcome attribution | Done |
+| **15C Learn** | Margin by origin feeds an advisory `LearningRecommendation`, with minimum samples, never applied automatically | Next, once real closed jobs exist |
 
 ## Economic truth rules (don't break these)
 
@@ -59,25 +59,31 @@ attaches the opportunity's accepted quote if there is one.
 
 Audit types: `quote.created`, `quote.status`, `job.created`, `job.closeout`, `job.reopened`.
 
-## 15B — next
+## 15B — what shipped
 
-**Capture where the work already happens (web).** No accounting workflow:
-- When an opportunity moves to PURSUING, ask for the quote amount and estimated hours.
-- When the quote is accepted, offer "start the job".
-- When a job is done, ask for the invoice amount and other costs, and show `gaps`.
+**Capture where the work already happens (web, admins only).**
+- *Find work*: on an opportunity being pursued, **Record quote** (amount, estimated
+  hours) goes straight to SUBMITTED. Then **Client accepted** (marks it won) or
+  **Client declined**. The existing "Create job site" picks up the accepted quote.
+- *Jobs & margins* (`ops-delivery`, `/ops/delivery`): each job's quoted vs delivered
+  figures with its `gaps`; **Job done — close out** asks for the invoice amount,
+  materials and subcontractors, and labour on-costs (blank = unknown); **Reopen**
+  needs a reason.
 
-**Observe (API, then a view).** A per-workspace report of closed jobs grouped by
-origin (`origin.type` plus kind/source, and region): count, median and range of
-hours variance, revenue vs quote, labour margin and gross margin, each with its *n*.
-Use medians, not means. Below a minimum *n*, say "not enough jobs yet".
+**Observe.** `GET /api/delivery/report` groups closed jobs by origin (Work-discovery
+kind, or the commercial signal kind) with median, range and *n* for hours vs
+estimate, revenue vs quote, labour margin and gross margin (gross only over jobs
+whose basis is GROSS). Below `DELIVERY_REPORT_MIN_JOBS` (3) a figure is withheld.
+`buildDeliveryReport` in `lib/jobEconomics.ts` is pure.
 
-Label revenue-vs-quote as such: on trade work it is usually variations the client
-added, not an estimating miss.
+**Outcome graph.** When a commercial opportunity has its own quotes, they set
+QUOTED, WON and revenue (`ref.type: 'quote'`), and prospect-level PROPOSAL/WON/LOST
+records are ignored for it (meetings still count). Opportunities without quotes
+behave as before.
 
-**Outcome graph.** For opportunities with quotes, take QUOTED / WON / revenue from
-the quotes (exact attribution to one opportunity) ahead of `ProspectOutcome`, which
-counts one win toward every opportunity of the prospect. Older wins stay as they are,
-and reports say which source they came from.
+**Not yet:** grouping by region (only Work-discovery opportunities carry one), and a
+quote form on commercial opportunities in the web app (the API supports it; it
+belongs with the operator console).
 
 ## 15C — later, and only with real closed jobs
 

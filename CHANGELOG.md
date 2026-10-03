@@ -8,6 +8,11 @@
   hours vs estimate, labour and gross margin, unknowns reported instead of zeroed
 - `/api/delivery/*` (admin only); see `docs/ACQUISITION_OS_DELIVERY.md`
 
+### Delivery economics (phase 15B)
+- Record and decide quotes from Find work; new *Jobs & margins* screen with closeout and reopen
+- Report of what closed work earns by origin (medians with sample sizes)
+- Outcome graph attributes wins and revenue to the exact quoted opportunity
+
 ## v1.3.0 — Full Build Pass
 
 ### API — New routes

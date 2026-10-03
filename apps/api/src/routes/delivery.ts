@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
-import { computeJobEconomics, canTransitionQuote, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
+import { computeJobEconomics, canTransitionQuote, buildDeliveryReport, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type {
@@ -340,6 +340,37 @@ deliveryRouter.get(
 )
 
 const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
+
+const ORIGIN_KIND_LABEL: Record<string, string> = {
+  DEVELOPMENT_APPLICATION: 'Development applications',
+  CONTRACT_AWARD: 'Contract awards',
+}
+
+// GET /api/delivery/report — closed jobs grouped by where the work came from:
+// medians with their n, withheld below the floor. Registered before /jobs/:id.
+deliveryRouter.get(
+  '/report',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseQuery(workspaceQuerySchema, req)
+    await assertWorkspacePermission(user.id, workspaceId, 'ops:manage')
+    const jobs = await prisma.job.findMany({
+      where: { workspaceId, status: 'COMPLETE' },
+      orderBy: { completedAt: 'desc' },
+      take: 1000,
+      include: jobInclude,
+    }) as JobRow[]
+    const report = buildDeliveryReport(jobs.filter(j => j.closeout != null).map(j => {
+      const o = originOf(j)
+      const kind = o?.kind ?? 'UNKNOWN'
+      const label = o == null ? 'Unknown origin'
+        : o.type === 'OPPORTUNITY' ? (ORIGIN_KIND_LABEL[kind] ?? kind)
+        : `Signal: ${kind.toLowerCase().replace(/_/g, ' ')}`
+      return { originKey: `${o?.type ?? 'NONE'}:${kind}`, originLabel: label, economics: j.closeout as JobEconomics }
+    }))
+    res.json({ report })
+  })
+)
 
 async function loadJob(id: string, workspaceId: string): Promise<JobRow> {
   const job = await prisma.job.findFirst({ where: { id, workspaceId }, include: jobInclude }) as JobRow | null

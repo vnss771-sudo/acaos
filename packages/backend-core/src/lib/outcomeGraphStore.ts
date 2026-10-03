@@ -5,6 +5,7 @@ import { prisma } from './prisma.js'
 import {
   buildOutcomeChain, summarizeOutcomes,
   type OutcomeChain, type OutcomeIntent, type OutcomeOpportunity, type OutcomeRecord, type OutcomeSend, type OutcomeSummary,
+  type OutcomeQuote,
 } from './outcomeGraph.js'
 import { attributeCause, OUTCOME_CAUSES, type CauseAttribution, type OutcomeCause } from './outcomeCauses.js'
 
@@ -45,7 +46,7 @@ async function chainsFor(workspaceId: string, opps: OppRow[], now: Date): Promis
   if (opps.length === 0) return []
   const oppIds = opps.map(o => o.id)
   const prospectIds = [...new Set(opps.map(o => o.prospectId))]
-  const [recs, intents, outcomes] = await Promise.all([
+  const [recs, intents, outcomes, quotes] = await Promise.all([
     prisma.recommendation.findMany({
       where: { workspaceId, commercialOpportunityId: { in: oppIds } },
       select: { id: true, createdAt: true, actionText: true, commercialOpportunityId: true },
@@ -58,6 +59,10 @@ async function chainsFor(workspaceId: string, opps: OppRow[], now: Date): Promis
       where: { workspaceId, prospectId: { in: prospectIds } },
       select: { id: true, stage: true, recordedAt: true, dealValue: true, prospectId: true },
     }) as Promise<OutcomeRow[]>,
+    prisma.quote.findMany({
+      where: { workspaceId, commercialOpportunityId: { in: oppIds }, status: { in: ['SUBMITTED', 'ACCEPTED', 'REJECTED'] } },
+      select: { id: true, status: true, amountCents: true, createdAt: true, submittedAt: true, decidedAt: true, commercialOpportunityId: true },
+    }) as Promise<Array<OutcomeQuote & { commercialOpportunityId: string }>>,
   ])
   const sends = intents.length
     ? await prisma.outreachSent.findMany({
@@ -70,6 +75,7 @@ async function chainsFor(workspaceId: string, opps: OppRow[], now: Date): Promis
   const intentsByOpp = groupBy(intents, i => i.commercialOpportunityId)
   const sendsByIntent = groupBy(sends, s => s.outreachIntentId)
   const outcomesByProspect = groupBy(outcomes, o => o.prospectId)
+  const quotesByOpp = groupBy(quotes, q => q.commercialOpportunityId)
 
   return opps.map(o => {
     const its = intentsByOpp.get(o.id) ?? []
@@ -80,6 +86,7 @@ async function chainsFor(workspaceId: string, opps: OppRow[], now: Date): Promis
       intents: its,
       sends: oppSends,
       outcomes: outcomesByProspect.get(o.prospectId) ?? [],
+      quotes: quotesByOpp.get(o.id) ?? [],
     })
     // Only drafts that went out (an intent with a send) say anything about the message.
     const sentIntents = its.filter(i => (sendsByIntent.get(i.id) ?? []).length > 0)
