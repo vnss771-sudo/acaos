@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Microsoft 365 sending through Graph
+- Microsoft 365 mailboxes connected by sign-in now send through Microsoft Graph instead of SMTP, so
+  they can send even where the tenant has SMTP AUTH turned off (the default under security defaults).
+- The full MIME message is sent, keeping List-Unsubscribe, threading headers and the Message-ID used for
+  reply matching.
+- Sign-in now also asks for Graph `Mail.Send`. Mailboxes connected earlier keep sending over SMTP until
+  they are reconnected.
+- SMTP is tried only when Graph certainly didn't send (no consent yet, 401, 403 or 429). A `5.7.139` SMTP failure tells the user to
+  reconnect.
+- Kill switch: `MICROSOFT_SEND_VIA_GRAPH`
+
 ### Reply classification corrections that count
 - The Inbox 👎 now asks which label the reply should have had. Previously the verdict was only written
   to the audit log, and nothing read it back.

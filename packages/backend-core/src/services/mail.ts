@@ -18,7 +18,8 @@ import type { LeadStage } from '@acaos/shared'
 import { createHash } from 'node:crypto'
 import { assessRisk } from '../lib/riskEscalation.js'
 import { isFeatureEnabled } from '../lib/launchControls.js'
-import { getMailAccessToken, isOAuthMailConfig, providerForAuthMethod, type OAuthMailConfig } from '../lib/mailOAuth.js'
+import { getMailAccessToken, isOAuthMailConfig, MailOAuthConsentError, microsoftGraphSendEnabled, providerForAuthMethod, type OAuthMailConfig } from '../lib/mailOAuth.js'
+import { fetchWithTimeout } from '../lib/fetchWithTimeout.js'
 import {
   assessInboundEnquiry, enquiryExcerpt, parseHeaderBlock, ENQUIRY_KIND, ENQUIRY_SOURCE, type EnquiryRecord,
 } from '../lib/inboundEnquiry.js'
@@ -315,6 +316,25 @@ export function closeMailTransports(): void {
 export type SendMailOptions = { headers?: Record<string, string>; text?: string }
 
 export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null, opts?: SendMailOptions) {
+  const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
+  const message = {
+    from,
+    to,
+    subject,
+    html,
+    ...(opts?.text ? { text: opts.text } : {}),
+    ...(opts?.headers ? { headers: opts.headers } : {}),
+  }
+
+  // A Microsoft 365 mailbox connected by sign-in sends through Graph, which
+  // works where the tenant has turned SMTP AUTH off. null = Graph didn't send
+  // and can't (no consent yet, or refused before accepting): fall back to SMTP.
+  const microsoft = isOAuthMailConfig(cfg) && providerForAuthMethod(cfg!.authMethod) === 'microsoft'
+  if (microsoft && microsoftGraphSendEnabled()) {
+    const viaGraph = await sendViaGraph(cfg!, message)
+    if (viaGraph) return viaGraph
+  }
+
   // Workspace-supplied SMTP hosts are an SSRF surface: resolve and reject
   // private/loopback/metadata targets, then dial the resolved IP directly so the
   // check and the connect can't disagree (DNS-rebinding TOCTOU). Env-configured
@@ -322,15 +342,59 @@ export async function sendMail(to: string, subject: string, html: string, cfg?: 
   const pin = cfg?.smtpHost ? await resolvePublicMailHost(cfg.smtpHost, 'smtpHost') : undefined
   const accessToken = isOAuthMailConfig(cfg) ? await getMailAccessToken(cfg!) : undefined
   const transporter = buildTransport(cfg, pin, accessToken)
-  const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
-  return transporter.sendMail({
-    from,
-    to,
-    subject,
-    html,
-    ...(opts?.text ? { text: opts.text } : {}),
-    ...(opts?.headers ? { headers: opts.headers } : {}),
-  })
+  try {
+    return await transporter.sendMail(message)
+  } catch (err) {
+    // 5.7.139: this tenant/mailbox has SMTP AUTH disabled. Say how to fix it.
+    if (microsoft && /5\.7\.139|SmtpClientAuthentication/i.test(err instanceof Error ? err.message : String(err))) {
+      throw new ApiError(409, MICROSOFT_SMTP_DISABLED_MESSAGE)
+    }
+    throw err
+  }
+}
+
+export const MICROSOFT_SMTP_DISABLED_MESSAGE =
+  'Microsoft 365 has SMTP sending turned off for this mailbox. Reconnect it in Settings so ACAOS can send through Microsoft Graph, or ask your admin to allow Authenticated SMTP.'
+
+type OutgoingMessage = { from: string; to: string; subject: string; html: string; text?: string; headers?: Record<string, string> }
+
+// Builds the full RFC 5322 message locally so every header survives
+// (List-Unsubscribe, In-Reply-To/References for threading, our Message-ID for
+// reply attribution). Graph's JSON message format only allows X- headers.
+// newline 'windows' = CRLF (RFC 5322); nodemailer 10 ignores 'crlf' here.
+const mimeComposer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' })
+
+/**
+ * Send through Microsoft Graph (POST /me/sendMail with a base64 MIME body).
+ * Returns the sent message's id on 202 Accepted; null when Graph certainly did
+ * not send and SMTP may be tried (no Graph consent on this grant, or 401/403/429).
+ * Any other failure throws — a 5xx or timeout may have sent, so no fallback
+ * that could deliver twice.
+ */
+export async function sendViaGraph(
+  cfg: SmtpConfig,
+  message: OutgoingMessage,
+  deps: { fetch?: typeof fetchWithTimeout; getAccessToken?: typeof getMailAccessToken } = {},
+): Promise<{ messageId: string; accepted: string[]; transport: 'graph' } | null> {
+  let token: string
+  try {
+    token = await (deps.getAccessToken ?? getMailAccessToken)(cfg, {}, 'graph')
+  } catch (err) {
+    if (err instanceof MailOAuthConsentError) return null
+    throw err
+  }
+  const built = await mimeComposer.sendMail(message) as unknown as { message: Buffer; messageId: string }
+  const res = await (deps.fetch ?? fetchWithTimeout)('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
+    body: built.message.toString('base64'),
+  }, 30_000)
+  if (res.status === 202) return { messageId: built.messageId, accepted: [message.to], transport: 'graph' }
+  // Refused before accepting (auth, policy, throttling): nothing was sent.
+  if (res.status === 401 || res.status === 403 || res.status === 429) return null
+  let detail = ''
+  try { detail = ((await res.json()) as { error?: { code?: string; message?: string } }).error?.message ?? '' } catch { /* no body */ }
+  throw new Error(`Microsoft Graph send failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
 }
 
 // Strips quoted text and signatures to get the fresh reply content
