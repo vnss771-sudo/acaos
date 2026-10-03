@@ -4,6 +4,7 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { encryptSecret } from '@acaos/backend-core/lib/encrypt.js'
 import { assertPublicMailHost } from '@acaos/backend-core/lib/ssrf.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { AUTH_METHOD_PASSWORD, configuredMailOAuthProviders } from '@acaos/backend-core/lib/mailOAuth.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { z } from 'zod'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
@@ -56,6 +57,19 @@ const emailConfigRuntimeSchema = z.object({
   imapPass:   strField,
 })
 
+// Start domain warmup the first time a workspace gets a real sending mailbox
+// (saved by hand or connected by sign-in). At most once: an existing ramp is
+// never reset; POST /:id/warmup/start is the explicit restart.
+export async function startSenderWarmupOnce(workspaceId: string): Promise<void> {
+  const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { warmupStartedAt: true } })
+  if (icp && icp.warmupStartedAt != null) return
+  await prisma.workspaceICP.upsert({
+    where: { workspaceId },
+    create: { workspaceId, warmupStartedAt: new Date(), targetIndustries: [], targetGeos: [], excludedIndustries: [] },
+    update: { warmupStartedAt: new Date() },
+  })
+}
+
 export function registerEmailConfigRoutes(workspaceRouter: Router) {
   workspaceRouter.get(
     '/:id/email-config',
@@ -80,7 +94,12 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
           imapSecure: config.imapSecure,
           imapUser: config.imapUser,
           imapPassSet: !!config.imapPass,
-        } : null
+          authMethod: config.authMethod,
+          oauthAccountEmail: config.oauthAccountEmail,
+          oauthError: config.oauthError,
+        } : null,
+        // Sign-in providers this deployment offers (client credentials configured).
+        oauthProviders: configuredMailOAuthProviders(),
       })
     })
   )
@@ -109,6 +128,12 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
         imapSecure: parsed.imapSecure,
         imapUser:   parsed.imapUser,
         imapPass:   rawImapPass ? encryptSecret(rawImapPass) : null,
+        // Saving server settings by hand replaces any sign-in connection.
+        authMethod: AUTH_METHOD_PASSWORD,
+        oauthAccountEmail: null,
+        oauthRefreshToken: null,
+        oauthConnectedAt: null,
+        oauthError: null,
       }
 
       // F-04: SSRF validation — reject hosts that are, or resolve to, private/
@@ -135,16 +160,7 @@ export function registerEmailConfigRoutes(workspaceRouter: Router) {
       // already being null), so re-saving/editing an established sender's config
       // never resets its ramp. An explicit manual restart lives at
       // POST /:id/warmup/start for the "reset after a long pause" case.
-      if (data.smtpHost) {
-        const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { warmupStartedAt: true } })
-        if (!icp || icp.warmupStartedAt == null) {
-          await prisma.workspaceICP.upsert({
-            where: { workspaceId },
-            create: { workspaceId, warmupStartedAt: new Date(), targetIndustries: [], targetGeos: [], excludedIndustries: [] },
-            update: { warmupStartedAt: new Date() },
-          })
-        }
-      }
+      if (data.smtpHost) await startSenderWarmupOnce(workspaceId)
 
       // Audit the config change. Record only non-secret connection hints — never
       // the SMTP/IMAP passwords (encrypted or raw); just whether they were set.

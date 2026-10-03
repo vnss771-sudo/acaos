@@ -14,7 +14,7 @@ import { WorkspaceSection, type WorkspaceForm } from '../components/settings/Wor
 import { TeamSection, type MemberForm, type PendingInvite } from '../components/settings/TeamSection.js'
 import { IcpSection, type IcpForm } from '../components/settings/IcpSection.js'
 import { BusinessContextSection } from '../components/settings/BusinessContextSection.js'
-import { EmailConfigSection, type EmailConfigForm } from '../components/settings/EmailConfigSection.js'
+import { EmailConfigSection, type EmailConfigForm, type EmailOAuthState, type MailOAuthProvider } from '../components/settings/EmailConfigSection.js'
 import { DeliverabilitySection, type DomainCheckResult, type DomainMonitor, type WarmupStatus, type ReputationVerdict } from '../components/settings/DeliverabilitySection.js'
 import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
@@ -59,6 +59,15 @@ type Props = {
   canManage?: boolean
 }
 
+// Reason codes from GET /api/mailbox/oauth/callback (routes/mailboxOAuth.ts).
+const MAILBOX_OAUTH_ERRORS: Record<string, string> = {
+  cancelled: 'Sign-in was cancelled — the mailbox was not connected',
+  expired: 'Sign-in took too long — please try again',
+  forbidden: 'You need to be a workspace admin to connect the mailbox',
+  exchange_failed: 'The provider did not complete the sign-in — please try again',
+  provider_error: 'The provider reported an error — please try again',
+}
+
 export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspaceUpdate, canManage = false }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [profileForm, setProfileForm] = useState({ name: user.name ?? '' })
@@ -91,6 +100,8 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
   const emptyEmail: EmailConfigForm = { smtpHost: '', smtpPort: '587', smtpSecure: false, smtpUser: '', smtpPass: '', smtpFrom: '', imapHost: '', imapPort: '993', imapSecure: true, imapUser: '', imapPass: '', smtpPassSet: false, imapPassSet: false }
   const [emailForm, setEmailForm] = useState<EmailConfigForm>(emptyEmail)
   const [savingEmail, setSavingEmail] = useState(false)
+  const [emailOAuth, setEmailOAuth] = useState<EmailOAuthState | null>(null)
+  const [oauthBusy, setOauthBusy] = useState(false)
 
   // API Keys
   const [keyWorking, setKeyWorking] = useState(false)
@@ -139,8 +150,16 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
         }
       })
       .catch(() => { if (!cancelled) toast.error('Failed to load ICP settings') })
-    api<{ config: Record<string, unknown> | null }>(`/api/workspaces/${workspace.id}/email-config`)
+    api<{ config: Record<string, unknown> | null; oauthProviders?: MailOAuthProvider[] }>(`/api/workspaces/${workspace.id}/email-config`)
       .then(d => {
+        if (!cancelled) {
+          setEmailOAuth({
+            providers: d.oauthProviders ?? [],
+            authMethod: String(d.config?.authMethod ?? 'PASSWORD'),
+            accountEmail: d.config?.oauthAccountEmail ? String(d.config.oauthAccountEmail) : null,
+            error: d.config?.oauthError ? String(d.config.oauthError) : null,
+          })
+        }
         if (d.config && !cancelled) {
           setEmailForm({
             smtpHost: String(d.config.smtpHost ?? ''),
@@ -364,6 +383,43 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
   }
 
+  // Back from a provider sign-in (/settings?mailbox=connected|error&reason=…):
+  // say how it went once, then drop the query so a reload doesn't repeat it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const outcome = params.get('mailbox')
+    if (!outcome) return
+    if (outcome === 'connected') toast.success('Mailbox connected')
+    else toast.error(MAILBOX_OAUTH_ERRORS[params.get('reason') ?? ''] ?? 'Could not connect the mailbox')
+    params.delete('mailbox'); params.delete('reason')
+    const qs = params.toString()
+    window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`)
+  }, [])
+
+  async function connectMailboxOAuth(provider: MailOAuthProvider) {
+    if (!workspace) return
+    setOauthBusy(true)
+    try {
+      const { url } = await route('POST /api/mailbox/oauth/start', { body: { workspaceId: workspace.id, provider } })
+      window.location.assign(url)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start sign-in')
+      setOauthBusy(false)
+    }
+  }
+
+  async function disconnectMailboxOAuth() {
+    if (!workspace) return
+    setOauthBusy(true)
+    try {
+      await route('POST /api/mailbox/oauth/disconnect', { body: { workspaceId: workspace.id } })
+      setEmailOAuth(o => o ? { ...o, authMethod: 'PASSWORD', accountEmail: null, error: null } : o)
+      setEmailForm(f => ({ ...f, smtpHost: '', smtpUser: '', smtpFrom: '', imapHost: '', imapUser: '', smtpPassSet: false, imapPassSet: false }))
+      toast.success('Mailbox disconnected')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not disconnect') }
+    finally { setOauthBusy(false) }
+  }
+
   async function saveEmailConfig() {
     if (!workspace) return
     setSavingEmail(true)
@@ -554,7 +610,10 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
 
       {workspace && isOwnerOrAdmin && (
         <div id={SETTINGS_SECTIONS.email} style={anchorStyle}>
-          <EmailConfigSection emailForm={emailForm} setEmailForm={setEmailForm} saving={savingEmail} onSave={saveEmailConfig} />
+          <EmailConfigSection
+            emailForm={emailForm} setEmailForm={setEmailForm} saving={savingEmail} onSave={saveEmailConfig}
+            oauth={emailOAuth ?? undefined} oauthBusy={oauthBusy} onOAuthConnect={connectMailboxOAuth} onOAuthDisconnect={disconnectMailboxOAuth}
+          />
         </div>
       )}
 

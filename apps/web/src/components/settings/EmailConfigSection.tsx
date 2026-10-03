@@ -40,17 +40,60 @@ const PROVIDER_PRESETS: {
   },
 ]
 
-export function EmailConfigSection({ emailForm, setEmailForm, saving, onSave }: {
+export type MailOAuthProvider = 'google' | 'microsoft'
+
+// Sign-in connection state (server: lib/mailOAuth.ts). authMethod PASSWORD means
+// the manual SMTP/IMAP form below is in use.
+export type EmailOAuthState = {
+  providers: MailOAuthProvider[]
+  authMethod: string
+  accountEmail: string | null
+  error: string | null
+}
+
+const OAUTH_LABEL: Record<MailOAuthProvider, string> = { google: 'Sign in with Google', microsoft: 'Sign in with Microsoft' }
+const OAUTH_PROVIDER_OF: Record<string, MailOAuthProvider> = { GOOGLE_OAUTH: 'google', MICROSOFT_OAUTH: 'microsoft' }
+const OAUTH_NAME: Record<MailOAuthProvider, string> = { google: 'Google', microsoft: 'Microsoft' }
+
+export function EmailConfigSection({ emailForm, setEmailForm, saving, onSave, oauth, oauthBusy = false, onOAuthConnect, onOAuthDisconnect }: {
   emailForm: EmailConfigForm
   setEmailForm: React.Dispatch<React.SetStateAction<EmailConfigForm>>
   saving: boolean
   onSave: () => void
+  oauth?: EmailOAuthState
+  oauthBusy?: boolean
+  onOAuthConnect?: (provider: MailOAuthProvider) => void
+  onOAuthDisconnect?: () => void
 }) {
   const [presetNote, setPresetNote] = React.useState<string | null>(null)
 
   function applyPreset(preset: typeof PROVIDER_PRESETS[number]) {
     setEmailForm(f => ({ ...f, ...preset.values }))
     setPresetNote(preset.note)
+  }
+
+  const connectedVia = oauth ? OAUTH_PROVIDER_OF[oauth.authMethod] : undefined
+  if (oauth && connectedVia) {
+    return (
+      <div style={s.card}>
+        <div style={s.sectionHeader}>Email Configuration</div>
+        <div style={{ color: colors.text, fontSize: 14, marginBottom: 6 }}>
+          Connected to <strong>{oauth.accountEmail ?? 'your mailbox'}</strong> by signing in with {OAUTH_NAME[connectedVia]}.
+        </div>
+        <div style={{ color: colors.textMuted, fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
+          ACAOS sends the emails you approve from this address and picks up replies and new enquiries from its inbox. No password is stored.
+        </div>
+        {oauth.error && (
+          <div role="alert" style={{ color: colors.red, fontSize: 13, marginBottom: 12 }}>{oauth.error}</div>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {oauth.error && oauth.providers.includes(connectedVia) && (
+            <button style={s.btn} disabled={oauthBusy} onClick={() => onOAuthConnect?.(connectedVia)}>Reconnect</button>
+          )}
+          <button style={s.btnGhost} disabled={oauthBusy} onClick={() => onOAuthDisconnect?.()}>Disconnect</button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -61,6 +104,19 @@ export function EmailConfigSection({ emailForm, setEmailForm, saving, onSave }: 
         <strong>receiving (IMAP)</strong> lets ACAOS pick up replies and sort them in your Inbox.
         Your passwords are stored encrypted.
       </div>
+
+      {oauth && oauth.providers.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {oauth.providers.map(p => (
+              <button key={p} type="button" style={s.btn} disabled={oauthBusy} onClick={() => onOAuthConnect?.(p)}>{OAUTH_LABEL[p]}</button>
+            ))}
+          </div>
+          <div style={{ color: colors.textFaint, fontSize: 12 }}>
+            Easiest for Gmail, Google Workspace, Outlook and Microsoft 365 — no app password needed. Or enter server settings by hand below.
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: presetNote ? 8 : 16 }}>
         <span style={{ color: colors.textFaint, fontSize: 12 }}>Quick setup:</span>
