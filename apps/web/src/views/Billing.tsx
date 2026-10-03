@@ -54,23 +54,22 @@ type BillingStatus = {
 // the enforced limits.
 const PLAN_FEATURES: Record<string, string[]> = {
   free: [
-    '1 workspace',
-    'Basic lead management'
+    'Find work: tenders and development applications for your trade',
+    'Quotes, jobs, crew, shifts and margins',
+    'Up to 2 team members'
   ],
   starter: [
-    'AI-powered email research',
-    'Smart compose & reply',
-    'Lead tagging and notes',
-    'Bulk import (CSV)',
-    'Async job queue',
-    'Email integration'
+    'Everything in Free',
+    'Up to 5 team members',
+    'Client signals and AI research',
+    'Email outreach — nothing sends without your approval',
+    'Replies sorted by intent'
   ],
   growth: [
-    'Everything in Inbox Assistant',
+    'Everything in Contractor',
+    'Up to 25 team members (crews and office)',
     'Multiple workspaces',
-    'Team collaboration (25 seats)',
-    'Advanced reporting',
-    'Dedicated success manager',
+    'Dedicated onboarding and success manager',
     'Custom SLA and support'
   ]
 }

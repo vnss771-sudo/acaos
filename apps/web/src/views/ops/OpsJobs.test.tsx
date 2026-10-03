@@ -38,7 +38,7 @@ describe('OpsJobs', () => {
   test('shows the empty state when there are no job sites', async () => {
     const api = apiFor([])
     render(<OpsJobs api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
-    expect(await screen.findByText(/No job sites yet/i)).toBeInTheDocument()
+    expect(await screen.findByText(/No sites yet/i)).toBeInTheDocument()
   })
 
   test('a member (canManage=false) sees job sites but no Add/Edit/Archive controls', async () => {
@@ -108,7 +108,7 @@ describe('OpsJobs', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /Archive/i }))
     const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByText(/Archive job site\?/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/Archive site\?/i)).toBeInTheDocument()
 
     await userEvent.click(within(dialog).getByRole('button', { name: /^Archive$/i }))
 

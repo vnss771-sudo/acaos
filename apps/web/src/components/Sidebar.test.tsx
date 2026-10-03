@@ -24,26 +24,26 @@ describe('Sidebar', () => {
     renderSidebar()
     expect(screen.getByText('Northwind Trades')).toBeInTheDocument()
     expect(screen.getByText('sarah@northwind.test')).toBeInTheDocument()
-    for (const label of ['Home', 'Analytics', 'Potential clients', 'Campaigns', 'Leads', 'AI Tools', 'Billing', 'Settings']) {
+    for (const label of ['Today', 'Find work', 'Clients', 'Jobs & margins', 'Crew', 'Campaigns', 'Analytics', 'AI tools', 'Overview', 'Billing', 'Settings']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
   })
 
-  test('groups the advanced surfaces under headings so the daily loop reads as the primary set', () => {
+  test('groups email outreach under its own heading so the contractor loop reads as the primary set', () => {
     renderSidebar()
-    expect(screen.getByText('Discover & analyze')).toBeInTheDocument()
+    expect(screen.getByText('Outreach')).toBeInTheDocument()
     expect(screen.getByText('Account')).toBeInTheDocument()
   })
 
   test('clicking a nav item calls setView with its id', async () => {
     const { setView } = renderSidebar()
-    await userEvent.click(screen.getByText('Potential clients'))
+    await userEvent.click(screen.getByText('Clients'))
     expect(setView).toHaveBeenCalledWith('prospects')
   })
 
   test('shows the plan label for the workspace', () => {
     renderSidebar({ workspace: { ...workspace, plan: 'growth' } })
-    expect(screen.getByText(/Growth plan/i)).toBeInTheDocument()
+    expect(screen.getByText(/Contractor Pro plan/i)).toBeInTheDocument()
   })
 
   test('falls back to the free plan when there is no workspace', () => {
@@ -58,15 +58,15 @@ describe('Sidebar', () => {
   })
 
   describe('hub nav mode', () => {
-    test('renders the five hubs instead of the flat grouped nav', () => {
+    test('renders the contractor hubs instead of the flat grouped nav', () => {
       renderSidebar({ hubNav: true })
-      for (const label of ['Home', 'Potential clients', 'Outreach', 'Inbox', 'Settings']) {
+      for (const label of ['Today', 'Work', 'Crew', 'Outreach', 'Settings']) {
         expect(screen.getByText(label)).toBeInTheDocument()
       }
       // Merged-away surfaces are no longer top-level items.
       expect(screen.queryByText('Campaigns')).not.toBeInTheDocument()
       expect(screen.queryByText('Analytics')).not.toBeInTheDocument()
-      expect(screen.queryByText('Discover & analyze')).not.toBeInTheDocument()
+      expect(screen.queryByText('Find work')).not.toBeInTheDocument()
     })
 
     test('selecting a hub opens its first tab', async () => {
@@ -76,8 +76,8 @@ describe('Sidebar', () => {
     })
 
     test('highlights the hub that owns the current view', () => {
-      renderSidebar({ hubNav: true, view: 'leads' })
-      expect(screen.getByText('Potential clients').closest('button')).toHaveAttribute('aria-current', 'page')
+      renderSidebar({ hubNav: true, view: 'ops-delivery' })
+      expect(screen.getByText('Work').closest('button')).toHaveAttribute('aria-current', 'page')
     })
   })
 })

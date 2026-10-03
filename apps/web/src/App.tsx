@@ -86,7 +86,7 @@ export function App() {
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
-  const [view, setView, replaceView] = useViewRouter('dashboard')
+  const [view, setView, replaceView] = useViewRouter('today')
   // Resolved once per session — the hub-nav flag is static (env / localStorage).
   const [hubNav] = useState(isHubNavEnabled)
   const [booting, setBooting] = useState(true)
@@ -191,7 +191,7 @@ export function App() {
   // over a blank panel. A replace, not a push: the user didn't ask for this
   // navigation, so it shouldn't leave a Back stop.
   useEffect(() => {
-    if (view === 'admin' && user && !user.isPlatformAdmin) replaceView('dashboard')
+    if (view === 'admin' && user && !user.isPlatformAdmin) replaceView('today')
   }, [view, user, replaceView])
 
   function handleWorkspaceUpdate(updated: Workspace) {
@@ -267,28 +267,28 @@ export function App() {
   const isAdmin = Boolean(user.isPlatformAdmin)
 
   const VIEW_TITLE: Record<View, string> = {
-    dashboard: 'Home',
+    dashboard: 'Overview',
     intelligence: 'Analytics',
-    prospects: 'Potential clients',
+    prospects: 'Clients',
     missions: 'Missions',
     campaigns: 'Campaigns',
-    approvals: 'To Review',
+    approvals: 'To review',
     inbox: 'Inbox',
     leads: 'Leads',
-    ai: 'AI Tools',
+    ai: 'AI tools',
     billing: 'Billing',
     settings: 'Settings',
     admin: 'Admin Panel',
     today: 'Today',
-    'ops-dashboard': 'Field Ops',
-    'ops-crew': 'Field Ops — Crew',
-    'ops-jobs': 'Field Ops — Job Sites',
-    'ops-shifts': 'Field Ops — Shifts',
-    'ops-roster': 'Field Ops — Roster',
-    'ops-fatigue': 'Field Ops — Fatigue',
-    'ops-alerts': 'Field Ops — Alerts',
-    'ops-find-work': 'Field Ops — Find work',
-    'ops-delivery': 'Field Ops — Jobs & margins',
+    'ops-dashboard': 'Crew — Overview',
+    'ops-crew': 'Crew',
+    'ops-jobs': 'Crew — Sites',
+    'ops-shifts': 'Crew — Shifts',
+    'ops-roster': 'Crew — Roster',
+    'ops-fatigue': 'Crew — Fatigue',
+    'ops-alerts': 'Crew — Alerts',
+    'ops-find-work': 'Find work',
+    'ops-delivery': 'Jobs & margins',
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
@@ -489,6 +489,7 @@ export function App() {
           api={api}
           toast={toast}
           onComplete={() => handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })}
+          onNavigate={setView}
           onConnectEmail={() => {
             handleWorkspaceUpdate({ ...activeWorkspace, onboardingCompleted: true })
             openSettingsSection(setView, 'email')

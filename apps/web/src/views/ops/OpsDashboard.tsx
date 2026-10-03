@@ -33,7 +33,7 @@ export function OpsDashboard({ api, workspace, toast, setView }: Props) {
     setLoading(true)
     api<{ overview: OpsOverview }>(`/api/ops/admin/overview?workspaceId=${workspace.id}`)
       .then(d => { if (reqId === reqRef.current) setOverview(d.overview) })
-      .catch(e => { if (reqId === reqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load Field Ops overview') })
+      .catch(e => { if (reqId === reqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load the crew overview') })
       .finally(() => { if (reqId === reqRef.current) setLoading(false) })
   }, [workspace?.id])
 
@@ -44,7 +44,7 @@ export function OpsDashboard({ api, workspace, toast, setView }: Props) {
       <OpsSubNav view="ops-dashboard" setView={setView} />
 
       <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 16 }}>
-        Field Ops is the operational side of the product — crew, job sites, and shift scheduling. It's separate from Leads/Campaigns, which cover sales and outreach.
+        Where jobs get done: your crew, the sites they work on, rosters and shifts. Hours logged here feed each job's margin in Jobs &amp; margins.
       </div>
 
       {loading && !overview ? (
@@ -52,12 +52,12 @@ export function OpsDashboard({ api, workspace, toast, setView }: Props) {
           {[0, 1, 2, 3].map(i => <Card key={i}><Skeleton height={70} /></Card>)}
         </Grid>
       ) : !overview ? (
-        <EmptyState title="No Field Ops data yet" description="Add crew members and job sites to get started." />
+        <EmptyState title="No crew or sites yet" description="Add your crew and a site to get started — or win a job in Find work and start it." />
       ) : (
         <div style={s.stack}>
           <Grid cols={4}>
             <KpiCard label="Active Crew" value={overview.activeCrewCount} />
-            <KpiCard label="Job Sites" value={overview.jobSiteCount} />
+            <KpiCard label="Sites" value={overview.jobSiteCount} />
             <KpiCard label="Open Alerts" value={overview.openAlertCount} color={overview.openAlertCount > 0 ? colors.amber : colors.text} />
             <KpiCard label="Hours This Week" value={overview.thisWeekShiftHours} />
           </Grid>

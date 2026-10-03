@@ -7,41 +7,36 @@ import { HUBS, hubForView, defaultViewForHub } from '../lib/hubs.js'
 type NavItem = { id: View; label: string; icon: string }
 type NavGroup = { heading?: string; items: NavItem[] }
 
-// Two-tier nav so the 11 surfaces don't read as 11 equal choices. The first group
-// (no heading) is the daily loop — the five things you touch every day, in order:
-// see what needs you (Home) → work your leads → run campaigns → clear the review
-// queue → handle replies. Everything else is demoted under headed groups so it's
-// there when wanted but out of the way. Labels favour plain words over jargon
-// (Home, not "Radar"; To Review, not "Review Queue"; Analytics, not "Intelligence").
+// Flat nav (the rollback for the hub nav). The first group is the contractor's
+// daily loop in order — what needs a decision, find work, the clients behind it,
+// the jobs being delivered, the crew doing them. Email outreach and analysis sit
+// under their own heading: there when wanted, out of the way otherwise.
 const NAV_GROUPS: NavGroup[] = [
   {
     items: [
-      { id: 'dashboard', label: 'Home', icon: '⬡' },
       { id: 'today', label: 'Today', icon: '☀' },
-      { id: 'prospects', label: 'Potential clients', icon: '◎' },
-      { id: 'leads', label: 'Leads', icon: '▤' },
-      { id: 'campaigns', label: 'Campaigns', icon: '▣' },
-      { id: 'approvals', label: 'To Review', icon: '✓' },
-      { id: 'inbox', label: 'Inbox', icon: '✉' },
+      { id: 'ops-find-work', label: 'Find work', icon: '⚒' },
+      { id: 'prospects', label: 'Clients', icon: '◎' },
+      { id: 'ops-delivery', label: 'Jobs & margins', icon: '$' },
+      { id: 'ops-dashboard', label: 'Crew', icon: '⚡' },
     ],
   },
   {
-    heading: 'Discover & analyze',
+    heading: 'Outreach',
     items: [
+      { id: 'campaigns', label: 'Campaigns', icon: '▣' },
+      { id: 'approvals', label: 'To review', icon: '✓' },
+      { id: 'inbox', label: 'Inbox', icon: '✉' },
+      { id: 'leads', label: 'Leads', icon: '▤' },
       { id: 'missions', label: 'Missions', icon: '◇' },
       { id: 'intelligence', label: 'Analytics', icon: '◈' },
-      { id: 'ai', label: 'AI Tools', icon: '✦' },
-    ],
-  },
-  {
-    heading: 'Field Ops',
-    items: [
-      { id: 'ops-dashboard', label: 'Field Ops', icon: '⚡' },
+      { id: 'ai', label: 'AI tools', icon: '✦' },
     ],
   },
   {
     heading: 'Account',
     items: [
+      { id: 'dashboard', label: 'Overview', icon: '⬡' },
       { id: 'settings', label: 'Settings', icon: '◌' },
       { id: 'billing', label: 'Billing', icon: '◆' },
     ],
@@ -129,7 +124,8 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hu
               // The single "Field Ops" entry stands in for 7 view ids (its own
               // always-visible sub-nav switches between them — see OpsSubNav) — so
               // it stays highlighted for any of them, not just the exact match.
-              const active = n.id === 'ops-dashboard' ? view.startsWith('ops-') : view === n.id
+              // "Crew" stands for every crew page; Find work and Jobs & margins have their own entries.
+              const active = n.id === 'ops-dashboard' ? view.startsWith('ops-') && view !== 'ops-find-work' && view !== 'ops-delivery' : view === n.id
               return (
                 <button
                   key={n.id}

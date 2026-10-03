@@ -145,7 +145,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
     if (statusFilter) params.set('status', statusFilter)
     api<{ jobSites: OpsJobSite[]; total: number }>(`/api/ops/jobs?${params}`)
       .then(d => { if (reqId === reqRef.current) { setJobSites(d.jobSites || []); setTotal(d.total || 0) } })
-      .catch(e => { if (reqId === reqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load job sites') })
+      .catch(e => { if (reqId === reqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load sites') })
       .finally(() => { if (reqId === reqRef.current) setLoading(false) })
   }, [workspace?.id, page, statusFilter])
 
@@ -184,7 +184,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
     } catch (e) {
       // The backend returns a clear 409 message for a duplicate job code
       // ("A job site with this job code already exists") — surface it as-is.
-      toast.error(e instanceof Error ? e.message : 'Failed to add job site')
+      toast.error(e instanceof Error ? e.message : 'Failed to add site')
     } finally { setSaving(false) }
   }
 
@@ -196,7 +196,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
       setEditTarget(null)
       toast.success('Job site updated')
       fetchJobs()
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to update job site') }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to update site') }
     finally { setSaving(false) }
   }
 
@@ -208,7 +208,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
       toast.success(`${archiveTarget.siteName} archived`)
       setArchiveTarget(null)
       fetchJobs()
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to archive job site') }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to archive site') }
     finally { setArchiving(false) }
   }
 
@@ -239,7 +239,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
           <option value="ACTIVE">Active</option>
           <option value="ARCHIVED">Archived</option>
         </select>
-        <span style={{ color: colors.textFaint, fontSize: 13 }}>{total} job site{total === 1 ? '' : 's'}</span>
+        <span style={{ color: colors.textFaint, fontSize: 13 }}>{total} site{total === 1 ? '' : 's'}</span>
         {canManage && (
           <button style={{ ...s.btn, marginLeft: 'auto' }} onClick={openAdd}>+ Add Job Site</button>
         )}
@@ -252,8 +252,8 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
           </div>
         ) : jobSites.length === 0 ? (
           <EmptyState
-            title="No job sites yet"
-            description="Add a job site to start rostering crew and tracking shifts against it."
+            title="No sites yet"
+            description="Add a site to roster crew and log shifts against it — starting a job from Find work creates one for you."
             action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add Job Site</button> : undefined}
           />
         ) : (
@@ -300,7 +300,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
       <Modal
         open={!!archiveTarget}
         onClose={() => setArchiveTarget(null)}
-        title="Archive job site?"
+        title="Archive site?"
         width={420}
         footer={<>
           <button style={s.btnSecondary} onClick={() => setArchiveTarget(null)}>Cancel</button>

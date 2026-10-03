@@ -21,23 +21,63 @@ function seedBody(api: Api) {
 
 async function walkToStep3(api: Api, props: Partial<React.ComponentProps<typeof OnboardingWizard>> = {}) {
   render(<OnboardingWizard workspace={workspace} api={api as never} toast={toast as never} onComplete={vi.fn()} {...props} />)
+  await userEvent.click(screen.getByRole('button', { name: /Set up email outreach/ }))
   await userEvent.click(screen.getByRole('button', { name: 'Select Industrial Services' }))
   await userEvent.click(screen.getByRole('button', { name: /Continue/ }))
   await screen.findByText('Want some example data to explore?')
 }
 
-// Step 3 now leads to the "Your first potential clients" step before the final screen.
+// Step 3 now leads to the "Your first clients" step before the final screen.
 async function skipFirstProspects() {
-  await screen.findByText('Your first potential clients')
+  await screen.findByText('Your first clients')
   await userEvent.click(screen.getByRole('button', { name: /Skip for now/ }))
 }
 
 describe('OnboardingWizard', () => {
-  test('explains how the product works before asking anything', () => {
+  test('starts by asking which job ACAOS does first, with skip available', () => {
     render(<OnboardingWizard workspace={workspace} api={makeApi() as never} toast={toast as never} onComplete={vi.fn()} />)
     expect(screen.getByText('Welcome to ACAOS')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /I'm a trade contractor/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Set up email outreach/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Skip setup/ })).toBeInTheDocument()
+  })
+
+  test('the email path explains how outreach works before asking anything', async () => {
+    render(<OnboardingWizard workspace={workspace} api={makeApi() as never} toast={toast as never} onComplete={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: /Set up email outreach/ }))
     expect(screen.getByText(/nothing sends without you/)).toBeInTheDocument()
     expect(screen.getByText('Step 1 of 3 · Pick your business type')).toBeInTheDocument()
+  })
+
+  test('the contractor path saves trades and regions to Find work, then lands on Find work', async () => {
+    const api = vi.fn((path: string, _init?: { method?: string; body?: string }) => path.startsWith('/api/opportunities/profile?')
+      ? Promise.resolve({ trades: [{ id: 'electrical', label: 'Electrical' }, { id: 'plumbing', label: 'Plumbing' }], regions: ['QLD', 'NSW'], sources: [{ name: 'austender', label: 'AusTender', configured: true }, { name: 'planningalerts', label: 'DAs', configured: false }] })
+      : Promise.resolve({}))
+    const onComplete = vi.fn()
+    const onNavigate = vi.fn()
+    render(<OnboardingWizard workspace={workspace} api={api as never} toast={toast as never} onComplete={onComplete} onNavigate={onNavigate} />)
+    await userEvent.click(screen.getByRole('button', { name: /I'm a trade contractor/ }))
+    await userEvent.click(await screen.findByLabelText('Electrical'))
+    await userEvent.click(screen.getByLabelText('QLD'))
+    await userEvent.click(screen.getByRole('button', { name: /Start finding work/ }))
+    expect(await screen.findByText('You’re set up')).toBeInTheDocument()
+    const put = api.mock.calls.find(([p, i]) => p === '/api/opportunities/profile' && i?.method === 'PUT')
+    expect(JSON.parse(put![1]!.body!)).toEqual({ workspaceId: 'ws1', enabled: true, trades: ['electrical'], keywords: [], regions: ['QLD'], sources: ['austender', 'planningalerts'] })
+    expect(seedBody(api as never)).toEqual({ playbookId: null, includeExamples: false })
+    await userEvent.click(screen.getByRole('button', { name: /Go to Find work/ }))
+    expect(onComplete).toHaveBeenCalled()
+    expect(onNavigate).toHaveBeenCalledWith('ops-find-work')
+  })
+
+  test('the contractor path needs at least one trade', async () => {
+    const api = vi.fn((path: string) => path.startsWith('/api/opportunities/profile?')
+      ? Promise.resolve({ trades: [{ id: 'electrical', label: 'Electrical' }], regions: ['QLD'], sources: [] })
+      : Promise.resolve({}))
+    render(<OnboardingWizard workspace={workspace} api={api as never} toast={toast as never} onComplete={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: /I'm a trade contractor/ }))
+    await screen.findByLabelText('Electrical')
+    await userEvent.click(screen.getByRole('button', { name: /Start finding work/ }))
+    expect(toast.error).toHaveBeenCalledWith('Pick at least one trade')
   })
 
   test('adding examples seeds them and the final screen says so', async () => {
@@ -79,7 +119,7 @@ describe('OnboardingWizard', () => {
         : {}))
     await walkToStep3(api)
     await userEvent.click(screen.getByRole('button', { name: /Looks good/ }))
-    await screen.findByText('Your first potential clients')
+    await screen.findByText('Your first clients')
 
     const submit = screen.getByRole('button', { name: /Prepare my first emails/ })
     expect(submit).toBeDisabled()

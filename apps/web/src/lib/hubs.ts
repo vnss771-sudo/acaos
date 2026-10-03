@@ -1,46 +1,50 @@
 import type { View } from '../types.js'
 
-// ── Consolidated 5-hub navigation (on by default) ──────────────────────
-// The product is one acquisition loop that had grown to 11 top-level pages. This
-// collapses them into five hubs, each hosting the existing page views as sub-tabs:
+// ── Contractor-first hub navigation (on by default) ─────────────────────
+// The product is one loop for a trade business — find work, win it, run it,
+// learn what pays — so the hubs follow that loop in order:
 //
-//   Home      → Dashboard
-//   Prospects → Prospects · Leads · Analytics (was Intelligence)
-//   Outreach  → Campaigns · Missions · To Review (was Approvals) · AI Tools
-//   Inbox     → Inbox (replies / response triage only — draft approval lives in Outreach)
-//   Settings  → Settings (incl. Compliance, Team, Mailboxes) · Billing · Admin
+//   Today    → Today (what needs a decision) · Overview (the old Home dashboard)
+//   Work     → Find work · Clients · Jobs & margins
+//   Crew     → Overview · Crew · Shifts · Roster · Sites · Fatigue · Alerts
+//   Outreach → Campaigns · To review · Inbox · Leads · Missions · Analytics · AI tools
+//   Settings → Settings · Billing · Admin
 //
-// This is a NAV-ONLY grouping: nothing is merged at the data layer, no route or
-// view is deleted, and every existing `view` id stays valid — so the command palette
-// and any deep links keep working.
+// NAV-ONLY grouping: no view or route is deleted and every `view` id stays valid,
+// so the command palette and deep links keep working.
 
-export type HubId = 'home' | 'prospects' | 'outreach' | 'inbox' | 'settings'
+export type HubId = 'today' | 'work' | 'crew' | 'outreach' | 'settings'
 
 export type HubTab = { view: View; label: string; adminOnly?: boolean }
 export type Hub = { id: HubId; label: string; icon: string; tabs: HubTab[] }
 
 export const HUBS: Hub[] = [
-  { id: 'home', label: 'Home', icon: '⬡', tabs: [
-    { view: 'dashboard', label: 'Home' },
+  { id: 'today', label: 'Today', icon: '☀', tabs: [
     { view: 'today', label: 'Today' },
-    // 'Field Ops' is one HubTabs entry standing in for 8 view ids, exactly like
-    // the flat nav's single sidebar entry — its own always-visible OpsSubNav
-    // switches between them, not this hub-tab strip.
-    { view: 'ops-dashboard', label: 'Field Ops' },
+    { view: 'dashboard', label: 'Overview' },
   ] },
-  { id: 'prospects', label: 'Potential clients', icon: '◎', tabs: [
-    { view: 'prospects', label: 'Potential clients' },
-    { view: 'leads', label: 'Leads' },
-    { view: 'intelligence', label: 'Analytics' },
+  { id: 'work', label: 'Work', icon: '⚒', tabs: [
+    { view: 'ops-find-work', label: 'Find work' },
+    { view: 'prospects', label: 'Clients' },
+    { view: 'ops-delivery', label: 'Jobs & margins' },
+  ] },
+  { id: 'crew', label: 'Crew', icon: '⚡', tabs: [
+    { view: 'ops-dashboard', label: 'Overview' },
+    { view: 'ops-crew', label: 'Crew' },
+    { view: 'ops-shifts', label: 'Shifts' },
+    { view: 'ops-roster', label: 'Roster' },
+    { view: 'ops-jobs', label: 'Sites' },
+    { view: 'ops-fatigue', label: 'Fatigue' },
+    { view: 'ops-alerts', label: 'Alerts' },
   ] },
   { id: 'outreach', label: 'Outreach', icon: '▣', tabs: [
     { view: 'campaigns', label: 'Campaigns' },
-    { view: 'missions', label: 'Missions' },
-    { view: 'approvals', label: 'To Review' },
-    { view: 'ai', label: 'AI Tools' },
-  ] },
-  { id: 'inbox', label: 'Inbox', icon: '✉', tabs: [
+    { view: 'approvals', label: 'To review' },
     { view: 'inbox', label: 'Inbox' },
+    { view: 'leads', label: 'Leads' },
+    { view: 'missions', label: 'Missions' },
+    { view: 'intelligence', label: 'Analytics' },
+    { view: 'ai', label: 'AI tools' },
   ] },
   { id: 'settings', label: 'Settings', icon: '◌', tabs: [
     { view: 'settings', label: 'Settings' },
@@ -49,7 +53,7 @@ export const HUBS: Hub[] = [
   ] },
 ]
 
-// The hub that owns a given view. Falls back to Home for any unmapped view so the
+// The hub that owns a given view. Falls back to Today for any unmapped view so the
 // nav can never end up with no hub highlighted.
 export function hubForView(view: View): Hub {
   return HUBS.find(h => h.tabs.some(t => t.view === view)) ?? HUBS[0]
@@ -69,9 +73,8 @@ export function defaultViewForHub(hub: Hub, isAdmin: boolean): View {
 
 // Whether the consolidated hub nav is active. A runtime localStorage override wins
 // (so it can be dogfooded — or rolled back — in a browser without a rebuild);
-// otherwise the build-time VITE_HUB_NAV flag decides. Defaults ON: the hub nav
-// groups Lead/Prospect and Missions/Campaigns together, so VITE_HUB_NAV=false (or localStorage acaos_hub_nav=0)
-// is a rollback switch back to the old flat nav, not the normal path.
+// otherwise the build-time VITE_HUB_NAV flag decides. Defaults ON; VITE_HUB_NAV=false
+// (or localStorage acaos_hub_nav=0) is a rollback switch to the flat sidebar nav.
 export function isHubNavEnabled(): boolean {
   try {
     const override = localStorage.getItem('acaos_hub_nav')

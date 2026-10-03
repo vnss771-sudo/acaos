@@ -110,7 +110,7 @@ function Evidence({ r }: { r: LearningRecommendationDto }) {
         <table style={{ marginTop: 8, borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr style={{ textAlign: 'left', color: colors.textFaint }}>
-              <th>Industry</th><th>Wins / potential clients</th><th>Observed</th><th>Adjusted</th><th>vs overall</th>
+              <th>Industry</th><th>Wins / clients</th><th>Observed</th><th>Adjusted</th><th>vs overall</th>
             </tr>
           </thead>
           <tbody>

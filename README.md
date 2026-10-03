@@ -1,47 +1,60 @@
-# ACAOS — Agentic Client Acquisition OS
+# ACAOS — find profitable work, win it, run it
 
-**Inbox Assistant**: AI-powered email intelligence platform for agencies. Classify replies, auto-suggest responses, manage high-volume inboxes. Built on a modular OS supporting discovery, outreach, and operations.
+**For trade contractors.** ACAOS finds the work (tenders and development
+applications for your trade and area, plus businesses showing buying signals),
+helps you win it, runs it (crew, shifts, sites), and tells you which work
+actually made money — so next month you chase better work, not just more.
 
-**Current status: Inbox Assistant controlled paid beta. Multi-module platform in active development.**
-
----
-
-## Product modules
-
-**Inbox Assistant** (primary entry offering)
-- AI-powered email classification and reply triage
-- Smart compose suggestions (human-in-the-loop)
-- Multi-inbox management for agencies
-- Built-in approval workflow for audit trails
-
-**Discover & Outreach** (growth/expansion)
-- Signal-based prospect discovery
-- Campaign-based outreach with AI generation
-- Reply tracking and learning feedback loop
-- ROI analytics per campaign
-
-**Operations** (enterprise)
-- Crew and job-site management
-- Shift tracking and fatigue monitoring
-- Alert and compliance management
+**Status:** pre-launch. The product is built and tested end to end; launch needs
+hosting accounts and keys only (see [`docs/GO_LIVE_CHECKLIST.md`](docs/GO_LIVE_CHECKLIST.md)).
 
 ---
 
-## Core flow: Inbox Assistant
+## The contractor loop
 
 ```
-Connect email → AI classification → Review replies → Suggest actions
-→ Approve responses → Send with audit trail → Learn from patterns
+Find work → Pursue → Contact & quote → Win → Start the job → Crew & shifts → Close out → Margin
+     ↑                                                                                      │
+     └──────────────────── learn which work actually pays ─────────────────────────────────┘
 ```
 
-**Platform features across all modules:**
-- Multi-tenant workspaces with Stripe billing and role-based access control
-- Per-workspace email (SMTP/IMAP) configuration with encrypted credential storage
-- Human-in-the-loop AI: all generated content requires approval before sending
-- Full audit trails for compliance and transparency
-- Async job queue (Redis + BullMQ) for background processing
-- Admin dashboard for platform observability
-- Open API for integrations and custom workflows
+| Step | Where in the app | What happens |
+|---|---|---|
+| Find work | **Work → Find work** | Every morning: government contracts just awarded and council development applications that match your trade and area, each with the evidence and who to call |
+| Pursue | Find work card → **Pursue** | Marks it as work you're going after |
+| Contact & quote | Same card: phone/email links, **Record quote** | Price and estimated labour hours, captured while you're doing it |
+| Win | **Client accepted** | The work is marked won; the card follows you to the Won tab |
+| Start the job | **Start the job** | Creates the job and its site in one click |
+| Crew & shifts | **Crew → Crew / Shifts / Roster** | Crew with hourly rates; hours logged against the job's site |
+| Close out | **Work → Jobs & margins → Job done — close out** | Invoice amount, materials and subcontractors, labour on-costs |
+| Margin | **Jobs & margins**, **Today** | Quoted vs delivered, labour and gross margin, and what each kind of work earns |
+
+**Today** is the landing screen: what needs a decision now (with the evidence
+behind it), work won but not started, new this week, and the numbers — open
+pipeline, won revenue, quote-to-win rate and delivered margin.
+
+### Honest numbers
+
+- An unknown is shown as unknown with the reason ("2 crew have no base rate"),
+  never as $0.
+- A finished job's figures are frozen; changing a rate later never rewrites them.
+- Patterns (e.g. "development applications earn 29% gross") are shown only with
+  the number of jobs behind them, and withheld below 3.
+
+### Also included
+
+- **Clients:** businesses showing buying signals (expansion, hiring, contract
+  wins), scored, with cited evidence and the next move.
+- **Outreach:** email campaigns with nothing sent before you approve it, and an
+  inbox that sorts replies by intent.
+- **Crew safety:** fatigue monitoring and alerts.
+
+Positioning, pricing and terminology: [`POSITIONING.md`](POSITIONING.md).
+Demo script: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+
+**Platform:** multi-tenant workspaces, role-based access (crew see their own
+work; quotes, rates and margins are admin-only), Stripe billing, full audit
+trail, background jobs (Redis + BullMQ), encrypted mailbox credentials.
 
 ---
 

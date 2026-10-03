@@ -84,7 +84,7 @@ describe('ProspectsView', () => {
 
     await userEvent.click(await screen.findByText('Meridian Roofing'))
 
-    expect(await screen.findByText('Potential client brief')).toBeInTheDocument()
+    expect(await screen.findByText('Client brief')).toBeInTheDocument()
     expect(screen.getByText(/Driven mainly by their funding signal/i)).toBeInTheDocument()
     expect(screen.getByText(/Construction is one of your target industries/)).toBeInTheDocument()
     expect(screen.getByText(/Fast-track to proposal/)).toBeInTheDocument()

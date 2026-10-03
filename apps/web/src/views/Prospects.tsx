@@ -490,7 +490,7 @@ export function ProspectsView({ api, workspace, toast, canManage = false }: Prop
       // refresh as the run finalizes.
       toast.success(res.deduped
         ? 'Discovery already running for this query — results will appear shortly.'
-        : 'Discovery started — new potential clients will appear shortly.')
+        : 'Discovery started — new clients will appear shortly.')
     } catch (e: unknown) { toast.error((e as Error).message) }
     finally { setDiscovering(false); loadRuns() }
   }

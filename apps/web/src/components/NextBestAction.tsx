@@ -30,9 +30,9 @@ export function computeNextBestAction({ stats, hotCount, signalCount }: Input): 
   if (!stats || stats.totalLeads === 0) {
     return {
       id: 'discover',
-      title: 'Find your first potential clients',
+      title: 'Find your first clients',
       body: 'Your pipeline is empty. Find high-intent accounts that match your ideal customer.',
-      cta: 'Find potential clients',
+      cta: 'Find clients',
       view: 'prospects',
       tone: 'blue',
     }
@@ -81,7 +81,7 @@ export function computeNextBestAction({ stats, hotCount, signalCount }: Input): 
   return {
     id: 'momentum',
     title: "You're all caught up",
-    body: 'No urgent actions. Review mission performance or add more potential clients.',
+    body: 'No urgent actions. Review mission performance or add more clients.',
     cta: 'Open missions',
     view: 'missions',
     tone: 'blue',

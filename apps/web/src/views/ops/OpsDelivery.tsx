@@ -210,7 +210,7 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
           )}
 
           {(jobs ?? []).length === 0 ? (
-            <EmptyState title="No jobs yet" description="Record a quote on work you're pursuing in Find work. When the client accepts, create the job site and it appears here." />
+            <EmptyState title="No jobs yet" description="Record a quote on work you're pursuing in Find work. When the client accepts, start the job and it appears here." />
           ) : (jobs ?? []).map(j => {
             const e = j.economics
             return (
@@ -253,7 +253,15 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                   </ul>
                 )}
 
-                {j.status === 'ACTIVE' && closing !== j.id && <button style={s.btnSm} onClick={() => startCloseout(j)}>Job done — close out</button>}
+                {j.status === 'ACTIVE' && closing !== j.id && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* The next step for this job, in the order the work happens. */}
+                    {e && e.actualHours === 0 && <span style={{ fontSize: 12, color: colors.textMuted }}>Next: add your crew and log shifts against {j.site.jobCode}.</span>}
+                    {e && e.gaps.some(g => g.includes('no base rate')) && <button style={s.btnGhost} onClick={() => setView('ops-crew')}>Set crew rates</button>}
+                    <button style={s.btnGhost} onClick={() => setView('ops-shifts')}>Log shifts</button>
+                    <button style={s.btnSm} onClick={() => startCloseout(j)}>Job done — close out</button>
+                  </div>
+                )}
                 {j.status === 'ACTIVE' && closing === j.id && (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div>

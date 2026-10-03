@@ -68,7 +68,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
       .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load crew'))
     api<{ jobSites: OpsJobSite[] }>(`/api/ops/jobs?workspaceId=${workspace.id}&status=ACTIVE&limit=100`)
       .then(d => { if (!cancelled) setJobSites(d.jobSites || []) })
-      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load job sites'))
+      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load sites'))
     return () => { cancelled = true }
   }, [workspace?.id])
 
@@ -274,7 +274,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
     } as Column<OpsShiftRecord>] : []),
   ]
 
-  const activeShiftJobSiteName = status?.shift ? (jobSiteById.get(status.shift.jobSiteId)?.siteName ?? 'a job site') : ''
+  const activeShiftJobSiteName = status?.shift ? (jobSiteById.get(status.shift.jobSiteId)?.siteName ?? 'a site') : ''
   const isClockedIn = !!(status?.clockedIn && status.shift)
 
   return (
@@ -298,7 +298,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
               <div>
                 <label style={s.label} htmlFor="clock-job-site">Job Site</label>
                 <select id="clock-job-site" style={s.input} value={clockJobSiteId} onChange={e => setClockJobSiteId(e.target.value)}>
-                  <option value="">Select job site</option>
+                  <option value="">Select site</option>
                   {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
                 </select>
               </div>
@@ -412,7 +412,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
           <div>
             <label style={s.label} htmlFor="shift-add-job-site">Job Site</label>
             <select id="shift-add-job-site" style={s.input} value={manualForm.jobSiteId} onChange={e => setManualForm(f => ({ ...f, jobSiteId: e.target.value }))} required>
-              <option value="">Select job site</option>
+              <option value="">Select site</option>
               {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
             </select>
           </div>

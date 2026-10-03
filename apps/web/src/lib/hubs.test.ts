@@ -3,14 +3,16 @@ import { HUBS, hubForView, visibleTabs, defaultViewForHub, isHubNavEnabled } fro
 import type { View } from '../types.js'
 
 describe('hubs model', () => {
-  test('exposes exactly the five consolidated hubs in order', () => {
-    expect(HUBS.map(h => h.id)).toEqual(['home', 'prospects', 'outreach', 'inbox', 'settings'])
+  test('exposes the contractor-first hubs in loop order', () => {
+    expect(HUBS.map(h => h.id)).toEqual(['today', 'work', 'crew', 'outreach', 'settings'])
   })
 
-  test('every legacy view id maps to exactly one hub', () => {
+  test('every view id maps to exactly one hub', () => {
     const ALL_VIEWS: View[] = [
-      'dashboard', 'intelligence', 'prospects', 'missions', 'campaigns',
+      'today', 'dashboard', 'intelligence', 'prospects', 'missions', 'campaigns',
       'approvals', 'inbox', 'leads', 'ai', 'billing', 'settings', 'admin',
+      'ops-dashboard', 'ops-crew', 'ops-jobs', 'ops-shifts', 'ops-roster', 'ops-fatigue', 'ops-alerts',
+      'ops-find-work', 'ops-delivery',
     ]
     for (const v of ALL_VIEWS) {
       const owning = HUBS.filter(h => h.tabs.some(t => t.view === v))
@@ -18,19 +20,13 @@ describe('hubs model', () => {
     }
   })
 
-  test('hubForView routes the merged pages to their hub', () => {
-    expect(hubForView('leads').id).toBe('prospects')
-    expect(hubForView('intelligence').id).toBe('prospects')
-    expect(hubForView('approvals').id).toBe('outreach')
-    expect(hubForView('ai').id).toBe('outreach')
+  test('the contractor loop reads in order: find work, clients, jobs; then the crew pages', () => {
+    expect(HUBS.find(h => h.id === 'work')!.tabs.map(t => t.view)).toEqual(['ops-find-work', 'prospects', 'ops-delivery'])
+    expect(hubForView('ops-shifts').id).toBe('crew')
+    expect(hubForView('ops-delivery').id).toBe('work')
+    expect(hubForView('inbox').id).toBe('outreach')
     expect(hubForView('billing').id).toBe('settings')
     expect(hubForView('admin').id).toBe('settings')
-  })
-
-  test('inbox hub holds only the inbox (approvals live in outreach, not here)', () => {
-    const inbox = HUBS.find(h => h.id === 'inbox')!
-    expect(inbox.tabs.map(t => t.view)).toEqual(['inbox'])
-    expect(hubForView('approvals').id).not.toBe('inbox')
   })
 
   test('visibleTabs hides the admin-only tab from non-admins', () => {
@@ -40,8 +36,8 @@ describe('hubs model', () => {
   })
 
   test('defaultViewForHub opens a hub at its first visible tab', () => {
-    const prospects = HUBS.find(h => h.id === 'prospects')!
-    expect(defaultViewForHub(prospects, false)).toBe('prospects')
+    const work = HUBS.find(h => h.id === 'work')!
+    expect(defaultViewForHub(work, false)).toBe('ops-find-work')
     const settings = HUBS.find(h => h.id === 'settings')!
     expect(defaultViewForHub(settings, false)).toBe('settings')
   })

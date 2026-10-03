@@ -83,7 +83,7 @@ export function ProspectBrief({ prospect }: { prospect: Prospect }) {
   return (
     <div style={{ ...s.cardInner, marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ color: colors.text, fontSize: 14, fontWeight: 700 }}>Potential client brief</span>
+        <span style={{ color: colors.text, fontSize: 14, fontWeight: 700 }}>Client brief</span>
         <span style={{ color: colors.amber, fontSize: 13, fontWeight: 700 }}>Opportunity {prospect.opportunityScore}/100</span>
       </div>
 

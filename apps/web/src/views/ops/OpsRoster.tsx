@@ -103,7 +103,7 @@ function RosterFormFields({ form, setForm, isEdit, crewOptions, jobSiteOptions }
       <div>
         <label style={s.label} htmlFor="roster-job-site">Job Site</label>
         <select id="roster-job-site" style={s.input} value={form.jobSiteId} onChange={ff('jobSiteId')} required>
-          <option value="">Select job site…</option>
+          <option value="">Select site…</option>
           {jobSiteOptions.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
         </select>
       </div>
@@ -332,7 +332,7 @@ export function OpsRoster({ api, workspace, toast, canManage = false, setView }:
         <Grid cols={3}>
           <KpiCard label="Draft Entries" value={summary.draftCount ?? 0} />
           <KpiCard label="Published This Week" value={summary.publishedThisWeekCount ?? 0} color={colors.green} />
-          <KpiCard label="Active Job Sites" value={summary.activeJobSiteCount ?? 0} />
+          <KpiCard label="Active sites" value={summary.activeJobSiteCount ?? 0} />
         </Grid>
       ) : (
         <Grid cols={3}>
