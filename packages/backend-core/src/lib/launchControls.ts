@@ -16,7 +16,7 @@
 // Everything is read live from the environment (no caching) so flipping a switch
 // takes effect on the next request/job without a restart.
 
-export type Feature = 'ai' | 'send' | 'mailboxSync' | 'discovery'
+export type Feature = 'ai' | 'send' | 'mailboxSync' | 'discovery' | 'enquiries'
 
 // The env var backing each feature kill-switch.
 const FEATURE_ENV: Record<Feature, string> = {
@@ -24,6 +24,8 @@ const FEATURE_ENV: Record<Feature, string> = {
   send: 'FEATURE_SEND',
   mailboxSync: 'FEATURE_MAILBOX_SYNC',
   discovery: 'FEATURE_DISCOVERY',
+  // Surfacing unmatched inbound mail as Find work enquiries (lib/inboundEnquiry.ts).
+  enquiries: 'FEATURE_INBOUND_ENQUIRIES',
 }
 
 // Human-readable label per feature for the 503 message / log lines.
@@ -32,6 +34,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   send: 'Email sending',
   mailboxSync: 'Mailbox sync',
   discovery: 'Prospect discovery',
+  enquiries: 'Inbound enquiries',
 }
 
 // Tri-state boolean env parse: recognized true/false tokens win; anything else

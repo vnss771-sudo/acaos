@@ -56,6 +56,7 @@ All read live from the environment — flipping any of these takes effect on the
 - FEATURE_SEND — outbound email sending. Default `true`.
 - FEATURE_MAILBOX_SYNC — IMAP mailbox sync (reply/bounce ingest). Default `true`.
 - FEATURE_DISCOVERY — prospect discovery. Default `true`.
+- FEATURE_INBOUND_ENQUIRIES — surface unmatched inbound mail that asks for work as Find work enquiries. Default `true`.
 
 ### Safe launch (default OFF — conservative controlled rollout)
 - SAFE_LAUNCH_MODE — forces human approval of every outbound draft and clamps every workspace's daily send cap to a low ceiling. Default `false`.

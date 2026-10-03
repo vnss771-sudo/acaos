@@ -362,6 +362,7 @@ const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 const ORIGIN_KIND_LABEL: Record<string, string> = {
   DEVELOPMENT_APPLICATION: 'Development applications',
   CONTRACT_AWARD: 'Contract awards',
+  DIRECT_ENQUIRY: 'Direct enquiries',
 }
 
 // GET /api/delivery/report — closed jobs grouped by where the work came from:

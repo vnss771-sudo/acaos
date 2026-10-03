@@ -3,7 +3,7 @@
 // whether it is relevant to a workspace and why; the sweep persists it as an
 // Opportunity. Kept dependency-free so sources, matcher and tests share it.
 
-export type OpportunityKind = 'CONTRACT_AWARD' | 'DEVELOPMENT_APPLICATION'
+export type OpportunityKind = 'CONTRACT_AWARD' | 'DEVELOPMENT_APPLICATION' | 'DIRECT_ENQUIRY'
 
 export const OPPORTUNITY_STATUSES = ['NEW', 'PURSUING', 'WON', 'LOST', 'DISMISSED'] as const
 export type OpportunityStatus = (typeof OPPORTUNITY_STATUSES)[number]

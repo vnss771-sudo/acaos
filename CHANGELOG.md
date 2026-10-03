@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Inbound enquiries and risk escalation
+- Emails that ask for work from someone who isn't a lead and isn't replying to an outreach email
+  (previously recorded as "unmatched" and dropped) now appear in Find work as **Emailed you** cards,
+  with the sender, a short redacted excerpt and the reasons they were picked up. They follow the same
+  Pursue → Quote → Won → Job → Margin loop, and Jobs & margins reports them as "Direct enquiries".
+  Automated, bulk and transactional mail is filtered out by its headers, sender and wording.
+  Kill switch: `FEATURE_INBOUND_ENQUIRIES`
+- Deterministic risk escalation (`lib/riskEscalation.ts`): replies or enquiries that mention legal
+  action, a refund or payment dispute, a formal complaint, damage the business caused, or a data breach
+  are flagged when the mailbox syncs, before any AI runs. A flagged reply is never marked dead or used
+  for scoring, and gets no AI draft (the Inbox shows "Needs you"). A flagged enquiry goes to the top
+  of Find work
+
 ### Contractor-first
 - Positioning, README, pricing and terminology rewritten for trade contractors (`POSITIONING.md`);
   plans shown as Free / Contractor / Contractor Pro (plan keys and Stripe mapping unchanged)
