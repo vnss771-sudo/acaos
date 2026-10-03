@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixes from running the app
+- Reloading a page could log the user out: app boot fired a second, concurrent token refresh, which the
+  server's refresh-reuse (theft) detection treats as a replay and revokes every session. Boot now shares
+  the single-flight refresh, and refreshes are serialised across tabs with the Web Locks API
+- Find work's "Active" tab now shows only new + pursued work, matching its count (it also listed won and lost)
+- Jobs & margins: a running job shows "% of estimate used" instead of a misleading negative variance;
+  the origin line says where the work came from instead of repeating the title; closeout placeholders fit
+
 ### Hardening
 - Links built from external data (tender feeds, evidence, AI research) only render for http(s) URLs
 - Jobs flag shifts logged after closeout instead of silently leaving them out

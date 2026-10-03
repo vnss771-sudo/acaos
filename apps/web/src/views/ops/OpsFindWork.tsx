@@ -133,7 +133,9 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
     setLoading(true)
     setLoadError(false)
     const params = new URLSearchParams({ workspaceId: workspace.id })
+    // "Active" means new + pursuing — the same set its count shows.
     if (filter) params.set('status', filter)
+    else params.set('scope', 'active')
     Promise.all([
       api<ListResponse>(`/api/opportunities?${params}`),
       api<ProfileResponse>(`/api/opportunities/profile?workspaceId=${workspace.id}`),

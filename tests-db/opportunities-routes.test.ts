@@ -101,6 +101,13 @@ test('list: best first, dismissed hidden by default, counts per status, tenant-s
   assert.deepEqual(r.body.counts, { NEW: 2, DISMISSED: 1 })
   assert.equal(r.body.opportunities[0].reasons[0], 'Classified as electrical work')
 
+  // scope=active is the "Active" tab: work still in play only, never won/lost/dismissed.
+  await seedOpportunity(workspace.id, { score: 97, title: 'Won', status: 'WON' })
+  await seedOpportunity(workspace.id, { score: 60, title: 'Pursuing', status: 'PURSUING' })
+  const active = await req(user.id, 'GET', `/?workspaceId=${workspace.id}&scope=active`)
+  assert.deepEqual(active.body.opportunities.map((o: { title: string }) => o.title), ['High', 'Pursuing', 'Low'])
+  assert.equal((await req(user.id, 'GET', `/?workspaceId=${workspace.id}&scope=everything`)).status, 400)
+
   const dismissed = await req(user.id, 'GET', `/?workspaceId=${workspace.id}&status=DISMISSED`)
   assert.deepEqual(dismissed.body.opportunities.map((o: { title: string }) => o.title), ['Dismissed'])
 

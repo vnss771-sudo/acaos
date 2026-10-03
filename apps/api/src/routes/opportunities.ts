@@ -129,11 +129,14 @@ opportunitiesRouter.put(
 const listQuerySchema = z.object({
   workspaceId: workspaceIdField,
   status: z.enum(OPPORTUNITY_STATUSES).optional(),
+  // scope=active: only work still in play (NEW + PURSUING). Ignored with ?status.
+  scope: z.enum(['active']).optional(),
   page: z.coerce.number().optional(),
   limit: z.coerce.number().optional(),
 })
 
-// GET /api/opportunities — best first. Without ?status, DISMISSED is hidden.
+// GET /api/opportunities — best first. Without ?status, DISMISSED is hidden;
+// ?scope=active narrows to NEW + PURSUING.
 opportunitiesRouter.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -143,7 +146,10 @@ opportunitiesRouter.get(
     const page = Math.max(1, Number(q.page) || 1)
     const limit = Math.min(100, Math.max(1, Number(q.limit) || 25))
 
-    const where = { workspaceId: q.workspaceId, ...(q.status ? { status: q.status } : { status: { not: 'DISMISSED' } }) }
+    const statusWhere = q.status ? { status: q.status }
+      : q.scope === 'active' ? { status: { in: ['NEW', 'PURSUING'] } }
+      : { status: { not: 'DISMISSED' } }
+    const where = { workspaceId: q.workspaceId, ...statusWhere }
     const [opportunities, total, grouped] = await Promise.all([
       prisma.opportunity.findMany({
         where,
