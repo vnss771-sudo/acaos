@@ -241,7 +241,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
         </select>
         <span style={{ color: colors.textFaint, fontSize: 13 }}>{total} site{total === 1 ? '' : 's'}</span>
         {canManage && (
-          <button style={{ ...s.btn, marginLeft: 'auto' }} onClick={openAdd}>+ Add Job Site</button>
+          <button style={{ ...s.btn, marginLeft: 'auto' }} onClick={openAdd}>+ Add site</button>
         )}
       </div>
 
@@ -254,7 +254,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
           <EmptyState
             title="No sites yet"
             description="Add a site to roster crew and log shifts against it — starting a job from Find work creates one for you."
-            action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add Job Site</button> : undefined}
+            action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add site</button> : undefined}
           />
         ) : (
           <Table columns={columns} rows={jobSites} rowKey={j => j.id} />
@@ -272,11 +272,11 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
       <Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Add Job Site"
+        title="Add site"
         footer={<>
           <button style={s.btnSecondary} onClick={() => setAddOpen(false)}>Cancel</button>
           <button style={s.btn} disabled={saving || !form.jobCode.trim() || !form.siteName.trim()} onClick={submitAdd}>
-            {saving ? 'Saving…' : 'Add Job Site'}
+            {saving ? 'Saving…' : 'Add site'}
           </button>
         </>}
       >

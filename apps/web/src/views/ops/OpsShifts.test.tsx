@@ -102,7 +102,7 @@ describe('OpsShifts', () => {
 
     // See the timeout comment above the "shows a Clock In button" test.
     await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })
-    await userEvent.selectOptions(screen.getByLabelText('Job Site'), 'job1')
+    await userEvent.selectOptions(screen.getByLabelText('Site', { selector: '#clock-job-site' }), 'job1')
     await userEvent.click(screen.getByRole('button', { name: /Clock In/i }))
 
     await waitFor(() => {

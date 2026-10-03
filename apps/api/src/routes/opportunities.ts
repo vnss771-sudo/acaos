@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
+import { requireAuth, requireVerifiedForMutationExcept } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
@@ -21,7 +21,11 @@ import type { Assert, Extends, UpdateDiscoveryProfileRequest, UpdateOpportunityS
 // won job into a Field Ops job site is ops:manage.
 export const opportunitiesRouter = Router()
 opportunitiesRouter.use(requireAuth)
-opportunitiesRouter.use(requireVerifiedForMutation)
+// The discovery profile is onboarding self-configuration (the contractor path of
+// the setup wizard saves it before the email is confirmed), so like /icp and
+// /seed in routes/workspaces it is exempt. Every other mutation here — status,
+// run-now, create-job — still needs a verified email.
+opportunitiesRouter.use(requireVerifiedForMutationExcept(/^\/profile$/))
 
 const SOURCE_NAMES = OPPORTUNITY_SOURCES.map(s => s.name) as [string, ...string[]]
 

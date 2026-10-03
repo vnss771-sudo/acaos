@@ -176,3 +176,12 @@ test('run: admin-only, needs the server flag and a profile with sources', async 
   const noProfile = await req(user.id, 'POST', '/run', { workspaceId: workspace.id })
   assert.equal(noProfile.status, 409)
 })
+
+test('an unverified new owner can save the Find work profile during onboarding, but nothing else', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('fresh@x.test', 'owner', { emailVerified: false })
+  const put = await req(user.id, 'PUT', '/profile', { workspaceId: workspace.id, ...PROFILE })
+  assert.equal(put.status, 200, JSON.stringify(put.body))
+  const o = await seedOpportunity(workspace.id)
+  assert.equal((await req(user.id, 'PATCH', `/${o.id}/status`, { workspaceId: workspace.id, status: 'PURSUING' })).status, 403)
+  assert.equal((await req(user.id, 'POST', '/run', { workspaceId: workspace.id })).status, 403)
+})

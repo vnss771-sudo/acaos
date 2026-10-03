@@ -242,7 +242,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
 
   const columns: Column<OpsShiftRecord>[] = [
     { key: 'crewMember', header: 'Crew', render: sh => sh.crewMember?.fullName ?? crewById.get(sh.crewMemberId)?.fullName ?? '—' },
-    { key: 'jobSite', header: 'Job Site', render: sh => sh.jobSite?.siteName ?? jobSiteById.get(sh.jobSiteId)?.siteName ?? '—' },
+    { key: 'jobSite', header: 'Site', render: sh => sh.jobSite?.siteName ?? jobSiteById.get(sh.jobSiteId)?.siteName ?? '—' },
     { key: 'shiftDate', header: 'Date', render: sh => new Date(sh.shiftDate).toLocaleDateString() },
     {
       key: 'time', header: 'Start–End', render: sh => (
@@ -296,7 +296,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
             </div>
             {!isClockedIn && (
               <div>
-                <label style={s.label} htmlFor="clock-job-site">Job Site</label>
+                <label style={s.label} htmlFor="clock-job-site">Site</label>
                 <select id="clock-job-site" style={s.input} value={clockJobSiteId} onChange={e => setClockJobSiteId(e.target.value)}>
                   <option value="">Select site</option>
                   {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
@@ -410,7 +410,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
             </select>
           </div>
           <div>
-            <label style={s.label} htmlFor="shift-add-job-site">Job Site</label>
+            <label style={s.label} htmlFor="shift-add-job-site">Site</label>
             <select id="shift-add-job-site" style={s.input} value={manualForm.jobSiteId} onChange={e => setManualForm(f => ({ ...f, jobSiteId: e.target.value }))} required>
               <option value="">Select site</option>
               {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
@@ -462,7 +462,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
       >
         <Grid cols={2}>
           <div>
-            <label style={s.label} htmlFor="shift-edit-job-site">Job Site</label>
+            <label style={s.label} htmlFor="shift-edit-job-site">Site</label>
             <select id="shift-edit-job-site" style={s.input} value={editForm.jobSiteId} onChange={e => setEditForm(f => ({ ...f, jobSiteId: e.target.value }))}>
               {editForm.jobSiteId && !jobSiteById.has(editForm.jobSiteId) && (
                 <option value={editForm.jobSiteId}>{editTarget?.jobSite?.siteName ?? editForm.jobSiteId} (archived)</option>

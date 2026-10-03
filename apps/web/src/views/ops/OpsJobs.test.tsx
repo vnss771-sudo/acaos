@@ -45,7 +45,7 @@ describe('OpsJobs', () => {
     const api = apiFor([site])
     render(<OpsJobs api={api as never} workspace={workspace} toast={toast as never} canManage={false} setView={setView} />)
     expect(await screen.findByText('Riverside Depot')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Add Job Site/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Add site/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Edit/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Archive/i })).not.toBeInTheDocument()
   })
@@ -64,13 +64,13 @@ describe('OpsJobs', () => {
     render(<OpsJobs api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
     await screen.findByText('Riverside Depot')
 
-    await userEvent.click(screen.getByRole('button', { name: /Add Job Site/i }))
+    await userEvent.click(screen.getByRole('button', { name: /Add site/i }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
     await userEvent.type(screen.getByLabelText(/Job Code/i), 'SITE-002')
     await userEvent.type(screen.getByLabelText(/Site Name/i), 'North Yard')
 
-    await userEvent.click(screen.getByRole('button', { name: /^Add Job Site$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^Add site$/i }))
 
     await waitFor(() => expect(api).toHaveBeenCalledWith(
       '/api/ops/jobs',
@@ -139,10 +139,10 @@ describe('OpsJobs', () => {
     render(<OpsJobs api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
     await screen.findByText('Riverside Depot')
 
-    await userEvent.click(screen.getByRole('button', { name: /Add Job Site/i }))
+    await userEvent.click(screen.getByRole('button', { name: /Add site/i }))
     await userEvent.type(screen.getByLabelText(/Job Code/i), 'SITE-001')
     await userEvent.type(screen.getByLabelText(/Site Name/i), 'Dup Site')
-    await userEvent.click(screen.getByRole('button', { name: /^Add Job Site$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^Add site$/i }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('A job site with this job code already exists'))
   })

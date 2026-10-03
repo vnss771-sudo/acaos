@@ -101,7 +101,7 @@ function RosterFormFields({ form, setForm, isEdit, crewOptions, jobSiteOptions }
         )}
       </div>
       <div>
-        <label style={s.label} htmlFor="roster-job-site">Job Site</label>
+        <label style={s.label} htmlFor="roster-job-site">Site</label>
         <select id="roster-job-site" style={s.input} value={form.jobSiteId} onChange={ff('jobSiteId')} required>
           <option value="">Select site…</option>
           {jobSiteOptions.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
@@ -307,7 +307,7 @@ export function OpsRoster({ api, workspace, toast, canManage = false, setView }:
 
   const columns: Column<OpsRosterEntry>[] = [
     { key: 'crew', header: 'Crew', render: e => e.crewMember?.fullName ?? '—' },
-    { key: 'jobSite', header: 'Job Site', render: e => e.jobSite?.siteName ?? '—' },
+    { key: 'jobSite', header: 'Site', render: e => e.jobSite?.siteName ?? '—' },
     { key: 'date', header: 'Date', render: e => new Date(e.rosterDate).toLocaleDateString() },
     { key: 'time', header: 'Start–End', render: e => `${formatTime(e.startTime)} – ${formatTime(e.endTime)}` },
     { key: 'shiftType', header: 'Type', render: e => <Badge color={colors.blue}>{e.shiftType}</Badge> },
