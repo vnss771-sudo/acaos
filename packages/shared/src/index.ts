@@ -288,6 +288,21 @@ export interface InboxClassificationFeedbackRequest {
   correctedIntent?: string
 }
 
+// GET /api/inbox/classification-accuracy (backend-core lib/classificationAccuracy.ts)
+export interface ClassificationAccuracyResponse {
+  days: number
+  reviewed: number
+  correct: number
+  incorrect: number
+  unsure: number
+  accuracy: number | null
+  withheldReason: string | null
+  labels: Array<{ label: string; reviewed: number; wrong: number; topCorrection: { to: string; count: number } | null }>
+  mistakes: Array<{ from: string; to: string; count: number }>
+  overturnedNegatives: { count: number; aboveFloor: number; floor: number }
+  recommendation: string | null
+}
+
 // ── Work discovery ("Find work") ──────────────────────────────────────────────
 export type OpportunityStatus = 'NEW' | 'PURSUING' | 'WON' | 'LOST' | 'DISMISSED'
 
@@ -753,7 +768,7 @@ export interface RouteContracts {
   'POST /api/inbox/reply/:replyId/draft': { params: { replyId: string }; body: DraftInboxReplyRequest; response: { body: string } }
   'POST /api/inbox/reply/:replyId/send': { params: { replyId: string }; body: SendInboxReplyRequest; response: { success: boolean; sentAt: string; message: string; duplicate?: boolean } }
   'POST /api/inbox/reply/:replyId/sends/:sendId/resolve': { params: { replyId: string; sendId: string }; body: ResolveInboxReplySendRequest; response: { success: boolean; status: 'SENT' | 'FAILED' } }
-  'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string } }
+  'PATCH /api/inbox/reply/:replyId/feedback': { params: { replyId: string }; body: InboxClassificationFeedbackRequest; response: { success: boolean; message: string; stageApplied?: string | null; outcomeCorrected?: boolean } }
 
   // Workspaces
   'PATCH /api/workspaces/:id': { params: { id: string }; body: UpdateWorkspaceRequest; response: unknown }

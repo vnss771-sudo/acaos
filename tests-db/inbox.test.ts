@@ -10,6 +10,7 @@ import { inboxRouter, createInboxReplySendHandler, createInboxReplyDraftHandler 
 import type { generateReplyDraft } from '../packages/backend-core/src/services/openai.ts'
 import { requireAuth, requireVerifiedForMutation } from '../apps/api/src/middleware/auth.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
+import { applyReplyAnalysis } from '../apps/worker/src/processors.ts'
 
 let server: TestServer
 before(async () => { server = await startTestServer('/api/inbox', inboxRouter) })
@@ -489,6 +490,86 @@ test('reply/feedback: records correct/incorrect/unsure feedback with an audit tr
   assert.equal(metadata.feedback, 'incorrect')
   assert.equal(metadata.correctedIntent, 'NOT_INTERESTED')
   assert.equal(metadata.originalIntent, 'INTERESTED')
+})
+
+// A reply the worker actually analysed: lead + REPLIED send, then the real
+// applyReplyAnalysis, so stage and scoring outcome are what production writes.
+async function analysedReply(workspaceId: string, classification: string, confidence: number) {
+  const lead = await prisma.lead.create({ data: { workspaceId, businessName: 'Acme', email: 'r@x.test', stage: 'REPLIED', score: 60 } })
+  const send = await prisma.outreachSent.create({
+    data: { workspaceId, leadId: lead.id, toEmail: 'r@x.test', subject: 's', body: 'b', status: 'REPLIED', repliedAt: new Date(Date.now() - 1000) },
+  })
+  await applyReplyAnalysis(lead.id, { classification, confidence, isAutoReply: false } as never)
+  return { lead, send }
+}
+
+function feedbackReq(userId: string, replyId: string, body: Record<string, unknown>) {
+  return server.request(`/api/inbox/reply/${replyId}/feedback`, { method: 'PATCH', headers: jsonAuth(userId), body: JSON.stringify(body) })
+}
+
+test('reply/feedback: incorrect needs the right label (400)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const reply = await seedReply(workspace.id)
+  assert.equal((await feedbackReq(user.id, reply.id, { workspaceId: workspace.id, feedback: 'incorrect' })).status, 400)
+  assert.equal((await feedbackReq(user.id, reply.id, { workspaceId: workspace.id, feedback: 'incorrect', correctedIntent: 'INTERESTED' })).status, 400, 'same label is not a correction')
+})
+
+test('reply/feedback: overturning an auto-killed "not interested" revives the lead and fixes the scoring outcome', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const { lead, send } = await analysedReply(workspace.id, 'NOT_INTERESTED', 95)
+  assert.equal((await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } })).stage, 'DEAD')
+
+  const res = await feedbackReq(user.id, send.id, { workspaceId: workspace.id, feedback: 'incorrect', correctedIntent: 'NOT_NOW' })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.stageApplied, 'REPLIED')
+  assert.equal(res.body.outcomeCorrected, true)
+
+  assert.equal((await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } })).stage, 'REPLIED')
+  const outcome = await prisma.scoringOutcome.findFirstOrThrow({ where: { leadId: lead.id } })
+  assert.equal(outcome.replied, true)
+  assert.equal(outcome.replyIntent, 'NEED_MORE_INFO')
+  const stored = await prisma.outreachSent.findUniqueOrThrow({ where: { id: send.id } })
+  assert.equal(stored.replyFeedback, 'INCORRECT')
+  assert.equal(stored.replyIntentCorrected, 'NOT_NOW')
+  assert.equal(stored.replyFeedbackByUserId, user.id)
+
+  // 'correct' afterwards restores the AI label and its effects.
+  const back = await feedbackReq(user.id, send.id, { workspaceId: workspace.id, feedback: 'correct' })
+  assert.equal(back.body.stageApplied, 'DEAD')
+  assert.equal((await prisma.outreachSent.findUniqueOrThrow({ where: { id: send.id } })).replyIntentCorrected, null)
+  assert.equal((await prisma.scoringOutcome.findFirstOrThrow({ where: { leadId: lead.id } })).replied, false)
+})
+
+test('reply/feedback: a lead that has moved on since is left alone; the outcome is still corrected', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const { lead, send } = await analysedReply(workspace.id, 'NOT_NOW', 90)
+  await prisma.lead.update({ where: { id: lead.id }, data: { stage: 'BOOKED' } })
+
+  const res = await feedbackReq(user.id, send.id, { workspaceId: workspace.id, feedback: 'incorrect', correctedIntent: 'NOT_INTERESTED' })
+  assert.equal(res.body.stageApplied, null)
+  assert.equal((await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } })).stage, 'BOOKED')
+  assert.equal((await prisma.scoringOutcome.findFirstOrThrow({ where: { leadId: lead.id } })).replyIntent, 'NOT_INTERESTED')
+})
+
+test('classification-accuracy: reports from stored verdicts in the window', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const verdicts: Array<[string, string, string | null]> = [
+    ['INTERESTED', 'CORRECT', null], ['INTERESTED', 'CORRECT', null], ['NOT_NOW', 'INCORRECT', 'INTERESTED'],
+    ['NOT_NOW', 'INCORRECT', 'INTERESTED'], ['REFERRAL', 'CORRECT', null], ['NEEDS_MORE_INFO', 'UNSURE', null],
+  ]
+  for (const [intent, feedback, corrected] of verdicts) {
+    await seedReply(workspace.id, { replyIntent: intent, replyFeedback: feedback, replyIntentCorrected: corrected, replyFeedbackAt: new Date() })
+  }
+  await seedReply(workspace.id, { replyIntent: 'INTERESTED', replyFeedback: 'INCORRECT', replyIntentCorrected: 'NOT_NOW', replyFeedbackAt: new Date(Date.now() - 200 * 86_400_000) })
+  await seedReply(workspace.id) // never reviewed
+
+  const res = await server.request(`/api/inbox/classification-accuracy?workspaceId=${workspace.id}`, { headers: jsonAuth(user.id) })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.reviewed, 6, 'only verdicts inside the 90-day window')
+  assert.equal(res.body.correct, 3)
+  assert.equal(res.body.incorrect, 2)
+  assert.equal(res.body.accuracy, 0.6)
+  assert.deepEqual(res.body.mistakes[0], { from: 'NOT_NOW', to: 'INTERESTED', count: 2 })
 })
 
 test('reply/feedback: 404 for a reply that does not exist', async () => {

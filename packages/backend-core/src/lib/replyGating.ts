@@ -32,3 +32,35 @@ export function effectiveReplyClassification(
   }
   return classification
 }
+
+// ── What a classification does ────────────────────────────────────────────────
+// One source of truth for the automated consequences of a reply label, shared by
+// the analyze-reply worker (which applies them) and the Inbox correction route
+// (which undoes the automation's effect and applies a person's label instead).
+
+/** Lead stage a reply classification moves the lead to. */
+export const REPLY_STAGE: Record<string, string> = {
+  INTERESTED: 'REPLIED',
+  NOT_INTERESTED: 'DEAD',
+  NEEDS_MORE_INFO: 'REPLIED',
+  NOT_NOW: 'REPLIED',
+  REFERRAL: 'REPLIED',
+  OUT_OF_OFFICE: 'OUTREACH_SENT',
+}
+
+const OUTCOME_INTENT: Record<string, string> = {
+  INTERESTED: 'INTERESTED',
+  NOT_INTERESTED: 'NOT_INTERESTED',
+  NEEDS_MORE_INFO: 'NEED_MORE_INFO',
+  NOT_NOW: 'NEED_MORE_INFO',
+  REFERRAL: 'INTERESTED',
+  OUT_OF_OFFICE: 'NOT_INTERESTED',
+}
+
+/** The ScoringOutcome fields a reply classification records for the learning loop. */
+export function replyOutcomeFor(classification: string): { replied: boolean; replyIntent: string | null } {
+  return {
+    replied: !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(classification),
+    replyIntent: OUTCOME_INTENT[classification] ?? null,
+  }
+}

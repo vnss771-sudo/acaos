@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { InboxView } from './Inbox.js'
 import type { Workspace } from '../types.js'
@@ -186,5 +186,32 @@ describe('InboxView', () => {
     const post = api.mock.calls.find(([, init]) => (init as { method?: string } | undefined)?.method === 'POST')!
     expect(post[0]).toBe('/api/inbox/reply/r1/sends/s1/resolve')
     expect(JSON.parse((post[1] as { body: string }).body)).toEqual({ workspaceId: 'ws1', outcome: 'sent' })
+  })
+
+  test('👎 asks which label it should have been and sends the correction', async () => {
+    const accuracyReport = {
+      days: 90, reviewed: 12, correct: 9, incorrect: 3, unsure: 0, accuracy: 0.75, withheldReason: null,
+      labels: [], mistakes: [{ from: 'NOT_NOW', to: 'INTERESTED', count: 2 }],
+      overturnedNegatives: { count: 0, aboveFloor: 0, floor: 60 }, recommendation: null,
+    }
+    const api = vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return Promise.resolve({ success: true, message: 'ok', stageApplied: null, outcomeCorrected: true })
+      if (path.startsWith('/api/inbox/classification-accuracy')) return Promise.resolve(accuracyReport)
+      return Promise.resolve(payload)
+    })
+    render(<InboxView api={api as never} workspace={workspace} toast={toast as never} />)
+    await screen.findByText('Meridian Roofing')
+    expect(await screen.findByText(/75% right across 12 replies/)).toBeInTheDocument()
+    expect(screen.getByText(/not now → interested \(2\)/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTitle('Mark as incorrect'))
+    const picker = screen.getByRole('group', { name: /What should this reply have been/ })
+    await userEvent.click(within(picker).getByRole('button', { name: 'Not now' }))
+
+    await waitFor(() => expect(api).toHaveBeenCalledWith(
+      '/api/inbox/reply/r1/feedback',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ workspaceId: 'ws1', feedback: 'incorrect', correctedIntent: 'NOT_NOW' }) }),
+    ))
+    expect(toast.success).toHaveBeenCalledWith('Corrected to Not now')
   })
 })

@@ -22,7 +22,7 @@ import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendation
 import { isCommercialOpportunityEngineEnabled, loadOfferCatalog, refreshCommercialOpportunities, type OfferCatalog } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
-import { effectiveReplyClassification } from '@acaos/backend-core/lib/replyGating.js'
+import { effectiveReplyClassification, REPLY_STAGE, replyOutcomeFor } from '@acaos/backend-core/lib/replyGating.js'
 import { parseRiskFlags } from '@acaos/backend-core/lib/riskEscalation.js'
 import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
@@ -1921,15 +1921,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // already stamped on the send above; only the automated effects use the gated value.
   const effectiveClassification = effectiveReplyClassification(parsed.classification, parsed.confidence)
 
-  const stageMap: Record<string, LeadStage> = {
-    INTERESTED: 'REPLIED',
-    NOT_INTERESTED: 'DEAD',
-    NEEDS_MORE_INFO: 'REPLIED',
-    NOT_NOW: 'REPLIED',
-    REFERRAL: 'REPLIED',
-    OUT_OF_OFFICE: 'OUTREACH_SENT',
-  }
-  const mapped = stageMap[effectiveClassification]
+  const mapped = REPLY_STAGE[effectiveClassification] as LeadStage | undefined
   const newStage = escalated && mapped === 'DEAD' ? 'REPLIED' : mapped
   if (newStage) {
     await prisma.lead.updateMany({ where: { id: leadId, workspaceId: lead.workspaceId }, data: { stage: newStage } })
@@ -1944,17 +1936,9 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // with P2002; re-read in that case so we still get the id.
   const model = await getOrCreateScoringModel(lead.workspaceId)
 
-  const replyIntentMap: Record<string, string> = {
-    INTERESTED: 'INTERESTED',
-    NOT_INTERESTED: 'NOT_INTERESTED',
-    NEEDS_MORE_INFO: 'NEED_MORE_INFO',
-    NOT_NOW: 'NEED_MORE_INFO',
-    REFERRAL: 'INTERESTED',
-    OUT_OF_OFFICE: 'NOT_INTERESTED',
-  }
   // Use the gated classification for the scoring outcome too, so a downgraded
   // low-confidence negative doesn't feed the learning loop a false "not replied".
-  const replied = !['NOT_INTERESTED', 'OUT_OF_OFFICE'].includes(effectiveClassification)
+  const { replied, replyIntent } = replyOutcomeFor(effectiveClassification)
 
   await prisma.scoringOutcome.create({
     data: {
@@ -1964,7 +1948,7 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
       prospectId: null,
       score: lead.score,
       replied,
-      replyIntent: replyIntentMap[effectiveClassification] ?? null,
+      replyIntent,
       // The replied-to message's relevance, scored and frozen at SEND time —
       // never derived from the reply (that would leak the outcome into its own
       // predictor). Sends from before relevance scoring fall back to the default.

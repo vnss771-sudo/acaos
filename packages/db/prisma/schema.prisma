@@ -494,6 +494,13 @@ model OutreachSent {
   // time before any AI runs. Non-empty = a person must handle it: no DEAD
   // transition, no scoring outcome, no AI draft.
   replyRiskFlags          String[]         @default([])
+  // A person's verdict on the AI reply label (Inbox 👍/👎): CORRECT | INCORRECT |
+  // UNSURE, and the right label when INCORRECT. A correction is applied to the
+  // lead stage and scoring outcome; lib/classificationAccuracy.ts reads these.
+  replyFeedback           String?
+  replyIntentCorrected    String?
+  replyFeedbackAt         DateTime?
+  replyFeedbackByUserId   String?
   unsubscribeToken        String?          @unique
   // Intelligence provenance (Stage 5): what intent/recommendation + evidence this
   // send was based on, snapshotted at send time so the record is self-auditable.
@@ -554,6 +561,8 @@ model OutreachSent {
   // Optimizes Inbox list query: GET /api/inbox filters by (workspaceId, status, repliedAt)
   // and orders by repliedAt DESC. This compound index covers the full query.
   @@index([workspaceId, status, repliedAt])
+  // Backs the classifier-accuracy report (reviewed replies in a window).
+  @@index([workspaceId, replyFeedbackAt])
   // Backs the observation sweep: SENT rows not yet classified, oldest first.
   @@index([status, engagementOutcome, sentAt])
 }

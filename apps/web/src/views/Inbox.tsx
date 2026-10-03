@@ -10,6 +10,7 @@ import { AiQuickAction } from '../components/AiQuickAction.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { makeRouteApi } from '../lib/routeApi.js'
+import type { ClassificationAccuracyResponse } from '@acaos/shared'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
 
@@ -28,6 +29,10 @@ type Reply = {
   replyIsAutoReply: boolean | null
   // Deterministic risk flags (legal, payment dispute, ...): a person answers; no AI draft.
   replyRiskFlags?: string[]
+  // A person's stored verdict on the label (CORRECT | INCORRECT | UNSURE) and the
+  // right label when INCORRECT — shown instead of the AI's label.
+  replyFeedback?: string | null
+  replyIntentCorrected?: string | null
   lead: { id: string; businessName: string; stage: string } | null
   // An Inbox reply on this thread that hasn't finished. outcomeUnknown: it may or
   // may not have been delivered, and the user must say which before replying again.
@@ -45,6 +50,28 @@ const CLASS_META: Record<string, { label: string; color: string }> = {
   NOT_NOW: { label: 'Not now', color: colors.amber },
   OUT_OF_OFFICE: { label: 'Auto-reply', color: colors.textFaint },
   NOT_INTERESTED: { label: 'Not interested', color: colors.red },
+}
+
+// How the reply classifier is doing, from replies your team marked right or
+// wrong (server: lib/classificationAccuracy.ts). Withheld until enough are reviewed.
+function AccuracyPanel({ report }: { report: ClassificationAccuracyResponse }) {
+  const label = (l: string) => (CLASS_META[l]?.label ?? l).toLowerCase()
+  return (
+    <div style={{ ...s.card, padding: 12, display: 'grid', gap: 4, fontSize: 13 }} aria-label="Reply sorting accuracy">
+      <div style={{ color: colors.text }}>
+        <strong>Reply sorting, last {report.days} days:</strong>{' '}
+        {report.accuracy != null
+          ? `${Math.round(report.accuracy * 100)}% right across ${report.correct + report.incorrect} replies your team checked`
+          : report.withheldReason}
+      </div>
+      {report.mistakes.length > 0 && (
+        <div style={{ color: colors.textMuted }}>
+          Most often wrong: {report.mistakes.slice(0, 3).map(m => `${label(m.from)} → ${label(m.to)} (${m.count})`).join(', ')}
+        </div>
+      )}
+      {report.recommendation && <div style={{ color: colors.amber }}>{report.recommendation}</div>}
+    </div>
+  )
 }
 
 function ConfidenceBar({ value }: { value: number }) {
@@ -67,6 +94,10 @@ const RISK_LABEL: Record<string, string> = {
   COMPLAINT: 'Complaint',
   DAMAGE_CLAIM: 'Says your work caused damage or injury',
   DATA_BREACH: 'Mentions a data breach',
+}
+
+const STAGE_LABEL: Record<string, string> = {
+  REPLIED: 'Replied', DEAD: 'Not interested', OUTREACH_SENT: 'Contacted',
 }
 
 const URGENCY_LABEL: Record<string, string> = {
@@ -93,6 +124,9 @@ export function InboxView({ api, workspace, toast }: Props) {
   const [composeKey, setComposeKey] = useState('')
   const [feedbackReplyId, setFeedbackReplyId] = useState<string | null>(null)
   const [feedbackSending, setFeedbackSending] = useState(false)
+  // The reply whose 👎 is open, asking which label it should have had.
+  const [correctingId, setCorrectingId] = useState<string | null>(null)
+  const [accuracy, setAccuracy] = useState<ClassificationAccuracyResponse | null>(null)
   // Compose session (see composeKeyRef) whose AI draft is in flight, if any.
   const [draftingKey, setDraftingKey] = useState<string | null>(null)
   // The open compose session, so a draft that returns after the user cancelled,
@@ -118,6 +152,15 @@ export function InboxView({ api, workspace, toast }: Props) {
   }, [workspace?.id, filter])
 
   useEffect(() => { load() }, [load])
+
+  // Classifier accuracy from reviewed replies. An enhancement: a failure hides the panel.
+  const loadAccuracy = useCallback(() => {
+    if (!workspace) return
+    api<ClassificationAccuracyResponse>(`/api/inbox/classification-accuracy?workspaceId=${workspace.id}`)
+      .then(setAccuracy)
+      .catch(() => setAccuracy(null))
+  }, [workspace?.id])
+  useEffect(() => { loadAccuracy() }, [loadAccuracy])
 
   const openComposer = useCallback((replyId: string) => {
     const key = newIdempotencyKey()
@@ -201,26 +244,27 @@ export function InboxView({ api, workspace, toast }: Props) {
     }
   }, [workspace?.id, route, toast, load])
 
-  const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect') => {
+  const handleClassificationFeedback = useCallback(async (replyId: string, feedback: 'correct' | 'incorrect', correctedIntent?: string) => {
     if (!workspace) return
     setFeedbackSending(true)
     try {
-      await route('PATCH /api/inbox/reply/:replyId/feedback', {
+      const res = await route('PATCH /api/inbox/reply/:replyId/feedback', {
         params: { replyId },
-        body: {
-          workspaceId: workspace.id,
-          feedback,
-        },
+        body: { workspaceId: workspace.id, feedback, ...(correctedIntent ? { correctedIntent } : {}) },
       })
-      toast.success(feedback === 'correct' ? '✓ Thanks for the feedback!' : '✓ Noted. We\'ll improve this.')
+      toast.success(feedback === 'correct'
+        ? 'Thanks — marked as right'
+        : `Corrected to ${CLASS_META[correctedIntent ?? '']?.label ?? correctedIntent}${res.stageApplied ? ` — lead moved to ${STAGE_LABEL[res.stageApplied] ?? res.stageApplied}` : ''}`)
       setFeedbackReplyId(replyId)
+      setCorrectingId(null)
       load()
-    } catch {
-      toast.error('Failed to record feedback')
+      loadAccuracy()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to record feedback')
     } finally {
       setFeedbackSending(false)
     }
-  }, [workspace?.id, route, toast, load, data])
+  }, [workspace?.id, route, toast, load, loadAccuracy])
 
   const counts = data?.counts ?? {}
   const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
@@ -250,6 +294,8 @@ export function InboxView({ api, workspace, toast }: Props) {
         })}
       </div>
 
+      {accuracy && accuracy.reviewed > 0 && <AccuracyPanel report={accuracy} />}
+
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40 }}><Spinner /></div>
       ) : !data || data.replies.length === 0 ? (
@@ -259,7 +305,8 @@ export function InboxView({ api, workspace, toast }: Props) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {data.replies.map(r => {
-            const meta = r.replyIntent ? CLASS_META[r.replyIntent] : null
+            const shownLabel = r.replyIntentCorrected ?? r.replyIntent
+            const meta = shownLabel ? CLASS_META[shownLabel] : null
             const risks = (r.replyRiskFlags ?? []).filter(f => RISK_LABEL[f])
             const escalated = risks.length > 0
             return (
@@ -268,6 +315,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                   <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <span style={{ color: colors.text, fontWeight: 700, fontSize: 14 }}>{r.lead?.businessName || r.toEmail}</span>
                     {meta && <Badge color={meta.color}>{meta.label}</Badge>}
+                    {r.replyIntentCorrected && <span style={{ color: colors.textFaint, fontSize: 11 }} title={`Sorted as ${CLASS_META[r.replyIntent ?? '']?.label ?? r.replyIntent} — corrected by your team`}>corrected</span>}
                     {r.replyIsAutoReply && <span style={{ color: colors.textFaint, fontSize: 11 }}>auto-reply</span>}
                     {escalated && <Badge color={colors.red}>Needs you</Badge>}
                   </span>
@@ -297,7 +345,12 @@ export function InboxView({ api, workspace, toast }: Props) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                       <span style={{ color: colors.textFaint, fontSize: 11 }}>Classification confidence</span>
-                      {feedbackReplyId !== r.id && (
+                      {r.replyFeedback && feedbackReplyId !== r.id && (
+                        <span style={{ color: colors.textFaint, fontSize: 11 }}>
+                          {r.replyFeedback === 'CORRECT' ? 'Marked right' : r.replyFeedback === 'INCORRECT' ? 'Corrected' : 'Marked unsure'}
+                        </span>
+                      )}
+                      {!r.replyFeedback && feedbackReplyId !== r.id && (
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button
                             onClick={() => handleClassificationFeedback(r.id, 'correct')}
@@ -319,7 +372,7 @@ export function InboxView({ api, workspace, toast }: Props) {
                             👍
                           </button>
                           <button
-                            onClick={() => handleClassificationFeedback(r.id, 'incorrect')}
+                            onClick={() => setCorrectingId(correctingId === r.id ? null : r.id)}
                             disabled={feedbackSending || sendingReplyId === r.id}
                             style={{
                               background: 'none',
@@ -341,6 +394,22 @@ export function InboxView({ api, workspace, toast }: Props) {
                       )}
                     </div>
                     <ConfidenceBar value={r.replyConfidence} />
+                    {correctingId === r.id && (
+                      <div role="group" aria-label="What should this reply have been?" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 4 }}>
+                        <span style={{ color: colors.textMuted, fontSize: 12 }}>What was it?</span>
+                        {FILTERS.filter(f => f !== r.replyIntent).map(f => (
+                          <button
+                            key={f}
+                            disabled={feedbackSending}
+                            onClick={() => handleClassificationFeedback(r.id, 'incorrect', f)}
+                            style={{ padding: '3px 10px', borderRadius: 999, fontSize: 12, cursor: 'pointer', border: `1px solid ${CLASS_META[f].color}`, background: 'transparent', color: CLASS_META[f].color }}
+                          >
+                            {CLASS_META[f].label}
+                          </button>
+                        ))}
+                        <button onClick={() => setCorrectingId(null)} style={{ background: 'none', border: 'none', color: colors.textFaint, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    )}
                   </div>
                 )}
                 {r.pendingSend ? (
