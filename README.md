@@ -15,7 +15,7 @@ hosting accounts and keys only (see [`docs/GO_LIVE_CHECKLIST.md`](docs/GO_LIVE_C
 ```
 Find work → Pursue → Contact & quote → Win → Start the job → Crew & shifts → Close out → Margin
      ↑                                                                                      │
-     └──────────────────── learn which work actually pays ─────────────────────────────────┘
+     └──────────────────── learn which work actually pays ────────────────────────────────[...]
 ```
 
 | Step | Where in the app | What happens |
@@ -77,10 +77,10 @@ cp .env.example .env        # fill in required values
 npm install
 npm run prisma:generate
 npm run prisma:migrate
-npm run dev:api             # http://localhost:4000
-npm run dev:worker
-npm run dev:web             # http://localhost:5173
+npm run dev                 # starts web + api + worker together
 ```
+
+Then open the web app at `http://localhost:5173` and the API at `http://localhost:4000`.
 
 ### Docker (one command — full stack)
 
@@ -201,4 +201,4 @@ logs with request-id correlation, and a dependency-free load-test harness
 
 ## GitHub automation
 
-GitHub automation is now split into four layers: `CI`, `CodeQL`, `Dependabot`, and `Release`. The repo-side contract lives in [`docs/CI_CD.md`](docs/CI_CD.md), and the last non-git repository settings are documented in [`docs/GITHUB_ADMIN.md`](docs/GITHUB_ADMIN.md).
+GitHub automation is now split into four layers: `CI`, `CodeQL`, `Dependabot`, and `Release`. The repo-side contract lives in [`docs/CI_CD.md`](docs/CI_CD.md), and the last non-git repository settings are in [`docs/GITHUB_ADMIN.md`](docs/GITHUB_ADMIN.md).
