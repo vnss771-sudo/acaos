@@ -107,12 +107,13 @@ async function withMode<T>(mode: string | undefined, fn: () => Promise<T>): Prom
 
 async function seedLearnable(workspaceId: string) {
   // 8 WON (FUNDING) + 4 LOST (PROCUREMENT) = 12 outcomes (>= the 10 minimum).
-  // One shared recordedAt: calibration is recency-weighted, so outcomes stamped
-  // a moment apart by the DB default get slightly different weights and the
-  // baseline drifts off exactly 8/12 on a slow runner.
-  const recordedAt = new Date()
-  for (let i = 0; i < 8; i++) await seedOutcome(workspaceId, 'WON', 'FUNDING', recordedAt)
-  for (let i = 0; i < 4; i++) await seedOutcome(workspaceId, 'LOST', 'PROCUREMENT', recordedAt)
+  // Fixed timestamps 1ms apart, not the DB default. Calibration is recency-
+  // weighted: stamps that depend on how fast the runner seeds make the baseline
+  // drift off 8/12 by a runner-dependent amount, and identical stamps leave the
+  // row order (and so the float sums) arbitrary between runs.
+  const base = Date.now()
+  for (let i = 0; i < 8; i++) await seedOutcome(workspaceId, 'WON', 'FUNDING', new Date(base + i))
+  for (let i = 0; i < 4; i++) await seedOutcome(workspaceId, 'LOST', 'PROCUREMENT', new Date(base + 8 + i))
 }
 
 test('calibrateScoring (default shadow): proposes, applies nothing, never touches the ICP', async () => {
