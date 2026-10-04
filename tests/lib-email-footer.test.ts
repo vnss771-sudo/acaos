@@ -1,6 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildOutreachEmail } from '../packages/backend-core/src/lib/emailFooter.ts'
+import { buildOutreachEmail, resolveUnsubscribeBaseUrl } from '../packages/backend-core/src/lib/emailFooter.ts'
+
+// The unsubscribe link must never point at localhost in production: a worker
+// deployed without API_URL used to mail http://localhost:4000 links.
+test('unsubscribe base URL comes from API_URL, without a trailing slash', () => {
+  assert.equal(resolveUnsubscribeBaseUrl({ API_URL: 'https://api.acaos.test/', NODE_ENV: 'production' }), 'https://api.acaos.test')
+})
+
+test('unsubscribe base URL is null in production when API_URL is missing or blank', () => {
+  assert.equal(resolveUnsubscribeBaseUrl({ NODE_ENV: 'production' }), null)
+  assert.equal(resolveUnsubscribeBaseUrl({ API_URL: '  ', NODE_ENV: 'production' }), null)
+})
+
+test('unsubscribe base URL falls back to the local API outside production', () => {
+  assert.equal(resolveUnsubscribeBaseUrl({ NODE_ENV: 'development' }), 'http://localhost:4000')
+  assert.equal(resolveUnsubscribeBaseUrl({}), 'http://localhost:4000')
+})
 
 const base = { body: 'Hi there,\nQuick question about scheduling.', appUrl: 'https://api.acaos.test/', unsubscribeToken: 'tok123' }
 
