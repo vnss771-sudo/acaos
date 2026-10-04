@@ -16,6 +16,21 @@ function getStripe() {
   })
 }
 
+// A Stripe failure (a rejected or rotated key, an outage, the breaker open) is a
+// billing-provider problem, not a bug in the request. Answer 503 with a plain
+// message instead of a bare 500 "Internal server error", and log the real cause
+// for the operator. ApiErrors raised before the call (not configured, no price)
+// pass through unchanged.
+export async function callStripe<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await stripeBreaker.call(fn)
+  } catch (err) {
+    if (err instanceof ApiError) throw err
+    logger.error(`Stripe ${operation} failed`, { err: err instanceof Error ? err.message : String(err) })
+    throw new ApiError(503, 'Billing is temporarily unavailable. Please try again shortly.')
+  }
+}
+
 // Paid plans eligible for Stripe checkout (the `free` tier is never purchased).
 export type CheckoutPlan = Exclude<BillingPlan, 'free'>
 
@@ -57,13 +72,13 @@ export async function createCheckoutSession(
     sessionParams.customer_email = customerEmail
   }
 
-  return stripeBreaker.call(() => stripe.checkout.sessions.create(sessionParams))
+  return callStripe('checkout', () => stripe.checkout.sessions.create(sessionParams))
 }
 
 export async function createBillingPortalSession(customerId: string) {
   const stripe = getStripe()
   const webBase = process.env.WEB_URL || process.env.API_URL || 'https://acaos.app'
-  return stripeBreaker.call(() => stripe.billingPortal.sessions.create({
+  return callStripe('billing portal', () => stripe.billingPortal.sessions.create({
     customer: customerId,
     return_url: `${webBase}/billing`
   }))
