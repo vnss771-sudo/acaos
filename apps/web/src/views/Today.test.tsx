@@ -26,7 +26,7 @@ const DETAIL = {
   prospect: { ...URGENT.prospect, contactName: 'Sam Lee', contactTitle: 'Ops Manager', contactEmail: 'sam@example.test' },
 }
 
-function mockApi(opts: { networkIn?: boolean } = {}) {
+function mockApi(opts: { networkIn?: boolean; quotes?: unknown[] } = {}) {
   return vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
     if (init?.method && init.method !== 'GET') return Promise.resolve({ ok: true, created: true, intentId: 'i1', success: true, optedInAt: null })
     if (path.startsWith('/api/commercial-opportunities/outcomes')) return Promise.resolve({ summary: SUMMARY })
@@ -34,7 +34,7 @@ function mockApi(opts: { networkIn?: boolean } = {}) {
     if (path.startsWith('/api/commercial-opportunities/c1')) return Promise.resolve({ opportunity: DETAIL })
     if (path.startsWith('/api/commercial-opportunities')) return Promise.resolve({ opportunities: [URGENT, PURSUING, WATCH] })
     if (path.startsWith('/api/delivery/report')) return Promise.resolve({ report: { minJobs: 3, overall: { jobs: 4, grossMarginPct: { n: 4, median: 24 }, labourMarginPct: null } } })
-    if (path.startsWith('/api/delivery/quotes')) return Promise.resolve({ quotes: [] })
+    if (path.startsWith('/api/delivery/quotes')) return Promise.resolve({ quotes: opts.quotes ?? [] })
     return Promise.reject(new Error(`unexpected ${path}`))
   })
 }
@@ -61,6 +61,28 @@ describe('Today', () => {
     expect(screen.getByText('median gross, 4 closed jobs')).toBeInTheDocument()
     expect(screen.getByText('Unconfirmed')).toBeInTheDocument()
     expect(screen.getByText('value unknown')).toBeInTheDocument()
+  })
+
+  // Find work quotes live on Opportunity, which the outcomes summary never sees.
+  // A contractor who quoted and won through Find work used to see $0 and "0 quoted".
+  test('Find work quotes and wins count toward won revenue, quote-to-win and the pipeline hint', async () => {
+    const fw = (id: string, opportunityId: string, status: string, amountCents: number) =>
+      ({ id, opportunityId, commercialOpportunityId: null, status, amountCents, estimatedHours: 100, job: null })
+    const quotes = [
+      fw('q3', 'o1', 'ACCEPTED', 6_000_000),
+      fw('q2', 'o2', 'ACCEPTED', 2_500_000),
+      fw('q1', 'o3', 'SUBMITTED', 1_000_000),
+      fw('q0', 'o3', 'DRAFT', 900_000), // older draft of o3: superseded, never counted
+    ]
+    render(<Today api={mockApi({ quotes }) as never} workspace={workspace} toast={toast as never} isAdmin setView={setView} />)
+    expect(await screen.findByText('Needs your decision (2)')).toBeInTheDocument()
+    // Summary: $50,000 sourced + $10,000 influenced, plus $85,000 accepted in Find work.
+    expect(screen.getByText('$145,000')).toBeInTheDocument()
+    expect(screen.getByText('$50,000 sourced · $10,000 influenced · $85,000 from Find work')).toBeInTheDocument()
+    // Summary: 2 of 4 quoted won; Find work: 2 of 3 quoted won → 4 of 7.
+    expect(screen.getByText('57%')).toBeInTheDocument()
+    expect(screen.getByText('7 quoted')).toBeInTheDocument()
+    expect(screen.getByText('3 opportunities, value × chance · $10,000 quoted in Find work')).toBeInTheDocument()
   })
 
   test('members see no margin, quotes or network controls, and those endpoints are never called', async () => {
