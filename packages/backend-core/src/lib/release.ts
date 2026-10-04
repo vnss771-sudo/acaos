@@ -12,9 +12,15 @@ export type RuntimeMetadata = {
   startedAt: string
 }
 
+// The Dockerfiles default their ACAOS_RELEASE_* build args to "unknown", so an
+// image built without them carries that literal. Treat it as unset, or it would
+// shadow the RAILWAY_GIT_COMMIT_SHA fallback and every deploy would report
+// commit "unknown".
+const UNSET_PLACEHOLDER = 'unknown'
+
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim()
-  return value ? value : undefined
+  return value && value.toLowerCase() !== UNSET_PLACEHOLDER ? value : undefined
 }
 
 export function getRuntimeMetadata(service: string): RuntimeMetadata {
