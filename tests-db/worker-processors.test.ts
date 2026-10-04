@@ -77,12 +77,12 @@ test('scoreProspects reassesses commercial opportunities, unless the engine is s
 
 // --- calibrateScoring ---
 
-async function seedOutcome(workspaceId: string, stage: 'WON' | 'LOST', signalType: string) {
+async function seedOutcome(workspaceId: string, stage: 'WON' | 'LOST', signalType: string, recordedAt?: Date) {
   const prospect = await seedProspect(workspaceId)
   await prisma.signal.create({
     data: { workspaceId, prospectId: prospect.id, type: signalType as any, strength: 80 },
   })
-  await prisma.prospectOutcome.create({ data: { workspaceId, prospectId: prospect.id, stage } })
+  await prisma.prospectOutcome.create({ data: { workspaceId, prospectId: prospect.id, stage, recordedAt } })
 }
 
 test('calibrateScoring no-ops below the minimum sample size', async () => {
@@ -107,8 +107,12 @@ async function withMode<T>(mode: string | undefined, fn: () => Promise<T>): Prom
 
 async function seedLearnable(workspaceId: string) {
   // 8 WON (FUNDING) + 4 LOST (PROCUREMENT) = 12 outcomes (>= the 10 minimum).
-  for (let i = 0; i < 8; i++) await seedOutcome(workspaceId, 'WON', 'FUNDING')
-  for (let i = 0; i < 4; i++) await seedOutcome(workspaceId, 'LOST', 'PROCUREMENT')
+  // One shared recordedAt: calibration is recency-weighted, so outcomes stamped
+  // a moment apart by the DB default get slightly different weights and the
+  // baseline drifts off exactly 8/12 on a slow runner.
+  const recordedAt = new Date()
+  for (let i = 0; i < 8; i++) await seedOutcome(workspaceId, 'WON', 'FUNDING', recordedAt)
+  for (let i = 0; i < 4; i++) await seedOutcome(workspaceId, 'LOST', 'PROCUREMENT', recordedAt)
 }
 
 test('calibrateScoring (default shadow): proposes, applies nothing, never touches the ICP', async () => {
