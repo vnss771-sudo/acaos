@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
+import './base.css'
 import './animations.css'
 import './a11y.css'
 
