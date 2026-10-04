@@ -7,7 +7,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "lib": ["ES2020"],
+    "lib": ["ES2022"],
     "resolveJsonModule": true,
     "declaration": true,
     "customConditions": ["acaos-src"],
