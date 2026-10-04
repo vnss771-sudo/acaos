@@ -4,7 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { withDefaultConnectionLimit, DEFAULT_CONNECTION_LIMIT } from '../packages/backend-core/src/lib/databaseUrl.ts'
+import { withDefaultConnectionLimit, DEFAULT_CONNECTION_LIMIT, checkDatabaseUrlConfigured } from '../packages/backend-core/src/lib/databaseUrl.ts'
 
 test('appends the default connection_limit when the URL has no query string', () => {
   const result = withDefaultConnectionLimit('postgresql://user:pass@host:5432/db', {})
@@ -57,4 +57,24 @@ test('defaults to process.env when no env object is passed', () => {
     if (prev === undefined) delete process.env.DB_POOL_SIZE
     else process.env.DB_POOL_SIZE = prev
   }
+})
+
+// checkDatabaseUrlConfigured: the worker ran in production for days with a
+// malformed DATABASE_URL, failing every job. It must now refuse to boot.
+test('checkDatabaseUrlConfigured accepts postgres:// and postgresql:// URLs in production', () => {
+  assert.doesNotThrow(() => checkDatabaseUrlConfigured({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://u:p@h:5432/db' }))
+  assert.doesNotThrow(() => checkDatabaseUrlConfigured({ NODE_ENV: 'production', DATABASE_URL: 'postgres://u:p@h:5432/db' }))
+})
+
+test('checkDatabaseUrlConfigured throws in production on a missing or malformed URL, without echoing it', () => {
+  assert.throws(() => checkDatabaseUrlConfigured({ NODE_ENV: 'production' }), /must be a postgresql:\/\/ URL/)
+  assert.throws(
+    () => checkDatabaseUrlConfigured({ NODE_ENV: 'production', DATABASE_URL: '"postgresql://u:s3cret@h/db"' }),
+    (err: Error) => /must be a postgresql:\/\/ URL/.test(err.message) && !err.message.includes('s3cret'),
+  )
+})
+
+test('checkDatabaseUrlConfigured does nothing outside production', () => {
+  assert.doesNotThrow(() => checkDatabaseUrlConfigured({ NODE_ENV: 'development' }))
+  assert.doesNotThrow(() => checkDatabaseUrlConfigured({}))
 })

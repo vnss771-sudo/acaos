@@ -58,6 +58,7 @@ import { logLifecycleEvent } from '@acaos/backend-core/lib/lifecycle.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { initErrorReporting } from '@acaos/backend-core/lib/errorReporting.js'
 import { checkEncryptionKeyHealth, checkEmailEncryptionKeyConfigured } from '@acaos/backend-core/lib/encrypt.js'
+import { checkDatabaseUrlConfigured } from '@acaos/backend-core/lib/databaseUrl.js'
 import { attachBreakerStore } from '@acaos/backend-core/lib/circuit.js'
 import { createRedisBreakerStore } from '@acaos/backend-core/lib/breakerStore.js'
 import { attachProviderQuotaStore } from '@acaos/backend-core/lib/providerQuota.js'
@@ -518,16 +519,22 @@ for (const [name, worker] of WORKER_QUEUES) {
     // Correlate the failure back to the originating API request when the enqueuer
     // threaded a requestId through the payload (optional — worker-internal jobs omit it).
     const requestId = typeof job?.data?.requestId === 'string' ? job.data.requestId : undefined
-    log(name, `Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`, requestId)
+    // Failures were logged at info, so the platform's error views showed a
+    // healthy worker while every job failed. Warn while BullMQ will retry,
+    // error once the retries are spent.
+    const finalAttempt = isFinalAttempt(job)
+    logger[finalAttempt ? 'error' : 'warn'](`Job ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`, {
+      queue: name, service: SERVICE, releaseId: metadata.releaseId, ...(requestId ? { requestId } : {}),
+    })
     // Only count/report once the job has exhausted its retries — transient
     // failures that BullMQ will retry are noise, not faults.
-    if (isFinalAttempt(job)) {
+    if (finalAttempt) {
       incJob(name, 'failed')
       captureError(err, { source: 'worker.failed', queue: name, jobId: job?.id, attempts: job?.attemptsMade, requestId })
     }
   })
   worker.on('error', (err) => {
-    log(name, `Worker error: ${err.message}`)
+    logger.error(`Worker error: ${err.message}`, { queue: name, service: SERVICE, releaseId: metadata.releaseId })
     captureError(err, { source: 'worker.error', queue: name })
   })
 }
@@ -711,6 +718,10 @@ checkEncryptionKeyHealth()
 // environments checkEncryptionKeyHealth() above leaves untouched.
 checkEmailEncryptionKeyConfigured()
 
+// Same for DATABASE_URL: a malformed value booted clean and then failed every
+// job, and the worker ran that way in production for days.
+checkDatabaseUrlConfigured()
+
 // Distributed tracing: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT (or, for local
 // debugging, OTEL_CONSOLE_EXPORTER) is set — see backend-core/lib/tracing.ts.
 initTracing(SERVICE)
@@ -729,12 +740,20 @@ attachProviderQuotaStore(connection)
 // Bind to the platform-injected PORT when present (so Railway's healthcheck, which
 // probes $PORT, can reach /live and restart a wedged worker) and fall back to the
 // fixed 9090 locally/in Docker. WORKER_HEALTH_PORT overrides both.
+// /ready also proves Postgres answers, so a deploy whose DATABASE_URL is wrong
+// fails its healthcheck instead of going live. Cached briefly so frequent probes
+// don't each hit the database.
+const databaseReachable = createCachedValue(
+  () => prisma.$queryRaw`SELECT 1`.then(() => true, () => false),
+  5_000,
+)
+
 const healthServer = startHealthServer(
   Number(process.env.WORKER_HEALTH_PORT || process.env.PORT || 9090),
   {
     collectQueueDepths,
     collectDomainMetrics: () => domainMetricsCache.get(),
-    isReady: () => !shuttingDown && connection.status === 'ready',
+    isReady: async () => !shuttingDown && connection.status === 'ready' && await databaseReachable.get(),
   },
 )
 
