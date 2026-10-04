@@ -14,7 +14,8 @@ for detail. Work top to bottom; don't skip the sign-off.
 
 ## 0. Pre-flight (code is ready)
 
-- [ ] `master` is green: all 17 CI checks pass on the release commit.
+- [ ] `master` is green: every CI check passes on the release commit, including the
+      `required` roll-up and CodeQL.
 - [ ] `npm run verify` is clean locally (lint, typecheck, unit + DB + Redis tiers).
 - [ ] `dist-pack/release-manifest.json` regenerated (`node scripts/make-zips.mjs`);
       record the `releaseId` — it is the immutable deployment contract.
@@ -38,6 +39,11 @@ the compose placeholders:
 - [ ] **IMAP: `IMAP_HOST/USER/PASS`** — required for the reply pipeline that feeds the **Inbox** (or set per-workspace in `WorkspaceEmailConfig`)
 - [ ] `METRICS_TOKEN` (bearer for `/metrics`; in prod `/metrics` 404s without it)
 - [ ] Web build arg `VITE_API_BASE_URL=https://api.<domain>`
+- [ ] *Optional, mailbox sign-in* (see [MAILBOX_SIGN_IN](./MAILBOX_SIGN_IN.md)):
+      `GOOGLE_OAUTH_CLIENT_ID/SECRET` and/or `MICROSOFT_OAUTH_CLIENT_ID/SECRET`
+      (+ `MICROSOFT_OAUTH_TENANT`, default `common`), with `API_URL=https://api.<domain>`
+      so the redirect URI resolves. Register that redirect URI with each provider.
+      `MICROSOFT_SEND_VIA_GRAPH` (default `true`) sends Microsoft 365 mail through Graph.
 
 ## 2. Infrastructure
 
@@ -76,8 +82,10 @@ The **api** image is the **only** migration writer (`scripts/start-with-migratio
 runs `prisma migrate deploy`, then the API). See [MIGRATIONS](./MIGRATIONS.md).
 
 1. [ ] Deploy/upgrade Postgres + Redis.
-2. [ ] Deploy **api** → it applies pending migrations (latest:
-       `20260625030612_compliance_consent`). Confirm it logs migrations applied.
+2. [ ] Deploy **api** → it applies pending migrations. Confirm it logs them applied and
+       that the newest one matches the newest folder in `packages/db/prisma/migrations/`
+       (`ls packages/db/prisma/migrations | sort | tail -2`; at the time of writing
+       `20261003300000_reply_feedback`).
 3. [ ] Deploy **worker** (never runs migrations; consumes `analyze-reply`,
        `sync-mailbox`, `send-campaign`, etc.).
 4. [ ] Deploy **web** (nginx static, port 8080) built against the prod API URL.
@@ -97,20 +105,33 @@ Core smoke (full list in [SMOKE_TESTS](./SMOKE_TESTS.md)):
 - [ ] Stripe checkout creates a session; webhook verifies a CLI test event.
 - [ ] SMTP sends a test email; `POST /api/mailbox/sync` ingests a reply.
 
-This release's surfaces:
-- [ ] **Acquisition Radar** loads with the Next Best Action hero.
-- [ ] **⌘K command palette** opens (⌘K / Ctrl+K / `/`) and routes.
-- [ ] **Review Queue** shows risk flags on a draft; batch approve/reject works.
-- [ ] **Prospects** grid sorts + bulk-select rescore/recommend work.
+The contractor loop (the core product — walk it end to end on a fresh workspace):
+- [ ] **Today** loads as the landing screen.
+- [ ] **Work → Find work** shows matched tenders / development applications;
+      **Pursue** → **Record quote** → **Client accepted** moves a card to the Won tab.
+- [ ] **Start the job** creates the job and its site in one click.
+- [ ] **Crew → Crew / Shifts / Roster**: add a crew member with a rate and log hours
+      against the job's site.
+- [ ] **Work → Jobs & margins**: close out the job and see quoted vs delivered margin.
+
+Mail and the rest of the app:
+- [ ] **Settings → mailbox**: *Sign in with Google / Microsoft* connects a mailbox (if
+      the OAuth keys are set); a test send from a Microsoft 365 mailbox goes through.
 - [ ] **Inbox** lists a classified reply (run a `sync-mailbox` against a seeded reply);
-      classification + suggested action render.
+      classification + suggested action render; correcting a label (👎) updates the
+      classification-accuracy panel.
+- [ ] **Review Queue** shows risk flags on a draft; batch approve/reject works. A draft
+      containing a card number or secret key is held for review and can't be approved.
+- [ ] **⌘K command palette** opens (⌘K / Ctrl+K / `/`) and routes.
 - [ ] **Investor demo** (`?demo=investor`) renders the seeded shell, **Exit demo** clears it.
 
 ## 5. Rollback
 
 - [ ] Redeploy the previous `releaseId` images (api → worker → web).
-- [ ] Migrations are additive/nullable this release, so a code rollback needs **no
-      down-migration**; the new `OutreachSent.reply*` columns are simply unused by older code.
+- [ ] Check the migrations shipped since the previous release. If they only add tables,
+      nullable columns or columns with defaults (true of every migration up to
+      `20261003300000_reply_feedback`), a code rollback needs **no down-migration**: older
+      code simply ignores the new columns.
 - [ ] If a forward migration must be reverted, follow [MIGRATIONS](./MIGRATIONS.md) — never `db push` in prod.
 
 ## 6. Operator-only GitHub items (cannot be automated by CI/agent)
