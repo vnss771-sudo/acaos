@@ -44,7 +44,7 @@ import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, checkClaimGrounding, sensitiveDataViolation, type DraftPolicyConfig, type DraftPolicyViolation } from '@acaos/backend-core/lib/policyCheck.js'
 import { assertOutreachTone, OutreachToneError } from '@acaos/backend-core/lib/outreachTone.js'
-import { buildOutreachEmail } from '@acaos/backend-core/lib/emailFooter.js'
+import { buildOutreachEmail, resolveUnsubscribeBaseUrl } from '@acaos/backend-core/lib/emailFooter.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs, utcDayStart } from '@acaos/backend-core/lib/campaignStats.js'
@@ -691,7 +691,11 @@ async function loadCampaignSendConfig(campaignId: string, workspaceId: string) {
     : undefined
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
   if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
-  return { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg }
+  // Every email carries an unsubscribe link built from API_URL. Refuse the whole
+  // batch before any send rather than mail out links that can't work.
+  const unsubscribeBaseUrl = resolveUnsubscribeBaseUrl()
+  if (!unsubscribeBaseUrl) throw new Error('API_URL not configured — set it so unsubscribe links work')
+  return { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg, unsubscribeBaseUrl }
 }
 
 type CampaignSendConfig = Awaited<ReturnType<typeof loadCampaignSendConfig>>
@@ -1136,7 +1140,7 @@ export async function sendCampaignBatch(
   // generator, so production callers (worker.ts) are unchanged.
   const generateOutreachFn = deps.generateOutreach ?? generateOutreach
 
-  const { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg } =
+  const { icp, workspace, missionCtx, draftPolicy, autoFollowupsEnabled, smtpCfg, unsubscribeBaseUrl } =
     await loadCampaignSendConfig(campaignId, workspaceId)
   // Selection tracking (best-effort): who this run considered, selected or
   // excluded and why. Leads are processed in id order (≈ creation order), so a
@@ -1297,7 +1301,7 @@ export async function sendCampaignBatch(
       )
     : null
 
-  const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
+  const appUrl = unsubscribeBaseUrl
 
   await progress?.(10)
 
@@ -1566,6 +1570,8 @@ export async function sendFollowupTask(
   if (!step || !step.isActive) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'STEP_INACTIVE' })
   const smtpCfg: SmtpConfig | null = wsCfg ?? null
   if (!isMailConfigured(smtpCfg)) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SMTP_NOT_CONFIGURED' })
+  const appUrl = resolveUnsubscribeBaseUrl()
+  if (!appUrl) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'API_URL_NOT_CONFIGURED' })
   if (sensitiveKinds(`${step.subject ?? ''}\n${step.body}`).length > 0) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SENSITIVE_DATA' })
 
   // Sender-reputation circuit breaker (same modes as the campaign sender). A
@@ -1608,7 +1614,6 @@ export async function sendFollowupTask(
   const subject = (step.subject && step.subject.trim()) || 'Following up'
   const body = step.body
   const unsubscribeToken = randomBytes(24).toString('hex')
-  const appUrl = (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, '')
   const { htmlBody, textBody, unsubscribeUrl } = buildOutreachEmail({
     body, appUrl, unsubscribeToken,
     senderBusinessName: workspace?.senderBusinessName,

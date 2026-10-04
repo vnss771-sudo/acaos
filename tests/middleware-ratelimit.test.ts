@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
-import { createRateLimiter, authRateLimit } from '../apps/api/src/middleware/rateLimit.ts'
+import { createRateLimiter, authRateLimit, authRefreshRateLimit } from '../apps/api/src/middleware/rateLimit.ts'
 import type { Request, Response, NextFunction } from 'express'
 
 // ---------------------------------------------------------------------------
@@ -304,5 +304,31 @@ test('authRateLimit: requests without an email skip the per-account limiter', as
   const { res, status } = makeRes()
   const { nextCalled } = await runMiddleware(authRateLimit, mk(), res)
   assert.equal(nextCalled, false)
+  assert.equal(status.mock.calls[0]?.arguments[0], 429)
+})
+
+// ---------------------------------------------------------------------------
+// authRefreshRateLimit: token refresh has its own budget
+// ---------------------------------------------------------------------------
+// The SPA refreshes on every page load. Sharing the 10-per-15-minute login
+// budget locked users out after a few reloads (reproduced against production).
+test('authRefreshRateLimit: ordinary reloads stay well clear of the login ceiling', async () => {
+  const mk = () => ({ headers: {}, ip: '10.0.0.77', socket: { remoteAddress: '10.0.0.77' }, body: {} }) as unknown as Request
+  for (let i = 0; i < 30; i++) {
+    const { res } = makeRes()
+    const { nextCalled } = await runMiddleware(authRefreshRateLimit, mk(), res)
+    assert.equal(nextCalled, true, `refresh ${i + 1} passes`)
+  }
+})
+
+test('authRefreshRateLimit: still stops a flood from one IP', async () => {
+  const mk = () => ({ headers: {}, ip: '10.0.0.78', socket: { remoteAddress: '10.0.0.78' }, body: {} }) as unknown as Request
+  for (let i = 0; i < 120; i++) {
+    const { res } = makeRes()
+    await runMiddleware(authRefreshRateLimit, mk(), res)
+  }
+  const { res, status } = makeRes()
+  const { nextCalled } = await runMiddleware(authRefreshRateLimit, mk(), res)
+  assert.equal(nextCalled, false, 'the 121st refresh in the window is blocked')
   assert.equal(status.mock.calls[0]?.arguments[0], 429)
 })

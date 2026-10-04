@@ -1,0 +1,21 @@
+/* Page base styles. These used to sit in an inline <style> in index.html,
+ * which the production CSP (style-src-elem 'self', nginx.conf) blocks: the
+ * page then rendered with the browser's default 8px white margin and fonts.
+ * Bundled same-origin by Vite like animations.css and a11y.css. */
+
+body {
+  margin: 0;
+  font-family:
+    Inter,
+    Arial,
+    sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}

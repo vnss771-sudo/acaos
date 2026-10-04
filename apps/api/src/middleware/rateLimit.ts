@@ -137,6 +137,20 @@ export const authRateLimit: RequestHandler = (req, res, next) => {
   })
 }
 
+// Token refresh gets its own per-IP budget. The SPA refreshes on every page load
+// and whenever the access token expires, so sharing the 10-per-15-minute login
+// budget locked people out after a few reloads, and a crew behind one site,
+// office or mobile-carrier IP shared it. A refresh needs a valid HttpOnly
+// refresh cookie and rotates it on every use, so this ceiling only has to stop
+// floods, not guessing.
+export const authRefreshRateLimit = createRateLimiter({
+  name: 'auth_refresh',
+  windowMs: AUTH_WINDOW_MS,
+  max: 120,
+  degradedMax: 30,
+  message: AUTH_MESSAGE,
+})
+
 // 60 AI requests per hour per IP (generous for demos). This is the IP tier only
 // — many users behind one NAT/office IP share this bucket. The workspace tier
 // that stops a single compromised/abusive workspace from bursting the shared

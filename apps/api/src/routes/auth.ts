@@ -17,7 +17,7 @@ import { encryptSecret, decryptSecret } from '@acaos/backend-core/lib/encrypt.js
 import { generateTotpSecret, verifyTotpStep, buildOtpauthUri } from '@acaos/backend-core/lib/totp.js'
 import { isLocked, lockRetryAfterSeconds, nextLockoutAfterFailure, CLEARED_LOCKOUT } from '@acaos/backend-core/lib/accountLockout.js'
 import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-core/lib/disposableEmail.js'
-import { authRateLimit } from '../middleware/rateLimit.js'
+import { authRateLimit, authRefreshRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/textNormalize.js'
@@ -249,7 +249,7 @@ authRouter.post(
 
 authRouter.post(
   '/refresh',
-  authRateLimit,
+  authRefreshRateLimit,
   requireCsrfHeader,
   asyncHandler(async (req, res) => {
     // The refresh token is read from the HttpOnly cookie, never the body.

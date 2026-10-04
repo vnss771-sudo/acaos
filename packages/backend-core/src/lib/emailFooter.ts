@@ -26,6 +26,19 @@ export interface RenderedOutreachEmail {
 const FOOTER_NOTICE = 'You received this email because you matched our outreach criteria. To stop receiving emails,'
 
 /**
+ * Base URL the unsubscribe link points at: the API's public origin (API_URL).
+ * In production a missing API_URL returns null instead of falling back to
+ * localhost, which would put an unsubscribe link that can't work into every
+ * email. Senders must refuse to send on null. Outside production the local API
+ * is a safe default.
+ */
+export function resolveUnsubscribeBaseUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  const configured = env.API_URL?.trim().replace(/\/+$/, '')
+  if (configured) return configured
+  return env.NODE_ENV === 'production' ? null : 'http://localhost:4000'
+}
+
+/**
  * Render the HTML + text bodies for an outreach email, including the unsubscribe
  * link and (when configured) the sender business name + physical postal address.
  * Pure and dependency-free so it's exhaustively unit-testable.

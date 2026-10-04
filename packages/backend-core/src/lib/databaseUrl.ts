@@ -12,6 +12,21 @@
 
 export const DEFAULT_CONNECTION_LIMIT = 10
 
+/**
+ * Boot check for processes that only reach Postgres through the Prisma client
+ * (the worker). A malformed DATABASE_URL used to boot clean and then fail every
+ * job with "the URL must start with the protocol postgresql://". Throw at
+ * startup instead, so the deploy fails where it is visible. Production only.
+ * The error never echoes the value: it carries the database password.
+ */
+export function checkDatabaseUrlConfigured(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.NODE_ENV !== 'production') return
+  const raw = env.DATABASE_URL?.trim() ?? ''
+  if (!/^postgres(ql)?:\/\//i.test(raw)) {
+    throw new Error('DATABASE_URL must be a postgresql:// URL (on Railway, set it to ${{Postgres.DATABASE_URL}})')
+  }
+}
+
 // DB_POOL_SIZE lets an operator size the pool per replica (e.g. to match
 // WEB_CONCURRENCY, a worker's queue concurrency, or PgBouncer capacity) without
 // having to hand-edit the connection string. Invalid/absent values fall back

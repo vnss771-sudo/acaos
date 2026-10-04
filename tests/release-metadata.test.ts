@@ -49,3 +49,23 @@ test('an explicit ACAOS_RELEASE_SHA takes precedence over the Railway SHA', () =
     assert.equal(getRuntimeMetadata('acaos-api').commit, 'deadbeefcafe0000')
   })
 })
+
+// The Dockerfiles default ACAOS_RELEASE_SHA to "unknown" when no build arg is
+// passed (Railway passes none), which used to shadow the Railway SHA.
+test('the Dockerfile placeholder "unknown" does not shadow the Railway SHA', () => {
+  withEnv({ ACAOS_RELEASE_SHA: 'unknown', RAILWAY_GIT_COMMIT_SHA: 'abcdef1234567890face' }, () => {
+    const m = getRuntimeMetadata('acaos-worker')
+    assert.equal(m.commit, 'abcdef1234567890face')
+    assert.equal(m.releaseId, `${m.version}+abcdef123456`)
+  })
+})
+
+test('the "unknown" build-time placeholder reads as no build time', () => {
+  const saved = process.env.ACAOS_BUILD_TIME
+  process.env.ACAOS_BUILD_TIME = 'unknown'
+  try {
+    assert.equal(getRuntimeMetadata('acaos-worker').buildTime, null)
+  } finally {
+    if (saved === undefined) delete process.env.ACAOS_BUILD_TIME; else process.env.ACAOS_BUILD_TIME = saved
+  }
+})

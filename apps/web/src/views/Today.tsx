@@ -85,6 +85,9 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
   const [summary, setSummary] = useState<Summary | null>(null)
   const [delivery, setDelivery] = useState<DeliveryReport | null>(null)
   const [quotes, setQuotes] = useState<Map<string, QuoteSummary>>(new Map())
+  // Find work quotes hang off Opportunity, not CommercialOpportunity, so the
+  // outcomes summary never sees them: the latest quote per Find work opportunity.
+  const [workQuotes, setWorkQuotes] = useState<QuoteSummary[]>([])
   const [network, setNetwork] = useState<'in' | 'out' | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
@@ -114,11 +117,16 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
         setSummary(outcomes.summary)
         setDelivery(report?.report ?? null)
         const latest = new Map<string, QuoteSummary>()
+        const latestWork = new Map<string, QuoteSummary>()
+        // Quotes arrive newest first, so the first one seen per opportunity is its latest.
         for (const q of quoteList.quotes ?? []) {
           const key = q.commercialOpportunityId
           if (key && !latest.has(key) && q.status !== 'WITHDRAWN' && q.status !== 'REJECTED') latest.set(key, q)
+          const workKey = q.opportunityId
+          if (workKey && !latestWork.has(workKey) && q.status !== 'WITHDRAWN' && q.status !== 'DRAFT') latestWork.set(workKey, q)
         }
         setQuotes(latest)
+        setWorkQuotes([...latestWork.values()])
         setNetwork(net)
       })
       .catch(e => {
@@ -182,7 +190,23 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
   const toStart = all.filter(o => o.status === 'WON' && quotes.get(o.id)?.status === 'ACCEPTED' && !quotes.get(o.id)?.job)
   const fresh = all.filter(o => now - Date.parse(o.firstDetectedAt) <= NEW_WINDOW_DAYS * DAY)
   const pipelineCents = all.filter(o => o.status === 'OPEN' || o.status === 'PURSUING').reduce((t, o) => t + (o.expectedValueCents ?? 0), 0)
-  const won = summary ? summary.wonRevenueCents.sourced + summary.wonRevenueCents.influenced : 0
+  // Find work: work ACAOS found that was quoted (submitted, accepted or declined)
+  // and won (accepted). A quote awaiting a decision has no chance estimate, so it
+  // sits beside the value × chance pipeline rather than inside it.
+  const sumCents = (qs: QuoteSummary[]) => qs.reduce((t, q) => t + q.amountCents, 0)
+  const workWon = workQuotes.filter(q => q.status === 'ACCEPTED')
+  const workAwaitingCents = sumCents(workQuotes.filter(q => q.status === 'SUBMITTED'))
+  const workWonCents = sumCents(workWon)
+  const commercialQuoted = summary?.reached.QUOTED ?? 0
+  const commercialQuotedWon = Math.round((summary?.conversion.quotedToWon ?? 0) * commercialQuoted)
+  const quotedTotal = commercialQuoted + workQuotes.length
+  const quoteToWin = quotedTotal > 0 ? (commercialQuotedWon + workWon.length) / quotedTotal : null
+  const won = (summary ? summary.wonRevenueCents.sourced + summary.wonRevenueCents.influenced : 0) + workWonCents
+  const wonParts = [
+    ...(summary ? [`${formatCents(summary.wonRevenueCents.sourced)} sourced`, `${formatCents(summary.wonRevenueCents.influenced)} influenced`] : []),
+    ...(workWonCents > 0 ? [`${formatCents(workWonCents)} from Find work`] : []),
+  ]
+  const openCount = all.filter(o => o.status === 'OPEN' || o.status === 'PURSUING').length
   const margin = delivery?.overall.grossMarginPct ?? delivery?.overall.labourMarginPct ?? null
   const marginKind = delivery?.overall.grossMarginPct ? 'gross' : 'labour'
 
@@ -274,9 +298,13 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <Kpi label="Open pipeline" value={formatCents(pipelineCents)} hint={`${all.filter(o => o.status === 'OPEN' || o.status === 'PURSUING').length} opportunities, value × chance`} />
-        <Kpi label="Won through ACAOS" value={formatCents(won)} hint={summary ? `${formatCents(summary.wonRevenueCents.sourced)} sourced · ${formatCents(summary.wonRevenueCents.influenced)} influenced` : undefined} />
-        <Kpi label="Quote → win" value={pct(summary?.conversion.quotedToWon)} hint={summary ? `${summary.reached.QUOTED ?? 0} quoted` : undefined} />
+        <Kpi
+          label="Open pipeline"
+          value={formatCents(pipelineCents)}
+          hint={`${openCount} opportunities, value × chance${workAwaitingCents > 0 ? ` · ${formatCents(workAwaitingCents)} quoted in Find work` : ''}`}
+        />
+        <Kpi label="Won through ACAOS" value={formatCents(won)} hint={wonParts.length > 0 ? wonParts.join(' · ') : undefined} />
+        <Kpi label="Quote → win" value={pct(quoteToWin)} hint={summary || quotedTotal > 0 ? `${quotedTotal} quoted` : undefined} />
         {isAdmin && (
           <Kpi
             label="Delivered margin"

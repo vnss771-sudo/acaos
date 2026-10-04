@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fixes from the live test (4 Oct 2026)
+- Today counts Find work. Accepted Find work quotes add to Won through ACAOS ("from Find work"), all
+  quotes count toward Quote → win, and quotes awaiting a decision show beside the pipeline. Before,
+  a contractor who quoted and won through Find work saw $0 and "0 quoted".
+- Page reloads no longer use up login attempts. `/api/auth/refresh` has its own per-IP limit
+  (120 per 15 minutes, 30 while Redis is degraded) instead of sharing login's 10.
+- Upgrade and the billing portal answer a Stripe failure with a 503 "Billing is temporarily
+  unavailable" instead of "Internal server error".
+- No email goes out with a localhost unsubscribe link. In production, a worker without `API_URL`
+  refuses the campaign batch and blocks follow-ups (`API_URL_NOT_CONFIGURED`).
+- The worker refuses to start in production when `DATABASE_URL` isn't a `postgresql://` URL, and its
+  `/ready` also checks the database. Job failures log at warn (will retry) or error (retries spent)
+  instead of info.
+- The page base styles moved from an inline `<style>` in `index.html` to `src/base.css`. The production
+  CSP blocked the inline block, leaving a white 8px frame and browser-default fonts.
+- Docker-built services report their real commit: the Dockerfiles' `unknown` placeholder no longer
+  hides `RAILWAY_GIT_COMMIT_SHA`.
+
 ### Microsoft 365 sending through Graph
 - Microsoft 365 mailboxes connected by sign-in now send through Microsoft Graph instead of SMTP, so
   they can send even where the tenant has SMTP AUTH turned off (the default under security defaults).
