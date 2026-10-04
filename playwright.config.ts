@@ -52,7 +52,7 @@ export default defineConfig({
       // API on :4000. The worker is intentionally NOT started — all three flows
       // assert on synchronous responses (seed and AI are inline; campaign launch
       // asserts on the 202 enqueue ack, which fires before any job runs).
-      command: 'npm run start:dev -w @acaos/api',
+      command: 'npm --workspace @acaos/api run start:dev',
       url: 'http://localhost:4000/api/live',
       env: serverEnv,
       timeout: 60_000,
@@ -62,7 +62,7 @@ export default defineConfig({
     },
     {
       // Vite dev server on :5173 proxies /api -> http://localhost:4000.
-      command: 'npm run dev -w @acaos/web',
+      command: 'npm --workspace @acaos/web run dev',
       url: 'http://localhost:5173',
       env: serverEnv,
       timeout: 60_000,
