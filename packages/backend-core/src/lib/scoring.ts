@@ -396,18 +396,19 @@ const RECOMPUTE_EVERY_N_OUTCOMES = 7
  * the total outcome count so callers don't need a second count query.
  */
 export async function maybeRecomputeScoringWeights(
+  workspaceId: string,
   scoringModelId: string,
   currentWeights: ScoringWeights,
 ): Promise<{ updated: boolean; totalOutcomes: number }> {
   const mode = learningAdaptationMode()
-  const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId } })
+  const totalOutcomes = await prisma.scoringOutcome.count({ where: { workspaceId, scoringModelId } })
   if (mode === 'off') return { updated: false, totalOutcomes }
   if (totalOutcomes < RECOMPUTE_EVERY_N_OUTCOMES || totalOutcomes % RECOMPUTE_EVERY_N_OUTCOMES !== 0) {
     return { updated: false, totalOutcomes }
   }
 
   const all = await prisma.scoringOutcome.findMany({
-    where: { scoringModelId },
+    where: { workspaceId, scoringModelId },
     select: { score: true, replied: true, messageRelevance: true, channelUsed: true, timingFit: true },
   })
 

@@ -123,7 +123,7 @@ export async function observeEngagementOutcomes(
         // outcome, so it must see each outcome individually). Not in one
         // transaction with the claim: a crash between them loses one sample
         // rather than ever duplicating one.
-        await maybeRecomputeScoringWeights(model.id, model.weights as ScoringWeights)
+        await maybeRecomputeScoringWeights(row.workspaceId, model.id, model.weights as ScoringWeights)
       }
     }
     if (rows.length < batchSize) break

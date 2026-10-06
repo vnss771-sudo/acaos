@@ -70,6 +70,16 @@ test('create / createMany scoped by data.workspaceId', () => {
 test('a tenant foreign key (campaignId, leadId, …) scopes transitively → scoped_via_fk', () => {
   assert.equal(classify('OutreachSent', 'findMany', { where: { campaignId: 'c1', leadId: { in: ['l1'] } } }), 'scoped_via_fk')
   assert.equal(classify('Signal', 'findMany', { where: { prospectId: 'p1' } }), 'scoped_via_fk')
+  assert.equal(classify('ScoringOutcome', 'count', { where: { leadId: { equals: 'l1' } } }), 'scoped_via_fk')
+})
+
+test('a foreign key that does not pin specific rows (null, not, notIn) is not scoping', () => {
+  // `leadId: null` or `leadId: { not: null }` matches rows in every workspace.
+  assert.equal(classify('ScoringOutcome', 'findMany', { where: { leadId: null } }), 'unscoped')
+  assert.equal(classify('ScoringOutcome', 'findMany', { where: { leadId: { not: null } } }), 'unscoped')
+  assert.equal(classify('OutreachSent', 'updateMany', { where: { campaignId: { notIn: ['c1'] } }, data: {} }), 'unscoped')
+  // Still scoped when the workspace is pinned alongside.
+  assert.equal(classify('ScoringOutcome', 'findMany', { where: { workspaceId: WS, leadId: null } }), 'scoped')
 })
 
 // ── unscoped: the catastrophic case ─────────────────────────────────────────────

@@ -71,7 +71,7 @@ export async function promptVersionQuality(workspaceId: string): Promise<PromptV
   if (byVersion.size === 0) return []
 
   const versions = await prisma.aiPromptVersion.findMany({
-    where: { id: { in: [...byVersion.keys()] } },
+    where: { workspaceId, id: { in: [...byVersion.keys()] } },
     select: { id: true, type: true, version: true, model: true, createdAt: true },
   })
 

@@ -155,7 +155,7 @@ outcomesRouter.post(
 
     // Every 7th outcome recomputes weights — the shared learning-loop path also
     // used by the product's own analyze-reply -> applyReplyAnalysis pipeline.
-    const { updated: weightsUpdated, totalOutcomes } = await maybeRecomputeScoringWeights(model.id, model.weights as Weights)
+    const { updated: weightsUpdated, totalOutcomes } = await maybeRecomputeScoringWeights(workspaceId, model.id, model.weights as Weights)
     if (weightsUpdated) {
       // Retuned weights change the scoringModel block in the dashboard summary.
       invalidateWorkspaceStats(workspaceId)
@@ -185,7 +185,7 @@ outcomesRouter.get(
     }
 
     const model = await getOrCreateModel(workspaceId)
-    const totalOutcomes = await prisma.scoringOutcome.count({ where: { scoringModelId: model.id } })
+    const totalOutcomes = await prisma.scoringOutcome.count({ where: { workspaceId, scoringModelId: model.id } })
 
     res.json({
       workspaceId,
