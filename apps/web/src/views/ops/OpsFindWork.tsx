@@ -228,6 +228,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
   const profile = meta?.profile ?? null
   const opportunities = data?.opportunities ?? []
   const activeCount = (data?.counts.NEW ?? 0) + (data?.counts.PURSUING ?? 0)
+  const discoveryOff = meta?.discoveryEnabled === false
 
   return (
     <div>
@@ -241,12 +242,16 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {canManage && profile && <button style={s.btnGhost} onClick={runNow}>Search now</button>}
+          {canManage && profile && (
+            <button style={s.btnGhost} onClick={runNow} disabled={discoveryOff} title={discoveryOff ? 'Automatic searching is switched off on this server' : undefined}>
+              Search now
+            </button>
+          )}
           <button style={s.btnGhost} onClick={openSettings}>{canManage ? 'Discovery settings' : 'What we look for'}</button>
         </div>
       </div>
 
-      {meta && !meta.discoveryEnabled && (
+      {discoveryOff && (
         <div role="status" style={{ padding: 10, borderRadius: 6, border: `1px solid ${colors.amber}`, color: colors.text, fontSize: 13, marginBottom: 12 }}>
           Automatic searching is switched off on this server, so nothing new will appear until an administrator turns it on.
         </div>
@@ -368,7 +373,11 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
       ) : opportunities.length === 0 ? (
         <EmptyState
           title={filter ? 'Nothing here yet' : 'No new work found yet'}
-          description={filter ? 'Opportunities you move to this stage will show here.' : 'We search on a schedule. New matches for your trades and area will appear here.'}
+          description={filter
+            ? 'Opportunities you move to this stage will show here.'
+            : discoveryOff
+              ? 'New matches for your trades and area will appear here once automatic searching is turned on.'
+              : 'We search on a schedule. New matches for your trades and area will appear here.'}
         />
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
