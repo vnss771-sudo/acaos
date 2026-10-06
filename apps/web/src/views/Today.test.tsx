@@ -3,6 +3,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Today, needsAttention } from './Today.js'
 import type { Workspace } from '../types.js'
+import type { PilotScorecard } from '../lib/scorecard.js'
+import { makeScorecard } from '../test/scorecardFixture.js'
 
 const workspace: Workspace = { id: 'ws1', name: 'Sparky Co', slug: 'sparky', plan: 'free' }
 const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }
@@ -26,7 +28,7 @@ const DETAIL = {
   prospect: { ...URGENT.prospect, contactName: 'Sam Lee', contactTitle: 'Ops Manager', contactEmail: 'sam@example.test' },
 }
 
-function mockApi(opts: { networkIn?: boolean; quotes?: unknown[] } = {}) {
+function mockApi(opts: { networkIn?: boolean; quotes?: unknown[]; scorecard?: PilotScorecard } = {}) {
   return vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
     if (init?.method && init.method !== 'GET') return Promise.resolve({ ok: true, created: true, intentId: 'i1', success: true, optedInAt: null })
     if (path.startsWith('/api/commercial-opportunities/outcomes')) return Promise.resolve({ summary: SUMMARY })
@@ -36,6 +38,7 @@ function mockApi(opts: { networkIn?: boolean; quotes?: unknown[] } = {}) {
     if (path.startsWith('/api/commercial-opportunities')) return Promise.resolve({ opportunities: [URGENT, PURSUING, WATCH] })
     if (path.startsWith('/api/delivery/report')) return Promise.resolve({ report: { minJobs: 3, overall: { jobs: 4, grossMarginPct: { n: 4, median: 24 }, labourMarginPct: null } } })
     if (path.startsWith('/api/delivery/quotes')) return Promise.resolve({ quotes: opts.quotes ?? [] })
+    if (path.startsWith('/api/delivery/scorecard') && opts.scorecard) return Promise.resolve({ scorecard: opts.scorecard })
     return Promise.reject(new Error(`unexpected ${path}`))
   })
 }
@@ -44,6 +47,28 @@ const writes = (api: ReturnType<typeof vi.fn>) => api.mock.calls.filter(([, init
 beforeEach(() => vi.clearAllMocks())
 
 describe('Today', () => {
+  test('admins see this week in Find work, with the margin and best source, linked to the scorecard', async () => {
+    render(<Today api={mockApi({ scorecard: makeScorecard() }) as never} workspace={workspace} toast={toast as never} isAdmin setView={setView} />)
+    expect(await screen.findByText('This week in Find work')).toBeInTheDocument()
+    expect(screen.getByText('7 found · 3 worth pursuing · 2 quotes ($42,000) · 1 won ($18,500)')).toBeInTheDocument()
+    expect(screen.getByText('31% gross margin (1 closed job) · Best source: Development applications')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Open scorecard' }))
+    expect(setView).toHaveBeenCalledWith('ops-scorecard')
+  })
+
+  test('no Find work card for members, or for a workspace without Find work', async () => {
+    const memberApi = mockApi({ scorecard: makeScorecard() })
+    const { unmount } = render(<Today api={memberApi as never} workspace={workspace} toast={toast as never} setView={setView} />)
+    expect(await screen.findByText('Needs your decision (2)')).toBeInTheDocument()
+    expect(memberApi.mock.calls.some(([p]) => String(p).startsWith('/api/delivery/scorecard'))).toBe(false)
+    unmount()
+
+    const outreachOnly = makeScorecard({ findWorkSetUp: false, totals: { ...makeScorecard().totals, found: 0 } })
+    render(<Today api={mockApi({ scorecard: outreachOnly }) as never} workspace={workspace} toast={toast as never} isAdmin setView={setView} />)
+    expect(await screen.findByText('Needs your decision (2)')).toBeInTheDocument()
+    expect(screen.queryByText('This week in Find work')).not.toBeInTheDocument()
+  })
+
   test('needsAttention: pursued work and high-urgency open work', () => {
     expect(needsAttention(URGENT as never)).toBe(true)
     expect(needsAttention(PURSUING as never)).toBe(true)

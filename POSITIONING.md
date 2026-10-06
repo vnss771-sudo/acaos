@@ -119,3 +119,7 @@ of the Contractor plan. The lead story is the contractor loop.
 | Quotes recorded from Find work | ≥ 2 per week |
 | Jobs closed out in ACAOS (with invoice entered) | ≥ 80% of won jobs |
 | Customers who can name their most profitable source of work | all of them, by day 90 |
+
+Each pilot customer sees these on the Scorecard tab (Work hub) and as "This week in
+Find work" on Today; the platform admin sees every pilot under Admin → Contractor
+pilots. Definitions are in `packages/backend-core/src/lib/pilotScorecard.ts`.

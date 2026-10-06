@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Contractor pilot scorecard (6 Oct 2026)
+- New Scorecard tab in the Work hub answers "is ACAOS helping this business find and win worthwhile
+  work?" against the pilot targets: work found (3+ a week), quotes from Find work (2+ a week), won
+  jobs closed out with an invoice (80%), and a most profitable source. It shows this week, the
+  weeks behind it, totals and conversions (found → quoted, quote → won), and each source's won
+  value and gross margin, with a plain-language line once margins exist ("You made the most money
+  from development applications…").
+- Today opens with "This week in Find work" for admins: found, worth pursuing, quoted, won, margin
+  and best source.
+- `GET /api/delivery/scorecard` (workspace admins) serves it; `GET /api/admin/pilot-scorecards` lists
+  every Find work workspace for the platform admin, shown under Admin → Contractor pilots beside the
+  outreach activation funnel.
+- Unknowns stay unknown: a win without an accepted quote has no amount, and jobs without costs
+  entered don't count toward gross margin.
+
 ### Tenant guard enforcing (6 Oct 2026)
 - The whole test suite ran with `TENANT_GUARD_MODE=enforce`, and five queries it blocked now filter by
   workspace: the onboarding import's top prospects, the pre-send relevance score update, the scoring

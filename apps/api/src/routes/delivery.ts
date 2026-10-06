@@ -7,6 +7,7 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { computeJobEconomics, canTransitionQuote, buildDeliveryReport, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
+import { FIND_WORK_KIND_LABEL, loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type {
@@ -359,12 +360,6 @@ deliveryRouter.get(
 
 const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
-const ORIGIN_KIND_LABEL: Record<string, string> = {
-  DEVELOPMENT_APPLICATION: 'Development applications',
-  CONTRACT_AWARD: 'Contract awards',
-  DIRECT_ENQUIRY: 'Direct enquiries',
-}
-
 // GET /api/delivery/report — closed jobs grouped by where the work came from:
 // medians with their n, withheld below the floor. Registered before /jobs/:id.
 deliveryRouter.get(
@@ -383,11 +378,29 @@ deliveryRouter.get(
       const o = originOf(j)
       const kind = o?.kind ?? 'UNKNOWN'
       const label = o == null ? 'Unknown origin'
-        : o.type === 'OPPORTUNITY' ? (ORIGIN_KIND_LABEL[kind] ?? kind)
+        : o.type === 'OPPORTUNITY' ? (FIND_WORK_KIND_LABEL[kind] ?? kind)
         : `Signal: ${kind.toLowerCase().replace(/_/g, ' ')}`
       return { originKey: `${o?.type ?? 'NONE'}:${kind}`, originLabel: label, economics: j.closeout as JobEconomics }
     }))
     res.json({ report })
+  })
+)
+
+const scorecardQuerySchema = z.object({
+  workspaceId: workspaceIdField,
+  weeks: z.coerce.number().int().min(1).max(SCORECARD_MAX_WEEKS).default(SCORECARD_DEFAULT_WEEKS),
+})
+
+// GET /api/delivery/scorecard — the pilot scorecard: what Find work found, what
+// was quoted and won each week against the pilot targets, how much won work
+// was closed out, and which source made the most money.
+deliveryRouter.get(
+  '/scorecard',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId, weeks } = parseQuery(scorecardQuerySchema, req)
+    await assertWorkspacePermission(user.id, workspaceId, 'ops:manage')
+    res.json({ scorecard: await loadPilotScorecard(workspaceId, { weeks }) })
   })
 )
 

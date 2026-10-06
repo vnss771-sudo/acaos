@@ -12,7 +12,7 @@ describe('hubs model', () => {
       'today', 'dashboard', 'intelligence', 'prospects', 'missions', 'campaigns',
       'approvals', 'inbox', 'leads', 'ai', 'billing', 'settings', 'admin',
       'ops-dashboard', 'ops-crew', 'ops-jobs', 'ops-shifts', 'ops-roster', 'ops-fatigue', 'ops-alerts',
-      'ops-find-work', 'ops-delivery',
+      'ops-find-work', 'ops-delivery', 'ops-scorecard',
     ]
     for (const v of ALL_VIEWS) {
       const owning = HUBS.filter(h => h.tabs.some(t => t.view === v))
@@ -20,8 +20,8 @@ describe('hubs model', () => {
     }
   })
 
-  test('the contractor loop reads in order: find work, clients, jobs; then the crew pages', () => {
-    expect(HUBS.find(h => h.id === 'work')!.tabs.map(t => t.view)).toEqual(['ops-find-work', 'prospects', 'ops-delivery'])
+  test('the contractor loop reads in order: find work, clients, jobs, scorecard; then the crew pages', () => {
+    expect(HUBS.find(h => h.id === 'work')!.tabs.map(t => t.view)).toEqual(['ops-find-work', 'prospects', 'ops-delivery', 'ops-scorecard'])
     expect(hubForView('ops-shifts').id).toBe('crew')
     expect(hubForView('ops-delivery').id).toBe('work')
     expect(hubForView('inbox').id).toBe('outreach')

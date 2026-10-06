@@ -7,10 +7,13 @@ import { HUBS, hubForView, defaultViewForHub } from '../lib/hubs.js'
 type NavItem = { id: View; label: string; icon: string }
 type NavGroup = { heading?: string; items: NavItem[] }
 
+// The Work pages, each with its own entry; every other ops-* view is a Crew page.
+const WORK_VIEWS: ReadonlySet<View> = new Set<View>(['ops-find-work', 'ops-delivery', 'ops-scorecard'])
+
 // Flat nav (the rollback for the hub nav). The first group is the contractor's
 // daily loop in order — what needs a decision, find work, the clients behind it,
-// the jobs being delivered, the crew doing them. Email outreach and analysis sit
-// under their own heading: there when wanted, out of the way otherwise.
+// the jobs being delivered, the scorecard, the crew doing them. Email outreach and
+// analysis sit under their own heading: there when wanted, out of the way otherwise.
 const NAV_GROUPS: NavGroup[] = [
   {
     items: [
@@ -18,6 +21,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'ops-find-work', label: 'Find work', icon: '⚒' },
       { id: 'prospects', label: 'Clients', icon: '◎' },
       { id: 'ops-delivery', label: 'Jobs & margins', icon: '$' },
+      { id: 'ops-scorecard', label: 'Scorecard', icon: '★' },
       { id: 'ops-dashboard', label: 'Crew', icon: '⚡' },
     ],
   },
@@ -124,8 +128,8 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hu
               // The single "Field Ops" entry stands in for 7 view ids (its own
               // always-visible sub-nav switches between them — see OpsSubNav) — so
               // it stays highlighted for any of them, not just the exact match.
-              // "Crew" stands for every crew page; Find work and Jobs & margins have their own entries.
-              const active = n.id === 'ops-dashboard' ? view.startsWith('ops-') && view !== 'ops-find-work' && view !== 'ops-delivery' : view === n.id
+              // "Crew" stands for every crew page; the Work pages have their own entries.
+              const active = n.id === 'ops-dashboard' ? view.startsWith('ops-') && !WORK_VIEWS.has(view) : view === n.id
               return (
                 <button
                   key={n.id}

@@ -20,6 +20,7 @@ const COMMANDS: Command[] = [
   { id: 'ops-find-work', label: 'Find work', description: 'Tenders and development applications for your trade and area', icon: '⚒' },
   { id: 'prospects', label: 'Clients', description: 'Builders and businesses you could work for, with their signals', icon: '◎' },
   { id: 'ops-delivery', label: 'Jobs & margins', description: 'Quoted vs delivered, closeout, and what your work earns', icon: '$' },
+  { id: 'ops-scorecard', label: 'Scorecard', description: 'Work found, quoted and won each week, against your pilot targets', icon: '★' },
   { id: 'ops-dashboard', label: 'Crew', description: 'Crew, shifts, roster, sites, fatigue and safety alerts', icon: '⚡' },
   { id: 'dashboard', label: 'Overview', description: 'Outreach overview: next action, hot accounts, signals', icon: '⬡' },
   { id: 'campaigns', label: 'Campaigns', description: 'Email outreach campaigns and sending', icon: '▣' },

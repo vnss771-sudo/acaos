@@ -6,6 +6,8 @@ import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import { PLAN_LABELS } from '../types.js'
 import type { AuditEvent, BillingPlan } from '../types.js'
+import { formatCents } from '../lib/money.js'
+import { marginText, ratePct, type PilotScorecard } from '../lib/scorecard.js'
 
 type WorkspaceSummary = {
   id: string
@@ -32,6 +34,8 @@ type AdminOverview = {
 }
 
 type QueueStat = { name: string; active: number; waiting: number; completed: number; failed: number }
+
+type Pilot = { workspace: { id: string; name: string; createdAt: string }; scorecard: PilotScorecard }
 
 type Props = { api: ApiHook; toast: ToastHook }
 
@@ -64,6 +68,7 @@ export function AdminView({ api, toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [queues, setQueues] = useState<QueueStat[]>([])
   const [audit, setAudit] = useState<AuditEvent[]>([])
+  const [pilots, setPilots] = useState<Pilot[]>([])
   const [workspaceSort, setWorkspaceSort] = useState<SortState | undefined>()
   const [queueSort, setQueueSort] = useState<SortState | undefined>()
   const [auditSort, setAuditSort] = useState<SortState | undefined>()
@@ -80,6 +85,9 @@ export function AdminView({ api, toast }: Props) {
     api<{ events: AuditEvent[] }>('/api/admin/audit?limit=50')
       .then(d => { if (!cancelled) setAudit(d.events) })
       .catch(() => { if (!cancelled) toast.error('Failed to load audit log') })
+    api<{ pilots?: Pilot[] }>('/api/admin/pilot-scorecards')
+      .then(d => { if (!cancelled) setPilots(d.pilots ?? []) })
+      .catch(() => { if (!cancelled) toast.error('Failed to load the contractor pilots') })
     return () => { cancelled = true }
   }, [])
 
@@ -166,6 +174,45 @@ export function AdminView({ api, toast }: Props) {
     },
   ]
 
+  // Each pilot against the targets: this week, weeks on target, close-out and source.
+  const met = (ok: boolean | null, text: string) => (
+    <span style={{ color: ok == null ? colors.textFaint : ok ? colors.green : colors.amber }}>{text}</span>
+  )
+  const pilotColumns: Column<Pilot>[] = [
+    { key: 'name', header: 'Workspace', render: p => <span style={{ color: colors.text, fontWeight: 500 }}>{p.workspace.name}</span> },
+    {
+      key: 'found', header: 'Found (week)', align: 'right',
+      render: p => met(p.scorecard.checks.thisWeek.found, String(p.scorecard.weeks[0]?.found ?? 0)),
+    },
+    {
+      key: 'quoted', header: 'Quotes (week)', align: 'right',
+      render: p => met(p.scorecard.checks.thisWeek.quotes, String(p.scorecard.weeks[0]?.quoted ?? 0)),
+    },
+    {
+      key: 'weeksMet', header: 'Weeks on target',
+      render: p => {
+        const w = p.scorecard.checks.weeksMet
+        return <span style={{ color: colors.textMuted, fontSize: 12 }}>{w.of > 0 ? `found ${w.found}/${w.of} · quotes ${w.quotes}/${w.of}` : '—'}</span>
+      },
+    },
+    {
+      key: 'won', header: 'Won', align: 'right',
+      render: p => <span style={{ color: colors.textMuted }}>{p.scorecard.totals.won} · {formatCents(p.scorecard.totals.wonCents)}</span>,
+    },
+    {
+      key: 'closeout', header: 'Closed out',
+      render: p => {
+        const c = p.scorecard.closeout
+        return met(p.scorecard.checks.closeout, c.won - c.cancelled > 0 ? `${c.closedOut}/${c.won - c.cancelled} (${ratePct(c.rate)})` : '—')
+      },
+    },
+    { key: 'margin', header: 'Margin', render: p => <span style={{ color: colors.textMuted, fontSize: 12 }}>{marginText(p.scorecard)}</span> },
+    {
+      key: 'source', header: 'Best source',
+      render: p => met(p.scorecard.checks.sourceIdentified ? true : null, p.scorecard.bestSource ? p.scorecard.bestSource.label : 'Not yet'),
+    },
+  ]
+
   const queueColumns: Column<QueueStat>[] = [
     { key: 'name', header: 'Queue', sortable: true, render: q => <span style={{ color: colors.text, fontFamily: 'monospace', fontSize: 12 }}>{q.name}</span> },
     { key: 'active', header: 'Active', sortable: true, render: q => <span style={{ color: q.active > 0 ? colors.amber : colors.textFaint, fontWeight: q.active > 0 ? 700 : 400 }}>{q.active}</span> },
@@ -221,6 +268,20 @@ export function AdminView({ api, toast }: Props) {
           sort={workspaceSort}
           onSortChange={setWorkspaceSort}
           empty="No workspaces yet."
+        />
+      </div>
+
+      {/* Contractor pilots: the Find work loop, beside the outreach activation funnel */}
+      <div style={{ ...s.card, marginTop: 24 }}>
+        <div style={{ ...s.sectionHeader, marginBottom: 4 }}>Contractor pilots</div>
+        <div style={{ color: colors.textFaint, fontSize: 12, marginBottom: 16 }}>
+          Workspaces with Find work set up, against the pilot targets: 3+ found and 2+ quotes a week, 80% of won jobs closed out, a most profitable source. Green is on target.
+        </div>
+        <Table<Pilot>
+          columns={pilotColumns}
+          rows={pilots}
+          rowKey={p => p.workspace.id}
+          empty="No workspace has set up Find work yet."
         />
       </div>
 

@@ -13,6 +13,7 @@ import { EmptyState } from '../components/ui/EmptyState.js'
 import { ErrorBanner } from '../components/ui/ErrorBanner.js'
 import { Skeleton } from '../components/ui/Skeleton.js'
 import { QuoteCapture, type QuoteSummary } from '../components/ops/QuoteCapture.js'
+import { insightText, marginText, thisWeekItems, type PilotScorecard } from '../lib/scorecard.js'
 
 // The operator console (phase 14): "what should I do today". Commercial
 // opportunities that need a decision now, each with the evidence behind it;
@@ -89,6 +90,7 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
   // outcomes summary never sees them: the latest quote per Find work opportunity.
   const [workQuotes, setWorkQuotes] = useState<QuoteSummary[]>([])
   const [network, setNetwork] = useState<'in' | 'out' | null>(null)
+  const [scorecard, setScorecard] = useState<PilotScorecard | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
@@ -113,8 +115,12 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
         ? api<{ optedInAt: string | null }>(`/api/commercial-opportunities/network-participation?workspaceId=${ws}`)
           .then(r => (r.optedInAt ? 'in' as const : 'out' as const), () => null)
         : Promise.resolve(null),
+      // The pilot scorecard's week; a failed read just hides the card.
+      isAdmin
+        ? api<{ scorecard?: PilotScorecard }>(`/api/delivery/scorecard?workspaceId=${ws}`).then(r => r.scorecard ?? null, () => null)
+        : Promise.resolve(null),
     ])
-      .then(([list, outcomes, report, quoteList, net]) => {
+      .then(([list, outcomes, report, quoteList, net, card]) => {
         if (reqId !== reqRef.current) return
         setOpps(list.opportunities)
         setSummary(outcomes.summary)
@@ -131,6 +137,7 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
         setQuotes(latest)
         setWorkQuotes([...latestWork.values()])
         setNetwork(net)
+        setScorecard(card)
       })
       .catch(e => {
         if (reqId !== reqRef.current) return
@@ -299,6 +306,20 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
         <h1 style={{ margin: 0, fontSize: 22, color: colors.text }}>Today</h1>
         <div style={{ color: colors.textMuted, fontSize: 13 }}>What needs a decision, why, and what it's worth. Nothing here sends anything.</div>
       </div>
+
+      {scorecard && (scorecard.findWorkSetUp || scorecard.totals.found > 0) && (
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ fontWeight: 600, color: colors.text }}>This week in Find work</div>
+            <button style={s.btnGhost} onClick={() => setView('ops-scorecard')}>Open scorecard</button>
+          </div>
+          <div style={{ fontSize: 14, color: colors.text, marginTop: 6 }}>{thisWeekItems(scorecard).join(' · ')}</div>
+          <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 4 }}>
+            {marginText(scorecard)}{scorecard.bestSource ? ` · Best source: ${scorecard.bestSource.label}` : ''}
+          </div>
+          {insightText(scorecard) && <div style={{ fontSize: 13, color: colors.text, marginTop: 8 }}>{insightText(scorecard)}</div>}
+        </Card>
+      )}
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <Kpi

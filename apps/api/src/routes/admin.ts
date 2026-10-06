@@ -4,6 +4,8 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { requireAuth, requireVerifiedEmail, hasFreshAuth } from '../middleware/auth.js'
 import { recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { getActivationFunnel } from '@acaos/backend-core/lib/analytics.js'
+import { loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
+import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { getQueueStats } from '@acaos/backend-core/lib/queues.js'
 import { parseQuery } from '../lib/validate.js'
 import { escCsv } from '../lib/csv.js'
@@ -73,6 +75,34 @@ adminRouter.get(
   asyncHandler(async (_req, res) => {
     const funnel = await getActivationFunnel()
     res.json({ funnel })
+  })
+)
+
+const pilotScorecardsQuerySchema = z.object({
+  weeks: z.coerce.number().int().min(1).max(SCORECARD_MAX_WEEKS).default(SCORECARD_DEFAULT_WEEKS),
+})
+
+// Contractor pilots (cross-tenant, platform-admin only): the scorecard of every
+// workspace with Find work set up, newest first. Alongside the activation funnel,
+// which follows the outreach product; this follows the contractor loop.
+adminRouter.get(
+  '/pilot-scorecards',
+  asyncHandler(async (req, res) => {
+    const { weeks } = parseQuery(pilotScorecardsQuerySchema, req)
+    const workspaces = await prisma.workspace.findMany({
+      where: { discoveryProfile: { isNot: null } },
+      select: { id: true, name: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    }) as Array<{ id: string; name: string; createdAt: Date }>
+    const pilots = []
+    // One workspace at a time, each in its own tenant context so the guard checks
+    // every read the scorecard makes.
+    for (const workspace of workspaces) {
+      const scorecard = await runInWorkspaceContext(workspace.id, () => loadPilotScorecard(workspace.id, { weeks }))
+      pilots.push({ workspace, scorecard })
+    }
+    res.json({ pilots })
   })
 )
 
