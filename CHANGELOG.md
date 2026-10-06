@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Uptime check and quieter startup (6 Oct 2026)
+- New `.github/workflows/uptime.yml` runs the deploy smoke check against the live API and web every
+  15 minutes and fails, emailing the repo owner, when either is down after one retry.
+- The API's startup migrations no longer print npm's "new version available" notice, which the
+  platform logged as an error on every start.
+
 ### Live test follow-ups (6 Oct 2026)
 - The API answers CORS preflights with a 10-minute max age, so browsers stop repeating the OPTIONS
   request before each call to the same address. They were 98 of 201 requests in the live test.

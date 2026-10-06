@@ -118,6 +118,8 @@ not sufficient — the PR's CI `required` check is the authority.
 
 `post-deploy-smoke.yml` runs `npm run smoke:deploy` against the API `/api/ready` and worker `/ready` endpoints, optionally enforcing `--expect-version` and `--expect-commit`, and fails on API/worker release drift. It supports manual dispatch AND is auto-triggered by `release.yml`'s `post_deploy_smoke` job on every published release (`workflow_call`).
 
+`uptime.yml` runs the same check against the live API and web every 15 minutes. It retries once after 30 seconds, then fails the run, and GitHub emails whoever last changed its schedule. The live hosts are set in the workflow's `env`.
+
 `release.yml`'s `canary_bake` job bakes a canary/blue-green target's health and 5xx burn rate (`scripts/rollout-gate.mjs`) before promoting, with optional webhook hand-offs to promote or automatically roll back on the target platform — see [`DEPLOY_RUNBOOK.md`](./DEPLOY_RUNBOOK.md#canary--blue-green-bake-and-automatic-rollback). It no-ops cleanly until `CANARY_URL` is configured.
 
 ## Environment variables for rollout smoke

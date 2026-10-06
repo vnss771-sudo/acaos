@@ -26,7 +26,12 @@ const RAW_INDEX_DIR = 'scripts/sql/raw-indexes'
 
 function prisma(args) {
   // Throws on non-zero exit; caller inspects err.stdout/err.stderr.
-  return execFileSync('npx', ['prisma', ...args], { encoding: 'utf8' })
+  // Without npm_config_update_notifier, npx prints npm's "new version available"
+  // notice to stderr on every start, and the platform logs it as an error.
+  return execFileSync('npx', ['prisma', ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, npm_config_update_notifier: 'false' },
+  })
 }
 
 function migrateDeploy() {
