@@ -22,7 +22,7 @@ export function makeScorecard(overrides: Partial<PilotScorecard> = {}): PilotSco
     totals: { found: 9, pursued: 4, quoted: 3, quotedCents: 5_100_000, won: 1, wonCents: 1_850_000, wonWithoutAmount: 0 },
     conversion: {
       discoveryToQuote: { found: 9, quoted: 3, rate: 0.333 },
-      quoteToWon: { quoted: 3, won: 1, lost: 1, awaiting: 1, rate: 0.5 },
+      quoteToWon: { quoted: 3, won: 1, lost: 1, awaiting: 1, rate: 0.333 },
     },
     closeout: { won: 2, closedOut: 1, closedWithoutInvoice: 0, inProgress: 1, notStarted: 0, cancelled: 0, rate: 0.5 },
     margin: { closedJobs: 1, grossMarginJobs: 1, grossMarginCents: 1_240_000, revenueCents: 4_000_000, grossMarginPct: 31 },

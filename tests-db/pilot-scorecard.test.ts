@@ -99,7 +99,7 @@ test('the scorecard counts a week of Find work through quote, win and closeout',
   assert.equal(sc.closeout.rate, 1)
   assert.deepEqual(sc.bestSource, { kind: 'DEVELOPMENT_APPLICATION', label: 'Development applications', basis: 'GROSS_MARGIN', cents: 1_200_000, jobs: 1 })
   assert.equal(sc.checks.sourceIdentified, true)
-  assert.deepEqual(sc.conversion.quoteToWon, { quoted: 2, won: 1, lost: 0, awaiting: 1, rate: 1 })
+  assert.deepEqual(sc.conversion.quoteToWon, { quoted: 2, won: 1, lost: 0, awaiting: 1, rate: 0.5 })
 })
 
 test('another workspace’s work never counts, and a non-member is refused', async () => {

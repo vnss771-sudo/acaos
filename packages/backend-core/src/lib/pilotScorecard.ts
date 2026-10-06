@@ -98,8 +98,8 @@ export interface PilotScorecard {
   conversion: {
     // Of the work found in the window, how much has been quoted so far.
     discoveryToQuote: { found: number; quoted: number; rate: number | null }
-    // Of the work first quoted in the window, how much the client accepted,
-    // over the quotes with a decision.
+    // Of the work first quoted in the window, how much the client accepted. A
+    // quote awaiting a decision counts as not won yet, as on Today.
     quoteToWon: { quoted: number; won: number; lost: number; awaiting: number; rate: number | null }
   }
   // Work won in the window and where its job stands. Cancelled jobs are left
@@ -280,7 +280,7 @@ export function buildPilotScorecard(input: {
         quoted: foundCohort.filter(o => firstQuoteAt(o) != null).length,
         rate: ratio(foundCohort.filter(o => firstQuoteAt(o) != null).length, foundCohort.length),
       },
-      quoteToWon: { quoted: quotedCohort.length, won: qWon, lost: qLost, awaiting: quotedCohort.length - qWon - qLost, rate: ratio(qWon, qWon + qLost) },
+      quoteToWon: { quoted: quotedCohort.length, won: qWon, lost: qLost, awaiting: quotedCohort.length - qWon - qLost, rate: ratio(qWon, quotedCohort.length) },
     },
     closeout,
     margin,

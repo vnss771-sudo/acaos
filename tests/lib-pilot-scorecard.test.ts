@@ -70,7 +70,7 @@ test('wins count in the week they were marked won, at the accepted quote; a win 
   assert.equal(sc.weeks[0].wonWithoutAmount, 1)
 })
 
-test('conversions: found → quoted over the found cohort, quote → won over decided quotes', () => {
+test('conversions: found → quoted over the found cohort, quote → won over everything quoted', () => {
   const sc = build([
     opp({ quotes: [quote({ status: 'ACCEPTED' })], status: 'WON', statusChangedAt: ago(1) }),
     opp({ quotes: [quote({ status: 'REJECTED' })], status: 'LOST', statusChangedAt: ago(1) }),
@@ -78,7 +78,7 @@ test('conversions: found → quoted over the found cohort, quote → won over de
     opp(),
   ])
   assert.deepEqual(sc.conversion.discoveryToQuote, { found: 4, quoted: 3, rate: 0.75 })
-  assert.deepEqual(sc.conversion.quoteToWon, { quoted: 3, won: 1, lost: 1, awaiting: 1, rate: 0.5 })
+  assert.deepEqual(sc.conversion.quoteToWon, { quoted: 3, won: 1, lost: 1, awaiting: 1, rate: 0.333 })
 })
 
 test('close-out: won work whose job is complete with an invoice; cancelled jobs are left out', () => {

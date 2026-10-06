@@ -34,6 +34,8 @@ describe('OpsScorecard', () => {
     expect(screen.getByText('Development applications ($12,400 gross margin)')).toBeInTheDocument()
     expect(screen.getByText('Contract awards')).toBeInTheDocument()
     expect(screen.getByText('$12,400 (31%)')).toBeInTheDocument()
+    // Quote → won uses Today's definition: won over everything quoted.
+    expect(screen.getByText('Found → quoted: 33% (3 of 9) · Quote → won: 33% (1 of 3, 1 lost, 1 awaiting a decision)')).toBeInTheDocument()
   })
 
   test('before any closed job, the source target is not yet met and says what it needs', async () => {

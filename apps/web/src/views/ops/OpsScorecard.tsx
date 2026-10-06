@@ -153,7 +153,7 @@ function ScorecardBody({ sc, setView }: { sc: PilotScorecard; setView: (v: View)
         <div style={{ fontSize: 13, color: colors.text, display: 'grid', gap: 4 }}>
           <div>{sc.totals.found} found · {sc.totals.pursued} worth pursuing · {plural(sc.totals.quoted, 'quote')} ({formatCents(sc.totals.quotedCents)}) · {sc.totals.won} won ({formatCents(sc.totals.wonCents)})</div>
           <div style={{ color: colors.textMuted }}>
-            Found → quoted: {ratePct(d.rate)} ({d.quoted} of {d.found}) · Quote → won: {ratePct(q.rate)} ({q.won} of {q.won + q.lost} decided{q.awaiting > 0 ? `, ${q.awaiting} awaiting a decision` : ''})
+            Found → quoted: {ratePct(d.rate)} ({d.quoted} of {d.found}) · Quote → won: {ratePct(q.rate)} ({q.won} of {q.quoted}{q.lost > 0 ? `, ${q.lost} lost` : ''}{q.awaiting > 0 ? `, ${q.awaiting} awaiting a decision` : ''})
           </div>
           <div style={{ color: colors.textMuted }}>{marginText(sc)}</div>
         </div>
