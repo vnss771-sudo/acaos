@@ -28,7 +28,9 @@ See also [`../../docs/SLO.md`](../../docs/SLO.md) (targets + error budget) and
    `prometheus.yml` + `alerts.yml` + `recording_rules.yml` mounted alongside.
 3. For uptime: run `blackbox_exporter --config.file=blackbox.yml`. The
    `blackbox-*` job `targets` in `prometheus.yml` point at the live Railway
-   hosts; change them when the custom domain goes live.
+   hosts; change them when the custom domain goes live. Until Prometheus runs
+   somewhere, `.github/workflows/uptime.yml` checks the same hosts every 15
+   minutes and fails (emailing the repo owner) when one is down.
 4. For routing: run Alertmanager with `alertmanager.yml` (`--config.expand-env`),
    supplying `SLACK_WEBHOOK_URL` / `PAGERDUTY_ROUTING_KEY` via env.
 5. In Grafana: **Dashboards → Import → Upload JSON** → `grafana-dashboard.json`,

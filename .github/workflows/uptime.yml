@@ -1,0 +1,50 @@
+name: Uptime
+
+# Checks the live site every 15 minutes with the deploy smoke check
+# (scripts/smoke-deploy.mjs): the API's /api/ready must answer ok with its
+# release header, and the web app must load. A failure retries once after 30
+# seconds so a deploy restart doesn't alert; a second failure fails the run, and
+# GitHub emails whoever last changed this schedule. Free while the repo is
+# public. GitHub pauses scheduled workflows after 60 days without repo activity.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  # Changes to the check itself run it once against the live site.
+  pull_request:
+    paths:
+      - .github/workflows/uptime.yml
+      - scripts/smoke-deploy.mjs
+
+concurrency:
+  group: uptime-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  # The live Railway hosts; switch to the custom domain once it is added.
+  SMOKE_API_URL: https://acaosapi-acaos.up.railway.app
+  SMOKE_WEB_URL: https://acaosweb-acaos.up.railway.app
+  SMOKE_TIMEOUT_MS: '15000'
+
+jobs:
+  check:
+    name: Live API and web respond
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Check the live site (one retry)
+        run: |
+          node scripts/smoke-deploy.mjs && exit 0
+          echo "::warning::First check failed; retrying in 30 seconds"
+          sleep 30
+          node scripts/smoke-deploy.mjs
