@@ -22,7 +22,7 @@ describe('HubTabs', () => {
 
   test('the Work hub lists the contractor loop in order', () => {
     render(<HubTabs view="ops-find-work" setView={vi.fn()} isAdmin={false} />)
-    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Find work', 'Clients', 'Jobs & margins'])
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Find work', 'Clients', 'Jobs & margins', 'Scorecard'])
     expect(screen.getByRole('tab', { name: 'Find work' })).toHaveAttribute('aria-selected', 'true')
   })
 

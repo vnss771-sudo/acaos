@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { AdminView } from './Admin.js'
+import { makeScorecard } from '../test/scorecardFixture.js'
 
 const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }
 afterEach(() => vi.restoreAllMocks())
@@ -23,6 +24,25 @@ function makeApi() {
 }
 
 describe('AdminView', () => {
+  test('lists each contractor pilot against the targets', async () => {
+    const api = vi.fn((path: string) => {
+      if (path.includes('/overview')) return Promise.resolve(overview)
+      if (path.includes('/pilot-scorecards')) {
+        return Promise.resolve({ pilots: [{ workspace: { id: 'w1', name: 'Sparky Co', createdAt: new Date().toISOString() }, scorecard: makeScorecard() }] })
+      }
+      if (path.includes('/queue-stats')) return Promise.resolve({ queues: [] })
+      if (path.includes('/audit')) return Promise.resolve({ events: [] })
+      return Promise.resolve({})
+    })
+    render(<AdminView api={api as never} toast={toast as never} />)
+    expect(await screen.findByText('Contractor pilots')).toBeInTheDocument()
+    expect(await screen.findByText('Sparky Co')).toBeInTheDocument()
+    expect(screen.getByText('found 1/2 · quotes 1/2')).toBeInTheDocument()
+    expect(screen.getByText('1/2 (50%)')).toBeInTheDocument()
+    expect(screen.getByText('31% gross margin (1 closed job)')).toBeInTheDocument()
+    expect(screen.getByText('Development applications')).toBeInTheDocument()
+  })
+
   test('renders the audit log panel with recent events', async () => {
     render(<AdminView api={makeApi() as never} toast={toast as never} />)
     expect(await screen.findByText('Recent Activity (Audit Log)')).toBeInTheDocument()

@@ -5,7 +5,7 @@ import type { View } from '../types.js'
 // learn what pays — so the hubs follow that loop in order:
 //
 //   Today    → Today (what needs a decision) · Overview (the old Home dashboard)
-//   Work     → Find work · Clients · Jobs & margins
+//   Work     → Find work · Clients · Jobs & margins · Scorecard
 //   Crew     → Overview · Crew · Shifts · Roster · Sites · Fatigue · Alerts
 //   Outreach → Campaigns · To review · Inbox · Leads · Missions · Analytics · AI tools
 //   Settings → Settings · Billing · Admin
@@ -27,6 +27,7 @@ export const HUBS: Hub[] = [
     { view: 'ops-find-work', label: 'Find work' },
     { view: 'prospects', label: 'Clients' },
     { view: 'ops-delivery', label: 'Jobs & margins' },
+    { view: 'ops-scorecard', label: 'Scorecard' },
   ] },
   { id: 'crew', label: 'Crew', icon: '⚡', tabs: [
     { view: 'ops-dashboard', label: 'Overview' },
