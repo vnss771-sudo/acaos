@@ -4,7 +4,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { discoverProspectsBatch } from '../apps/worker/src/processors.ts'
+import { discoverProspectsBatch } from './helpers/workerJobs.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 import type { ProspectCandidate } from '../packages/backend-core/src/lib/prospectSources.ts'
 

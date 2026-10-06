@@ -3,7 +3,8 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { scoreProspects, calibrateScoring, applyReplyAnalysis, researchLead, generateOutreachDraft } from '../apps/worker/src/processors.ts'
+import { applyReplyAnalysis } from '../apps/worker/src/processors.ts'
+import { scoreProspects, calibrateScoring, researchLead, generateOutreachDraft } from './helpers/workerJobs.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 import { maybeRecomputeScoringWeights, DEFAULT_SCORING_WEIGHTS } from '../packages/backend-core/src/lib/scoring.ts'
 

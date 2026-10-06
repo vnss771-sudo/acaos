@@ -7,7 +7,7 @@ import { test, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { commercialOpportunitiesRouter } from '../apps/api/src/routes/commercialOpportunities.ts'
 import { refreshCommercialOpportunities } from '../packages/backend-core/src/lib/commercialOpportunityStore.ts'
-import { learnSignalCalibration } from '../packages/backend-core/src/lib/calibrationLearning.ts'
+import { learnSignalCalibration } from './helpers/workerJobs.ts'
 import { decideRecommendation } from '../packages/backend-core/src/lib/learningDecisions.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
 

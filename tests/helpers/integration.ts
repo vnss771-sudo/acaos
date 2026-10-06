@@ -13,6 +13,7 @@
 import express, { type Router } from 'express'
 import type { Server } from 'node:http'
 import { errorHandler, notFoundHandler } from '../../apps/api/src/lib/http.ts'
+import { tenantContext } from '../../apps/api/src/middleware/tenantContext.ts'
 import { signJwt } from '../../packages/backend-core/src/lib/jwt.ts'
 import { clearAllTtlCaches } from '../../apps/api/src/lib/ttlCache.ts'
 
@@ -113,6 +114,10 @@ export async function startTestServer(
   app.set('trust proxy', 1)
   opts.configure?.(app)
   app.use(express.json())
+  // As in server.ts: a request's workspaceId becomes the tenant context, so a run
+  // with TENANT_GUARD_MODE set checks every query a route makes. A no-op when the
+  // guard is off, which is the default in tests.
+  app.use(tenantContext)
   app.use(mountPath, router)
   app.use(notFoundHandler)
   app.use(errorHandler)
