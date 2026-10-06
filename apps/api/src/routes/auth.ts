@@ -23,6 +23,7 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/textNormalize.js'
 import { resolveUniqueWorkspaceSlug, normalizeWorkspaceRole } from '../lib/workspaces.js'
 import { isMailConfigured, sendMail } from '@acaos/backend-core/services/mail.js'
+import { passwordResetEmail, verificationEmail } from '../lib/authEmails.js'
 import { validate, emailField, passwordField } from '../lib/validate.js'
 import { z } from 'zod'
 
@@ -382,11 +383,8 @@ authRouter.post(
     const resetUrl = `${appUrl}/#reset=${rawToken}`
 
     if (isMailConfigured()) {
-      await sendMail(email, 'Reset your ACAOS password',
-        `<p>Click the link below to reset your password. This link expires in 1 hour.</p>` +
-        `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
-        `<p>If you didn't request this, you can safely ignore this email.</p>`
-      )
+      const msg = passwordResetEmail(resetUrl)
+      await sendMail(email, msg.subject, msg.html, undefined, { text: msg.text })
     } else if (process.env.NODE_ENV === 'production') {
       // Never log a URL containing the raw reset token in production.
       console.warn('[auth] SMTP not configured; password reset email was not sent')
@@ -627,11 +625,8 @@ async function sendVerificationEmail(userId: string, email: string) {
   const verifyUrl = `${appUrl}/#verify=${rawToken}`
 
   if (isMailConfigured()) {
-    await sendMail(email, 'Verify your ACAOS email address',
-      `<p>Please verify your email address by clicking the link below. This link expires in 24 hours.</p>` +
-      `<p><a href="${verifyUrl}">Verify email address</a></p>` +
-      `<p>If you didn't sign up for ACAOS, you can ignore this email.</p>`
-    )
+    const msg = verificationEmail(verifyUrl)
+    await sendMail(email, msg.subject, msg.html, undefined, { text: msg.text })
   } else if (process.env.NODE_ENV === 'production') {
     // Never log a URL containing the raw verification token in production.
     console.warn('[auth] SMTP not configured; verification email was not sent')
