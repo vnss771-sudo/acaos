@@ -3,7 +3,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { sendCampaignBatch } from '../apps/worker/src/processors.ts'
+import { sendCampaignBatch } from './helpers/workerJobs.ts'
 import { rebuildCampaignStats, utcDayStart, incrementCampaignDailyStats } from '../packages/backend-core/src/lib/campaignStats.ts'
 import { recordContactEvent } from '../packages/backend-core/src/lib/contactEvents.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'

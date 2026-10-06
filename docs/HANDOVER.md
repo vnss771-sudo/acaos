@@ -87,29 +87,25 @@ Refreshed from issue #217 (the five-lens audit) against current code.
 
 **Still open**
 
-1. **Tenant guard to `enforce`.** The guard runs in worker jobs and, via the
-   `tenantContext` middleware, on API requests that carry a `workspaceId`. Routes
-   addressed only by resource id (e.g. `/campaigns/:id`) still rely on
-   fetch-then-authorize. Wrap those handlers, run `observe` in production (the
-   default when `NODE_ENV=production`), clear any `[tenant-guard]` warnings, then
-   set `TENANT_GUARD_MODE=enforce`. Required before open self-serve signup; see
+1. **Tenant guard on resource-id routes.** The guard enforces in production on
+   worker jobs and, via the `tenantContext` middleware, on API requests that carry a
+   `workspaceId`. Routes addressed only by resource id (e.g. `/campaigns/:id`) have
+   no tenant context, so they still rely on fetch-then-authorize. Wrap those
+   handlers before open self-serve signup; see
    [PRODUCTION_ENV_VARS](PRODUCTION_ENV_VARS.md).
-2. **Reputation guard default (product call).** `REPUTATION_GUARD_MODE` defaults to
-   `observe`: it logs a degraded bounce/complaint rate but doesn't stop sending.
-   Decide whether launch runs with `enforce`.
-3. **Per-workspace draft policy.** `policyCheck.ts` supports `maxLinks` and
+2. **Per-workspace draft policy.** `policyCheck.ts` supports `maxLinks` and
    `requireUnsubscribeInBody`, but `WorkspaceDraftPolicy` has no columns for them.
    Add columns, migration and route only if per-workspace control is wanted.
-4. **Safer defaults for new workspaces (product call).** `SAFE_LAUNCH_MODE`
+3. **Safer defaults for new workspaces (product call).** `SAFE_LAUNCH_MODE`
    (forced approval plus a 20/day cap) exists but is off by default. Consider
    turning it on for launch.
-5. **Module structure.** `packages/backend-core/src/lib` is a flat directory of
+4. **Module structure.** `packages/backend-core/src/lib` is a flat directory of
    113 files and `apps/worker/src/processors.ts` is about 2,000 lines. Split by
    domain (send, score, discover, inbox) before the next feature wave.
-6. **Test gates.** `npm test` and the Redis tier have no coverage threshold (the
+5. **Test gates.** `npm test` and the Redis tier have no coverage threshold (the
    gate lives in `test:coverage`, 84/78/87); the DB tier's branch floor is 68%;
    `e2e` has five happy-path tests. Add failure-mode browser coverage.
-7. **Calibration improvement check (small).** Recommendation drafts record what
+6. **Calibration improvement check (small).** Recommendation drafts record what
    changed and why, but nothing records whether the baseline win rate improved
    versus the previous calibration. Closed PR #115 has a pure `diffCalibration()`
    that can be ported if wanted.
@@ -118,7 +114,10 @@ Refreshed from issue #217 (the five-lens audit) against current code.
 
 - Membership-role cache: invalidated on member add, remove and workspace delete
   (`apps/api/src/lib/workspaces.ts`).
-- Tenant guard is no longer silently inert in production (defaults to `observe`).
+- Tenant guard enforces in production (6 Oct 2026), and CI runs the DB, Redis and
+  browser tiers with it enforcing (`scripts/with-tenant-guard.sh`).
+- Reputation guard enforces in production (6 Oct 2026): sends stop when bounce or
+  complaint rates cross their thresholds.
 - Stranded `SENDING` rows are reaped (`staleSends.ts`) and in-flight sends count
   toward caps.
 

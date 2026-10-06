@@ -480,8 +480,11 @@ jobs:
             exit 1
           fi
 
-      - name: Database-backed tests
-        run: npm run test:db
+      # Production runs the tenant guard in enforce mode, so the tests do too: a
+      # query that strays outside its workspace fails, even when its caller
+      # swallows the error (see scripts/with-tenant-guard.sh).
+      - name: Database-backed tests (tenant guard enforcing)
+        run: bash scripts/with-tenant-guard.sh npm run test:db
 
   # Redis + PostgreSQL backed integration tests (real BullMQ queue).
   verify-redis:
@@ -548,8 +551,8 @@ jobs:
       - name: Apply migrations
         run: npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
 
-      - name: Redis-backed tests
-        run: npm run test:redis
+      - name: Redis-backed tests (tenant guard enforcing)
+        run: bash scripts/with-tenant-guard.sh npm run test:redis
 
   # End-to-end browser smoke tests. Boots the real API + web servers and drives
   # the UI to catch frontend<->backend contract regressions the unit suites miss.
@@ -622,8 +625,9 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: E2E smoke tests
-        run: npm run test:e2e
+      # The API server inherits TENANT_GUARD_MODE=enforce from the wrapper.
+      - name: E2E smoke tests (tenant guard enforcing)
+        run: bash scripts/with-tenant-guard.sh npm run test:e2e
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

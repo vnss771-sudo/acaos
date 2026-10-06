@@ -88,6 +88,19 @@ function matchesWorkspace(value: unknown, expected: string): boolean {
   return false
 }
 
+/** True if a foreign-key predicate pins the key to specific rows: an id,
+ *  `{ equals: id }` or `{ in: ids }`. `null`, `{ not: … }` and other broad
+ *  predicates match rows in every workspace, so they are not scoping. */
+function pinsForeignKey(value: unknown): boolean {
+  if (typeof value === 'string') return true
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const v = value as Record<string, unknown>
+    if (typeof v.equals === 'string') return true
+    if (Array.isArray(v.in)) return v.in.every((id) => typeof id === 'string')
+  }
+  return false
+}
+
 type SubtreeVerdict = 'scoped' | 'scoped_via_fk' | 'unscoped'
 
 /**
@@ -116,7 +129,7 @@ function classifySubtree(obj: unknown, workspaceId: string, depth = 0): SubtreeV
 
   if (matchesWorkspace(rec.workspaceId, workspaceId)) return 'scoped'
   for (const fk of TENANT_FOREIGN_KEYS) {
-    if (rec[fk] !== undefined) return 'scoped_via_fk'
+    if (pinsForeignKey(rec[fk])) return 'scoped_via_fk'
   }
 
   if ('AND' in rec) {

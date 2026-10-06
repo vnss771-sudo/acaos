@@ -42,6 +42,10 @@ The supply-chain gates `Dependency review` and `Secret scan (gitleaks)` live in 
 - DB-backed tests against PostgreSQL (plus a schema-drift check)
 - Redis-backed tests against Redis + PostgreSQL
 - Playwright browser smoke tests with cached Playwright browser binaries
+- the tenant guard enforcing in the DB, Redis and browser tiers, as it does in
+  production: they run through `scripts/with-tenant-guard.sh`, which fails the job
+  if the guard blocked any query, even one whose error the caller swallowed. Run a
+  tier the same way locally, e.g. `bash scripts/with-tenant-guard.sh npm run test:db`
 - a stable `required` aggregator job that fails if any of the above did not
   succeed — the durable CI check to require in branch protection (alongside the
   separate-workflow supply-chain gates `Dependency review` and

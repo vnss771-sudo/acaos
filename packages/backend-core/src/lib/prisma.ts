@@ -43,7 +43,12 @@ function createPrismaClient() {
         })
         if (result === 'unscoped') {
           const message = `[tenant-guard] blocked cross-tenant access: ${reason}`
-          if (mode === 'enforce') throw new Error(message)
+          // Enforce logs as well as throwing: a best-effort caller that swallows
+          // the error (`.catch(() => {})`) would otherwise hide the block.
+          if (mode === 'enforce') {
+            console.error(message)
+            throw new Error(message)
+          }
           console.warn(message)
         }
         return query(args)

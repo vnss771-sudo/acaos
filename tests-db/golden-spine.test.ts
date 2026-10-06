@@ -9,7 +9,7 @@
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
-import { scoreProspects } from '../apps/worker/src/processors.ts'
+import { scoreProspects } from './helpers/workerJobs.ts'
 import { ingestSignal } from '../packages/backend-core/src/lib/signalIngest.ts'
 import { generateRuleBasedRecommendation, toRawSignal } from '../packages/backend-core/src/lib/signalEngine.ts'
 import { createOutreachIntentForRecommendation } from '../packages/backend-core/src/lib/outreachIntent.ts'

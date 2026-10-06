@@ -1967,5 +1967,5 @@ export async function applyReplyAnalysis(leadId: string, parsed: ReplyAnalysisOu
   // Feed the same learning loop the external FieldOps ingest endpoint
   // (POST /api/outcomes) already drives, so a customer's own reply data — not
   // just FieldOps's — retunes their scoring weights over time.
-  await maybeRecomputeScoringWeights(model.id, model.weights as ScoringWeights)
+  await maybeRecomputeScoringWeights(lead.workspaceId, model.id, model.weights as ScoringWeights)
 }

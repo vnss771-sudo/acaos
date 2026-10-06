@@ -59,8 +59,8 @@ the compose placeholders:
       `example.com` values are templates); alert routes configured. `SENTRY_DSN` set (else
       error capture is a silent no-op). `METRICS_TOKEN` set (else `/metrics` 404s).
 - [ ] **Operational launch controls reviewed** (all optional, safe defaults — see
-      [PRODUCTION_ENV_VARS](./PRODUCTION_ENV_VARS.md)): `TENANT_GUARD_MODE=observe`,
-      `STATS_RECONCILE_ENABLED=true`; consider `SAFE_LAUNCH_MODE=true` for the supervised pilot.
+      [PRODUCTION_ENV_VARS](./PRODUCTION_ENV_VARS.md)): `TENANT_GUARD_MODE=enforce`,
+      `REPUTATION_GUARD_MODE=enforce`, `STATS_RECONCILE_ENABLED=true`; consider `SAFE_LAUNCH_MODE=true` for the supervised pilot.
 
 ## 2b. Compliance (optional — the gate ships dormant)
 

@@ -5,6 +5,7 @@ import {
   verifyWebhookSignature, nextRetryDelaySeconds, deliverWebhook, recordDeliveryOutcome,
   emitWebhookEvent, isWebhookEventType, WEBHOOK_FAILURE_DISABLE_THRESHOLD,
 } from '../packages/backend-core/src/lib/webhooks.ts'
+import { prisma } from '../packages/backend-core/src/lib/prisma.ts'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
 
 afterEach(() => resetPrisma())
@@ -69,11 +70,11 @@ test('recordDeliveryOutcome resets on success, increments on failure, auto-disab
   let updateArg: any
   installPrisma(createFakePrisma({ webhookEndpoint: { update: async (a: any) => { updateArg = a; return {} } } }))
 
-  await recordDeliveryOutcome((await import('../packages/backend-core/src/lib/prisma.ts')).prisma as any, 'e1', { ok: true, status: 200 }, 5)
+  await recordDeliveryOutcome(prisma as any, 'e1', { ok: true, status: 200 }, 5)
   assert.equal(updateArg.data.failureCount, 0)
   assert.equal(updateArg.data.enabled, undefined) // not disabled on success
 
-  await recordDeliveryOutcome((await import('../packages/backend-core/src/lib/prisma.ts')).prisma as any, 'e1', { ok: false, status: 500 }, WEBHOOK_FAILURE_DISABLE_THRESHOLD - 1)
+  await recordDeliveryOutcome(prisma as any, 'e1', { ok: false, status: 500 }, WEBHOOK_FAILURE_DISABLE_THRESHOLD - 1)
   assert.equal(updateArg.data.failureCount, WEBHOOK_FAILURE_DISABLE_THRESHOLD)
   assert.equal(updateArg.data.enabled, false) // auto-disabled at the threshold
 })

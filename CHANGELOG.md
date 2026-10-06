@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Tenant guard enforcing (6 Oct 2026)
+- The whole test suite ran with `TENANT_GUARD_MODE=enforce`, and five queries it blocked now filter by
+  workspace: the onboarding import's top prospects, the pre-send relevance score update, the scoring
+  model's outcome count, the scoring weight retune and the prompt quality report.
+- Route tests now run inside the tenant context, as the API does, and the database tests call worker
+  jobs through the same context wrapper as `worker.ts`. Before, the guard saw none of their queries.
+- In enforce mode the guard logs each block before throwing, so a caller that swallows the error
+  can't hide it.
+- A tenant foreign key counts as scoping only when it pins specific rows (an id, `equals` or `in`).
+  `leadId: null` and `{ not: null }` match rows in every workspace.
+- CI runs the database, Redis and browser tiers through `scripts/with-tenant-guard.sh`, which
+  enforces the guard and fails the job on any `[tenant-guard]` line.
+
 ### Uptime check and quieter startup (6 Oct 2026)
 - New `.github/workflows/uptime.yml` runs the deploy smoke check against the live API and web every
   15 minutes and fails, emailing the repo owner, when either is down after one retry.

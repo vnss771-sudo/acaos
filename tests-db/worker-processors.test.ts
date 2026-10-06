@@ -3,7 +3,8 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { scoreProspects, calibrateScoring, applyReplyAnalysis, researchLead, generateOutreachDraft } from '../apps/worker/src/processors.ts'
+import { applyReplyAnalysis } from '../apps/worker/src/processors.ts'
+import { scoreProspects, calibrateScoring, researchLead, generateOutreachDraft } from './helpers/workerJobs.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 import { maybeRecomputeScoringWeights, DEFAULT_SCORING_WEIGHTS } from '../packages/backend-core/src/lib/scoring.ts'
 
@@ -209,7 +210,7 @@ async function seedLearnableReplyModel(workspaceId: string) {
 test('learnable evidence in shadow mode: proposal recorded, production weights untouched', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const model = await seedLearnableReplyModel(workspace.id)
-  const r = await withMode('shadow', () => maybeRecomputeScoringWeights(model.id, DEFAULT_SCORING_WEIGHTS))
+  const r = await withMode('shadow', () => maybeRecomputeScoringWeights(workspace.id, model.id, DEFAULT_SCORING_WEIGHTS))
   assert.equal(r.updated, false)
   const after = await prisma.scoringModel.findUnique({ where: { id: model.id } })
   assert.deepEqual(after!.weights, DEFAULT_SCORING_WEIGHTS)
@@ -221,7 +222,7 @@ test('learnable evidence in shadow mode: proposal recorded, production weights u
 test('learnable evidence in live mode: weights move, bounded by the per-step cap', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const model = await seedLearnableReplyModel(workspace.id)
-  const r = await withMode('live', () => maybeRecomputeScoringWeights(model.id, DEFAULT_SCORING_WEIGHTS))
+  const r = await withMode('live', () => maybeRecomputeScoringWeights(workspace.id, model.id, DEFAULT_SCORING_WEIGHTS))
   assert.equal(r.updated, true)
   const w = (await prisma.scoringModel.findUnique({ where: { id: model.id } }))!.weights as typeof DEFAULT_SCORING_WEIGHTS
   assert.ok(w.messageRelevance > DEFAULT_SCORING_WEIGHTS.messageRelevance)

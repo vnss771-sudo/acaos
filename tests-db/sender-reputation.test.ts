@@ -7,7 +7,8 @@
 import { test, beforeEach, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { evaluateSenderReputation } from '../packages/backend-core/src/lib/senderReputation.ts'
-import { sendCampaignBatch, sendFollowupTask } from '../apps/worker/src/processors.ts'
+import { sendFollowupTask } from '../apps/worker/src/processors.ts'
+import { sendCampaignBatch } from './helpers/workerJobs.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })

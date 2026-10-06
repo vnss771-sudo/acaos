@@ -9,7 +9,7 @@
 
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { sendCampaignBatch } from '../apps/worker/src/processors.ts'
+import { sendCampaignBatch } from './helpers/workerJobs.ts'
 import { resetWorkerMetrics, renderWorkerMetrics } from '../apps/worker/src/lib/metrics.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 

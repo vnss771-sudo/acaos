@@ -246,7 +246,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
 
     const { imported, skipped, errors, createdIds } = await importProspectRows(workspaceId, rows)
     const top = await prisma.prospect.findMany({
-      where: { id: { in: createdIds } },
+      where: { workspaceId, id: { in: createdIds } },
       orderBy: { opportunityScore: 'desc' },
       take: ONBOARDING_INTENT_COUNT,
       include: { signals: true },
