@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   poolBenchmarks, networkMinClosed, networkMinContributors, MIN_CLOSED, MIN_CONTRIBUTORS,
   type WorkspaceKindCounts,
-  computeNetworkBenchmarks, loadNetworkBenchmarks, setNetworkParticipation, NetworkAccessError,
+  computeNetworkBenchmarks, loadNetworkBenchmarks, loadNetworkParticipation, setNetworkParticipation, NetworkAccessError,
 } from '../packages/backend-core/src/lib/networkIntelligence.ts'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
 
@@ -89,6 +89,15 @@ test('participation: 404 for an unknown workspace; opt-in stamps once; opt-out c
   assert.equal(f.callsTo('workspace', 'update').length, 0, 'staying in writes nothing')
   assert.deepEqual(await setNetworkParticipation('w1', false, now), { optedInAt: null })
   assert.equal(f.callsTo('workspace', 'update').length, 1)
+})
+
+test('participation status: 404 unknown, null when not opted in, the opt-in time otherwise', async () => {
+  fake(null)
+  await assert.rejects(loadNetworkParticipation('w1'), (e: unknown) => e instanceof NetworkAccessError && e.status === 404)
+  fake({ networkOptInAt: null })
+  assert.deepEqual(await loadNetworkParticipation('w1'), { optedInAt: null })
+  fake({ networkOptInAt: new Date('2026-09-01T00:00:00Z') })
+  assert.deepEqual(await loadNetworkParticipation('w1'), { optedInAt: '2026-09-01T00:00:00.000Z' })
 })
 
 test('reading: 404 unknown, 403 not opted in, otherwise the pool beside your own figures', async () => {

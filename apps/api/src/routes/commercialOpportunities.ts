@@ -9,7 +9,7 @@ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/works
 import { proposeIntentForOpportunity } from '@acaos/backend-core/lib/opportunityIntent.js'
 import { loadOutcomeChain, loadOutcomeSummary } from '@acaos/backend-core/lib/outcomeGraphStore.js'
 import { loadCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
-import { loadNetworkBenchmarks, NetworkAccessError, setNetworkParticipation } from '@acaos/backend-core/lib/networkIntelligence.js'
+import { loadNetworkBenchmarks, loadNetworkParticipation, NetworkAccessError, setNetworkParticipation } from '@acaos/backend-core/lib/networkIntelligence.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type { Assert, Extends, UpdateCommercialOpportunityStatusRequest, RefreshCommercialOpportunitiesRequest, ProposeOpportunityIntentRequest, NetworkParticipationRequest } from '@acaos/shared'
@@ -129,6 +129,24 @@ commercialOpportunitiesRouter.get(
     await assertMember(user.id, workspaceId)
     try {
       res.json(await loadNetworkBenchmarks(workspaceId))
+    } catch (e) {
+      if (e instanceof NetworkAccessError) throw new ApiError(e.status, e.message)
+      throw e
+    }
+  })
+)
+
+// GET /api/commercial-opportunities/network-participation — whether the workspace
+// shares its outcomes. Today reads this rather than probing the benchmarks, which
+// answer 403 to every workspace that hasn't opted in.
+commercialOpportunitiesRouter.get(
+  '/network-participation',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseQuery(z.object({ workspaceId: workspaceIdField }), req)
+    await assertMember(user.id, workspaceId)
+    try {
+      res.json(await loadNetworkParticipation(workspaceId))
     } catch (e) {
       if (e instanceof NetworkAccessError) throw new ApiError(e.status, e.message)
       throw e
