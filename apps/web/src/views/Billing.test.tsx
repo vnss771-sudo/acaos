@@ -47,6 +47,10 @@ describe('Billing', () => {
     expect(await screen.findByText('Upgrade your plan')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Upgrade to Contractor →/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Upgrade to Contractor Pro/i })).toBeInTheDocument()
+    // Who each plan is for, as in POSITIONING.md — not the old agency copy.
+    expect(screen.getByText('For most trade businesses')).toBeInTheDocument()
+    expect(screen.getByText('For multi-crew businesses')).toBeInTheDocument()
+    expect(screen.queryByText(/agencies/i)).toBeNull()
     expect(api).toHaveBeenCalledWith('/api/billing/status?workspaceId=ws1')
   })
 
