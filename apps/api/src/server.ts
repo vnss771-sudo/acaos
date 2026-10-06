@@ -1,7 +1,6 @@
 import 'dotenv/config'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import express from 'express'
-import cors from 'cors'
 import compression from 'compression'
 import { authRouter } from './routes/auth.js'
 import { billingRouter } from './routes/billing.js'
@@ -35,13 +34,14 @@ import { legalRouter } from './routes/legal.js'
 import { opsRouter } from './routes/ops/index.js'
 import { errorHandler, notFoundHandler } from './lib/http.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
+import { corsMiddleware } from './middleware/cors.js'
 import { requestContext } from './middleware/requestContext.js'
 import { tenantContext } from './middleware/tenantContext.js'
 import { metricsMiddleware } from './middleware/metrics.js'
 import { renderMetrics, METRICS_CONTENT_TYPE, setDependencyUp } from './lib/metrics.js'
 import { generalRateLimit } from './middleware/rateLimit.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { isProduction, isOriginAllowed, corsAllowsAnyOrigin, validateConfig, getReadinessReport } from '@acaos/backend-core/lib/config.js'
+import { isProduction, validateConfig, getReadinessReport } from '@acaos/backend-core/lib/config.js'
 import { checkEncryptionKeyHealth, checkEmailEncryptionKeyConfigured } from '@acaos/backend-core/lib/encrypt.js'
 import { pingDatabase, pingRedis } from './lib/health.js'
 import { parseTrustProxy } from './lib/trustProxy.js'
@@ -92,18 +92,7 @@ app.use(securityHeaders)
 app.use(requestContext)
 app.use(metricsMiddleware)
 
-app.use(cors({
-  // Reflecting any origin with credentials:true is only safe in the two explicit
-  // local envs — gating this on isProduction() instead would leave staging,
-  // preview, and an unset/typo'd NODE_ENV wide open to credentialed cross-origin
-  // requests from any site.
-  origin: corsAllowsAnyOrigin()
-    ? true
-    : (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => cb(null, isOriginAllowed(origin)),
-  credentials: true,
-  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Protection']
-}))
+app.use(corsMiddleware())
 
 app.use('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }))
 app.use(express.json({ limit: '1mb' }))
