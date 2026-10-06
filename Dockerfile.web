@@ -14,7 +14,7 @@ COPY scripts ./scripts
 
 # --include=dev so vite/typescript (devDependencies) are present for the build
 # even when NODE_ENV=production is injected into the build env (Railway).
-RUN npm ci --include=dev --ignore-optional
+RUN npm ci --include=dev
 
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web

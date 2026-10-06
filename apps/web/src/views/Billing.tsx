@@ -314,7 +314,7 @@ export function Billing({ api, workspace, toast }: Props) {
                     {PLAN_LABELS[plan]}
                   </div>
                   <div style={{ color: colors.textFaint, fontSize: 13, marginTop: 4 }}>
-                    {plan === 'starter' ? 'AI-powered email research for agencies' : 'Enterprise-scale with dedicated support'}
+                    {plan === 'starter' ? 'For most trade businesses' : 'For multi-crew businesses'}
                   </div>
                 </div>
 

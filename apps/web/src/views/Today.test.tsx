@@ -30,7 +30,8 @@ function mockApi(opts: { networkIn?: boolean; quotes?: unknown[] } = {}) {
   return vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
     if (init?.method && init.method !== 'GET') return Promise.resolve({ ok: true, created: true, intentId: 'i1', success: true, optedInAt: null })
     if (path.startsWith('/api/commercial-opportunities/outcomes')) return Promise.resolve({ summary: SUMMARY })
-    if (path.startsWith('/api/commercial-opportunities/network-benchmarks')) return opts.networkIn ? Promise.resolve({ benchmarks: [] }) : Promise.reject(new Error('Opt in'))
+    if (path.startsWith('/api/commercial-opportunities/network-benchmarks')) return Promise.reject(new Error('Today reads the opt-in state, not the benchmarks'))
+    if (path.startsWith('/api/commercial-opportunities/network-participation')) return Promise.resolve({ optedInAt: opts.networkIn ? '2026-09-01T00:00:00.000Z' : null })
     if (path.startsWith('/api/commercial-opportunities/c1')) return Promise.resolve({ opportunity: DETAIL })
     if (path.startsWith('/api/commercial-opportunities')) return Promise.resolve({ opportunities: [URGENT, PURSUING, WATCH] })
     if (path.startsWith('/api/delivery/report')) return Promise.resolve({ report: { minJobs: 3, overall: { jobs: 4, grossMarginPct: { n: 4, median: 24 }, labourMarginPct: null } } })
@@ -91,7 +92,7 @@ describe('Today', () => {
     expect(await screen.findByText('Needs your decision (2)')).toBeInTheDocument()
     expect(screen.queryByText('Delivered margin')).toBeNull()
     expect(screen.queryByText('Opt in')).toBeNull()
-    expect(api.mock.calls.some(([p]) => String(p).includes('/api/delivery') || String(p).includes('network-benchmarks'))).toBe(false)
+    expect(api.mock.calls.some(([p]) => String(p).includes('/api/delivery') || String(p).includes('/network-'))).toBe(false)
   })
 
   test('evidence opens with citations and contact; admins can propose outreach', async () => {
@@ -125,6 +126,13 @@ describe('Today', () => {
     expect(path).toBe('/api/commercial-opportunities/network-participation')
     expect(JSON.parse((init as { body: string }).body)).toEqual({ workspaceId: 'ws1', optIn: true })
     expect(await screen.findByRole('button', { name: 'Stop sharing' })).toBeInTheDocument()
+  })
+
+  test('network: the opt-in state is read directly, never by probing the benchmarks', async () => {
+    const api = mockApi({ networkIn: true })
+    render(<Today api={api as never} workspace={workspace} toast={toast as never} isAdmin setView={setView} />)
+    expect(await screen.findByRole('button', { name: 'Stop sharing' })).toBeInTheDocument()
+    expect(api.mock.calls.some(([p]) => String(p).includes('network-benchmarks'))).toBe(false)
   })
 })
 

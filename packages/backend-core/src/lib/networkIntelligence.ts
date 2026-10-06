@@ -131,6 +131,13 @@ export async function loadNetworkBenchmarks(workspaceId: string, opts: { now?: D
   }
 }
 
+/** Whether the workspace shares its outcomes. Unlike the benchmarks, readable before opting in. */
+export async function loadNetworkParticipation(workspaceId: string): Promise<{ optedInAt: string | null }> {
+  const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { networkOptInAt: true } }) as { networkOptInAt: Date | null } | null
+  if (!ws) throw new NetworkAccessError(404, 'Workspace not found')
+  return { optedInAt: ws.networkOptInAt?.toISOString() ?? null }
+}
+
 export async function setNetworkParticipation(workspaceId: string, optIn: boolean, now: Date = new Date()): Promise<{ optedInAt: string | null }> {
   const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { networkOptInAt: true } }) as { networkOptInAt: Date | null } | null
   if (!ws) throw new NetworkAccessError(404, 'Workspace not found')

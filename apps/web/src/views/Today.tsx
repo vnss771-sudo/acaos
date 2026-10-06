@@ -108,8 +108,11 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
       api<{ summary: Summary }>(`/api/commercial-opportunities/outcomes?workspaceId=${ws}`),
       isAdmin ? api<{ report: DeliveryReport }>(`/api/delivery/report?workspaceId=${ws}`).catch(() => null) : Promise.resolve(null),
       isAdmin ? api<{ quotes: QuoteSummary[] }>(`/api/delivery/quotes?workspaceId=${ws}`).catch(() => ({ quotes: [] as QuoteSummary[] })) : Promise.resolve({ quotes: [] as QuoteSummary[] }),
-      // 403 means "not opted in" — the benchmarks are only for contributors.
-      isAdmin ? api(`/api/commercial-opportunities/network-benchmarks?workspaceId=${ws}`).then(() => 'in' as const, () => 'out' as const) : Promise.resolve(null),
+      // The opt-in state itself; a failed read hides the control rather than guessing.
+      isAdmin
+        ? api<{ optedInAt: string | null }>(`/api/commercial-opportunities/network-participation?workspaceId=${ws}`)
+          .then(r => (r.optedInAt ? 'in' as const : 'out' as const), () => null)
+        : Promise.resolve(null),
     ])
       .then(([list, outcomes, report, quoteList, net]) => {
         if (reqId !== reqRef.current) return

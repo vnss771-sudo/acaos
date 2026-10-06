@@ -70,7 +70,8 @@ scrape_configs:
     metrics_path: /probe
     params: { module: [http_2xx_api] }
     static_configs:
-      - targets: ["https://api.example.com/api/live"] # ← set to your API base URL
+      # The live Railway host; switch to the custom domain once it is added.
+      - targets: ["https://acaosapi-acaos.up.railway.app/api/live"]
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -83,7 +84,7 @@ scrape_configs:
     metrics_path: /probe
     params: { module: [http_ready_api] }
     static_configs:
-      - targets: ["https://api.example.com/api/ready"] # ← set to your API base URL
+      - targets: ["https://acaosapi-acaos.up.railway.app/api/ready"]
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -96,7 +97,7 @@ scrape_configs:
     metrics_path: /probe
     params: { module: [http_2xx_web] }
     static_configs:
-      - targets: ["https://app.example.com/"] # ← set to your public web URL
+      - targets: ["https://acaosweb-acaos.up.railway.app/"]
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

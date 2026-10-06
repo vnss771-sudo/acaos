@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Live test follow-ups (6 Oct 2026)
+- The API answers CORS preflights with a 10-minute max age, so browsers stop repeating the OPTIONS
+  request before each call to the same address. They were 98 of 201 requests in the live test.
+- Today reads the network opt-in from new `GET /api/commercial-opportunities/network-participation`
+  instead of probing the benchmarks, which answered 403 to every workspace that hadn't opted in.
+- Find work with automatic searching off disables Search now, and the empty list no longer says
+  "We search on a schedule".
+- Billing describes the plans as `POSITIONING.md` does: Contractor is "For most trade businesses",
+  not "AI-powered email research for agencies".
+- The verification and password-reset emails carry a plain-text part.
+- The monitoring uptime probes target the live Railway hosts and require HTTPS.
+- `Dockerfile.web` drops `--ignore-optional`, an unknown npm flag that never omitted anything, and
+  `.env.example` drops the unused `VITE_STRIPE_PRICE_*`.
+
 ### Fixes from the live test (4 Oct 2026)
 - Today counts Find work. Accepted Find work quotes add to Won through ACAOS ("from Find work"), all
   quotes count toward Quote → win, and quotes awaiting a decision show beside the pipeline. Before,

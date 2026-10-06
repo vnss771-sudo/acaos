@@ -26,8 +26,9 @@ See also [`../../docs/SLO.md`](../../docs/SLO.md) (targets + error budget) and
    replica individually** (or use service discovery) if you run more than one;
    see the comment block at the top of `prometheus.yml`. Start Prometheus with
    `prometheus.yml` + `alerts.yml` + `recording_rules.yml` mounted alongside.
-3. For uptime: run `blackbox_exporter --config.file=blackbox.yml` and set the
-   `blackbox-*` job `targets` in `prometheus.yml` to your public URLs.
+3. For uptime: run `blackbox_exporter --config.file=blackbox.yml`. The
+   `blackbox-*` job `targets` in `prometheus.yml` point at the live Railway
+   hosts; change them when the custom domain goes live.
 4. For routing: run Alertmanager with `alertmanager.yml` (`--config.expand-env`),
    supplying `SLACK_WEBHOOK_URL` / `PAGERDUTY_ROUTING_KEY` via env.
 5. In Grafana: **Dashboards → Import → Upload JSON** → `grafana-dashboard.json`,

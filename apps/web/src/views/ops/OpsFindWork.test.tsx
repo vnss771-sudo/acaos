@@ -125,6 +125,14 @@ describe('OpsFindWork', () => {
     expect(await screen.findByText(/Automatic searching is switched off/)).toBeInTheDocument()
   })
 
+  test('with searching switched off, Search now is disabled and the empty list says why', async () => {
+    const api = mockApi({ enabled: false, opportunities: [] })
+    render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} setView={setView} canManage />)
+    expect(await screen.findByText(/once automatic searching is turned on/)).toBeInTheDocument()
+    expect(screen.queryByText(/We search on a schedule/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Search now' })).toBeDisabled()
+  })
+
   test('admins record a quote on work they are pursuing (cents, straight to submitted)', async () => {
     const api = mockApi({ opportunities: [{ ...OPP, status: 'PURSUING' }] })
     render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
