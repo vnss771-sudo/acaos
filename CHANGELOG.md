@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Find work: AusTender sweep unstuck (7 Oct 2026)
+- AusTender answers a day with no contract notices (a weekend, a public holiday) with a 400 "No
+  Records found" instead of an empty list. The adapter treated it as a failure, so the run failed, the
+  cursor never moved past Saturday 26 Sep, and every production sweep since Find work was turned on
+  (4 Oct) found nothing. That response now reads as an empty day; any other 400 still fails the run.
+
 ### Contractor pilot scorecard (6 Oct 2026)
 - New Scorecard tab in the Work hub answers "is ACAOS helping this business find and win worthwhile
   work?" against the pilot targets: work found (3+ a week), quotes from Find work (2+ a week), won

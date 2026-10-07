@@ -5,6 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   austenderSource, planningAlertsSource, austenderReleaseToCandidates, planningAlertsToCandidate, boundingBox,
+  isAustenderNoRecords,
 } from '../packages/backend-core/src/lib/opportunitySources.ts'
 import type { DiscoveryProfileInput } from '../packages/backend-core/src/lib/opportunityTypes.ts'
 
@@ -78,6 +79,41 @@ test('AusTender: a day over the page cap is kept but not marked done', async () 
   assert.equal(r.items.length, 40)
   assert.equal(r.nextCursor, '2026-09-24T00:00:00.000Z', 'cursor stays at the unfinished day')
   assert.match(r.warning ?? '', /more than 40 pages/)
+})
+
+// What AusTender returns for a day with no notices (seen in production for
+// Saturday 26 Sep 2026): a 400, not an empty list.
+const noRecords = (day: string, next: string) => new Response(
+  JSON.stringify({ errorCode: 100, message: `No Records found for Date Range ['${day}T00:00:00Z'-'${next}T00:00:00Z']` }),
+  { status: 400, headers: { 'Content-Type': 'application/json' } },
+)
+
+test('AusTender: a day with no notices (400 "No Records found") is an empty day, and the cursor moves past it', async () => {
+  const fetchImpl = fakeFetch((u) => {
+    if (u.pathname.includes('contractPublished/2026-09-22T00:00:00Z/')) return noRecords('2026-09-22', '2026-09-23')
+    if (u.pathname.includes('contractPublished/2026-09-23T00:00:00Z/')) return { releases: [release('CN401')], links: {} }
+    if (u.pathname.includes('contractPublished/2026-09-24T00:00:00Z/')) return noRecords('2026-09-24', '2026-09-25')
+    return { releases: [], links: {} }
+  })
+  const r = await austenderSource.fetch({ cursor: '2026-09-22T00:00:00.000Z', profile: PROFILE, now: NOW, fetchImpl })
+  assert.deepEqual(r.items.map(i => i.externalId), ['CN401'])
+  assert.equal(r.nextCursor, '2026-09-25T00:00:00.000Z')
+})
+
+test('AusTender: any other client error still fails the run', async () => {
+  const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ errorCode: 7, message: 'Invalid date' }), { status: 400 }))
+  await assert.rejects(
+    austenderSource.fetch({ cursor: '2026-09-24T00:00:00.000Z', profile: PROFILE, now: NOW, fetchImpl }),
+    /austender findByDates\/contractPublished 400: .*Invalid date/,
+  )
+})
+
+test('isAustenderNoRecords: only a 400 that says there are no records', () => {
+  assert.equal(isAustenderNoRecords(400, JSON.stringify({ errorCode: 100, message: 'No Records found for Date Range' })), true)
+  assert.equal(isAustenderNoRecords(400, JSON.stringify({ message: 'No Records found for Date Range' })), true)
+  assert.equal(isAustenderNoRecords(400, JSON.stringify({ errorCode: 7, message: 'Invalid date' })), false)
+  assert.equal(isAustenderNoRecords(404, JSON.stringify({ errorCode: 100 })), false)
+  assert.equal(isAustenderNoRecords(400, '<html>Bad Request</html>'), false)
 })
 
 test('AusTender: an unexpected payload fails loudly', async () => {
