@@ -5,7 +5,7 @@
 import { test, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { runOpportunitySweep } from '../packages/backend-core/src/lib/opportunitySweep.ts'
-import type { OpportunitySource, SourceFetchContext, SourceFetchResult } from '../packages/backend-core/src/lib/opportunitySources.ts'
+import { austenderSource, type OpportunitySource, type SourceFetchContext, type SourceFetchResult } from '../packages/backend-core/src/lib/opportunitySources.ts'
 import type { OpportunityCandidate } from '../packages/backend-core/src/lib/opportunityTypes.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
@@ -129,6 +129,41 @@ test('a failing fetch leaves the cursor in place and the next run resumes from i
   state = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id } })
   assert.equal(state.cursor, 'c2')
   assert.equal(state.lastError, null)
+})
+
+// Production, 4–6 Oct 2026: the AusTender cursor sat on Saturday 26 Sep, a day
+// AusTender answers with 400 "No Records found", so every sweep failed there and
+// Find work stayed empty. The real adapter must read that day as empty and move on.
+test('AusTender: an empty day no longer stalls the sweep; the cursor moves past it', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await profileFor(workspace.id, { sources: ['austender'] })
+  await prisma.discoverySourceState.create({ data: { workspaceId: workspace.id, source: 'austender', cursor: '2026-09-26T00:00:00.000Z' } })
+  const notice = {
+    ocid: 'prod-CN9001', id: 'CN9001-1', date: '2026-09-28T03:00:00Z',
+    parties: [{ id: 'sup-1', name: 'Acme Builders Pty Ltd', roles: ['supplier'], address: { locality: 'Brisbane', region: 'QLD', postalCode: '4000' } }],
+    awards: [{ id: 'CN9001-award', suppliers: [{ id: 'sup-1', name: 'Acme Builders Pty Ltd' }] }],
+    contracts: [{
+      id: 'CN9001', awardID: 'CN9001-award', title: 'Electrical maintenance services', value: { amount: '425000.00', currency: 'AUD' },
+      dateSigned: '2026-09-28T00:00:00Z', items: [{ classification: { scheme: 'UNSPSC', id: '72151500', description: 'Electrical system services' } }],
+    }],
+  }
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  const fetchImpl = async (url: string | URL) => {
+    const u = String(url)
+    if (u.includes('contractPublished/2026-09-26T00:00:00Z/') || u.includes('contractPublished/2026-09-27T00:00:00Z/')) {
+      return json({ errorCode: 100, message: 'No Records found for Date Range' }, 400)
+    }
+    if (u.includes('contractPublished/2026-09-28T00:00:00Z/')) return json({ releases: [notice], links: {} })
+    return json({ releases: [], links: {} })
+  }
+
+  const res = await runOpportunitySweep({ workspaceId: workspace.id, sources: [austenderSource], now: new Date('2026-10-06T12:54:00Z'), fetchImpl })
+  assert.equal(res.runs[0].status, 'ok', JSON.stringify(res.runs[0]))
+  const state = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id, source: 'austender' } })
+  assert.equal(state.cursor, '2026-10-03T00:00:00.000Z', 'seven days read per run: 26 Sep to 2 Oct')
+  assert.equal(state.lastError, null)
+  const found = await prisma.opportunity.findMany({ where: { workspaceId: workspace.id }, select: { externalId: true, kind: true } })
+  assert.deepEqual(found, [{ externalId: 'CN9001', kind: 'CONTRACT_AWARD' }])
 })
 
 test('a persistence failure mid-batch does not advance the cursor', async () => {

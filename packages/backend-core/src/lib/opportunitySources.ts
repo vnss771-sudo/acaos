@@ -15,7 +15,7 @@
 // Upstream formats are coded against each provider's published documentation.
 // scripts/smoke-discovery-sources.mjs checks them against the live APIs.
 import { z } from 'zod'
-import { callProvider } from './providerClient.js'
+import { callProvider, ProviderError } from './providerClient.js'
 import { austenderBreaker, planningAlertsBreaker } from './circuit.js'
 import {
   normalizeAuRegion, parseAuRegion,
@@ -209,6 +209,21 @@ export function austenderReleaseToCandidates(release: OcdsRelease): OpportunityC
   return out
 }
 
+// AusTender answers a day with no notices (a weekend, a public holiday) with
+// 400 {"errorCode": 100, "message": "No Records found for Date Range …"}. That
+// is an empty day, not a fault. Read as a failure, it failed the run, the
+// cursor never moved past that day, and every later sweep re-read it and found
+// nothing. Exported for tests.
+export function isAustenderNoRecords(status: number, body: string): boolean {
+  if (status !== 400) return false
+  try {
+    const parsed = JSON.parse(body) as { errorCode?: unknown; message?: unknown }
+    return parsed.errorCode === 100 || (typeof parsed.message === 'string' && /^no records found/i.test(parsed.message))
+  } catch {
+    return false
+  }
+}
+
 function dayStart(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
@@ -253,6 +268,11 @@ export const austenderSource: OpportunitySource = {
           breaker: austenderBreaker,
           ...(ctx.fetchImpl ? { fetchImpl: ctx.fetchImpl, sleepImpl: async () => {} } : {}),
           onSuccess: async (res) => parseOrThrow('austender', ocdsPackage, await res.json()),
+          onClientError: async (res) => {
+            const body = await res.text().catch(() => res.statusText)
+            if (isAustenderNoRecords(res.status, body)) return parseOrThrow('austender', ocdsPackage, { releases: [] })
+            throw new ProviderError('austender', 'findByDates/contractPublished', 'client_error', res.status, `austender findByDates/contractPublished ${res.status}: ${body.slice(0, 200)}`)
+          },
         })
         for (const r of pkg.releases) dayItems.push(...austenderReleaseToCandidates(r))
         url = pkg.links?.next || null
