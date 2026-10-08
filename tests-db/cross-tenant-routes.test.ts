@@ -2,8 +2,9 @@
 // isolation suite (tests/security-isolation.test.ts) covers leads/campaigns/
 // workspaces; this closes the audit's gap list — prospects, missions, and the
 // signal→prospect cross-reference — by asserting that a member of workspace A
-// can never read or mutate a resource owned by workspace B (403), exercising the
-// actual Prisma scoping rather than a mock.
+// can never read or mutate a resource owned by workspace B (404 for resource-id
+// routes, 403 for body-scoped cross-references), exercising the actual Prisma
+// scoping rather than a mock.
 
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -44,9 +45,9 @@ test('prospects: a member of A cannot read/update/delete a prospect in B', async
   const p = await prisma.prospect.create({ data: { workspaceId: b.workspace.id, companyName: 'Acme B', industry: 'construction' } })
   const h = authA(a.user.id)
 
-  assert.equal((await prospects.request(`/api/prospects/${p.id}`, { headers: h })).status, 403)
-  assert.equal((await prospects.request(`/api/prospects/${p.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ companyName: 'hacked' }) })).status, 403)
-  assert.equal((await prospects.request(`/api/prospects/${p.id}`, { method: 'DELETE', headers: h })).status, 403)
+  assert.equal((await prospects.request(`/api/prospects/${p.id}`, { headers: h })).status, 404)
+  assert.equal((await prospects.request(`/api/prospects/${p.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ companyName: 'hacked' }) })).status, 404)
+  assert.equal((await prospects.request(`/api/prospects/${p.id}`, { method: 'DELETE', headers: h })).status, 404)
 
   // The prospect is untouched.
   const after = await prisma.prospect.findUnique({ where: { id: p.id } })
@@ -58,8 +59,8 @@ test('missions: a member of A cannot read or update a mission in B', async () =>
   const m = await prisma.mission.create({ data: { workspaceId: b.workspace.id, name: 'Mission B', goalType: 'BOOK_MEETINGS' } })
   const h = authA(a.user.id)
 
-  assert.equal((await missions.request(`/api/missions/${m.id}`, { headers: h })).status, 403)
-  assert.equal((await missions.request(`/api/missions/${m.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ status: 'PAUSED' }) })).status, 403)
+  assert.equal((await missions.request(`/api/missions/${m.id}`, { headers: h })).status, 404)
+  assert.equal((await missions.request(`/api/missions/${m.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ status: 'PAUSED' }) })).status, 404)
 
   const after = await prisma.mission.findUnique({ where: { id: m.id } })
   assert.equal(after!.name, 'Mission B')

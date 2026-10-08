@@ -318,7 +318,7 @@ test('reply/resolve: tenant-scoped', async () => {
   const open = await prisma.inboxReplySend.create({
     data: { workspaceId: b.workspace.id, outreachSentId: reply.id, idempotencyKey: 'key-tenant', toEmail: 'lead@x.test', subject: 'Re: Intro', body: 'x', attemptedAt: new Date(0) },
   })
-  assert.equal((await resolveReq(a.user.id, reply.id, open.id, { workspaceId: b.workspace.id, outcome: 'sent' })).status, 403)
+  assert.equal((await resolveReq(a.user.id, reply.id, open.id, { workspaceId: b.workspace.id, outcome: 'sent' })).status, 404)
   assert.equal((await resolveReq(a.user.id, reply.id, open.id, { workspaceId: a.workspace.id, outcome: 'sent' })).status, 404)
   assert.equal((await prisma.inboxReplySend.findUniqueOrThrow({ where: { id: open.id } })).status, 'SENDING')
 })
@@ -602,7 +602,7 @@ test('reply/feedback: 404 for a reply that does not exist', async () => {
   assert.equal(res.status, 404)
 })
 
-test('reply/feedback: 403 when the reply belongs to a different workspace', async () => {
+test('reply/feedback: 404 when the reply belongs to a different workspace', async () => {
   const a = await seedUserWithWorkspace('a3@x.test')
   const b = await seedUserWithWorkspace('b3@x.test')
   const reply = await seedReply(b.workspace.id)
@@ -612,7 +612,7 @@ test('reply/feedback: 403 when the reply belongs to a different workspace', asyn
     headers: jsonAuth(a.user.id),
     body: JSON.stringify({ workspaceId: a.workspace.id, feedback: 'correct' }),
   })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 // ── POST /reply/:replyId/draft — AI draft for the composer ──────────────────

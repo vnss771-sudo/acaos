@@ -2,7 +2,7 @@ import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Request, Response, NextFunction } from 'express'
 import { tenantResourceScope } from '../apps/api/src/middleware/tenantResource.ts'
-import { currentWorkspaceId } from '../packages/backend-core/src/lib/tenantContext.ts'
+import { currentWorkspaceId, runInWorkspaceContext } from '../packages/backend-core/src/lib/tenantContext.ts'
 import { createFakePrisma, installPrisma, resetPrisma } from './helpers/integration.ts'
 
 const USER = 'tenant-scope-user'
@@ -57,4 +57,19 @@ test('resource tenant scope returns the same 404 when the resource does not exis
   const err = result.error as { statusCode?: number; message?: string }
   assert.equal(err?.statusCode, 404)
   assert.equal(err?.message, 'Signal not found')
+})
+
+test('resource tenant scope returns 404 without a cross-workspace query when the request is scoped elsewhere', async () => {
+  const db = createFakePrisma({ membership: { findFirst: async () => { throw new Error('membership should not be queried') } } })
+  installPrisma(db)
+  const middleware = tenantResourceScope({
+    resource: 'Reply',
+    param: 'replyId',
+    loadWorkspace: async () => ({ workspaceId: 'foreign-workspace' }),
+  })
+  const result = await runInWorkspaceContext(WS, () =>
+    invoke(middleware, { user: { id: USER } as any, params: { replyId: 'reply-b' } as any }))
+  const err = result.error as { statusCode?: number; message?: string }
+  assert.equal(err?.statusCode, 404)
+  assert.equal(err?.message, 'Reply not found')
 })

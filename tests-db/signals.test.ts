@@ -186,7 +186,7 @@ test('DELETE removes a signal in the owned workspace but not another\'s', async 
     method: 'DELETE',
     headers: { Authorization: bearer(a.user.id) },
   })
-  assert.equal(denied.status, 403)
+  assert.equal(denied.status, 404)
   assert.equal(await prisma.signal.count({ where: { id: sigB.id } }), 1)
 
   // Can delete own.

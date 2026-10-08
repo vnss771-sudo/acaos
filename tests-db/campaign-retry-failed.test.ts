@@ -35,5 +35,5 @@ test('POST /:id/retry-failed denies a non-member', async () => {
   const b = await seedUserWithWorkspace('b@x.test')
   const campaign = await prisma.campaign.create({ data: { workspaceId: b.workspace.id, name: 'C', goalType: 'BOOK_CALL' } })
   const res = await server.request(`/api/campaigns/${campaign.id}/retry-failed`, { method: 'POST', headers: { Authorization: bearer(a.user.id) } })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })

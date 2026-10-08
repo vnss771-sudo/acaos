@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express'
-import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
+import { currentWorkspaceId, runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { getWorkspaceRole } from '../lib/workspaces.js'
 
@@ -35,6 +35,12 @@ export function tenantResourceScope(options: TenantResourceScopeOptions): Reques
 
     const owned = await options.loadWorkspace(id)
     if (!owned) throw new ApiError(404, `${options.resource} not found`)
+
+    // The request already scoped itself to a workspace (query/body) and the resource
+    // lives elsewhere. Answer the same 404 without issuing a cross-workspace
+    // membership query, which the Prisma tenant guard would reject as a 500.
+    const ambient = currentWorkspaceId()
+    if (ambient && ambient !== owned.workspaceId) throw new ApiError(404, `${options.resource} not found`)
 
     const role = await getWorkspaceRole(user.id, owned.workspaceId)
     if (!role) {

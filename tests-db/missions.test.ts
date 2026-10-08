@@ -143,7 +143,7 @@ test('GET /missions/:id denies a non-member', async () => {
     body: JSON.stringify({ workspaceId: a.workspace.id, name: 'M', goalType: 'BOOK_CALL' }),
   })
   const res = await server.request(`/api/missions/${created.body.mission.id}`, { headers: { Authorization: bearer(b.user.id) } })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('PATCH /missions/:id updates status', async () => {
