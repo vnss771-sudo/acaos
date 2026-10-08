@@ -69,25 +69,18 @@ describe('OpsShifts', () => {
     expect(api).toHaveBeenCalledWith(expect.stringContaining('/api/ops/shifts?'))
   })
 
-  // The Clock In/Out button only appears after a chained sequence of async
-  // effects (fetch crew list -> auto-select the first crew member -> fetch
-  // that crew member's clock status -> render) — each hop is a resolved-
-  // promise microtask plus a React commit, which is near-instant on a normal
-  // machine but has been observed to occasionally blow even a 5000ms
-  // findBy* timeout on a loaded/CPU-starved CI runner (verified: passes
-  // 100% locally, including repeated runs; the underlying effect chain has
-  // no logic race — confirmed by reading it, not just running it). Retrying
-  // the whole test once or twice absorbs that runner-level stall without
-  // masking a real regression, since a genuine logic bug would fail on
-  // every retry, not just intermittently.
-  test('shows a Clock In button when the selected crew member is not clocked in', { retry: 2 }, async () => {
+  // The clock widget shows a skeleton until the status for the selected crew
+  // member has loaded. (These tests used to flake: one render showed a Clock In
+  // button before the status request started, then replaced it, so findBy*
+  // could resolve a node that was gone by the assertion.)
+  test('shows a Clock In button when the selected crew member is not clocked in', async () => {
     const api = apiFor({ clockedIn: false })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
     expect(await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })).toBeInTheDocument()
   })
 
-  test('shows a Clock Out button and "clocked in" text when the selected crew member is clocked in', { retry: 2 }, async () => {
+  test('shows a Clock Out button and "clocked in" text when the selected crew member is clocked in', async () => {
     const api = apiFor({ clockedIn: true, clockStatusShift: openShift })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 
@@ -96,7 +89,7 @@ describe('OpsShifts', () => {
     expect(screen.getByText(/Clocked in at/i)).toBeInTheDocument()
   })
 
-  test('clicking Clock In calls the API with the right body', { retry: 2 }, async () => {
+  test('clicking Clock In calls the API with the right body', async () => {
     const api = apiFor({ clockedIn: false })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
 

@@ -75,7 +75,9 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
   // ── Clock in / out widget — membership-level, visible to any crew member ──
   const [selectedCrewId, setSelectedCrewId] = useState('')
   const [clockJobSiteId, setClockJobSiteId] = useState('')
-  const [status, setStatus] = useState<{ clockedIn: boolean; shift: OpsShiftRecord | null } | null>(null)
+  // Tagged with the crew member it was fetched for, so a status that belongs to
+  // the previous selection (or none yet) is never rendered as the current one.
+  const [status, setStatus] = useState<{ crewMemberId: string; clockedIn: boolean; shift: OpsShiftRecord | null } | null>(null)
   const [statusLoading, setStatusLoading] = useState(false)
   const [clockWorking, setClockWorking] = useState(false)
 
@@ -87,8 +89,12 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
     const reqId = ++statusReqRef.current
     setStatusLoading(true)
     api<{ clockedIn: boolean; shift: OpsShiftRecord | null }>(`/api/ops/clock/status?workspaceId=${workspace.id}&crewMemberId=${selectedCrewId}`)
-      .then(d => { if (reqId === statusReqRef.current) setStatus(d) })
-      .catch(e => { if (reqId === statusReqRef.current) toast.error(e instanceof Error ? e.message : 'Failed to load clock status') })
+      .then(d => { if (reqId === statusReqRef.current) setStatus({ ...d, crewMemberId: selectedCrewId }) })
+      .catch(e => {
+        if (reqId !== statusReqRef.current) return
+        setStatus({ crewMemberId: selectedCrewId, clockedIn: false, shift: null })
+        toast.error(e instanceof Error ? e.message : 'Failed to load clock status')
+      })
       .finally(() => { if (reqId === statusReqRef.current) setStatusLoading(false) })
   }, [workspace?.id, selectedCrewId])
 
@@ -275,7 +281,8 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
   ]
 
   const activeShiftJobSiteName = status?.shift ? (jobSiteById.get(status.shift.jobSiteId)?.siteName ?? 'a site') : ''
-  const isClockedIn = !!(status?.clockedIn && status.shift)
+  const statusKnown = !!selectedCrewId && status?.crewMemberId === selectedCrewId && !statusLoading
+  const isClockedIn = statusKnown && !!(status?.clockedIn && status.shift)
 
   return (
     <div style={s.stack}>
@@ -305,7 +312,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
             )}
           </Grid>
 
-          {!selectedCrewId ? null : statusLoading ? (
+          {!selectedCrewId ? null : !statusKnown ? (
             <Skeleton height={40} />
           ) : isClockedIn && status?.shift ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
