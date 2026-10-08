@@ -73,7 +73,7 @@ after launch, in roughly this order:
 | `express` 4 → 5 | prod | Path syntax and async error handling changes across every route |
 | `react` / `react-dom` 18 → 19 | prod | Whole web app |
 | `prisma` / `@prisma/client` 5 → 7 | prod | Largest: generator and client changes; run the DB tier and drift check |
-| `typescript` 5 → 7 | dev | Native compiler; do last, after the rest settle |
+| `typescript` 6 → 7 | dev | **Deferred.** UQ-03 pins TypeScript 6.0.3 across root/workspaces so CI, local scripts and Docker do not resolve different compilers. Upgrade 7 separately after the toolchain supports it cleanly. |
 
 `tsx` is pinned exactly at the root (`4.22.4`) and Dependabot ignores it. Newer tsx
 versions (checked up to 4.23.15) change the JavaScript it generates enough that Node's

@@ -1,6 +1,6 @@
 # Building & Running ACAOS
 
-ACAOS is a TypeScript **npm-workspaces monorepo** (Node 22+, ESM). This guide covers
+ACAOS is a TypeScript **npm-workspaces monorepo** (Node 26, npm 10.9.2, ESM). This guide covers
 local development, the production build, Docker, and how the shared `@acaos/backend-core`
 package resolves at build/dev/test/runtime.
 
@@ -20,7 +20,9 @@ packages/backend-core/  Shared backend runtime (prisma, scoring, mail, queues, â
 
 | Tool | Version | Notes |
 |---|---|---|
-| Node.js | **22+** (CI uses 22) | ESM + `--conditions` support required |
+| Node.js | **26.x** (CI + Docker + `.nvmrc`) | Pinned major; ESM + `--conditions` support required |
+| npm | **10.9.2** | Pinned via `packageManager`, CI and Docker builder stages |
+| TypeScript | **6.0.3** | One compiler version at root and all TS workspaces |
 | npm | 10+ | workspaces |
 | PostgreSQL | 14+ | only for running the app / `test:db` |
 | Redis | 6+ | only for running the worker / `test:redis` |

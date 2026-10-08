@@ -6,6 +6,9 @@
 # the digest+tag. Re-resolve with:
 #   docker buildx imagetools inspect node:26-alpine --format '{{json .Manifest.Digest}}'
 FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS builder
+
+ARG NPM_VERSION=10.9.2
+RUN npm install --global npm@${NPM_VERSION}
 WORKDIR /app
 ARG ACAOS_RELEASE_VERSION=0.0.0-dev
 ARG ACAOS_RELEASE_SHA=unknown
