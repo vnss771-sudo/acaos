@@ -10,8 +10,12 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8')
 // dispatch. These source checks are deliberately conservative drift detectors:
 // if the implementation shape changes, security review is required.
 for (const [file, needles] of [
-  ['apps/worker/src/processors.ts', [
+  ['apps/worker/src/processors/campaignSend.ts', [
     "context: 'campaign'",
+    'authorizeOutboundSend({',
+    'sendMailFn(',
+  ]],
+  ['apps/worker/src/processors/followups.ts', [
     "context: 'followup'",
     'authorizeOutboundSend({',
     'sendMailFn(',
@@ -48,7 +52,8 @@ const allowedDirectMailCalls = new Map([
   ['apps/api/src/routes/workspaces/members.ts', 1],   // workspace invite
   ['apps/api/src/routes/mailbox.ts', 1],              // explicit mailbox test send
   ['apps/api/src/routes/inbox.ts', 1],                // human acquisition reply — policy guarded above
-  ['apps/worker/src/processors.ts', 2],                // campaign + follow-up — policy guarded above
+  ['apps/worker/src/processors/campaignSend.ts', 1],   // campaign — policy guarded above
+  ['apps/worker/src/processors/followups.ts', 1],      // follow-up — policy guarded above
 ])
 
 function walk(dir) {

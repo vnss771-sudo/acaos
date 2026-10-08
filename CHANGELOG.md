@@ -257,3 +257,8 @@
 - Added RP ID/origin/HTTPS configuration validation and single-use challenge helpers.
 - Added source/DB tests and `check:passkey-foundation`.
 - Passkey ceremonies remain disabled until SimpleWebAuthn packages are installed and locked under the Node 26 toolchain; no hand-rolled verifier was introduced.
+
+## UQ-10 — Worker processor domain split (2026-10-08)
+- Split the 1,959-line worker processor catch-all into scoring, outreach, campaign send, follow-up, discovery and reply modules.
+- Preserved `worker.ts` queue wiring through a compatibility barrel.
+- Added a CI architecture gate to prevent processor-domain collapse and updated send-authorization drift checks for the new module paths.
