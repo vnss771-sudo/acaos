@@ -69,7 +69,8 @@
     "check:toolchain": "node scripts/check-toolchain.mjs",
     "check:tenant-resources": "node scripts/check-tenant-resources.mjs",
     "check:send-authorization": "node scripts/check-send-authorization.mjs",
-    "check:csp": "node scripts/check-csp.mjs"
+    "check:csp": "node scripts/check-csp.mjs",
+    "check:passkey-foundation": "node scripts/check-passkey-foundation.mjs"
   },
   "overrides": {
     "nodemailer": "^10.0.13",

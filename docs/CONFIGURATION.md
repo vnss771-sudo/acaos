@@ -156,3 +156,17 @@ land here (and in `.env.example` if it's core/required) in the same change.*
 
 ### OpenAI model compatibility
 Model compatibility is centralized in `packages/backend-core/src/lib/modelProfiles.ts`. Reasoning families use `max_completion_tokens` and do not receive `temperature`; standard chat models retain `max_tokens` plus the configured sampling temperature. Run `npm run smoke:ai-provider` with production-like credentials before promoting a model change.
+
+## Passkeys / WebAuthn (foundation; not enabled yet)
+
+ACAOS now includes the persistent credential/challenge schema and relying-party configuration contract for WebAuthn. The cryptographic ceremony endpoints remain intentionally disabled until the vetted SimpleWebAuthn server/browser packages are installed and locked in `package-lock.json` under the Node 26 toolchain.
+
+When that implementation is activated, the required configuration will be:
+
+- `WEBAUTHN_ENABLED=true`
+- `WEBAUTHN_RP_ID=<registrable relying-party domain>`
+- `WEBAUTHN_ORIGIN=https://<exact application origin>` (falls back to `APP_URL`)
+- `WEBAUTHN_RP_NAME=ACAOS` (optional display name)
+- `WEBAUTHN_CHALLENGE_TTL_MS=300000` (optional; minimum one minute)
+
+ACAOS rejects non-HTTPS WebAuthn origins outside localhost and requires the origin hostname to equal the RP ID or be its subdomain. Do not enable `WEBAUTHN_ENABLED` until the ceremony verifier is present.

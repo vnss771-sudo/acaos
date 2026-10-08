@@ -251,3 +251,9 @@
 - Preserved `style` props on custom React components so component contracts remain unchanged until they render intrinsic DOM nodes.
 - Added `check:csp` to the main verification chain and a Playwright assertion that the rendered app contains zero inline style attributes.
 - Updated the ASVS/configuration documentation to reflect the strict CSP architecture.
+
+## 2026-10-08 — UQ-09 Passkey/WebAuthn foundation
+- Added additive passkey credential and ceremony-challenge persistence.
+- Added RP ID/origin/HTTPS configuration validation and single-use challenge helpers.
+- Added source/DB tests and `check:passkey-foundation`.
+- Passkey ceremonies remain disabled until SimpleWebAuthn packages are installed and locked under the Node 26 toolchain; no hand-rolled verifier was introduced.
