@@ -14,6 +14,7 @@ export type OutboundSendReasonCode =
   | 'WORKSPACE_NOT_FOUND'
   | 'WORKSPACE_SUPPRESSED'
   | 'REPUTATION_BLOCKED'
+  | 'REPUTATION_UNAVAILABLE'
   | 'RECIPIENT_REQUIRED'
   | 'RECIPIENT_SUPPRESSED'
   | 'CONSENT_REQUIRED'
@@ -124,6 +125,10 @@ export async function authorizeOutboundSend(input: AuthorizeOutboundSendInput): 
   const guardMode = reputationGuardMode()
   if (guardMode !== 'off') {
     const reputation = await evaluateSenderReputation(input.workspaceId).catch(() => null)
+    // In enforce mode an unreadable reputation ledger must not count as healthy:
+    // deny with a retryable code so callers defer instead of dispatching blind.
+    if (!reputation && guardMode === 'enforce') return finalizeDecision(input, deny('REPUTATION_UNAVAILABLE'))
+    if (!reputation) observations.push('REPUTATION_UNAVAILABLE')
     if (reputation && !reputation.healthy) {
       if (guardMode === 'enforce') return finalizeDecision(input, deny('REPUTATION_BLOCKED'))
       observations.push(`REPUTATION_DEGRADED:${reputation.reason}`)

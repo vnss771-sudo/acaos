@@ -1583,6 +1583,12 @@ export async function sendFollowupTask(
     audit: { entityType: 'followupTask', entityId: taskId },
   })
   if (!authorization.allowed) {
+    // A transient reputation-ledger failure defers (park back at SCHEDULED for the
+    // next scan) rather than cancelling the sequence step.
+    if (authorization.code === 'REPUTATION_UNAVAILABLE') {
+      await prisma.followupTask.update({ where: { id: taskId }, data: { status: 'SCHEDULED' } }).catch(() => {})
+      return { taskId, status: 'SKIPPED', reason: 'REPUTATION_UNAVAILABLE' }
+    }
     if (authorization.code === 'REPUTATION_BLOCKED') incReputationBlock('send-followup')
     if (authorization.code === 'CONSENT_REQUIRED') {
       await recordCriticalAudit({

@@ -24,6 +24,30 @@ requireText('apps/api/src/routes/leads.ts', "const leadTenantScope = tenantResou
 requireText('apps/api/src/routes/signals.ts', "signalsRouter.use('/:id', tenantResourceScope({", 'signal resource tenant scope')
 requireText('apps/api/src/routes/inbox.ts', "inboxRouter.use('/reply/:replyId', tenantResourceScope({", 'inbox reply tenant scope')
 
+// Express router.use('/:id', ...) also matches static single-segment paths, so a
+// static route such as '/stats' registered AFTER the scope would be swallowed by
+// it and answer 404. Static routes must be declared before the resource scope.
+for (const [file, router, mount] of [
+  ['apps/api/src/routes/campaigns.ts', 'campaignsRouter', '/:id'],
+  ['apps/api/src/routes/missions.ts', 'missionsRouter', '/:id'],
+  ['apps/api/src/routes/signals.ts', 'signalsRouter', '/:id'],
+  ['apps/api/src/routes/inbox.ts', 'inboxRouter', '/reply/:replyId'],
+]) {
+  const src = read(file)
+  const at = src.indexOf(`${router}.use('${mount}', tenantResourceScope(`)
+  if (at < 0) continue
+  const prefix = mount.slice(0, mount.lastIndexOf('/') + 1)
+  const routeRe = new RegExp(`${router}\\.(?:get|post|patch|put|delete|all|use)\\(\\s*'([^']*)'`, 'g')
+  for (const m of src.slice(at).matchAll(routeRe)) {
+    const path = m[1]
+    if (!path.startsWith(prefix)) continue
+    const segment = path.slice(prefix.length).split('/')[0]
+    if (segment && !segment.startsWith(':')) {
+      failures.push(`${file}: static route '${path}' is registered after ${router}.use('${mount}') and would be captured by the resource scope`)
+    }
+  }
+}
+
 const prospectFiles = [
   'apps/api/src/routes/prospects/crud.ts',
   'apps/api/src/routes/prospects/scoring.ts',

@@ -255,6 +255,7 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
       if (authorization.code === 'WORKSPACE_SUPPRESSED') throw new ApiError(403, 'Sending is suspended for this workspace')
       if (authorization.code === 'RECIPIENT_SUPPRESSED') throw new ApiError(409, 'This recipient has unsubscribed or is suppressed — reply not sent')
       if (authorization.code === 'REPUTATION_BLOCKED') throw new ApiError(409, 'Sending is temporarily blocked to protect sender reputation')
+      if (authorization.code === 'REPUTATION_UNAVAILABLE') throw new ApiError(503, 'Sender reputation could not be checked — please retry shortly')
       throw new ApiError(409, `Reply not sent: ${authorization.code}`)
     }
 
