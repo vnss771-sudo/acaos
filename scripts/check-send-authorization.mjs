@@ -92,7 +92,7 @@ for (const scanRoot of scanRoots) {
   for (const abs of walk(resolve(root, scanRoot))) {
     const file = relative(root, abs).replaceAll('\\', '/')
     const src = readFileSync(abs, 'utf8')
-    if (/\btransporter\.sendMail\s*\(/.test(src) || /graph\.microsoft\.com\/v1\.0\/me\/sendMail/.test(src)) {
+    if (/\btransporter\.sendMail\s*\(/.test(src) || src.includes('graph.microsoft.com/v1.0/me/sendMail')) {
       failures.push(`${file}: direct provider dispatch bypasses packages/backend-core/src/services/mail.ts`)
     }
   }
