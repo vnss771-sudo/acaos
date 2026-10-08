@@ -20,6 +20,22 @@ export type Urgency = 'HIGH' | 'MEDIUM' | 'LOW'
 
 export type ScoreDimension = { score: number; reason: string }
 
+/**
+ * OBSERVED: a source states a competition fact (bidder count, named incumbent).
+ * INFERRED: estimated from the event type alone. UNKNOWN: scored before this
+ * distinction existed.
+ */
+export type CompetitionBasis = 'OBSERVED' | 'INFERRED' | 'UNKNOWN'
+
+export type CompetitionEvidence = {
+  bidderCount: number | null
+  incumbentSupplier: string | null
+  /** A past award: historical context, not proof of the current incumbent. */
+  awardedSupplier: string | null
+  /** The source claims the facts were read from. */
+  claims: Array<{ claim: string; source: string; eventDate: string }>
+}
+
 export type OpportunityScorecard = {
   /** How valuable could this be? (0–100, log-scaled from the deal value.) */
   value: ScoreDimension & { basis: ValueBasis; rangeMinCents: number | null; rangeMaxCents: number | null; midCents: number | null }
@@ -34,7 +50,7 @@ export type OpportunityScorecard = {
   /** Can we reach the right person? */
   contactability: ScoreDimension
   /** How hard is it to win? (0 = uncontested, 100 = fiercely contested.) */
-  competition: ScoreDimension
+  competition: ScoreDimension & { basis: CompetitionBasis; evidence: CompetitionEvidence }
   /** The approved event-kind calibration weight applied to probability (1 = none). */
   calibration: { weight: number; reason: string }
   /** 0..1 */
@@ -90,6 +106,41 @@ const KIND_COMPETITION: Record<CommercialEventKind, [number, string]> = {
   LEADERSHIP_RESET: [35, 'New leadership — relationships are being re-formed'],
   EARLY_TRIGGER: [25, 'Early signal — few competitors will have noticed yet'],
 }
+
+// Explicit competition facts in a source claim. Conservative: a number must be
+// attached to a bidder noun, and a supplier must be named in capitals after an
+// explicit incumbent/award phrase (the name match is case-sensitive so trailing
+// lowercase words are not captured). Nothing is guessed when a source is silent.
+const BIDDER_COUNT = /\b(\d{1,3})\s+(?:bidders|tenderers|respondents|submissions|bids|tenders|responses)\b|\b(?:received|attracted)\s+(\d{1,3})\s+(?:bids|tenders|submissions|responses)\b/i
+const SUPPLIER_NAME = "([A-Z][\\w&.'-]*(?:\\s+(?:[A-Z][\\w&.'-]*|&|of|and))*)"
+const INCUMBENT = new RegExp(`\\b(?:[Ii]ncumbent|[Cc]urrent|[Ee]xisting)\\s+(?:supplier|provider|contractor|vendor)(?:\\s+is|:|,| -| —)?\\s+${SUPPLIER_NAME}`)
+const AWARDED = new RegExp(`\\b(?:[Aa]warded to|[Ss]uccessful (?:tenderer|bidder|supplier)(?:\\s+(?:was|is))?:?)\\s+${SUPPLIER_NAME}`)
+
+export function extractCompetitionEvidence(claims: Array<{ claim: string; source: string; eventDate: string }>): CompetitionEvidence {
+  const out: CompetitionEvidence = { bidderCount: null, incumbentSupplier: null, awardedSupplier: null, claims: [] }
+  for (const c of claims) {
+    let used = false
+    const bidders = c.claim.match(BIDDER_COUNT)
+    if (bidders && out.bidderCount == null) {
+      const n = Number(bidders[1] ?? bidders[2])
+      if (n > 0) { out.bidderCount = n; used = true }
+    }
+    const incumbent = c.claim.match(INCUMBENT)
+    if (incumbent && !out.incumbentSupplier) { out.incumbentSupplier = incumbent[1].trim(); used = true }
+    const awarded = c.claim.match(AWARDED)
+    if (awarded && !out.awardedSupplier) { out.awardedSupplier = awarded[1].trim(); used = true }
+    if (used) out.claims.push({ claim: c.claim, source: c.source, eventDate: c.eventDate })
+  }
+  return out
+}
+
+/** Bounded score from an observed bidder count: 1 → 20, 3 → 44, 5 → 68, 7+ → 90. */
+function bidderCountScore(n: number): number {
+  return Math.min(90, 20 + 12 * (n - 1))
+}
+
+/** A named incumbent makes displacement harder than the event type alone suggests. */
+const INCUMBENT_MIN_COMPETITION = 65
 
 const URGENCY_FACTOR: Record<Urgency, number> = { HIGH: 1, MEDIUM: 0.7, LOW: 0.4 }
 const PRIORITY_SCALE = 0.6
@@ -175,8 +226,22 @@ export function scoreOpportunity(input: ScorecardInput): OpportunityScorecard {
   }
 
   // ── Competition ──────────────────────────────────────────────────────────
-  const [competitionScore, competitionReason] = KIND_COMPETITION[event.kind]
-  const competition = { score: competitionScore, reason: competitionReason }
+  const [kindScore, kindReason] = KIND_COMPETITION[event.kind]
+  const competitionEvidence = extractCompetitionEvidence(event.evidence)
+  let competition: OpportunityScorecard['competition']
+  if (competitionEvidence.bidderCount != null) {
+    const n = competitionEvidence.bidderCount
+    competition = { score: bidderCountScore(n), basis: 'OBSERVED', evidence: competitionEvidence,
+      reason: `${n} bidder${n === 1 ? '' : 's'} reported by ${competitionEvidence.claims[0].source}` }
+  } else if (competitionEvidence.incumbentSupplier) {
+    competition = { score: Math.max(kindScore, INCUMBENT_MIN_COMPETITION), basis: 'OBSERVED', evidence: competitionEvidence,
+      reason: `Incumbent supplier ${competitionEvidence.incumbentSupplier} named by ${competitionEvidence.claims[0].source}` }
+  } else {
+    competition = { score: kindScore, basis: 'INFERRED', evidence: competitionEvidence,
+      reason: `Inferred from event type: ${kindReason}`
+        + (competitionEvidence.awardedSupplier ? `; previously awarded to ${competitionEvidence.awardedSupplier}` : '') }
+  }
+  const competitionScore = competition.score
 
   // ── Probability, expected value, priority ────────────────────────────────
   // Confidence × fit is the core; intent, contactability and competition

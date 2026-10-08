@@ -63,3 +63,17 @@ test('ingestSignal clamps evidence confidence into [0,1]', async () => {
   })
   assert.equal(captured[0].confidence, 1)
 })
+
+test('ingestSignal persists a plausible publishedAt and drops a future one', async () => {
+  const created: any[] = []
+  installPrisma(createFakePrisma({ signal: { upsert: async (a: any) => { created.push(a); return { id: 's', ...a.create } } } }))
+  const base = { workspaceId: 'w', prospectId: 'p', type: 'HIRING' as const, strength: 60, source: 'feed', title: 'Hiring' }
+
+  const published = new Date(Date.now() - 10 * 86_400_000)
+  await ingestSignal({ ...base, publishedAt: published })
+  assert.equal(created[0].create.publishedAt.getTime(), published.getTime())
+
+  await ingestSignal({ ...base, publishedAt: new Date(Date.now() + 30 * 86_400_000) })
+  assert.equal(created[1].create.publishedAt, null)
+  assert.equal('publishedAt' in created[1].update, false)
+})

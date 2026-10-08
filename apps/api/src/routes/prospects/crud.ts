@@ -8,6 +8,7 @@ import {
   getOpportunityTier,
   predictBuyingIntent,
   toRawSignal,
+  signalEventAt,
   freshnessState,
   explainFitScore,
   signalIntentContribution,
@@ -265,7 +266,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
       title: s.title,
       contribution: Math.round(signalIntentContribution(toRawSignal(s)) * 10) / 10,
       detectedAt: s.detectedAt,
-      freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
+      freshness: freshnessState({ type: s.type, detectedAt: signalEventAt(s) }),
       evidence: s.evidenceSource
         ? {
             provider: s.evidenceSource.provider,

@@ -4,8 +4,8 @@ import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, nonEmptyString, workspaceIdField } from '../lib/validate.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, MAX_SIGNALS_FOR_SCORING } from '@acaos/backend-core/lib/signalEngine.js'
-import type { RawSignal, SignalType } from '@acaos/backend-core/lib/signalEngine.js'
+import { calculateOpportunityScores, detectBuyingStage, calcWinProbability, freshnessState, MAX_SIGNALS_FOR_SCORING, toRawSignal, signalEventAt } from '@acaos/backend-core/lib/signalEngine.js'
+import type { SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/workspaces.js'
 import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
 import { urlHostnameMatchesDomain } from '@acaos/backend-core/lib/normalize.js'
@@ -15,10 +15,6 @@ import { tenantResourceScope } from '../middleware/tenantResource.js'
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
 signalsRouter.use(requireVerifiedForMutation)
-
-function toRawSignal(s: { type: string; strength: number; sourceReliability: number; industryRelevance: number; detectedAt: Date }): RawSignal {
-  return { type: s.type as RawSignal['type'], strength: s.strength, sourceReliability: s.sourceReliability, industryRelevance: s.industryRelevance, detectedAt: s.detectedAt }
-}
 
 const listSignalsQuerySchema = z.object({
   workspaceId: workspaceIdField,
@@ -51,7 +47,7 @@ signalsRouter.get('/', asyncHandler(async (req, res) => {
   // LIVE/RECENT/STALE/EXPIRED without recomputing decay client-side.
   const withFreshness = signals.map((s: (typeof signals)[number]) => ({
     ...s,
-    freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
+    freshness: freshnessState({ type: s.type, detectedAt: signalEventAt(s) }),
   }))
 
   res.json({ signals: withFreshness })
@@ -72,6 +68,9 @@ const createSignalSchema = z.object({
   sourceReliability: z.coerce.number().optional(),
   industryRelevance: z.coerce.number().optional(),
   detectedAt: z.union([z.string(), z.number()]).optional(),
+  // When the source says the event happened; distinct from detectedAt (when it
+  // was observed). Drives freshness, so it must be a real, non-future time.
+  publishedAt: z.union([z.string(), z.number()]).optional(),
   evidence: z.object({
     provider: z.string().optional(),
     sourceType: z.string().optional(),
@@ -104,6 +103,11 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
 
   const resolvedSource = body.source ?? 'manual'
   const resolvedDetectedAt = body.detectedAt ? new Date(body.detectedAt) : new Date()
+  const resolvedPublishedAt = body.publishedAt !== undefined ? new Date(body.publishedAt) : null
+  if (resolvedPublishedAt) {
+    if (Number.isNaN(resolvedPublishedAt.getTime())) throw new ApiError(400, 'publishedAt must be a valid date')
+    if (resolvedPublishedAt.getTime() > Date.now()) throw new ApiError(400, 'publishedAt cannot be in the future')
+  }
 
   // A sourceUrl that's well-formed (checked above by zod) but points at a domain
   // unrelated to this prospect's own domain is more likely a mis-pasted or
@@ -145,6 +149,7 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
     sourceReliability,
     industryRelevance,
     detectedAt: resolvedDetectedAt,
+    publishedAt: resolvedPublishedAt,
     evidence: evidenceInput,
   })
 

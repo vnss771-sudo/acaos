@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { scoreOpportunity, valueScore, type ScorecardInput } from '../packages/backend-core/src/lib/opportunityScoring.ts'
+import { scoreOpportunity, valueScore, extractCompetitionEvidence, type ScorecardInput } from '../packages/backend-core/src/lib/opportunityScoring.ts'
 import type { CommercialEventHypothesis, CommercialEventKind } from '../packages/backend-core/src/lib/commercialEventEngine.ts'
 
 const DAY = 86_400_000
@@ -109,4 +109,51 @@ test('every dimension carries a reason', () => {
 
 test('scoring is deterministic', () => {
   assert.deepEqual(scoreOpportunity(input()), scoreOpportunity(input()))
+})
+
+// ── Competition basis: observed facts vs event-type inference ───────────────
+const withClaim = (kind: CommercialEventKind, claim: string) => {
+  const base = event(kind)
+  return input({ event: { ...base, evidence: [{ ...base.evidence[0], claim, source: 'tenders.example.gov' }] } })
+}
+
+test('competition without a source fact is explicitly inferred from the event type', () => {
+  const c = scoreOpportunity(input()).competition
+  assert.equal(c.basis, 'INFERRED')
+  assert.match(c.reason, /^Inferred from event type: /)
+  assert.deepEqual(c.evidence, { bidderCount: null, incumbentSupplier: null, awardedSupplier: null, claims: [] })
+})
+
+test('a reported bidder count is observed competition with provenance and overrides the heuristic', () => {
+  const few = scoreOpportunity(withClaim('TENDER_OPPORTUNITY', 'Tender closed with 2 bidders')).competition
+  assert.equal(few.basis, 'OBSERVED')
+  assert.equal(few.evidence.bidderCount, 2)
+  assert.equal(few.score, 32)
+  assert.equal(few.reason, '2 bidders reported by tenders.example.gov')
+  assert.equal(few.evidence.claims[0].claim, 'Tender closed with 2 bidders')
+  const many = scoreOpportunity(withClaim('EARLY_TRIGGER', 'The tender attracted 12 submissions')).competition
+  assert.equal(many.score, 90)
+  assert.ok(many.score > few.score)
+})
+
+test('a named incumbent is observed and raises competition to at least the incumbent floor', () => {
+  const c = scoreOpportunity(withClaim('EARLY_TRIGGER', 'Incumbent supplier is Acme Facilities Pty Ltd, contract ends June')).competition
+  assert.equal(c.basis, 'OBSERVED')
+  assert.equal(c.evidence.incumbentSupplier, 'Acme Facilities Pty Ltd')
+  assert.equal(c.score, 65)
+})
+
+test('a past award is kept as context without being treated as the current incumbent', () => {
+  const c = scoreOpportunity(withClaim('CAPACITY_SHORTAGE', 'Contract awarded to Summit Plant & Equipment for 3 years')).competition
+  assert.equal(c.basis, 'INFERRED')
+  assert.equal(c.evidence.awardedSupplier, 'Summit Plant & Equipment')
+  assert.equal(c.evidence.incumbentSupplier, null)
+  assert.match(c.reason, /previously awarded to Summit Plant & Equipment$/)
+})
+
+test('competition extraction ignores numbers and names without an explicit competition phrase', () => {
+  for (const claim of ['Hiring 17 technicians', 'We bid on 3 projects', 'the current contractor is unknown', 'Acme Facilities won praise']) {
+    const e = extractCompetitionEvidence([{ claim, source: 's', eventDate: '2026-09-01' }])
+    assert.deepEqual([e.bidderCount, e.incumbentSupplier, e.awardedSupplier], [null, null, null], claim)
+  }
 })

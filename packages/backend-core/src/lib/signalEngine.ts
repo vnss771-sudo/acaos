@@ -44,6 +44,10 @@ export type RawSignal = {
   strength: number
   sourceReliability: number
   industryRelevance: number
+  /**
+   * Effective event time used for decay and timing: the source's publication time
+   * when trustworthy, else when ACAOS detected it. See signalEventAt().
+   */
   detectedAt: Date
   /** Optional provenance used by quality/corroboration analysis. */
   source?: string | null
@@ -417,6 +421,28 @@ export function generateRuleBasedRecommendation(
   return { bestContact, bestTiming, bestChannel, messageAngle, reasoning, actionText, urgency, priority }
 }
 
+// A source may report a publication time slightly ahead of our clock or of the
+// moment we observed it; beyond this the timestamp is not trusted.
+const PUBLISHED_AT_SKEW_MS = 24 * 60 * 60 * 1000
+
+/**
+ * When the signal's event actually happened, for freshness and decay. Uses the
+ * source's publishedAt when it is plausible, so an old event discovered today is
+ * scored as old. A publishedAt materially in the future, or materially after we
+ * observed it, is ignored in favour of detectedAt. Never invents a time.
+ */
+export function signalEventAt(
+  s: { detectedAt: Date; publishedAt?: Date | null },
+  now: number = Date.now(),
+): Date {
+  const published = s.publishedAt
+  if (!published || Number.isNaN(published.getTime())) return s.detectedAt
+  const t = published.getTime()
+  if (t > now + PUBLISHED_AT_SKEW_MS) return s.detectedAt
+  if (t > s.detectedAt.getTime() + PUBLISHED_AT_SKEW_MS) return s.detectedAt
+  return published
+}
+
 // Convert a DB Signal row to RawSignal for scoring functions. Provenance/text
 // fields are carried through when the row has them (the scores ignore them; the
 // commercial-event, offer-fit and signal-quality layers read them).
@@ -426,6 +452,7 @@ export function toRawSignal(s: {
   sourceReliability: number
   industryRelevance: number
   detectedAt: Date
+  publishedAt?: Date | null
   source?: string | null
   evidenceSourceId?: string | null
   title?: string | null
@@ -436,7 +463,7 @@ export function toRawSignal(s: {
     strength: s.strength,
     sourceReliability: s.sourceReliability,
     industryRelevance: s.industryRelevance,
-    detectedAt: s.detectedAt,
+    detectedAt: signalEventAt(s),
     source: s.source ?? null,
     evidenceSourceId: s.evidenceSourceId ?? null,
     title: s.title ?? null,

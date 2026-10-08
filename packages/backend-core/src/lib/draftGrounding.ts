@@ -7,7 +7,12 @@
 //   - every specific it states (a number, an amount, a percentage) must come from
 //     a fact or from the seller's own context (offer, proof points, business
 //     context) — otherwise it is unsupported;
-//   - it must use at least one fact, or it isn't grounded in the evidence at all.
+//   - it must use at least one fact, or it isn't grounded in the evidence at all;
+//   - a small set of high-risk qualitative assertions (rapid growth, major scale,
+//     market leadership, recent events) must be backed by a fact that itself
+//     says so. This is deliberately a narrow deterministic vocabulary, not general
+//     semantic entailment: fluent claims in these classes cannot slip past the
+//     number check.
 //
 // The result is the grounding record: claim → evidence (signal) → source →
 // confidence for each fact the draft uses, plus the problems found. A draft
@@ -70,7 +75,11 @@ export function initialGrounding(facts: GroundingFact[], context: string[]): Gro
 /** The fact list a draft is written from — the only things it may state about the buyer. */
 export function groundedSummary(facts: GroundingFact[]): string {
   const lines = facts.map(f => `${f.id}. ${f.claim} (${f.source}, ${f.ageDays <= 0 ? 'today' : f.ageDays === 1 ? '1 day ago' : `${f.ageDays} days ago`})`)
-  return ['Verified facts — state nothing about the company beyond these:', ...lines].join('\n')
+  return [
+    'Verified facts — state nothing about the company beyond these:',
+    ...lines,
+    'Do not call the company fast-growing, a market leader, or say it recently did something unless a fact above says so.',
+  ].join('\n')
 }
 
 /** Specific values a sentence can state: numbers, amounts, percentages ("$4.2M", "17", "18%"). */
@@ -92,6 +101,39 @@ const STOPWORDS = new Set([
 
 function words(text: string): Set<string> {
   return new Set((text.toLowerCase().match(/[a-z]{5,}/g) ?? []).filter(w => !STOPWORDS.has(w)))
+}
+
+/** A fact must be at most this old to back a "recently …" claim. */
+export const RECENT_CLAIM_MAX_AGE_DAYS = 90
+
+type QualitativeClaim = { label: string; supportedBy: (f: GroundingFact) => boolean; sellerMayState?: boolean }
+
+const GROWTH_CLAIM = /\b(?:rapid(?:ly)?|fast|explosive|booming|surging|accelerating|exponential(?:ly)?)\s+(?:grow\w*|expan\w*|scal\w*)|\bgrowing\s+(?:fast|rapidly|quickly)\b|\bhyper-?growth\b|\bskyrocket\w*/gi
+const GROWTH_EVIDENCE = /\b(?:rapid|fast|explosive|boom|surg|accelerat|exponential|hyper-?growth|doubl|tripl|record|skyrocket)/i
+const SCALE_CLAIM = /\b(?:major|significant|massive|huge|substantial|large-scale)\s+(?:expansion|growth|investment|contract|project|deal|win|funding|round|hiring|rollout|upgrade|acquisition)\b/gi
+const SCALE_EVIDENCE = /\b(?:major|significant|massive|huge|substantial|large-scale|large|record|largest|multi-?million|billion)\b|\$\s?\d/i
+const LEADERSHIP_CLAIM = /\b(?:market|industry|sector)[- ]lead(?:er|ing)\b|\bleading\s+(?:provider|supplier|company|firm|player|brand)\b|\b(?:largest|biggest|fastest-growing|number one|no\.\s?1)\b|#1\b/gi
+const LEADERSHIP_EVIDENCE = /\b(?:lead(?:er|ing)|largest|biggest|fastest|number one|no\.\s?1|top|ranked)\b|#1\b/i
+const RECENCY_CLAIM = /\b(?:recent(?:ly)?|just)\s+(open|launch|expand|won|win|award|announc|acquir|rais|hir|secur|mov)\w*/gi
+const RECENCY_STEMS: Record<string, RegExp> = {
+  open: /\bopen/i, launch: /\blaunch/i, expand: /\bexpan/i, won: /\b(?:won|win)/i, win: /\b(?:won|win)/i,
+  award: /\baward/i, announc: /\bannounc/i, acquir: /\bacqui/i, rais: /\brais/i, hir: /\bhir/i,
+  secur: /\bsecur/i, mov: /\b(?:mov|relocat)/i,
+}
+
+/** High-risk qualitative assertions in the draft, each with what would support it. */
+function qualitativeClaims(text: string): QualitativeClaim[] {
+  const out: QualitativeClaim[] = []
+  for (const m of text.matchAll(GROWTH_CLAIM)) out.push({ label: m[0], supportedBy: f => GROWTH_EVIDENCE.test(f.claim) })
+  for (const m of text.matchAll(SCALE_CLAIM)) out.push({ label: m[0], supportedBy: f => SCALE_EVIDENCE.test(f.claim) })
+  for (const m of text.matchAll(LEADERSHIP_CLAIM)) {
+    out.push({ label: m[0], supportedBy: f => LEADERSHIP_EVIDENCE.test(f.claim), sellerMayState: true })
+  }
+  for (const m of text.matchAll(RECENCY_CLAIM)) {
+    const stem = RECENCY_STEMS[m[1].toLowerCase()]
+    out.push({ label: m[0], supportedBy: f => f.ageDays <= RECENT_CLAIM_MAX_AGE_DAYS && stem.test(f.claim) })
+  }
+  return out
 }
 
 /** Two shared significant words tie a sentence to a fact. */
@@ -122,8 +164,14 @@ export function checkDraftGrounding(
 
   const allowed = new Set([...record.facts.map(f => f.claim), ...context].flatMap(specifics))
   const unsupported = draftSpecifics.filter(v => !allowed.has(v))
+  // Seller self-description may repeat its own leadership wording; nothing on the
+  // seller side can back a growth, scale or recency claim about the buyer.
+  const sellerText = context.join('\n')
+  const unsupportedQualitative = qualitativeClaims(text).filter(c =>
+    !record.facts.some(c.supportedBy) && !(c.sellerMayState && sellerText.toLowerCase().includes(c.label.toLowerCase())))
   const problems = [
     ...unsupported.map(v => `States "${v}" without evidence`),
+    ...[...new Set(unsupportedQualitative.map(c => c.label.toLowerCase()))].map(l => `Claims "${l}" without supporting evidence`),
     ...(claims.length === 0 ? ['Uses none of the verified facts'] : []),
   ]
   return {

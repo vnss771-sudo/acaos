@@ -68,3 +68,44 @@ test('buildIntentDraftInput writes from the facts when the intent is grounded', 
   assert.equal(buildIntentDraftInput({ prospect, recommendation, intent: {}, grounding: { facts: [] } }).aiSummary, 'free-text reasoning')
   assert.equal(buildIntentDraftInput({ prospect, recommendation, intent: {}, grounding: record }).aiSummary, groundedSummary(facts))
 })
+
+// ── Qualitative claims (rapid growth, scale, leadership, recency) ───────────
+const fact = (claim: string, ageDays = 5) => factsFromCitations([
+  { signalId: 'q1', claim, source: 'news.example.com', sourceUrl: null, eventDate: '2026-09-01T00:00:00Z', ageDays, quality: 80 },
+])
+const check = (body: string, facts: ReturnType<typeof fact>, context: string[] = []) =>
+  checkDraftGrounding({ subject: 'Logan depot crews', body }, initialGrounding(facts, context), { now: NOW })
+
+test('ordinary hiring evidence does not back a "rapidly expanding" claim', () => {
+  const g = check('You are hiring field technicians and rapidly expanding across Logan.', fact('Hiring field technicians in Logan'))
+  assert.equal(g.grounded, false)
+  assert.ok(g.problems.includes('Claims "rapidly expanding" without supporting evidence'), g.problems.join('; '))
+})
+
+test('evidence that itself shows fast growth backs a rapid-growth claim', () => {
+  const g = check('Your field technicians headcount doubled — rapid growth like that strains crews.', fact('Field technicians headcount doubled this year'))
+  assert.equal(g.grounded, true, g.problems.join('; '))
+})
+
+test('"recently opened" needs a matching fact no older than 90 days', () => {
+  const stale = check('You recently opened the Logan depot for field technicians.', fact('Opened the Logan depot for field technicians', 120))
+  assert.ok(stale.problems.includes('Claims "recently opened" without supporting evidence'), stale.problems.join('; '))
+  const fresh = check('You recently opened the Logan depot for field technicians.', fact('Opened the Logan depot for field technicians', 30))
+  assert.equal(fresh.grounded, true, fresh.problems.join('; '))
+  const otherEvent = check('You recently launched the Logan depot for field technicians.', fact('Opened the Logan depot for field technicians', 30))
+  assert.ok(otherEvent.problems.some(p => p.includes('recently launched')))
+})
+
+test('leadership claims about the buyer need evidence; the seller may repeat its own wording', () => {
+  const buyer = check('As the market leader for Logan depot technicians you need crews.', fact('Logan depot hiring field technicians'))
+  assert.ok(buyer.problems.includes('Claims "market leader" without supporting evidence'), buyer.problems.join('; '))
+  const seller = check('We are a leading supplier of crews for Logan depot technicians.', fact('Logan depot hiring field technicians'), ['A leading supplier of temporary crews'])
+  assert.equal(seller.grounded, true, seller.problems.join('; '))
+})
+
+test('seller context cannot back a buyer growth or scale claim, and filler is not flagged', () => {
+  const g = check('Your major expansion at the Logan depot technicians site needs crews.', fact('Logan depot hiring field technicians'), ['Supported a major expansion for another client'])
+  assert.ok(g.problems.includes('Claims "major expansion" without supporting evidence'), g.problems.join('; '))
+  const filler = check('Crews for your Logan depot technicians could make a significant difference.', fact('Logan depot hiring field technicians'))
+  assert.equal(filler.grounded, true, filler.problems.join('; '))
+})
