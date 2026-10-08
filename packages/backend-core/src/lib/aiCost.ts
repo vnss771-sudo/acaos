@@ -8,20 +8,20 @@
 // observable, mirroring discoveryCost.ts.
 //
 // These are deliberately rough, tunable estimates (USD cents per call at the
-// default gpt-4o-mini tier), not invoices. They feed reporting/observability only;
-// the enforced monthly AI quota is a separate, plan-priced concept and unaffected.
+// default gpt-5-mini tier), not invoices. They feed both reporting and the separate
+// plan-level monthly AI spend ceiling; call-count quotas remain independently enforced.
 
 export type AiAction = 'AI_RESEARCH' | 'AI_OUTREACH' | 'AI_REPLY'
 
 const AI_ACTIONS: readonly AiAction[] = ['AI_RESEARCH', 'AI_OUTREACH', 'AI_REPLY']
 
-// Default cents-per-call, derived from each action's token profile at gpt-4o-mini
+// Default cents-per-call, estimated from each action's token profile at gpt-5-mini
 // pricing (research ≈ 700in+1500out, outreach ≈ 500in+1200out, reply ≈ 3000in+700out).
 // Tunable for other model tiers via AI_COST_CENTS_RESEARCH / _OUTREACH / _REPLY.
 const DEFAULT_CENTS: Record<AiAction, number> = {
-  AI_RESEARCH: 0.1,
-  AI_OUTREACH: 0.08,
-  AI_REPLY: 0.05,
+  AI_RESEARCH: 0.32,
+  AI_OUTREACH: 0.25,
+  AI_REPLY: 0.22,
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100

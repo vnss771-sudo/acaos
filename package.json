@@ -60,7 +60,10 @@
     "smoke:deploy": "node scripts/smoke-deploy.mjs",
     "release:metadata": "node scripts/release-metadata.mjs",
     "release:metadata:env": "node scripts/release-metadata.mjs --env",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "smoke:ai-provider": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/smoke-ai-provider.ts",
+    "smoke:discovery-sources": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/smoke-discovery-sources.mjs",
+    "pilot:preflight": "bash scripts/pilot-preflight.sh"
   },
   "overrides": {
     "nodemailer": "^10.0.13",

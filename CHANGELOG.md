@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### AI provider compatibility and pilot preflight (8 Oct 2026)
+- Fixed the default GPT-5 reasoning request so reasoning models no longer receive `temperature`; they keep `max_completion_tokens` and the supported reasoning setting, while standard chat models retain `temperature: 0.4` + `max_tokens`.
+- Added a centralized model compatibility registry (`modelProfiles.ts`) so sampling/token/reasoning behaviour cannot drift across helpers.
+- Added final-wire regression tests that capture the actual OpenAI SDK request for `gpt-5-mini`, `gpt-5-nano`, `o4-mini`, and `gpt-4o-mini`.
+- Outreach provenance now records the parameters actually sent: reasoning models store `temperature = null` plus token-parameter/reasoning metadata, and the prompt hash changes with the effective request profile.
+- Added `npm run smoke:ai-provider` for a real-provider release smoke covering research, outreach, and reply analysis, with model, latency, and provider token counts.
+- Corrected AI-cost documentation: estimated per-action spend is used both for billing observability and the enforced monthly AI spend ceiling.
+
 ### Find work: AusTender sweep unstuck (7 Oct 2026)
 - AusTender answers a day with no contract notices (a weekend, a public holiday) with a 400 "No
   Records found" instead of an empty list. The adapter treated it as a failure, so the run failed, the

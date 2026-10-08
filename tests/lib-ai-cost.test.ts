@@ -12,11 +12,11 @@ afterEach(() => {
 
 test('weights each action by its per-call cost and sums the total', () => {
   const r = estimateAiCost({ AI_RESEARCH: 100, AI_OUTREACH: 50, AI_REPLY: 200 })
-  // defaults: 0.1, 0.08, 0.05 ¢/call → 10 + 4 + 10 = 24¢
-  assert.equal(r.byAction.AI_RESEARCH.costCents, 10)
-  assert.equal(r.byAction.AI_OUTREACH.costCents, 4)
-  assert.equal(r.byAction.AI_REPLY.costCents, 10)
-  assert.equal(r.totalCents, 24)
+  // defaults: 0.32, 0.25, 0.22 ¢/call → 32 + 12.5 + 44 = 88.5¢
+  assert.equal(r.byAction.AI_RESEARCH.costCents, 32)
+  assert.equal(r.byAction.AI_OUTREACH.costCents, 12.5)
+  assert.equal(r.byAction.AI_REPLY.costCents, 44)
+  assert.equal(r.totalCents, 88.5)
 })
 
 test('ignores zero/negative/unknown counts', () => {
@@ -32,10 +32,10 @@ test('rates are tunable via env (for other model tiers)', () => {
 
 test('a negative env rate falls back to the default', () => {
   process.env.AI_COST_CENTS_REPLY = '-1'
-  assert.equal(aiActionCostCents('AI_REPLY'), 0.05)
+  assert.equal(aiActionCostCents('AI_REPLY'), 0.22)
 })
 
 test('cents are rounded to 2 dp (no float drift in the total)', () => {
-  const r = estimateAiCost({ AI_RESEARCH: 3 }) // 0.1 * 3 = 0.30
-  assert.equal(r.totalCents, 0.3)
+  const r = estimateAiCost({ AI_RESEARCH: 3 }) // 0.32 * 3 = 0.96
+  assert.equal(r.totalCents, 0.96)
 })

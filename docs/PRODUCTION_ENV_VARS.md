@@ -14,8 +14,10 @@
 
 ## OpenAI
 - OPENAI_API_KEY
-- OPENAI_MODEL — must be allow-listed (defaults to `gpt-4o-mini`); an unrecognized value falls back to the default rather than running up spend.
-- OPENAI_MODEL_ALLOWLIST — optional comma-separated extra models to permit for `OPENAI_MODEL` (e.g. when adopting a newer model).
+- OPENAI_BASE_URL — optional OpenAI-compatible API endpoint; the OpenAI SDK default is used when unset. For Manus's sandbox gateway, use its configured base URL.
+- OPENAI_MODEL — allow-listed model to use; defaults to `gpt-5-mini`. An unrecognized value falls back to the default rather than silently selecting a potentially costly model.
+- OPENAI_MODEL_ALLOWLIST — optional comma-separated extra models to permit for `OPENAI_MODEL` (e.g. `gpt-5` or `gpt-5.5` after checking availability and cost).
+- Reasoning models (`gpt-5*`, `o*`) are sent `max_completion_tokens`; other supported chat models use `max_tokens`.
 
 ## Stripe
 - STRIPE_SECRET_KEY
@@ -96,7 +98,7 @@ All read live from the environment — flipping any of these takes effect on the
 - SOFT_BOUNCE_SUPPRESS_THRESHOLD — number of repeated soft bounces before an address is suppressed (hard/unknown bounces suppress immediately). Default 3.
 - OPENAI_MAX_TOKENS_RESEARCH / OPENAI_MAX_TOKENS_OUTREACH / OPENAI_MAX_TOKENS_REPLY — per-task output-token ceilings. Defaults 1500 / 1200 / 700. A hard ceiling of 4000 is enforced so a fat-fingered override can't request a runaway completion.
 - WORKSPACE_AI_RATE_MAX — per-workspace AI requests allowed per hour at the HTTP edge (complements the per-IP `aiRateLimit` and the monthly plan meter; stops one workspace bursting the shared OpenAI key across rotating IPs). Default 120; set 0 to disable. Tightens to 30/hour automatically in production while Redis is unavailable (the counter falls back to a per-pod in-process one).
-- AI_COST_CENTS_RESEARCH / AI_COST_CENTS_OUTREACH / AI_COST_CENTS_REPLY — estimated USD cents per AI call, used only for the cost-per-lead / AI-spend reporting in billing usage (never gates anything). Defaults 0.1 / 0.08 / 0.05 (gpt-4o-mini token profiles); tune for other model tiers.
+- AI_COST_CENTS_RESEARCH / AI_COST_CENTS_OUTREACH / AI_COST_CENTS_REPLY — estimated USD cents per AI call. These values power billing/observability and the plan-level monthly AI spend ceiling. Defaults 0.32 / 0.25 / 0.22 (rough gpt-5-mini estimates); tune for the selected provider/model and actual token usage.
 
 ## Observability
 - METRICS_TOKEN — bearer token guarding `/metrics` (API + worker). Required in production; when unset, `/metrics` is disabled and a startup warning is logged.
@@ -116,3 +118,7 @@ The worker periodically purges aged data and reclaims stale `SENDING` rows. The 
 - RETENTION_AUDIT_EVENT_DAYS — retention window for audit events (days). Default 730 (~24mo). Required: no.
 - RETENTION_STRIPE_EVENT_DAYS — retention window for stored Stripe events (days). Default 365. Required: no.
 - RETENTION_AUTH_TOKEN_DAYS — retention window for expired/revoked auth tokens (days). Default 30. Required: no.
+
+
+### OpenAI release smoke
+Before enabling a new model or promoting a release candidate, run `OPENAI_API_KEY=... npm run smoke:ai-provider`. The smoke exercises research, outreach and reply analysis through the production adapter and prints model, latency and provider token counts. Deterministic malformed/empty/seller-claim/refund cases remain covered in the normal test suites.

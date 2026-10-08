@@ -79,11 +79,12 @@ platform starts conservative.
 
 | Var | Default | Scope | Notes |
 |---|---|---|---|
-| `OPENAI_MODEL` | `gpt-4o-mini` | worker | Generation model. |
-| `OPENAI_MODEL_ALLOWLIST` | `''` | worker | Comma-separated allowlist; empty = allow the configured model. |
-| `OPENAI_TIMEOUT_MS` | `30000` | worker | Per-call request timeout. |
-| `OPENAI_MAX_TOKENS_RESEARCH` / `_OUTREACH` / `_REPLY` | per-task (capped at 4000) | worker | Output-token ceilings per task. |
-| `AI_COST_CENTS_RESEARCH` / `_OUTREACH` / `_REPLY` | `0.1` / `0.08` / `0.05` | worker | Cents-per-call estimates for the `acaos_ai_cost_cents_total` metric. |
+| `OPENAI_BASE_URL` | SDK default | api, worker | Optional OpenAI-compatible endpoint override; also accepts `OPENAI_API_BASE`. |
+| `OPENAI_MODEL` | `gpt-5-mini` | api, worker | Generation model; unknown values fall back to the default. |
+| `OPENAI_MODEL_ALLOWLIST` | `''` | api, worker | Comma-separated additional models to allow; the default safe model list remains enabled. |
+| `OPENAI_TIMEOUT_MS` | `30000` | api, worker | Per-call request timeout. |
+| `OPENAI_MAX_TOKENS_RESEARCH` / `_OUTREACH` / `_REPLY` | per-task (capped at 4000) | api, worker | Completion-token ceilings per task; GPT-5/reasoning families use `max_completion_tokens`. |
+| `AI_COST_CENTS_RESEARCH` / `_OUTREACH` / `_REPLY` | `0.32` / `0.25` / `0.22` | api, worker | Rough GPT-5-mini cents-per-call estimates for the `acaos_ai_cost_cents_total` metric; tune for actual model usage. |
 | `REPLY_CLASSIFICATION_MIN_CONFIDENCE` | (code default) | worker | Min confidence before a NOT_INTERESTED reply auto-kills a lead. |
 | `WORKSPACE_AI_RATE_MAX` | (code default) | api | Per-workspace AI request rate ceiling. |
 
@@ -152,3 +153,7 @@ app. Set per-invocation, not in deployment config: `DEPLOY_*`, `SMOKE_*`,
 
 *Keep this in sync when adding a `process.env` read: a new runtime variable should
 land here (and in `.env.example` if it's core/required) in the same change.*
+
+
+### OpenAI model compatibility
+Model compatibility is centralized in `packages/backend-core/src/lib/modelProfiles.ts`. Reasoning families use `max_completion_tokens` and do not receive `temperature`; standard chat models retain `max_tokens` plus the configured sampling temperature. Run `npm run smoke:ai-provider` with production-like credentials before promoting a model change.

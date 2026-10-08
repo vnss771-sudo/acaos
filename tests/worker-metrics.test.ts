@@ -8,14 +8,14 @@ import {
 beforeEach(() => resetWorkerMetrics())
 
 test('AI-cost counter accumulates estimated cents + calls per action, ignores non-positive', () => {
-  incAiCost('AI_OUTREACH', 10) // 10 * 0.08c = 0.8c
-  incAiCost('AI_OUTREACH')     // + 0.08c = 0.88c
-  incAiCost('AI_RESEARCH', 5)  // 5 * 0.1c = 0.5c
+  incAiCost('AI_OUTREACH', 10) // 10 * 0.25c = 2.5c
+  incAiCost('AI_OUTREACH')     // + 0.25c = 2.75c
+  incAiCost('AI_RESEARCH', 5)  // 5 * 0.32c = 1.6c
   incAiCost('AI_REPLY', 0)     // no-op
   const out = renderWorkerMetrics()
   assert.match(out, /# TYPE acaos_ai_cost_cents_total counter/)
-  assert.match(out, /acaos_ai_cost_cents_total\{action="AI_OUTREACH"\} 0\.88/)
-  assert.match(out, /acaos_ai_cost_cents_total\{action="AI_RESEARCH"\} 0\.5/)
+  assert.match(out, /acaos_ai_cost_cents_total\{action="AI_OUTREACH"\} 2\.75/)
+  assert.match(out, /acaos_ai_cost_cents_total\{action="AI_RESEARCH"\} 1\.6/)
   assert.match(out, /acaos_ai_calls_total\{action="AI_OUTREACH"\} 11/)
   assert.doesNotMatch(out, /action="AI_REPLY"/)
 })

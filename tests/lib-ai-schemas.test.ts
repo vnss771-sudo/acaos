@@ -49,6 +49,13 @@ test('parseAiJson(outreach): throws when a required field (email) is missing', (
   )
 })
 
+test('parseAiJson(outreach): rejects an empty object instead of exposing it as a draft', () => {
+  assert.throws(
+    () => parseAiJson(OutreachDraftOutputSchema, '{}', 'generate-outreach'),
+    (err: unknown) => err instanceof AiSchemaError && /subject|email/.test((err as AiSchemaError).issues),
+  )
+})
+
 test('parseAiJson(outreach): throws on an empty required string (min length)', () => {
   assert.throws(
     () => parseAiJson(OutreachDraftOutputSchema, JSON.stringify({ subject: '', email: 'x' }), 'test'),

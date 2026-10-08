@@ -343,9 +343,9 @@ export async function getMonthlyUsage(workspaceId: string): Promise<{
   const limit = PLAN_LIMITS[plan].aiCallsPerMonth
   const norm = (n: number) => (isFinite(n) ? n : -1) // -1 = unlimited
 
-  // Estimated AI spend this month, weighted by per-action token cost (observability
-  // only — never gates anything). Combined with discovery cost it gives a per-
-  // workspace cost-per-lead signal the platform previously had no visibility into.
+  // Estimated AI spend this month, weighted by per-action token cost. The same
+  // estimate also enforces the plan's monthly spend ceiling in assertAiUsageAllowed();
+  // here it is returned for billing/observability alongside discovery economics.
   const aiCost = estimateAiCost(totals)
 
   return {
