@@ -93,7 +93,7 @@ test('POST /import creates valid rows and reports the count', async () => {
 
 // --- get/update/delete by id ---
 test('GET /:id denies another workspace\'s lead', async () => {
-  assert.equal((await server.request('/api/leads/l-other', { headers: auth() })).status, 403)
+  assert.equal((await server.request('/api/leads/l-other', { headers: auth() })).status, 404)
 })
 test('PATCH /:id rejects an invalid stage', async () => {
   const res = await server.request('/api/leads/l-own', { method: 'PATCH', headers: jsonAuth(), body: body({ stage: 'NONSENSE' }) })
@@ -105,7 +105,7 @@ test('PATCH /:id updates and rescores a member lead', async () => {
   assert.equal(res.body.lead.stage, 'RESEARCHED')
 })
 test('DELETE /:id denies another workspace but allows own', async () => {
-  assert.equal((await server.request('/api/leads/l-other', { method: 'DELETE', headers: auth() })).status, 403)
+  assert.equal((await server.request('/api/leads/l-other', { method: 'DELETE', headers: auth() })).status, 404)
   assert.equal((await server.request('/api/leads/l-own', { method: 'DELETE', headers: auth() })).status, 200)
 })
 

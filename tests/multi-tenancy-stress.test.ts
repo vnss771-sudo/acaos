@@ -263,7 +263,7 @@ describe('A. Lead data isolation', () => {
     const r = await server.request('/api/leads/lead-b-1', {
       headers: { Authorization: bearer(USER_A) },
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
   })
 
   it('User A cannot PATCH a lead belonging to workspace B (403, no update called)', async () => {
@@ -272,7 +272,7 @@ describe('A. Lead data isolation', () => {
       headers: { Authorization: bearer(USER_A), 'Content-Type': 'application/json' },
       body: JSON.stringify({ stage: 'DEAD' }),
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
     assert.equal(prisma.callsTo('lead', 'update').length, 0, 'lead.update must never be called')
   })
 
@@ -281,7 +281,7 @@ describe('A. Lead data isolation', () => {
       method: 'DELETE',
       headers: { Authorization: bearer(USER_A) },
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
     assert.equal(prisma.callsTo('lead', 'delete').length, 0, 'lead.delete must never be called')
   })
 
@@ -295,7 +295,7 @@ describe('A. Lead data isolation', () => {
     })
     const results = await Promise.all(requests)
     for (const r of results) {
-      assert.equal(r.status, 403, 'All cross-workspace requests must be 403')
+      assert.equal(r.status, 404, 'All cross-workspace requests must be 404')
     }
   })
 })
@@ -412,7 +412,7 @@ describe('B. Campaign isolation', () => {
     const r = await server.request('/api/campaigns/campaign-b-1', {
       headers: { Authorization: bearer(USER_A) },
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
   })
 
   it('Campaign A stats show only workspace A outreach records', async () => {
@@ -439,7 +439,7 @@ describe('B. Campaign isolation', () => {
       headers: { Authorization: bearer(USER_A), 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
   })
 
   it('Concurrent campaign create in both workspaces — IDs are distinct, no collision', async () => {
@@ -976,14 +976,14 @@ describe('F. OutreachSent isolation', () => {
     const r = await server.request('/api/campaigns/f-campaign-b/outreach', {
       headers: { Authorization: bearer(USER_A) },
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
   })
 
   it('WS_B user cannot view outreach for WS_A campaign (403)', async () => {
     const r = await server.request('/api/campaigns/f-campaign-a/outreach', {
       headers: { Authorization: bearer(USER_B) },
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
   })
 
   it('Concurrent outreach log requests from A and B — no cross-contamination', async () => {
@@ -1016,7 +1016,7 @@ describe('F. OutreachSent isolation', () => {
     ]
     const results = await Promise.all(requests)
     for (const r of results) {
-      assert.equal(r.status, 403, 'All cross-workspace outreach requests must be 403')
+      assert.equal(r.status, 404, 'All cross-workspace outreach requests must be 404')
     }
   })
 })

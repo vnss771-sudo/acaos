@@ -212,6 +212,6 @@ test('DELETE denies removing a signal in another workspace and does not delete',
     method: 'DELETE',
     headers: { Authorization: bearer(MEMBER) },
   })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
   assert.equal(prisma.callsTo('signal', 'delete').length, 0)
 })
