@@ -34,11 +34,12 @@ Level 1 with Level 2 session/access-control controls**. Status legend:
 | V13 API | Per-workspace hashed ingest API keys, rotatable/revocable | ✅ | `apps/api/src/routes/ingest.ts`, `docs/KEY_ROTATION.md` |
 | V13 API | Rate limiting on auth, AI, mail, and ingest routes | ✅ | `apps/api/src/middleware/rateLimit.ts` |
 | V13 API | Webhook signature verification (Stripe) | ✅ | `apps/api/src/routes/billing.ts` |
-| V14 Config | Strict Content-Security-Policy (no `unsafe-inline`) | ✅ | Web CSP uses `style-src 'self'` + `style-src-attr 'none'`; React style objects are emitted as generated CSS classes by the CSP JSX runtime |
+| V14 Config | Strict Content-Security-Policy (no `unsafe-inline`) | 🟡 | Inline style objects currently require `style-src 'unsafe-inline'`; CSS-token migration is a roadmap item |
 | V14 Config | Provider calls bounded (timeout/retry/breaker) with failure metrics | ✅ | `apps/api/src/lib/providerClient.ts`, `tests/lib-provider-client.test.ts` |
 
 ## Planned (tracked)
 
+1. **Strict CSP** — migrate inline styles to CSS modules/tokens, drop `style-src 'unsafe-inline'` (V14).
 2. **Passkeys / WebAuthn** — a phishing-resistant second factor on top of the shipped TOTP MFA (V2).
 
 ## How to keep this matrix honest
