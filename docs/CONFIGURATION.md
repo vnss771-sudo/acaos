@@ -137,8 +137,13 @@ The web image ships a strict CSP. Two production hardening notes:
 - `connect-src 'self' https:` is intentionally broad so the SPA can reach any HTTPS
   API origin out of the box. **Tighten it to your exact API origin** in production
   (e.g. `connect-src 'self' https://api.example.com`) to narrow exfiltration paths.
-- `style-src-attr 'unsafe-inline'` is allowed because the app uses React inline
-  styles; migrating those to CSS classes lets you drop the inline-style allowance.
+- There is no `'unsafe-inline'` anywhere: `style-src-elem 'self'` and
+  `style-src-attr 'none'`. React `style={{}}` props still work because the client
+  renderer applies them through the CSSOM (`element.style`), which CSP does not
+  govern. What CSP blocks — raw `style=""` attributes via `setAttribute`,
+  `cssText`, `innerHTML`, injected `<style>` elements — is rejected by
+  `npm run check:csp`, and `e2e/csp-strict.spec.ts` drives every hub of the
+  production build under this exact header and fails on any CSP violation.
 
 ---
 

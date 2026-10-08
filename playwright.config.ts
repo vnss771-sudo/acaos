@@ -80,5 +80,16 @@ export default defineConfig({
       stdout: 'pipe',
       stderr: 'pipe',
     },
+    {
+      // Production web build on :4173 with nginx.conf's exact security headers,
+      // so e2e/csp-strict.spec.ts runs under the real strict CSP.
+      command: 'npm run build -w @acaos/web && node scripts/serve-web-csp.mjs --port 4173',
+      url: 'http://localhost:4173',
+      env: serverEnv,
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
   ],
 })

@@ -255,3 +255,9 @@
 - Split the 1,959-line worker processor catch-all into scoring, outreach, campaign send, follow-up, discovery and reply modules.
 - Preserved `worker.ts` queue wiring through a compatibility barrel.
 - Added a CI architecture gate to prevent processor-domain collapse and updated send-authorization drift checks for the new module paths.
+
+## 2026-10-08 — UQ-08 strict frontend CSP
+- Production `nginx.conf` CSP no longer allows `'unsafe-inline'`: `style-src 'self'`, `style-src-elem 'self'`, `style-src-attr 'none'`.
+- No runtime changes were needed: React applies `style={{}}` props through the CSSOM, which CSP does not govern. The earlier CSP-aware JSX runtime approach was dropped (it broke the jsdom test tier, lost inline-style cascade precedence and leaked rules for dynamic values).
+- Added `check:csp` to `npm run verify`: fails on a loosened policy, raw style-attribute/`<style>`/`innerHTML` writes in web code, or inline markup in `index.html`.
+- Added `e2e/csp-strict.spec.ts`, which serves the production build with `nginx.conf`'s exact headers (`scripts/serve-web-csp.mjs`), proves enforcement with a negative control, visits every hub and tab, and fails on any CSP violation.

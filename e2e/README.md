@@ -14,6 +14,9 @@ launch omitted `approved`) — these specs would have failed on both.
 | `onboarding-seed.spec.ts` | signup → wizard → playbook → ICP → seed → Prospects | onboarding/seed pipeline producing visible data |
 | `ai-tools-run.spec.ts` | AI Tools "Run" (sync, default) | request must include `workspaceId` (was `400 workspaceId required`) |
 | `campaign-launch.spec.ts` | Launch → Approve & Send (approvalMode on) | request must include `approved: true` (was `403 Approval required`) |
+| `security-send-failures.spec.ts` | UQ-06 negative safety journeys | workspace/recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation |
+| `billing-delivery-recovery.spec.ts` | Stripe webhook replay, quote → job → closeout, stale-send recovery | duplicate entitlement changes, duplicate jobs, mutated closeout snapshots, auto-resend of possibly-dispatched mail |
+| `csp-strict.spec.ts` | Production build under `nginx.conf`'s exact CSP, every hub and tab | any CSP violation (raw style attributes, inline `<style>`/script), the policy not being enforced |
 
 The AI and campaign specs assert on the actual outgoing request via
 `waitForResponse`, so they verify the exact contract rather than a side effect.
@@ -39,10 +42,9 @@ The worker is **not** started — every assertion is on a synchronous response
 npm run test:e2e
 ```
 
-Playwright starts the API (:4000) and web (:5173) servers automatically and,
-locally, reuses them if already running. `global-setup` applies migrations.
+Playwright starts the API (:4000), the web dev server (:5173) and the production
+web build behind `nginx.conf`'s security headers (:4173, `scripts/serve-web-csp.mjs`)
+automatically and, locally, reuses them if already running. `global-setup` applies migrations.
 
 In CI the `verify-e2e` job (see `.github/workflows/ci.yml`) provides the
 services and installs the browser.
-
-| `security-send-failures.spec.ts` | UQ-06 negative safety journeys | workspace/recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation |
