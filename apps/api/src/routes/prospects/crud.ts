@@ -19,7 +19,7 @@ import { dollarsToCents } from '../../lib/money.js'
 import { escCsv } from '../../lib/csv.js'
 import { clampInt } from '../../lib/textNormalize.js'
 import { isSuppressed } from '@acaos/backend-core/lib/suppressions.js'
-import { normalizeDomain, withDollars, getICP } from './helpers.js'
+import { prospectTenantScope, normalizeDomain, withDollars, getICP } from './helpers.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { parseQuery, workspaceIdField } from '../../lib/validate.js'
 import { z } from 'zod'
@@ -240,7 +240,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
   }))
 
   // GET /api/prospects/:id
-  prospectsRouter.get('/:id', asyncHandler(async (req, res) => {
+  prospectsRouter.get('/:id', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await prisma.prospect.findUnique({
       where: { id: req.params.id as string },
       include: {
@@ -350,7 +350,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
   }))
 
   // PATCH /api/prospects/:id
-  prospectsRouter.patch('/:id', asyncHandler(async (req, res) => {
+  prospectsRouter.patch('/:id', prospectTenantScope, asyncHandler(async (req, res) => {
     const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!existing) throw new ApiError(404, 'Prospect not found')
 
@@ -392,7 +392,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
   // the Prospect's company/contact fields and links the two records so the
   // relationship is visible from either side. A Prospect converts at most
   // once — a second attempt 409s rather than creating a duplicate Lead.
-  prospectsRouter.post('/:id/convert-to-lead', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/convert-to-lead', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 
@@ -459,7 +459,7 @@ export function registerCrudRoutes(prospectsRouter: Router) {
   }))
 
   // DELETE /api/prospects/:id
-  prospectsRouter.delete('/:id', asyncHandler(async (req, res) => {
+  prospectsRouter.delete('/:id', prospectTenantScope, asyncHandler(async (req, res) => {
     const existing = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!existing) throw new ApiError(404, 'Prospect not found')
 

@@ -8,7 +8,7 @@ import { checkDraftGrounding, type GroundingRecord } from '@acaos/backend-core/l
 import { materializeOutreachIntent } from '../../lib/materializeIntent.js'
 import { generateOutreach } from '@acaos/backend-core/services/openai.js'
 import { parseAiJson, OutreachDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
-import { loadIntentForWrite } from './helpers.js'
+import { prospectTenantScope, loadIntentForWrite } from './helpers.js'
 import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { z } from 'zod'
 
@@ -22,7 +22,7 @@ const materializeIntentSchema = z.object({ campaignId: z.string().optional() })
 export function registerIntentRoutes(prospectsRouter: Router) {
   // GET /api/prospects/:id/intents — read-only view of the bridge records for a
   // prospect (Stage 2): recommendation → outreach intent with evidence snapshot.
-  prospectsRouter.get('/:id/intents', asyncHandler(async (req, res) => {
+  prospectsRouter.get('/:id/intents', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await prisma.prospect.findUnique({
       where: { id: req.params.id as string },
       select: { id: true, workspaceId: true },
@@ -41,7 +41,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
 
   // POST /api/prospects/:id/intents/:intentId/draft — Stage 3: generate the
   // outreach draft FROM the intent's evidence context and store it on the intent.
-  prospectsRouter.post('/:id/intents/:intentId/draft', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/intents/:intentId/draft', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await prisma.prospect.findUnique({
       where: { id: req.params.id as string },
       select: { id: true, workspaceId: true, companyName: true, industry: true, contactName: true, location: true },
@@ -106,7 +106,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
 
   // Stage 4: approve/reject an intent's drafted outreach. Approval locks the
   // evidence + text already captured on the intent (the auditable snapshot).
-  prospectsRouter.post('/:id/intents/:intentId/approve', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/intents/:intentId/approve', prospectTenantScope, asyncHandler(async (req, res) => {
     const userId = requireUser(req).id
     const { id, intentId } = parseParams(intentParamsSchema, req)
     const { leadId: rawLeadId } = parseBody(approveIntentSchema, { body: req.body ?? {} })
@@ -138,7 +138,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
     res.json(updated)
   }))
 
-  prospectsRouter.post('/:id/intents/:intentId/reject', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/intents/:intentId/reject', prospectTenantScope, asyncHandler(async (req, res) => {
     const userId = requireUser(req).id
     const intent = await loadIntentForWrite(req.params.id as string, req.params.intentId as string, userId)
     if (['SENT', 'WON', 'LOST'].includes(intent.status)) {
@@ -156,7 +156,7 @@ export function registerIntentRoutes(prospectsRouter: Router) {
   // Stage 5 / Option A: materialise an APPROVED intent into a sendable Lead +
   // APPROVED draft in a campaign, linked back to the intent. After this, launch
   // the campaign via the normal send path (which stamps provenance + flips SENT).
-  prospectsRouter.post('/:id/intents/:intentId/materialize', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/intents/:intentId/materialize', prospectTenantScope, asyncHandler(async (req, res) => {
     const userId = requireUser(req).id
     const { id, intentId } = parseParams(intentParamsSchema, req)
     const { campaignId: rawCampaignId } = parseBody(materializeIntentSchema, { body: req.body ?? {} })

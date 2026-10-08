@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireVerifiedForMutation } from '../middleware/auth.js'
+import { tenantResourceScope } from '../middleware/tenantResource.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
@@ -547,6 +548,12 @@ export function createInboxReplyDraftHandler(deps: { generateReplyDraft?: typeof
     res.json({ body })
   })
 }
+
+inboxRouter.use('/reply/:replyId', tenantResourceScope({
+  resource: 'Reply',
+  param: 'replyId',
+  loadWorkspace: (id) => prisma.outreachSent.findUnique({ where: { id }, select: { workspaceId: true } }),
+}))
 
 inboxRouter.post('/reply/:replyId/draft', requireFeature('ai'), aiRateLimit, createInboxReplyDraftHandler())
 

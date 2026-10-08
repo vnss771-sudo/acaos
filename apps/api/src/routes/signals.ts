@@ -10,6 +10,7 @@ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/works
 import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
 import { urlHostnameMatchesDomain } from '@acaos/backend-core/lib/normalize.js'
 import type { Assert, CreateSignalRequest, Extends } from '@acaos/shared'
+import { tenantResourceScope } from '../middleware/tenantResource.js'
 
 export const signalsRouter = Router()
 signalsRouter.use(requireAuth)
@@ -169,6 +170,11 @@ signalsRouter.post('/', asyncHandler(async (req, res) => {
 }))
 
 // DELETE /api/signals/:id
+signalsRouter.use('/:id', tenantResourceScope({
+  resource: 'Signal',
+  loadWorkspace: (id) => prisma.signal.findUnique({ where: { id }, select: { workspaceId: true } }),
+}))
+
 signalsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const signalId = req.params.id as string
   const signal = await prisma.signal.findUnique({ where: { id: signalId } })

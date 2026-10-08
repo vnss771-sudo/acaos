@@ -213,3 +213,11 @@
 - AI Tools page: Research / Outreach / Reply tabs with live API calls
 - Billing page: Stripe checkout trigger
 - Sidebar navigation, JWT auth with logout-on-401
+
+## 2026-10-08 — Unicorn Quality UQ-04 tenant resource enforcement
+
+- Added `tenantResourceScope` middleware for resource-ID-only API routes.
+- Campaign, mission, lead, prospect, signal and inbox-reply ID routes now derive tenant context from the resource before business handlers execute.
+- Foreign-tenant resource IDs return the same 404 as missing IDs at the resource boundary to reduce existence leakage.
+- Added a tenant-resource route/lookup drift gate (`npm run check:tenant-resources`) to the main verification chain.
+- Added an explicit tenant resource enforcement matrix and middleware regression tests.
