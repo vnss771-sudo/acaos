@@ -8,7 +8,7 @@
 // Lives in lib (not routes) so workers and route handlers can share it without a
 // circular dependency. Does NOT rescore — callers rescore once per batch.
 import { prisma } from './prisma.js'
-import type { SignalType } from './signalEngine.js'
+import { signalEventAt, type SignalType } from './signalEngine.js'
 
 // Deterministic idempotency key: the same source+type+title within a month
 // upserts instead of duplicating. (Relocated here from the prospects route.)
@@ -52,6 +52,11 @@ export type IngestSignalInput = {
  */
 export async function ingestSignal(input: IngestSignalInput) {
   const detectedAt = input.detectedAt ?? new Date()
+  // Persist a source publication time only when it is plausible; an impossible
+  // future value would otherwise be stored as if it were evidence.
+  const publishedAt = input.publishedAt && signalEventAt({ detectedAt, publishedAt: input.publishedAt }) === input.publishedAt
+    ? input.publishedAt
+    : null
   const fp = buildSignalFingerprint(input.source, input.type, input.title ?? null, detectedAt)
 
   let evidenceSourceId: string | null = null
@@ -90,12 +95,12 @@ export async function ingestSignal(input: IngestSignalInput) {
       source: input.source,
       fingerprint: fp,
       detectedAt,
-      publishedAt: input.publishedAt ?? null,
+      publishedAt,
     },
     update: {
       strength: input.strength,
       detectedAt,
-      ...(input.publishedAt ? { publishedAt: input.publishedAt } : {}),
+      ...(publishedAt ? { publishedAt } : {}),
       ...(evidenceSourceId ? { evidenceSourceId } : {}),
     },
   })

@@ -506,6 +506,8 @@ export interface CreateSignalRequest {
   industryRelevance?: number
   // Accepts an ISO string or an epoch number; the API coerces via new Date().
   detectedAt?: string | number
+  // When the source says the event happened (same formats); must not be in the future.
+  publishedAt?: string | number
 }
 // The web create form spreads its prospect draft, whose columns are nullable, so
 // the declared fields accept null (undeclared form fields are dropped by the

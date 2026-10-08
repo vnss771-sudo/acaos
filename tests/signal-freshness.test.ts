@@ -32,3 +32,37 @@ test('fast-decaying signals go stale sooner than slow-decaying ones at the same 
 test('a future detectedAt is clamped to age 0 (LIVE, never throws)', () => {
   assert.equal(freshnessState({ type: 'FUNDING', detectedAt: daysAgo(-10) }), 'LIVE')
 })
+
+// ── Event time (publishedAt) vs observation time (detectedAt) ───────────────
+import { signalEventAt, toRawSignal } from '../packages/backend-core/src/lib/signalEngine.ts'
+
+const row = (over: { detectedAt?: Date; publishedAt?: Date | null } = {}) => ({
+  type: 'HIRING' as const, strength: 80, sourceReliability: 80, industryRelevance: 80,
+  detectedAt: new Date(), publishedAt: null, ...over,
+})
+
+test('an old event discovered today is scored by its publication time', () => {
+  const old = daysAgo(400)
+  const raw = toRawSignal(row({ publishedAt: old }))
+  assert.equal(raw.detectedAt.getTime(), old.getTime())
+  assert.equal(freshnessState(raw), 'EXPIRED')
+})
+
+test('without publishedAt, freshness falls back to observation time', () => {
+  const seen = new Date()
+  assert.equal(signalEventAt({ detectedAt: seen, publishedAt: null }), seen)
+  assert.equal(freshnessState(toRawSignal(row({ detectedAt: seen }))), 'LIVE')
+})
+
+test('a future publishedAt cannot make a signal fresher than when it was observed', () => {
+  const seen = daysAgo(200)
+  const future = new Date(Date.now() + 30 * 86_400_000)
+  assert.equal(signalEventAt({ detectedAt: seen, publishedAt: future }), seen)
+})
+
+test('a publishedAt well after observation is ignored, small clock skew is tolerated', () => {
+  const seen = daysAgo(100)
+  assert.equal(signalEventAt({ detectedAt: seen, publishedAt: daysAgo(50) }), seen)
+  const skewed = new Date(seen.getTime() + 60 * 60 * 1000)
+  assert.equal(signalEventAt({ detectedAt: seen, publishedAt: skewed }), skewed)
+})

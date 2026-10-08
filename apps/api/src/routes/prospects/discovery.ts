@@ -299,6 +299,11 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
         const domainKey = normalizeDomain(domain)
         const sourceUrl = row.sourceUrl ? String(row.sourceUrl) : null
         const observedAt = row.observedAt ? new Date(String(row.observedAt)) : undefined
+        // Source event time, independent of when it was observed. Implausible
+        // (future) values are dropped by ingestSignal; unparseable ones reject the row.
+        const rawPublishedAt = row.publishedAt ?? row.eventAt
+        const publishedAt = rawPublishedAt ? new Date(String(rawPublishedAt)) : null
+        if (publishedAt && Number.isNaN(publishedAt.getTime())) throw new Error('invalid publishedAt')
 
         let prospect = domainKey
           ? await prisma.prospect.findFirst({ where: { workspaceId, domainKey }, select: { id: true } })
@@ -343,6 +348,7 @@ export function registerDiscoveryRoutes(prospectsRouter: Router) {
           title: row.signalTitle ? String(row.signalTitle) : null,
           sourceUrl,
           detectedAt: observedAt,
+          publishedAt,
           evidence: {
             provider, sourceType, sourceUrl,
             confidence: row.confidence !== undefined ? Number(row.confidence) : 0.7,

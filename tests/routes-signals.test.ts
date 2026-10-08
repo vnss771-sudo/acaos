@@ -156,6 +156,29 @@ test('POST validates required fields and strength range', async () => {
   assert.equal(badStrength.status, 400)
 })
 
+test('POST rejects a publishedAt that is unparseable or in the future', async () => {
+  const headers = { Authorization: bearer(MEMBER), 'Content-Type': 'application/json' }
+  const base = { workspaceId: OWNED_WS, prospectId: 'p1', type: 'FUNDING', strength: 80 }
+  for (const publishedAt of ['not-a-date', new Date(Date.now() + 86_400_000).toISOString()]) {
+    const res = await server.request('/api/signals', { method: 'POST', headers, body: JSON.stringify({ ...base, publishedAt }) })
+    assert.equal(res.status, 400)
+  }
+  assert.equal(prisma.callsTo('signal', 'upsert').length, 0)
+})
+
+test('POST stores a valid publishedAt separately from detectedAt', async () => {
+  const publishedAt = '2026-01-15T00:00:00.000Z'
+  const res = await server.request('/api/signals', {
+    method: 'POST',
+    headers: { Authorization: bearer(MEMBER), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceId: OWNED_WS, prospectId: 'p1', type: 'FUNDING', strength: 80, publishedAt }),
+  })
+  assert.equal(res.status, 201)
+  const create = (prisma.callsTo('signal', 'upsert')[0].args[0] as any).create
+  assert.equal(create.publishedAt.toISOString(), publishedAt)
+  assert.notEqual(create.detectedAt.toISOString(), publishedAt)
+})
+
 test('POST creates a signal and rescores the prospect in the owned workspace', async () => {
   const res = await server.request('/api/signals', {
     method: 'POST',

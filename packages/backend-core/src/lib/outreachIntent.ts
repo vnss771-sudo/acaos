@@ -3,13 +3,14 @@
 // — the auditable "what we knew when we recommended this". Best-effort by design:
 // callers wrap it so a bridge write never breaks the primary recommendation path.
 import { prisma } from './prisma.js'
-import { freshnessState, type SignalType } from './signalEngine.js'
+import { freshnessState, signalEventAt, type SignalType } from './signalEngine.js'
 import type { OutreachInput, IcpContext } from '../services/openai.js'
 import { groundedSummary, type GroundingRecord } from './draftGrounding.js'
 
 export type SnapshotSignal = {
   type: SignalType
   detectedAt: Date
+  publishedAt?: Date | null
   title?: string | null
   source?: string | null
   evidenceSourceId?: string | null
@@ -20,14 +21,19 @@ export function buildEvidenceSnapshot(signals: SnapshotSignal[]) {
   return {
     capturedAt: new Date().toISOString(),
     signalCount: signals.length,
-    signals: signals.map((s) => ({
-      type: s.type,
-      title: s.title ?? null,
-      source: s.source ?? null,
-      detectedAt: s.detectedAt.toISOString(),
-      freshness: freshnessState({ type: s.type, detectedAt: s.detectedAt }),
-      hasEvidence: !!s.evidenceSourceId,
-    })),
+    signals: signals.map((s) => {
+      const eventAt = signalEventAt(s)
+      return {
+        type: s.type,
+        title: s.title ?? null,
+        source: s.source ?? null,
+        detectedAt: s.detectedAt.toISOString(),
+        publishedAt: s.publishedAt?.toISOString() ?? null,
+        eventAt: eventAt.toISOString(),
+        freshness: freshnessState({ type: s.type, detectedAt: eventAt }),
+        hasEvidence: !!s.evidenceSourceId,
+      }
+    }),
   }
 }
 
