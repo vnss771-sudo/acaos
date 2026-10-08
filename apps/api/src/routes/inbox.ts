@@ -248,6 +248,7 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
       context: 'reply',
       email: reply.toEmail,
       leadId: reply.leadId,
+      audit: { actorUserId: user.id, entityType: 'outreachSent', entityId: reply.id },
     })
     if (!authorization.allowed) {
       if (authorization.code === 'FEATURE_SEND_DISABLED') throw new ApiError(503, 'Email sending is temporarily unavailable')

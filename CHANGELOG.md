@@ -221,3 +221,9 @@
 - Foreign-tenant resource IDs return the same 404 as missing IDs at the resource boundary to reduce existence leakage.
 - Added a tenant-resource route/lookup drift gate (`npm run check:tenant-resources`) to the main verification chain.
 - Added an explicit tenant resource enforcement matrix and middleware regression tests.
+
+## 2026-10-08 — UQ-05 send authorization auditability
+
+- Added append-only allow/deny audit evidence to the centralized outbound acquisition send policy.
+- Added `check:send-authorization` to pin reviewed mail call sites and prevent silent provider-send bypasses.
+- Documented acquisition versus transactional mail authorization boundaries.

@@ -1223,6 +1223,7 @@ export async function sendCampaignBatch(
     workspaceId,
     context: 'campaign',
     recipientChecks: false,
+    audit: { entityType: 'campaign', entityId: campaignId },
   })
   if (!batchAuthorization.allowed) {
     console.log(`[send-campaign] Authorization blocked campaign ${campaignId}: ${batchAuthorization.code}`)
@@ -1579,6 +1580,7 @@ export async function sendFollowupTask(
     context: 'followup',
     email: lead.email,
     leadId,
+    audit: { entityType: 'followupTask', entityId: taskId },
   })
   if (!authorization.allowed) {
     if (authorization.code === 'REPUTATION_BLOCKED') incReputationBlock('send-followup')

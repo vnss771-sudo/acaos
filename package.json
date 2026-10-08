@@ -53,7 +53,7 @@
     "smoke:api": "node scripts/smoke-api-health.mjs",
     "release:smoke": "node scripts/smoke-deploy.mjs",
     "pack": "node scripts/make-zips.mjs",
-    "verify": "npm run prisma:generate && npm run check:toolchain && npm run check:boundaries && npm run check:tenant-resources && npm run check:frontend-mutations && npm run check:no-new-shim-imports && npm run check:workflow-pinning && npm run check:monitoring-assets && npm run check:rollout-contract && npm run check:compose-hardening && npm run check:test-tiers && npm run check:critical-test-coverage && npm run check:offline-stub && npm run lint && npm run typecheck && npm test && npm run test:web && npm run build",
+    "verify": "npm run prisma:generate && npm run check:toolchain && npm run check:boundaries && npm run check:tenant-resources && npm run check:send-authorization && npm run check:frontend-mutations && npm run check:no-new-shim-imports && npm run check:workflow-pinning && npm run check:monitoring-assets && npm run check:rollout-contract && npm run check:compose-hardening && npm run check:test-tiers && npm run check:critical-test-coverage && npm run check:offline-stub && npm run lint && npm run typecheck && npm test && npm run test:web && npm run build",
     "verify:services": "npm run test:db && npm run test:redis",
     "verify:clean": "bash scripts/verify-clean-build.sh",
     "postinstall": "node scripts/postinstall.mjs",
@@ -67,7 +67,8 @@
     "pilot:preflight": "bash scripts/pilot-preflight.sh",
     "pilot:policy": "node scripts/preflight-contract.mjs",
     "check:toolchain": "node scripts/check-toolchain.mjs",
-    "check:tenant-resources": "node scripts/check-tenant-resources.mjs"
+    "check:tenant-resources": "node scripts/check-tenant-resources.mjs",
+    "check:send-authorization": "node scripts/check-send-authorization.mjs"
   },
   "overrides": {
     "nodemailer": "^10.0.13",
