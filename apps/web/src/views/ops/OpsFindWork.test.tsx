@@ -152,6 +152,7 @@ describe('OpsFindWork', () => {
     })
     render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
     expect(await screen.findByText('$60,000')).toBeInTheDocument()
+    expect(screen.getByText('Opportunity → quote sent → awaiting decision')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Client accepted' }))
     const [path, init] = posts(api)[0]
     expect(path).toBe('/api/delivery/quotes/q1/status')

@@ -111,4 +111,18 @@ describe('OpsDelivery', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Log shifts' }))
     expect(setView).toHaveBeenCalledWith('ops-shifts')
   })
+  test('shows margins by region when the API returns a regional report, and omits it otherwise', async () => {
+    const regionalReport = { ...REPORT, groups: [{ ...REPORT.groups[0], key: 'REGION:qld', label: 'QLD' }] }
+    const api = vi.fn().mockImplementation((path: string) =>
+      path.startsWith('/api/delivery/report') ? Promise.resolve({ report: REPORT, regionalReport }) : Promise.resolve({ jobs: [ACTIVE, CLOSED] }))
+    const { unmount } = render(<OpsDelivery api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    expect(await screen.findByText('Margins by region')).toBeInTheDocument()
+    expect(screen.getByText('QLD')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Region' })).toBeInTheDocument()
+    unmount()
+
+    render(<OpsDelivery api={mockApi() as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    expect(await screen.findByText('Development applications')).toBeInTheDocument()
+    expect(screen.queryByText('Margins by region')).toBeNull()
+  })
 })
