@@ -2,7 +2,7 @@
  *
  * These were previously defined in inline <style> tags inside Spinner.tsx and
  * Toast.tsx. They were moved here so the production CSP can drop
- * 'unsafe-inline' for <style>/<link> elements (style-src-elem 'self'). Vite
+ * inline <style>/<link> elements (style-src-elem 'self'). Vite
  * bundles this file and emits it as a same-origin <link> stylesheet.
  *
  * The animation names (spin, slideIn) are unchanged so existing inline

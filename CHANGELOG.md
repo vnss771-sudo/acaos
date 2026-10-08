@@ -244,3 +244,10 @@
 - Expanded `check:toolchain` so all workflow-level Node pins are verified, preventing future release/runtime drift.
 - Re-ran source-level pilot hardening gates: tenant-resource, send-authorization, workflow pinning, monitoring assets, rollout contract, compose hardening, test-tier isolation, offline Prisma, architecture boundaries, and frontend mutation checks pass.
 - Full dependency-backed verification remains pending in a Node 26 environment with installed dependencies and real pilot provider/deployment credentials.
+
+## 2026-10-08 — UQ-08 strict frontend CSP
+- Removed `unsafe-inline` from the production web Content-Security-Policy and set `style-src-attr 'none'`.
+- Added a CSP-aware React JSX runtime that converts intrinsic-element `style` objects to generated CSS classes backed by a constructable or existing same-origin stylesheet.
+- Preserved `style` props on custom React components so component contracts remain unchanged until they render intrinsic DOM nodes.
+- Added `check:csp` to the main verification chain and a Playwright assertion that the rendered app contains zero inline style attributes.
+- Updated the ASVS/configuration documentation to reflect the strict CSP architecture.

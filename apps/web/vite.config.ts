@@ -1,9 +1,16 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
+import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [
+      { find: 'react/jsx-runtime', replacement: fileURLToPath(new URL('./src/csp-jsx-runtime.ts', import.meta.url)) },
+      { find: 'react/jsx-dev-runtime', replacement: fileURLToPath(new URL('./src/csp-jsx-dev-runtime.ts', import.meta.url)) },
+    ],
+  },
   server: {
     port: 5173,
     proxy: {

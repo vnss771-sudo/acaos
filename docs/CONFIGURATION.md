@@ -137,8 +137,7 @@ The web image ships a strict CSP. Two production hardening notes:
 - `connect-src 'self' https:` is intentionally broad so the SPA can reach any HTTPS
   API origin out of the box. **Tighten it to your exact API origin** in production
   (e.g. `connect-src 'self' https://api.example.com`) to narrow exfiltration paths.
-- `style-src-attr 'unsafe-inline'` is allowed because the app uses React inline
-  styles; migrating those to CSS classes lets you drop the inline-style allowance.
+- Inline React style objects are converted to generated CSS classes by the ACAOS CSP JSX runtime. Production sets `style-src-attr 'none'` and does not require `unsafe-inline`.
 
 ---
 
