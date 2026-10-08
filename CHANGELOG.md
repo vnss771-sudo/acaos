@@ -1,3 +1,7 @@
+
+## 2026-10-08 — UQ-06 security/send failure-path E2E
+- Added real API/Postgres Playwright negative journeys for workspace and recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation, and SMTP SSRF/provider safety.
+- E2E safety environment now explicitly enables SAFE_LAUNCH and reputation enforcement.
 # ACAOS Changelog
 
 ## Unreleased

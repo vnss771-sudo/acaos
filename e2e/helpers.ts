@@ -59,6 +59,53 @@ export async function getWorkspaceId(request: APIRequestContext, token: string):
   return data.workspaces[0].id as string
 }
 
+export async function createApiAccount(request: APIRequestContext): Promise<{ email: string; token: string; workspaceId: string }> {
+  const email = uniqueEmail()
+  const res = await request.post('/api/auth/signup', { data: { email, password: PASSWORD, name: 'E2E API Tester' } })
+  expect(res.ok(), `signup failed: ${res.status()} ${await res.text()}`).toBeTruthy()
+  const body = await res.json() as { token: string; workspace: { id: string } }
+  await verifyEmailInDb(email)
+  return { email, token: body.token, workspaceId: body.workspace.id }
+}
+
+export async function seedRepliedThread(workspaceId: string, toEmail = 'prospect@example.com'): Promise<string> {
+  const row = await db().outreachSent.create({
+    data: { workspaceId, toEmail, subject: 'Original subject', body: 'Original body', status: 'REPLIED', repliedAt: new Date() },
+    select: { id: true },
+  })
+  return row.id
+}
+
+export async function suppressWorkspace(workspaceId: string): Promise<void> {
+  await db().workspace.update({ where: { id: workspaceId }, data: { sendSuppressed: true, sendSuppressedReason: 'e2e safety stop' } })
+}
+
+export async function suppressRecipient(workspaceId: string, email: string): Promise<void> {
+  const emailKey = email.trim().toLowerCase()
+  await db().suppression.upsert({
+    where: { workspaceId_emailKey: { workspaceId, emailKey } },
+    update: { reason: 'UNSUBSCRIBED' },
+    create: { workspaceId, email, emailKey, reason: 'UNSUBSCRIBED' },
+  })
+}
+
+export async function degradeSenderReputation(workspaceId: string, email = 'prospect@example.com'): Promise<void> {
+  await db().contactEvent.createMany({
+    data: [
+      { workspaceId, emailKey: email.toLowerCase(), type: 'SENT', occurredAt: new Date() },
+      { workspaceId, emailKey: email.toLowerCase(), type: 'BOUNCED', occurredAt: new Date() },
+    ],
+  })
+}
+
+export async function seedUnsafeMailboxConfig(workspaceId: string): Promise<void> {
+  await db().workspaceEmailConfig.upsert({
+    where: { workspaceId },
+    update: { smtpHost: '127.0.0.1', smtpPort: 25, smtpSecure: false, smtpFrom: 'sender@example.com' },
+    create: { workspaceId, smtpHost: '127.0.0.1', smtpPort: 25, smtpSecure: false, smtpFrom: 'sender@example.com' },
+  })
+}
+
 export async function closeDb(): Promise<void> {
   if (prisma) { await prisma.$disconnect(); prisma = null }
 }

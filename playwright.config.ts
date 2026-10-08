@@ -30,6 +30,10 @@ const serverEnv = {
   // The suite drives many auth requests from one IP; without this the per-IP
   // auth limiter (10/15min) 429s the run. Test-only — never set in production.
   RATE_LIMIT_DISABLED: 'true',
+  SAFE_LAUNCH_MODE: 'true',
+  REPUTATION_GUARD_MODE: 'enforce',
+  REPUTATION_MIN_SENDS: '1',
+  REPUTATION_MAX_BOUNCE_RATE: '0',
 } as Record<string, string>
 
 export default defineConfig({

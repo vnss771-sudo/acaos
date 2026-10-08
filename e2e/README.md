@@ -44,3 +44,5 @@ locally, reuses them if already running. `global-setup` applies migrations.
 
 In CI the `verify-e2e` job (see `.github/workflows/ci.yml`) provides the
 services and installs the browser.
+
+| `security-send-failures.spec.ts` | UQ-06 negative safety journeys | workspace/recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation |
