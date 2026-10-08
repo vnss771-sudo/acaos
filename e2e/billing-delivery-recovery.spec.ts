@@ -31,8 +31,8 @@ test('Stripe webhook is idempotent: the first signed delivery applies and replay
     data: {
       object: {
         id: `cs_e2e_${Date.now()}`,
-        customer: 'cus_e2e',
-        subscription: 'sub_e2e',
+        customer: `cus_e2e_${eventId}`,
+        subscription: `sub_e2e_${eventId}`,
         metadata: { workspaceId: a.workspaceId, plan: 'growth', priceId: 'price_e2e_growth' },
       },
     },
