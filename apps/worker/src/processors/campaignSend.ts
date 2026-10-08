@@ -4,38 +4,18 @@
 // directly.
 
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { DEFAULT_SCORING_WEIGHTS, DEFAULT_MESSAGE_RELEVANCE, getOrCreateScoringModel, maybeRecomputeScoringWeights, explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets, type ScoringWeights } from '@acaos/backend-core/lib/scoring.js'
-import {
-  calculateOpportunityScores,
-  detectBuyingStage,
-  calcWinProbability,
-  toRawSignal,
-  MAX_SIGNALS_FOR_SCORING,
-} from '@acaos/backend-core/lib/signalEngine.js'
-import type { SignalType, SignalWeights } from '@acaos/backend-core/lib/signalEngine.js'
-import { calibrate, buildRecommendationDrafts, sameJson } from '@acaos/backend-core/lib/learningLoop.js'
-import { learningAdaptationMode } from '@acaos/backend-core/lib/learningMode.js'
 import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.js'
 import { SelectionRecorder } from '@acaos/backend-core/lib/selectionTracking.js'
 import { holdoutPercent, isHeldOut } from '@acaos/backend-core/lib/holdout.js'
-import { AUTO_RECOMMEND_THRESHOLD } from '@acaos/backend-core/lib/recommendationPolicy.js'
-import { isCommercialOpportunityEngineEnabled, loadOfferCatalog, refreshCommercialOpportunities, type OfferCatalog } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
-import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
+import { generateOutreach, outreachGenerationMeta } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
-import { effectiveReplyClassification, REPLY_STAGE, replyOutcomeFor } from '@acaos/backend-core/lib/replyGating.js'
-import { parseRiskFlags } from '@acaos/backend-core/lib/riskEscalation.js'
 import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
-import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
-import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
-import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
-import { parseAiJson, parseLeadResearchJson, OutreachDraftOutputSchema, type OutreachDraftOutput, type ReplyAnalysisOutput } from '@acaos/backend-core/lib/aiSchemas.js'
+import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
-import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
-import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
-import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
+import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
 import { effectiveApprovalMode, effectiveDailySendLimit, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { bulkCheckConsent } from '@acaos/backend-core/lib/consent.js'
-import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
+import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
@@ -49,45 +29,11 @@ import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs, utcDayStart } from '@acaos/backend-core/lib/campaignStats.js'
 import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
 import { authorizeOutboundSend } from '@acaos/backend-core/services/sendAuthorization.js'
-import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
-import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
-import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
-import type { ICPConfig } from '@acaos/backend-core/lib/signalEngine.js'
 import { randomBytes } from 'crypto'
-import type { LeadStage, FollowupTaskStatus } from '@acaos/shared'
+import type { LeadStage } from '@acaos/shared'
 import { incReputationBlock, incSendOutcome, incAiCost } from '../lib/metrics.js'
 
 type Progress = (n: number) => unknown
-
-type DbSignalRow = {
-  type: SignalType
-  strength: number
-  sourceReliability: number
-  industryRelevance: number
-  detectedAt: Date
-}
-
-type ScoreProspectRow = {
-  id: string
-  industry: string | null
-  employeeCount: number | null
-  contactEmail: string | null
-  contactName: string | null
-  domain: string | null
-  location: string | null
-  isExample: boolean
-  signals: DbSignalRow[]
-}
-
-type CalibrationOutcomeRow = {
-  stage: string
-  recordedAt: Date
-  prospect: {
-    industry: string | null
-    employeeCount: number | null
-    signals: Array<{ type: SignalType }>
-  }
-}
 
 type CampaignLeadRow = {
   id: string
