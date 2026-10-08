@@ -77,6 +77,13 @@ test('stores matching opportunities with score, reasons and counterparty; drops 
   assert.equal(state.lastFetched, 3)
   assert.equal(state.lastMatched, 1)
   assert.equal(state.lastError, null)
+  // Cumulative health counters (UQ-13).
+  assert.deepEqual(
+    [state.runCount, state.successCount, state.failureCount, state.fetchedTotal, state.matchedTotal, state.createdTotal, state.updatedTotal],
+    [1, 1, 0, 3, 1, 1, 0],
+  )
+  assert.ok(state.lastLatencyMs != null && state.lastLatencyMs >= 0)
+  assert.equal(state.latencyTotalMs, state.lastLatencyMs)
 })
 
 test('re-delivery is idempotent; a real change bumps lastChangedAt but never the user\'s status', async () => {
@@ -129,6 +136,7 @@ test('a failing fetch leaves the cursor in place and the next run resumes from i
   state = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id } })
   assert.equal(state.cursor, 'c2')
   assert.equal(state.lastError, null)
+  assert.deepEqual([state.runCount, state.successCount, state.failureCount, state.fetchedTotal], [3, 2, 1, 2])
 })
 
 // Production, 4–6 Oct 2026: the AusTender cursor sat on Saturday 26 Sep, a day
@@ -203,6 +211,9 @@ test('one failing source does not stop the others; unconfigured / unavailable so
   assert.equal(by.nosuch.reason, 'Unknown source')
   const warn = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id, source: 'needsbase' } })
   assert.equal(warn.lastWarning, 'Set a base location')
+  assert.deepEqual([warn.runCount, warn.skippedCount, warn.successCount], [1, 1, 0])
+  const broken = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id, source: 'broken' } })
+  assert.deepEqual([broken.runCount, broken.failureCount, broken.successCount], [1, 1, 0])
 })
 
 test('a national feed is fetched once per sweep and matched per workspace', async () => {
@@ -222,6 +233,9 @@ test('a national feed is fetched once per sweep and matched per workspace', asyn
   assert.equal(await prisma.opportunity.count({ where: { workspaceId: b.workspace.id } }), 0)
   // Each workspace keeps its own cursor.
   assert.equal(await prisma.discoverySourceState.count({ where: { cursor: 'c1' } }), 2)
+  // The one shared upstream read is timed once and recorded for both workspaces.
+  const latencies = (await prisma.discoverySourceState.findMany({ where: { cursor: 'c1' }, select: { lastLatencyMs: true } })).map(s => s.lastLatencyMs)
+  assert.equal(new Set(latencies).size, 1)
 })
 
 test('workspaceId limits the sweep to one workspace', async () => {

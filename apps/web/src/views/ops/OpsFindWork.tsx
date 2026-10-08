@@ -48,9 +48,29 @@ type Opportunity = {
 
 type ListResponse = { opportunities: Opportunity[]; counts: Partial<Record<OpportunityStatus, number>>; total: number }
 
+type SourceHealth = {
+  status: 'HEALTHY' | 'DEGRADED' | 'STALE' | 'FAILING' | 'SKIPPED' | 'UNKNOWN'
+  summary: string
+  data: { matchRate: number | null }
+  yield: { opportunities: number; won: number; jobsCreated: number }
+}
+
 type SourceInfo = {
   name: string; label: string; description: string; configured: boolean
   lastRunAt: string | null; lastSuccessAt: string | null; lastError: string | null; lastWarning: string | null; lastMatched: number
+  health?: SourceHealth
+}
+
+const HEALTH_COLOR: Record<SourceHealth['status'], string> = {
+  HEALTHY: colors.green, DEGRADED: colors.amber, STALE: colors.amber, FAILING: colors.red, SKIPPED: colors.textFaint, UNKNOWN: colors.textFaint,
+}
+
+/** One line of source health: status, then match rate and what its finds became once there is data. */
+export function sourceHealthLine(h: SourceHealth): string {
+  const parts = [h.summary]
+  if (h.data.matchRate != null) parts.push(`${Math.round(h.data.matchRate * 100)}% of results match your profile`)
+  if (h.yield.opportunities > 0) parts.push(`${h.yield.opportunities} found · ${h.yield.won} won · ${h.yield.jobsCreated} became jobs`)
+  return parts.join(' · ')
 }
 
 type Profile = {
@@ -320,6 +340,9 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
                         <strong>{src.label}</strong> — {src.description}
                         {!src.configured && <span style={{ color: colors.amber }}> (not set up on this server yet)</span>}
                         {src.lastSuccessAt && <span style={{ color: colors.textFaint }}> · last searched {new Date(src.lastSuccessAt).toLocaleString()}</span>}
+                        {src.health && src.health.status !== 'UNKNOWN' && (
+                          <span style={{ display: 'block', fontSize: 12, color: HEALTH_COLOR[src.health.status] }}>{sourceHealthLine(src.health)}</span>
+                        )}
                       </span>
                     </label>
                   ))}
