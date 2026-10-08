@@ -14,6 +14,7 @@ import { checkLeadLimit, reserveLeadCapacity } from '@acaos/backend-core/lib/lim
 import { escCsv } from '../lib/csv.js'
 import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
+import { tenantResourceScope } from '../middleware/tenantResource.js'
 import type { Prisma } from '@prisma/client'
 import { describeSensitiveKinds, sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import type { Assert, CreateLeadRequest, Extends, ImportLeadsRequest, LeadStage } from '@acaos/shared'
@@ -21,6 +22,11 @@ import type { Assert, CreateLeadRequest, Extends, ImportLeadsRequest, LeadStage 
 export const leadsRouter = Router()
 leadsRouter.use(requireAuth)
 leadsRouter.use(requireVerifiedForMutation)
+
+const leadTenantScope = tenantResourceScope({
+  resource: 'Lead',
+  loadWorkspace: (id) => prisma.lead.findUnique({ where: { id }, select: { workspaceId: true } }),
+})
 
 async function assertCampaignInWorkspace(campaignId: string | null | undefined, workspaceId: string): Promise<void> {
   if (!campaignId) return
@@ -352,6 +358,7 @@ leadsRouter.get('/export', asyncHandler(async (req, res) => {
 // Get lead by id
 leadsRouter.get(
   '/:id',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id as string } })
@@ -367,6 +374,7 @@ leadsRouter.get(
 // Update lead (including AI fields and stage)
 leadsRouter.patch(
   '/:id',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const leadId = req.params.id as string
@@ -459,6 +467,7 @@ leadsRouter.patch(
 // Delete lead
 leadsRouter.delete(
   '/:id',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const leadId = req.params.id as string
@@ -558,6 +567,7 @@ leadsRouter.post(
 // Get outreach drafts for a lead
 leadsRouter.get(
   '/:id/drafts',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const leadId = req.params.id as string
@@ -581,6 +591,7 @@ leadsRouter.get(
 // and fetched on demand by the lead detail panel.
 leadsRouter.get(
   '/:id/evidence',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const leadId = req.params.id as string
@@ -622,6 +633,7 @@ leadsRouter.get(
 // Approve a draft
 leadsRouter.post(
   '/:id/drafts/:draftId/approve',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const { id: leadId, draftId } = req.params as { id: string; draftId: string }
@@ -649,6 +661,7 @@ leadsRouter.post(
 // Reject a draft
 leadsRouter.post(
   '/:id/drafts/:draftId/reject',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const { id: leadId, draftId } = req.params as { id: string; draftId: string }
@@ -673,6 +686,7 @@ leadsRouter.post(
 // drafts are editable — once APPROVED/SENT the content is locked.
 leadsRouter.patch(
   '/:id/drafts/:draftId',
+  leadTenantScope,
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const { id: leadId, draftId } = req.params as { id: string; draftId: string }

@@ -14,11 +14,11 @@ import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { enrichProspect } from '../../services/apollo.js'
 import { ingestSignal } from '@acaos/backend-core/lib/signalIngest.js'
 import { findContactEmail, isHunterConfigured } from '../../services/hunter.js'
-import { withDollars, getICP } from './helpers.js'
+import { prospectTenantScope, withDollars, getICP } from './helpers.js'
 
 export function registerEnrichmentRoutes(prospectsRouter: Router) {
   // POST /api/prospects/:id/enrich — Apollo.io enrichment → auto signals → rescore
-  prospectsRouter.post('/:id/enrich', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/enrich', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id as string } })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 

@@ -35,7 +35,7 @@ test('launch wiring: the worker skips disabled-feature jobs', () => {
 
 // Safe-launch safe defaults are applied where outbound is decided.
 test('launch wiring: sendCampaignBatch applies safe-launch defaults', () => {
-  const p = read('apps/worker/src/processors.ts')
+  const p = read('apps/worker/src/processors/campaignSend.ts')
   assert.match(p, /effectiveApprovalMode\(/, 'must force approval via effectiveApprovalMode under safe-launch')
   assert.match(p, /effectiveDailySendLimit\(/, 'must clamp the daily cap via effectiveDailySendLimit under safe-launch')
 })

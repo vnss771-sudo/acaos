@@ -9,6 +9,7 @@ import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib
 import { generateLeadResearch, generateOutreach, analyzeReply, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@acaos/backend-core/lib/scoring.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import { parseAiJson, parseLeadResearchJson, OutreachDraftOutputSchema, ReplyAnalysisOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
 import { validate, workspaceIdField } from '../lib/validate.js'
 import { z } from 'zod'
 
@@ -77,9 +78,9 @@ aiRouter.post(
       select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true }
     }))
 
-    let data: Awaited<ReturnType<typeof generateLeadResearch>>
+    let data: ReturnType<typeof parseLeadResearchJson>
     try {
-      data = await generateLeadResearch({
+      const raw = await generateLeadResearch({
         businessName,
         website,
         category,
@@ -87,6 +88,7 @@ aiRouter.post(
         notes,
         icp
       })
+      data = parseLeadResearchJson(raw)
     } catch (err) {
       // Generation failed after reserving the AI call — refund it, mirroring
       // the worker's same-failure-mode handling (processors.ts).
@@ -126,9 +128,9 @@ aiRouter.post(
       select: { targetIndustries: true, businessType: true, outreachTone: true, businessContext: true }
     }))
 
-    let data: Awaited<ReturnType<typeof generateOutreach>>
+    let data: { subject: string; email: string; followup?: string }
     try {
-      data = await generateOutreach({
+      const raw = await generateOutreach({
         businessName,
         category,
         city,
@@ -138,6 +140,7 @@ aiRouter.post(
         notes,
         icp
       })
+      data = parseAiJson(OutreachDraftOutputSchema, raw, 'generate-outreach')
     } catch (err) {
       await refundAiUsage(workspaceId, 'AI_OUTREACH').catch(() => {})
       throw err
@@ -160,9 +163,10 @@ aiRouter.post(
     const icpRow = await prisma.workspaceICP.findUnique({ where: { workspaceId }, select: { businessContext: true } })
     await checkAndIncrementAiUsage(workspaceId, 'AI_REPLY')
 
-    let data: Awaited<ReturnType<typeof analyzeReply>>
+    let data: z.infer<typeof ReplyAnalysisOutputSchema>
     try {
-      data = await analyzeReply(replyBody, { businessContext: icpRow?.businessContext ?? undefined })
+      const raw = await analyzeReply(replyBody, { businessContext: icpRow?.businessContext ?? undefined })
+      data = parseAiJson(ReplyAnalysisOutputSchema, raw, 'analyze-reply')
     } catch (err) {
       await refundAiUsage(workspaceId, 'AI_REPLY').catch(() => {})
       throw err

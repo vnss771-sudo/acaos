@@ -1,6 +1,18 @@
+
+## 2026-10-08 — UQ-06 security/send failure-path E2E
+- Added real API/Postgres Playwright negative journeys for workspace and recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation, and SMTP SSRF/provider safety.
+- E2E safety environment now explicitly enables SAFE_LAUNCH and reputation enforcement.
 # ACAOS Changelog
 
 ## Unreleased
+
+### AI provider compatibility and pilot preflight (8 Oct 2026)
+- Fixed the default GPT-5 reasoning request so reasoning models no longer receive `temperature`; they keep `max_completion_tokens` and the supported reasoning setting, while standard chat models retain `temperature: 0.4` + `max_tokens`.
+- Added a centralized model compatibility registry (`modelProfiles.ts`) so sampling/token/reasoning behaviour cannot drift across helpers.
+- Added final-wire regression tests that capture the actual OpenAI SDK request for `gpt-5-mini`, `gpt-5-nano`, `o4-mini`, and `gpt-4o-mini`.
+- Outreach provenance now records the parameters actually sent: reasoning models store `temperature = null` plus token-parameter/reasoning metadata, and the prompt hash changes with the effective request profile.
+- Added `npm run smoke:ai-provider` for a real-provider release smoke covering research, outreach, and reply analysis, with model, latency, and provider token counts.
+- Corrected AI-cost documentation: estimated per-action spend is used both for billing observability and the enforced monthly AI spend ceiling.
 
 ### Find work: AusTender sweep unstuck (7 Oct 2026)
 - AusTender answers a day with no contract notices (a weekend, a public holiday) with a 400 "No
@@ -205,3 +217,47 @@
 - AI Tools page: Research / Outreach / Reply tabs with live API calls
 - Billing page: Stripe checkout trigger
 - Sidebar navigation, JWT auth with logout-on-401
+
+## 2026-10-08 — Unicorn Quality UQ-04 tenant resource enforcement
+
+- Added `tenantResourceScope` middleware for resource-ID-only API routes.
+- Campaign, mission, lead, prospect, signal and inbox-reply ID routes now derive tenant context from the resource before business handlers execute.
+- Foreign-tenant resource IDs return the same 404 as missing IDs at the resource boundary to reduce existence leakage.
+- Added a tenant-resource route/lookup drift gate (`npm run check:tenant-resources`) to the main verification chain.
+- Added an explicit tenant resource enforcement matrix and middleware regression tests.
+
+## 2026-10-08 — UQ-05 send authorization auditability
+
+- Added append-only allow/deny audit evidence to the centralized outbound acquisition send policy.
+- Added `check:send-authorization` to pin reviewed mail call sites and prevent silent provider-send bypasses.
+- Documented acquisition versus transactional mail authorization boundaries.
+
+### UQ-07 — Billing, delivery, and recovery failure-path E2E
+- Added signed Stripe webhook replay coverage proving first-delivery application plus duplicate acknowledgement without duplicate entitlement mutation.
+- Added real delivery-API coverage for quote → acceptance → job creation and duplicate-job refusal.
+- Added closeout safety coverage for open shifts, unknown-cost preservation, frozen economics, explicit reopen, and closeout versioning.
+- Added real-Postgres stale-SENDING recovery coverage proving stale claims fail closed while recent in-flight sends remain untouched.
+
+## 2026-10-08 — Release Gate A toolchain drift fix
+
+- Fixed GitHub release, post-deploy smoke, uptime, and eval workflows still using Node 22 after the production toolchain moved to Node 26.
+- Expanded `check:toolchain` so all workflow-level Node pins are verified, preventing future release/runtime drift.
+- Re-ran source-level pilot hardening gates: tenant-resource, send-authorization, workflow pinning, monitoring assets, rollout contract, compose hardening, test-tier isolation, offline Prisma, architecture boundaries, and frontend mutation checks pass.
+- Full dependency-backed verification remains pending in a Node 26 environment with installed dependencies and real pilot provider/deployment credentials.
+
+## 2026-10-08 — UQ-09 Passkey/WebAuthn foundation
+- Added additive passkey credential and ceremony-challenge persistence.
+- Added RP ID/origin/HTTPS configuration validation and single-use challenge helpers.
+- Added source/DB tests and `check:passkey-foundation`.
+- Passkey ceremonies remain disabled until SimpleWebAuthn packages are installed and locked under the Node 26 toolchain; no hand-rolled verifier was introduced.
+
+## UQ-10 — Worker processor domain split (2026-10-08)
+- Split the 1,959-line worker processor catch-all into scoring, outreach, campaign send, follow-up, discovery and reply modules.
+- Preserved `worker.ts` queue wiring through a compatibility barrel.
+- Added a CI architecture gate to prevent processor-domain collapse and updated send-authorization drift checks for the new module paths.
+
+## 2026-10-08 — UQ-08 strict frontend CSP
+- Production `nginx.conf` CSP no longer allows `'unsafe-inline'`: `style-src 'self'`, `style-src-elem 'self'`, `style-src-attr 'none'`.
+- No runtime changes were needed: React applies `style={{}}` props through the CSSOM, which CSP does not govern. The earlier CSP-aware JSX runtime approach was dropped (it broke the jsdom test tier, lost inline-style cascade precedence and leaked rules for dynamic values).
+- Added `check:csp` to `npm run verify`: fails on a loosened policy, raw style-attribute/`<style>`/`innerHTML` writes in web code, or inline markup in `index.html`.
+- Added `e2e/csp-strict.spec.ts`, which serves the production build with `nginx.conf`'s exact headers (`scripts/serve-web-csp.mjs`), proves enforcement with a negative control, visits every hub and tab, and fails on any CSP violation.

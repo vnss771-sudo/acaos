@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '26'
   # The live Railway hosts; switch to the custom domain once it is added.
   SMOKE_API_URL: https://acaosapi-acaos.up.railway.app
   SMOKE_WEB_URL: https://acaosweb-acaos.up.railway.app

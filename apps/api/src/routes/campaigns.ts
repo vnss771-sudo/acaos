@@ -16,6 +16,7 @@ import { enforceSendReadiness } from '@acaos/backend-core/lib/config.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { invalidateWorkspaceStats } from '../lib/statsCache.js'
+import { tenantResourceScope } from '../middleware/tenantResource.js'
 import type { Assert, CreateCampaignRequest, Extends, LeadStage, SendCampaignRequest } from '@acaos/shared'
 
 export const campaignsRouter = Router()
@@ -157,6 +158,15 @@ campaignsRouter.post(
     res.status(201).json({ campaign })
   })
 )
+
+// Resource-id routes cannot advertise workspaceId in the request. Resolve the
+// campaign once at the router boundary, hide cross-tenant existence, and run every
+// downstream /:id handler inside the tenant guard context. Action-specific RBAC
+// remains in each mutation handler.
+campaignsRouter.use('/:id', tenantResourceScope({
+  resource: 'Campaign',
+  loadWorkspace: (id) => prisma.campaign.findUnique({ where: { id }, select: { workspaceId: true } }),
+}))
 
 // Get campaign by id
 campaignsRouter.get(

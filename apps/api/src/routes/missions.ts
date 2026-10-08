@@ -6,6 +6,7 @@ import { userBelongsToWorkspace, assertMinimumWorkspaceRole } from '../lib/works
 import { validate, workspaceIdField, nonEmptyString } from '../lib/validate.js'
 import { z } from 'zod'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
+import { tenantResourceScope } from '../middleware/tenantResource.js'
 import { getPack } from '../lib/packs/index.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
 import { getSendReadiness } from '../lib/sendReadiness.js'
@@ -135,6 +136,11 @@ missionsRouter.get(
 
 // Mission control plane: the mission + its playbook, recent discovery activity,
 // the prospects it owns, and the actionable outreach queue scoped to it.
+missionsRouter.use('/:id', tenantResourceScope({
+  resource: 'Mission',
+  loadWorkspace: (id) => prisma.mission.findUnique({ where: { id }, select: { workspaceId: true } }),
+}))
+
 missionsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {

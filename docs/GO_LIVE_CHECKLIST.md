@@ -16,7 +16,9 @@ for detail. Work top to bottom; don't skip the sign-off.
 
 - [ ] `master` is green: every CI check passes on the release commit, including the
       `required` roll-up and CodeQL.
-- [ ] `npm run verify` is clean locally (lint, typecheck, unit + DB + Redis tiers).
+- [ ] `npm run verify` is clean locally (static contracts, lint, typecheck, unit/web tests and production builds).
+- [ ] `npm run verify:services` is clean against disposable Postgres + Redis.
+- [ ] `npm run test:e2e` is green against the release-candidate stack.
 - [ ] `dist-pack/release-manifest.json` regenerated (`node scripts/make-zips.mjs`);
       record the `releaseId` — it is the immutable deployment contract.
 - [ ] No pending DB migration drift: CI's schema-drift check passed for this commit.
@@ -101,18 +103,20 @@ Health:
 Core smoke (full list in [SMOKE_TESTS](./SMOKE_TESTS.md)):
 - [ ] Signup → login → `/api/auth/me`.
 - [ ] Create workspace; create a lead/prospect.
-- [ ] AI research + outreach generation return content.
+- [ ] `npm run smoke:ai-provider` passes against the configured OpenAI provider/model (research, outreach, reply analysis; request metadata/token counts printed).
 - [ ] Stripe checkout creates a session; webhook verifies a CLI test event.
 - [ ] SMTP sends a test email; `POST /api/mailbox/sync` ingests a reply.
 
 The contractor loop (the core product — walk it end to end on a fresh workspace):
 - [ ] **Today** loads as the landing screen.
+- [ ] `npm run smoke:discovery-sources` passes for every enabled live source; for AusTender confirm an empty `No Records found` day advances rather than stalls the cursor.
 - [ ] **Work → Find work** shows matched tenders / development applications;
       **Pursue** → **Record quote** → **Client accepted** moves a card to the Won tab.
 - [ ] **Start the job** creates the job and its site in one click.
 - [ ] **Crew → Crew / Shifts / Roster**: add a crew member with a rate and log hours
       against the job's site.
 - [ ] **Work → Jobs & margins**: close out the job and see quoted vs delivered margin.
+- [ ] **Work → Scorecard** reflects the found → quoted → won → closeout path and source economics for the seeded journey.
 
 Mail and the rest of the app:
 - [ ] **Settings → mailbox**: *Sign in with Google / Microsoft* connects a mailbox (if
@@ -144,3 +148,15 @@ Mail and the rest of the app:
 - [ ] On-call owner assigned; alerting + dashboards live (see [SLO](./SLO.md)).
 - [ ] `releaseId` recorded in the deploy log.
 - [ ] Stakeholders notified.
+
+## Controlled-pilot policy gate (UQ-02)
+
+Before running the expensive pilot verification tiers, run:
+
+```bash
+npm run pilot:policy
+```
+
+The policy gate is fail-closed for the controlled production pilot. It requires an explicit production posture including `SAFE_LAUNCH_MODE=true`, `TENANT_GUARD_MODE=enforce`, `REPUTATION_GUARD_MODE=enforce`, `FOLLOWUPS_ENABLED=false`, an explicit `COMPLIANCE_GATE_ENABLED=true|false`, HTTPS `API_URL`/`WEB_URL`, required database/Redis/AI/billing/metrics configuration, and a resolvable release commit/ID. It writes machine-readable and human-readable evidence to `dist-pack/preflight/release-preflight.json` and `.md` by default.
+
+`npm run pilot:preflight` now invokes this policy gate first and exits before tests/provider smokes if the deployment configuration is unsafe. When `SMOKE_API_URL`, `SMOKE_WORKER_URL`, or `SMOKE_WEB_URL` are provided, the final deployment smoke is bound to the exact release version/commit/ID being certified.

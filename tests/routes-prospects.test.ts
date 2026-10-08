@@ -119,7 +119,7 @@ test('GET / succeeds for a member', async () => {
 
 test('GET /:id denies access to another workspace\'s prospect', async () => {
   const res = await server.request('/api/prospects/p-other', { headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('GET /:id returns 404 for an unknown prospect', async () => {
@@ -140,7 +140,7 @@ test('POST / requires companyName', async () => {
 
 test('DELETE /:id denies another workspace and does not delete', async () => {
   const res = await server.request('/api/prospects/p-other', { method: 'DELETE', headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
   assert.equal(prisma.callsTo('prospect', 'delete').length, 0)
 })
 
@@ -161,7 +161,7 @@ test('POST /:id/enrich returns a clean 503 when Apollo is not configured', async
 
 test('POST /:id/enrich still enforces workspace access before anything else', async () => {
   const res = await server.request('/api/prospects/p-other/enrich', { method: 'POST', headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('GET /:id/intents returns the prospect bridge intents for a member', async () => {
@@ -175,12 +175,12 @@ test('GET /:id/intents returns the prospect bridge intents for a member', async 
 
 test('GET /:id/intents denies a prospect in another workspace', async () => {
   const res = await server.request('/api/prospects/p-other/intents', { headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('POST /:id/intents/:intentId/draft denies another workspace', async () => {
   const res = await server.request('/api/prospects/p-other/intents/oi1/draft', { method: 'POST', headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('POST /:id/intents/:intentId/draft 404 when the intent is missing', async () => {
@@ -242,7 +242,7 @@ test('POST /:id/intents/:intentId/reject 409 for an already-sent intent', async 
 
 test('POST /:id/intents/:intentId/approve denies another workspace', async () => {
   const res = await server.request('/api/prospects/p-other/intents/oi1/approve', { method: 'POST', headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('POST /:id/intents/:intentId/approve 404 when the intent is missing', async () => {

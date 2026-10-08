@@ -123,7 +123,7 @@ describe('IDOR: leads', () => {
     const r = await server.request('/api/leads/' + LEAD_IN_B, {
       headers: { Authorization: bearer(USER_A) }
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
   })
 
   it('PATCH /api/leads/:id — user A cannot update a lead in workspace B', async () => {
@@ -132,7 +132,7 @@ describe('IDOR: leads', () => {
       headers: { Authorization: bearer(USER_A), 'Content-Type': 'application/json' },
       body: JSON.stringify({ stage: 'DEAD', score: 0 })
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
     const updates = prisma.callsTo('lead', 'update')
     assert.equal(updates.length, 0, 'lead.update must never be called')
   })
@@ -142,7 +142,7 @@ describe('IDOR: leads', () => {
       method: 'DELETE',
       headers: { Authorization: bearer(USER_A) }
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
     assert.equal(prisma.callsTo('lead', 'delete').length, 0, 'lead.delete must never be called')
   })
 })
@@ -185,7 +185,7 @@ describe('IDOR: campaigns', () => {
       headers: { Authorization: bearer(USER_A), 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Hijacked' })
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
     assert.equal(prisma.callsTo('campaign', 'update').length, 0)
   })
 
@@ -194,7 +194,7 @@ describe('IDOR: campaigns', () => {
       method: 'DELETE',
       headers: { Authorization: bearer(USER_A) }
     })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 404)
     assert.equal(prisma.callsTo('campaign', 'delete').length, 0)
   })
 })

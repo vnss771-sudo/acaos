@@ -186,7 +186,7 @@ test('GET /:id resolves the playbook when the mission has one', async () => {
 
 test('GET /:id denies access to another workspace\'s mission', async () => {
   const res = await server.request('/api/missions/m-other', { headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('GET /:id returns 404 for an unknown mission', async () => {
@@ -239,7 +239,7 @@ test('PATCH /:id denies another workspace and does not update', async () => {
   const res = await server.request('/api/missions/m-other', {
     method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ status: 'PAUSED' }),
   })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
   assert.equal(prisma.callsTo('mission', 'update').length, 0)
 })
 
@@ -253,6 +253,6 @@ test('POST /:id/score returns 404 for an unknown mission', async () => {
 
 test('POST /:id/score denies a non-admin of the mission workspace (no audit)', async () => {
   const res = await server.request('/api/missions/m-other/score', { method: 'POST', headers: jsonHeaders })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
   assert.equal(prisma.callsTo('auditEvent', 'create').length, 0)
 })

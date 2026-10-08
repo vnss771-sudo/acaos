@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { generateLeadResearch, generateOutreach, analyzeReply, buildOutreachUserPrompt, buildVerticalDesc, sanitizeUntrusted } from '../packages/backend-core/src/services/openai.ts'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { generateLeadResearch, generateOutreach, analyzeReply, buildOutreachUserPrompt, buildOutreachSystemPrompt, buildVerticalDesc, sanitizeUntrusted, completionText, hasUnsupportedSellerClaim } from '../packages/backend-core/src/services/openai.ts'
 import { ApiError } from '../apps/api/src/lib/http.ts'
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => void | Promise<void>) {
@@ -84,6 +86,18 @@ test('generateLeadResearch: does NOT throw the 503 when OPENAI_API_KEY is set (n
       // Any other error (network, OpenAI auth) is expected — key guard passed
     }
   })
+})
+
+test('completionText: rejects success responses with no choices or empty content', () => {
+  assert.throws(
+    () => completionText({ choices: [] }),
+    (err: unknown) => err instanceof ApiError && err.statusCode === 502 && /empty response/i.test(err.message),
+  )
+  assert.throws(
+    () => completionText({ choices: [{ message: { content: '  ' } }] }),
+    (err: unknown) => err instanceof ApiError && err.statusCode === 502,
+  )
+  assert.equal(completionText({ choices: [{ message: { content: '{"ok":true}' } }] }), '{"ok":true}')
 })
 
 // ---------------------------------------------------------------------------
@@ -173,4 +187,52 @@ test('buildOutreachUserPrompt: opens with the real personal hook when notes are 
 test('buildOutreachUserPrompt: never fabricates a relationship when no notes given', () => {
   const prompt = buildOutreachUserPrompt({ businessName: 'Acme Plumbing' })
   assert.match(prompt, /genuinely cold email; do NOT fabricate a prior relationship/i)
+})
+
+test('buildOutreachSystemPrompt: forbids unsupported seller features and outcome claims', () => {
+  const prompt = buildOutreachSystemPrompt({ businessName: 'Acme Plumbing' })
+  assert.match(prompt, /SELLER-CLAIM SAFETY/)
+  assert.match(prompt, /Only claim a seller capability or proof point when it is explicitly present/i)
+  assert.match(prompt, /If neither is provided, do not write "we help"/i)
+})
+
+test('hasUnsupportedSellerClaim: flags invented capabilities, anecdotes, and customer proof', () => {
+  assert.equal(hasUnsupportedSellerClaim('We help electrical teams cut admin time.'), true)
+  assert.equal(hasUnsupportedSellerClaim('I can show a concrete example from another electrical team.'), true)
+  assert.equal(hasUnsupportedSellerClaim('I often hear this from growing contractors.'), true)
+  assert.equal(hasUnsupportedSellerClaim('Would you be open to a quick conversation about this?'), false)
+})
+
+test('generateOutreach: rejects unsupported seller claims from the provider when no seller facts exist', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      id: 'mock', object: 'chat.completion', created: 1, model: 'gpt-5-mini',
+      choices: [{ index: 0, finish_reason: 'stop', message: {
+        role: 'assistant',
+        content: JSON.stringify({
+          subject: 'quick question',
+          email: 'I can show a concrete example from another electrical team.',
+          followup: 'Would this be relevant?',
+        }),
+        },
+      }],
+    }))
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  try {
+    await withEnv({
+      OPENAI_API_KEY: 'mock-key',
+      OPENAI_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+      OPENAI_MODEL: 'gpt-5-mini',
+    }, async () => {
+      await assert.rejects(
+        () => generateOutreach({ businessName: 'Fictional Electrical' }),
+        (err: unknown) => err instanceof ApiError && err.statusCode === 502 && /unsupported seller claims/i.test(err.message),
+      )
+    })
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()))
+  }
 })

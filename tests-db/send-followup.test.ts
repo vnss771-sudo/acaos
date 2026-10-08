@@ -116,6 +116,57 @@ test('CANCELLED: a campaign with auto-followups disabled cancels the task, never
   assert.equal(await prisma.outreachSent.count({ where: { leadId: lead.id } }), 0)
 })
 
+test('BLOCKED: workspace suppression applied after scheduling blocks the follow-up before dispatch', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await seedSmtp(workspace.id)
+  const campaign = await seedCampaign(workspace.id, true)
+  await seedStep(campaign.id, 2, 3)
+  const lead = await seedLead(workspace.id, campaign.id)
+  const task = await seedDueTask(workspace.id, campaign.id, lead.id, 2)
+
+  // The task was already scheduled when an operator pulled the workspace drain
+  // switch. Authorization is deliberately re-evaluated at execution time.
+  await prisma.workspace.update({
+    where: { id: workspace.id },
+    data: { sendSuppressed: true, sendSuppressedReason: 'operator safety stop' },
+  })
+
+  const mailer = recordingMailer()
+  const res = await sendFollowupTask(task.id, { sendMail: mailer.fn })
+
+  assert.equal(res.status, 'BLOCKED')
+  assert.equal(res.reason, 'WORKSPACE_SUPPRESSED')
+  assert.deepEqual(mailer.sent, [])
+  assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id, leadId: lead.id } }), 0)
+  const after = await prisma.followupTask.findUnique({ where: { id: task.id } })
+  assert.equal(after!.status, 'BLOCKED')
+  assert.equal(after!.cancelledReason, 'WORKSPACE_SUPPRESSED')
+})
+
+test('BLOCKED: direct follow-up execution still honors the global FEATURE_SEND kill switch', async () => {
+  const prior = process.env.FEATURE_SEND
+  process.env.FEATURE_SEND = 'false'
+  try {
+    const { workspace } = await seedUserWithWorkspace()
+    await seedSmtp(workspace.id)
+    const campaign = await seedCampaign(workspace.id, true)
+    await seedStep(campaign.id, 2, 3)
+    const lead = await seedLead(workspace.id, campaign.id)
+    const task = await seedDueTask(workspace.id, campaign.id, lead.id, 2)
+
+    const mailer = recordingMailer()
+    const res = await sendFollowupTask(task.id, { sendMail: mailer.fn })
+
+    assert.equal(res.status, 'BLOCKED')
+    assert.equal(res.reason, 'FEATURE_SEND_DISABLED')
+    assert.deepEqual(mailer.sent, [])
+    assert.equal(await prisma.outreachSent.count({ where: { campaignId: campaign.id, leadId: lead.id } }), 0)
+  } finally {
+    if (prior === undefined) delete process.env.FEATURE_SEND
+    else process.env.FEATURE_SEND = prior
+  }
+})
+
 test('BLOCKED: a suppressed recipient is blocked at send time, never dispatched', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)

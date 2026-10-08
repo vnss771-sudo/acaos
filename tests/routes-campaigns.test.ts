@@ -93,7 +93,7 @@ test('GET /:id returns 404 for unknown', async () => {
   assert.equal((await server.request('/api/campaigns/missing', { headers: auth() })).status, 404)
 })
 test('GET /:id denies a campaign in another workspace', async () => {
-  assert.equal((await server.request('/api/campaigns/c-other', { headers: auth() })).status, 403)
+  assert.equal((await server.request('/api/campaigns/c-other', { headers: auth() })).status, 404)
 })
 
 test('PATCH updates a campaign for a member', async () => {
@@ -103,11 +103,11 @@ test('PATCH updates a campaign for a member', async () => {
 })
 test('PATCH denies another workspace', async () => {
   const res = await server.request('/api/campaigns/c-other', { method: 'PATCH', headers: jsonAuth(), body: JSON.stringify({ name: 'X' }) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('GET /:id/attribution denies another workspace, returns the funnel for a member', async () => {
-  assert.equal((await server.request('/api/campaigns/c-other/attribution', { headers: auth() })).status, 403)
+  assert.equal((await server.request('/api/campaigns/c-other/attribution', { headers: auth() })).status, 404)
 
   const s = spec()
   s.contactEvent = { findMany: async (a: any) => (a.where.type === 'SENT' ? [{ leadId: 'l1' }, { leadId: 'l2' }] : [{ leadId: 'l1' }]) } as any
@@ -123,7 +123,7 @@ test('GET /:id/attribution denies another workspace, returns the funnel for a me
 })
 
 test('DELETE removes a member campaign but denies another workspace', async () => {
-  assert.equal((await server.request('/api/campaigns/c-other', { method: 'DELETE', headers: auth() })).status, 403)
+  assert.equal((await server.request('/api/campaigns/c-other', { method: 'DELETE', headers: auth() })).status, 404)
   assert.equal(prisma.callsTo('campaign', 'delete').length, 0)
   assert.equal((await server.request('/api/campaigns/c1', { method: 'DELETE', headers: auth() })).status, 200)
   assert.equal(prisma.callsTo('campaign', 'delete').length, 1)

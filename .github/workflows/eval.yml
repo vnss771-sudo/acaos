@@ -15,7 +15,7 @@ permissions:
   contents: write # the eval job commits its own score-history JSON back to the repo (see below)
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '26'
 
 jobs:
   eval:

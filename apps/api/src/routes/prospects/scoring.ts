@@ -12,7 +12,7 @@ import { userHasWorkspaceAccess } from '../../lib/workspaces.js'
 import { enqueueScoreProspects, enqueueCalibrate } from '@acaos/backend-core/lib/queues.js'
 import { recommendProspect, loadProspectWithSignals } from '../../lib/recommendProspect.js'
 import { dollarsToCents, centsToDollars } from '../../lib/money.js'
-import { withDollars, getICP } from './helpers.js'
+import { prospectTenantScope, withDollars, getICP } from './helpers.js'
 import { validate, parseParams, idField } from '../../lib/validate.js'
 import { z } from 'zod'
 
@@ -29,7 +29,7 @@ const outcomeBodySchema = z.object({
 
 export function registerScoringRoutes(prospectsRouter: Router) {
   // POST /api/prospects/:id/rescore
-  prospectsRouter.post('/:id/rescore', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/rescore', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await prisma.prospect.findUnique({
       where: { id: req.params.id as string },
       include: { signals: true },
@@ -60,7 +60,7 @@ export function registerScoringRoutes(prospectsRouter: Router) {
   }))
 
   // POST /api/prospects/:id/outcome
-  prospectsRouter.post('/:id/outcome', validate(outcomeBodySchema), asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/outcome', prospectTenantScope, validate(outcomeBodySchema), asyncHandler(async (req, res) => {
     const { id } = parseParams(prospectParamsSchema, req)
     const prospect = await prisma.prospect.findUnique({ where: { id } })
     if (!prospect) throw new ApiError(404, 'Prospect not found')
@@ -105,7 +105,7 @@ export function registerScoringRoutes(prospectsRouter: Router) {
   }))
 
   // POST /api/prospects/:id/recommend
-  prospectsRouter.post('/:id/recommend', asyncHandler(async (req, res) => {
+  prospectsRouter.post('/:id/recommend', prospectTenantScope, asyncHandler(async (req, res) => {
     const prospect = await loadProspectWithSignals(req.params.id as string)
     if (!prospect) throw new ApiError(404, 'Prospect not found')
 

@@ -121,6 +121,8 @@ model User {
   updatedAt           DateTime                 @updatedAt
   memberships         Membership[]
   refreshTokens       RefreshToken[]
+  passkeys            PasskeyCredential[]
+  passkeyChallenges   PasskeyChallenge[]
   passwordResetTokens PasswordResetToken[]
   emailVerifications  EmailVerificationToken[]
   opsCrewLinks        OpsCrewMember[]
@@ -607,6 +609,40 @@ model ScoringOutcome {
   @@index([workspaceId])
   @@index([scoringModelId])
   @@index([leadId])
+}
+
+
+model PasskeyCredential {
+  id           String   @id @default(cuid())
+  userId       String
+  credentialId String   @unique
+  publicKey    Bytes
+  counter      BigInt   @default(0)
+  transports   String[] @default([])
+  deviceType   String?
+  backedUp     Boolean  @default(false)
+  name         String?
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, revokedAt])
+}
+
+model PasskeyChallenge {
+  id        String   @id @default(cuid())
+  userId    String
+  purpose   String
+  challenge String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
 }
 
 model RefreshToken {

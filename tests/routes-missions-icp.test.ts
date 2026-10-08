@@ -75,7 +75,7 @@ const jsonHeaders = { Authorization: bearer(MEMBER), 'Content-Type': 'applicatio
 
 test('GET /:id/icp denies access to another workspace\'s mission', async () => {
   const res = await server.request('/api/missions/m-other/icp', { headers: auth(MEMBER) })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 test('GET /:id/icp returns 404 for an unknown mission', async () => {
@@ -112,7 +112,7 @@ test('PATCH /:id/icp denies a non-admin/other-workspace caller and does not writ
   const res = await server.request('/api/missions/m-other/icp', {
     method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ override: { targetIndustries: ['X'] } }),
   })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
   assert.equal(prisma.callsTo('mission', 'update').length, 0)
 })
 

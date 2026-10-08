@@ -39,7 +39,7 @@ retry waits for the breaker to probe rather than burning all attempts while OPEN
    send worker will then skip leads needing generation as `AI_GENERATION_FAILED`
    rather than erroring. Re-enable when OpenAI recovers.
 4. If only model availability changed, check/adjust `OPENAI_MODEL`
-   (default `gpt-4o-mini`).
+   (default `gpt-5-mini`).
 
 ## Diagnosis steps
 - Distinguish outage vs. our key/quota: 401/429 from OpenAI means

@@ -79,11 +79,12 @@ platform starts conservative.
 
 | Var | Default | Scope | Notes |
 |---|---|---|---|
-| `OPENAI_MODEL` | `gpt-4o-mini` | worker | Generation model. |
-| `OPENAI_MODEL_ALLOWLIST` | `''` | worker | Comma-separated allowlist; empty = allow the configured model. |
-| `OPENAI_TIMEOUT_MS` | `30000` | worker | Per-call request timeout. |
-| `OPENAI_MAX_TOKENS_RESEARCH` / `_OUTREACH` / `_REPLY` | per-task (capped at 4000) | worker | Output-token ceilings per task. |
-| `AI_COST_CENTS_RESEARCH` / `_OUTREACH` / `_REPLY` | `0.1` / `0.08` / `0.05` | worker | Cents-per-call estimates for the `acaos_ai_cost_cents_total` metric. |
+| `OPENAI_BASE_URL` | SDK default | api, worker | Optional OpenAI-compatible endpoint override; also accepts `OPENAI_API_BASE`. |
+| `OPENAI_MODEL` | `gpt-5-mini` | api, worker | Generation model; unknown values fall back to the default. |
+| `OPENAI_MODEL_ALLOWLIST` | `''` | api, worker | Comma-separated additional models to allow; the default safe model list remains enabled. |
+| `OPENAI_TIMEOUT_MS` | `30000` | api, worker | Per-call request timeout. |
+| `OPENAI_MAX_TOKENS_RESEARCH` / `_OUTREACH` / `_REPLY` | per-task (capped at 4000) | api, worker | Completion-token ceilings per task; GPT-5/reasoning families use `max_completion_tokens`. |
+| `AI_COST_CENTS_RESEARCH` / `_OUTREACH` / `_REPLY` | `0.32` / `0.25` / `0.22` | api, worker | Rough GPT-5-mini cents-per-call estimates for the `acaos_ai_cost_cents_total` metric; tune for actual model usage. |
 | `REPLY_CLASSIFICATION_MIN_CONFIDENCE` | (code default) | worker | Min confidence before a NOT_INTERESTED reply auto-kills a lead. |
 | `WORKSPACE_AI_RATE_MAX` | (code default) | api | Per-workspace AI request rate ceiling. |
 
@@ -136,8 +137,13 @@ The web image ships a strict CSP. Two production hardening notes:
 - `connect-src 'self' https:` is intentionally broad so the SPA can reach any HTTPS
   API origin out of the box. **Tighten it to your exact API origin** in production
   (e.g. `connect-src 'self' https://api.example.com`) to narrow exfiltration paths.
-- `style-src-attr 'unsafe-inline'` is allowed because the app uses React inline
-  styles; migrating those to CSS classes lets you drop the inline-style allowance.
+- There is no `'unsafe-inline'` anywhere: `style-src-elem 'self'` and
+  `style-src-attr 'none'`. React `style={{}}` props still work because the client
+  renderer applies them through the CSSOM (`element.style`), which CSP does not
+  govern. What CSP blocks — raw `style=""` attributes via `setAttribute`,
+  `cssText`, `innerHTML`, injected `<style>` elements — is rejected by
+  `npm run check:csp`, and `e2e/csp-strict.spec.ts` drives every hub of the
+  production build under this exact header and fails on any CSP violation.
 
 ---
 
@@ -152,3 +158,21 @@ app. Set per-invocation, not in deployment config: `DEPLOY_*`, `SMOKE_*`,
 
 *Keep this in sync when adding a `process.env` read: a new runtime variable should
 land here (and in `.env.example` if it's core/required) in the same change.*
+
+
+### OpenAI model compatibility
+Model compatibility is centralized in `packages/backend-core/src/lib/modelProfiles.ts`. Reasoning families use `max_completion_tokens` and do not receive `temperature`; standard chat models retain `max_tokens` plus the configured sampling temperature. Run `npm run smoke:ai-provider` with production-like credentials before promoting a model change.
+
+## Passkeys / WebAuthn (foundation; not enabled yet)
+
+ACAOS now includes the persistent credential/challenge schema and relying-party configuration contract for WebAuthn. The cryptographic ceremony endpoints remain intentionally disabled until the vetted SimpleWebAuthn server/browser packages are installed and locked in `package-lock.json` under the Node 26 toolchain.
+
+When that implementation is activated, the required configuration will be:
+
+- `WEBAUTHN_ENABLED=true`
+- `WEBAUTHN_RP_ID=<registrable relying-party domain>`
+- `WEBAUTHN_ORIGIN=https://<exact application origin>` (falls back to `APP_URL`)
+- `WEBAUTHN_RP_NAME=ACAOS` (optional display name)
+- `WEBAUTHN_CHALLENGE_TTL_MS=300000` (optional; minimum one minute)
+
+ACAOS rejects non-HTTPS WebAuthn origins outside localhost and requires the origin hostname to equal the RP ID or be its subdomain. Do not enable `WEBAUTHN_ENABLED` until the ceremony verifier is present.

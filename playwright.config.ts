@@ -30,6 +30,16 @@ const serverEnv = {
   // The suite drives many auth requests from one IP; without this the per-IP
   // auth limiter (10/15min) 429s the run. Test-only — never set in production.
   RATE_LIMIT_DISABLED: 'true',
+  SAFE_LAUNCH_MODE: 'true',
+  REPUTATION_GUARD_MODE: 'enforce',
+  REPUTATION_MIN_SENDS: '1',
+  REPUTATION_MAX_BOUNCE_RATE: '0',
+  // UQ-07 exercises the real Stripe webhook signature/idempotency path with a
+  // deterministic local test secret. No Stripe network request is made.
+  STRIPE_SECRET_KEY: 'sk_test_e2e_local_only',
+  STRIPE_WEBHOOK_SECRET: 'whsec_e2e_local_secret',
+  STRIPE_PRICE_STARTER: 'price_e2e_starter',
+  STRIPE_PRICE_GROWTH: 'price_e2e_growth',
 } as Record<string, string>
 
 export default defineConfig({
@@ -66,6 +76,17 @@ export default defineConfig({
       url: 'http://localhost:5173',
       env: serverEnv,
       timeout: 60_000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      // Production web build on :4173 with nginx.conf's exact security headers,
+      // so e2e/csp-strict.spec.ts runs under the real strict CSP.
+      command: 'npm run build -w @acaos/web && node scripts/serve-web-csp.mjs --port 4173',
+      url: 'http://localhost:4173',
+      env: serverEnv,
+      timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       stdout: 'pipe',
       stderr: 'pipe',

@@ -4,8 +4,10 @@
 // operation on a tenant-owned model as:
 //
 //   - 'skipped'        — not our concern: non-tenant model, no active context, or a
-//                        single-row op keyed by a unique id (the existing fetch-then-
-//                        authorize pattern is the control for those).
+//                        single-row op keyed by a unique id. API resource-id routes
+//                        establish ownership/context at the router boundary via
+//                        tenantResourceScope; worker/internal flows retain explicit
+//                        parent/workspace authorization.
 //   - 'scoped'         — a multi-row read/write (or create) explicitly constrained by
 //                        workspaceId === the context workspace. The safe case.
 //   - 'scoped_via_fk'  — constrained by a tenant-owned foreign key (campaignId,
@@ -48,10 +50,11 @@ export const TENANT_FOREIGN_KEYS: ReadonlyArray<string> = [
   'outreachIntentId', 'outreachSentId', 'discoveryRunId', 'signalId',
 ]
 
-// Single-row ops keyed by a unique where: they target at most one row by its unique
-// id, so they can't carry a workspaceId filter. The fetch-then-authorize pattern (the
-// row's workspaceId is checked after load) is the control for these; the guard does
-// not second-guess them.
+// Single-row ops keyed by a unique where target at most one row. Resource-id API
+// routes establish tenant ownership before the handler through tenantResourceScope;
+// other internal flows use explicit parent/workspace authorization. The Prisma guard
+// therefore does not second-guess these single-row operations and instead protects
+// the multi-row operations executed inside the established tenant context.
 const SINGLE_ROW_OPS: ReadonlySet<string> = new Set([
   'findUnique', 'findUniqueOrThrow', 'update', 'delete', 'upsert',
 ])

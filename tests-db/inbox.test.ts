@@ -318,7 +318,7 @@ test('reply/resolve: tenant-scoped', async () => {
   const open = await prisma.inboxReplySend.create({
     data: { workspaceId: b.workspace.id, outreachSentId: reply.id, idempotencyKey: 'key-tenant', toEmail: 'lead@x.test', subject: 'Re: Intro', body: 'x', attemptedAt: new Date(0) },
   })
-  assert.equal((await resolveReq(a.user.id, reply.id, open.id, { workspaceId: b.workspace.id, outcome: 'sent' })).status, 403)
+  assert.equal((await resolveReq(a.user.id, reply.id, open.id, { workspaceId: b.workspace.id, outcome: 'sent' })).status, 404)
   assert.equal((await resolveReq(a.user.id, reply.id, open.id, { workspaceId: a.workspace.id, outcome: 'sent' })).status, 404)
   assert.equal((await prisma.inboxReplySend.findUniqueOrThrow({ where: { id: open.id } })).status, 'SENDING')
 })
@@ -404,6 +404,25 @@ test('reply/send: blocks a suppressed (unsubscribed) recipient', async () => {
   assert.equal(res.status, 409)
   assert.match(res.body.error, /unsubscribed|suppressed/i)
   assert.equal(sent.length, 0)
+})
+
+test('reply/send: canonical authorization honors FEATURE_SEND even without route middleware', async () => {
+  const prior = process.env.FEATURE_SEND
+  process.env.FEATURE_SEND = 'false'
+  try {
+    const { user, workspace } = await seedUserWithWorkspace()
+    await withMailbox(workspace.id)
+    const reply = await seedReply(workspace.id)
+
+    const res = await sendReq(user.id, reply.id, { workspaceId: workspace.id, body: 'hi', idempotencyKey: 'key-feature-send-off' })
+    assert.equal(res.status, 503)
+    assert.match(String(res.body.error ?? ''), /temporarily unavailable/i)
+    assert.equal(sent.length, 0)
+    assert.equal(await prisma.inboxReplySend.count(), 0)
+  } finally {
+    if (prior === undefined) delete process.env.FEATURE_SEND
+    else process.env.FEATURE_SEND = prior
+  }
 })
 
 test('reply/send: blocks an operator-suspended workspace', async () => {
@@ -583,7 +602,7 @@ test('reply/feedback: 404 for a reply that does not exist', async () => {
   assert.equal(res.status, 404)
 })
 
-test('reply/feedback: 403 when the reply belongs to a different workspace', async () => {
+test('reply/feedback: 404 when the reply belongs to a different workspace', async () => {
   const a = await seedUserWithWorkspace('a3@x.test')
   const b = await seedUserWithWorkspace('b3@x.test')
   const reply = await seedReply(b.workspace.id)
@@ -593,7 +612,7 @@ test('reply/feedback: 403 when the reply belongs to a different workspace', asyn
     headers: jsonAuth(a.user.id),
     body: JSON.stringify({ workspaceId: a.workspace.id, feedback: 'correct' }),
   })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
 })
 
 // ── POST /reply/:replyId/draft — AI draft for the composer ──────────────────

@@ -71,7 +71,7 @@ test('a prospect can only be converted once — a second attempt 409s without cr
   assert.equal(leadCount, 1, 'only the first conversion should have created a lead')
 })
 
-test('convert-to-lead denies (403) a caller who is not a member of the prospect\'s workspace', async () => {
+test('convert-to-lead denies (404) a caller who is not a member of the prospect\'s workspace', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const other = await seedUserWithWorkspace('other@x.test')
   const p = await prisma.prospect.create({ data: { workspaceId: other.workspace.id, companyName: 'Other Co' } })
@@ -79,7 +79,7 @@ test('convert-to-lead denies (403) a caller who is not a member of the prospect\
   const res = await prospects.request(`/api/prospects/${p.id}/convert-to-lead`, {
     method: 'POST', headers: jsonAuth(user.id), body: JSON.stringify({}),
   })
-  assert.equal(res.status, 403)
+  assert.equal(res.status, 404)
   assert.equal(await prisma.lead.count({ where: { workspaceId: workspace.id } }), 0)
 })
 

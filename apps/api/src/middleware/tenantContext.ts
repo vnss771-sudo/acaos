@@ -12,9 +12,10 @@ import { tenantGuardMode } from '@acaos/backend-core/lib/tenantGuard.js'
 // "claimed" workspace; the guard then verifies that the queries the handler runs are
 // actually scoped to it, so a handler that strays to another workspace is flagged
 // (observe) or rejected (enforce). Resource-id-only routes (e.g. /campaigns/:id,
-// where the workspace is derived from the resource) carry no request workspaceId and
-// fall through uncovered for now — the fetch-then-authorize pattern remains their
-// control; wrapping those handlers explicitly is the next coverage step.
+// where the workspace is derived from the resource) carry no request workspaceId.
+// Those are covered by tenantResourceScope on the resource routers: it resolves the
+// resource workspace, verifies membership, then runs the downstream handler in this
+// same AsyncLocalStorage context.
 //
 // A strict no-op when the guard is off (the default), so it adds nothing to the hot
 // path until an operator turns the guard on.

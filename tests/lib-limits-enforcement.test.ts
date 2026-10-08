@@ -101,12 +101,12 @@ test('assertAiUsageAllowed is read-only — it never increments usage', async ()
 })
 
 test('growth plan has no call-count cap but IS blocked by the dollar spend ceiling', async () => {
-  // AI_RESEARCH costs 0.1 cents/call by default; 500,000 calls = 50,000 cents,
+  // AI_RESEARCH costs 0.32 cents/call by default; 156,250 calls = 50,000 cents,
   // exactly the default growth ceiling ($500) — growth's aiCallsPerMonth is
   // Infinity, so only the dollar ceiling can stop this.
   install(spec({
     workspace: { plan: 'growth', subscriptionStatus: 'active' },
-    records: [{ action: 'AI_RESEARCH', count: 500_000 }],
+    records: [{ action: 'AI_RESEARCH', count: 156_250 }],
   }))
   await assert.rejects(
     () => assertAiUsageAllowed('ws1'),
@@ -114,10 +114,10 @@ test('growth plan has no call-count cap but IS blocked by the dollar spend ceili
   )
 })
 
-test('growth plan is allowed one cent below its dollar spend ceiling', async () => {
+test('growth plan is allowed below its dollar spend ceiling at the current model rate', async () => {
   install(spec({
     workspace: { plan: 'growth', subscriptionStatus: 'active' },
-    records: [{ action: 'AI_RESEARCH', count: 499_990 }], // 49,999.00 cents, just under $500
+    records: [{ action: 'AI_RESEARCH', count: 156_246 }], // 49,998.72 cents, just under $500
   }))
   await assertAiUsageAllowed('ws1') // should not throw
 })

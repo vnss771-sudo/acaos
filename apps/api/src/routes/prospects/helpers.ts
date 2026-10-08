@@ -1,4 +1,5 @@
 import { ApiError } from '../../lib/http.js'
+import { tenantResourceScope } from '../../middleware/tenantResource.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { centsToDollars } from '../../lib/money.js'
@@ -7,6 +8,12 @@ import { z } from 'zod'
 import type { ICPConfig, SignalType } from '@acaos/backend-core/lib/signalEngine.js'
 import type { Assert, Extends, DiscoverProspectsRequest, MissionIcpOverrideFields } from '@acaos/shared'
 import type { IndustryPack } from '../../lib/packs/types.js'
+
+
+export const prospectTenantScope = tenantResourceScope({
+  resource: 'Prospect',
+  loadWorkspace: (id) => prisma.prospect.findUnique({ where: { id }, select: { workspaceId: true } }),
+})
 
 // Request contract for POST /discover, pinned to the shared type so they can't drift.
 export const discoverSchema = z.object({
