@@ -1,5 +1,6 @@
 import { type Page, type APIRequestContext, expect } from '@playwright/test'
 import { PrismaClient } from '@prisma/client'
+import { randomUUID } from 'node:crypto'
 
 export const PASSWORD = 'Sup3rStrongPass!'
 
@@ -11,7 +12,7 @@ function db(): PrismaClient {
 
 /** Unique, lowercase email so parallel/repeat runs never collide on the unique index. */
 export function uniqueEmail(): string {
-  return `e2e+${Date.now()}_${Math.random().toString(36).slice(2, 8)}@example.com`
+  return `e2e+${Date.now()}_${randomUUID().slice(0, 8)}@example.com`
 }
 
 /**
@@ -138,7 +139,7 @@ export async function seedDeliveryOpportunity(workspaceId: string): Promise<stri
     data: {
       workspaceId,
       source: 'e2e',
-      externalId: `e2e_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      externalId: `e2e_${Date.now()}_${randomUUID().slice(0, 8)}`,
       kind: 'CONTRACT_AWARD',
       title: 'E2E Warehouse Electrical Package',
       description: 'Delivery-loop E2E fixture',
@@ -147,7 +148,7 @@ export async function seedDeliveryOpportunity(workspaceId: string): Promise<stri
       matchedTrades: ['electrical'],
       reasons: ['E2E deterministic fixture'],
       recommendedAction: 'Review and quote',
-      contentHash: `e2e_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      contentHash: `e2e_${Date.now()}_${randomUUID().slice(0, 8)}`,
     },
     select: { id: true },
   })
@@ -158,7 +159,7 @@ export async function seedCrewMember(workspaceId: string, baseRate = 50): Promis
   const row = await db().opsCrewMember.create({
     data: {
       workspaceId,
-      employeeCode: `E2E-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      employeeCode: `E2E-${Date.now()}-${randomUUID().slice(0, 6)}`,
       fullName: 'E2E Crew Member',
       role: 'Electrician',
       baseRate,
