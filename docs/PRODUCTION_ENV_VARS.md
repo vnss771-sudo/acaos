@@ -122,3 +122,19 @@ The worker periodically purges aged data and reclaims stale `SENDING` rows. The 
 
 ### OpenAI release smoke
 Before enabling a new model or promoting a release candidate, run `OPENAI_API_KEY=... npm run smoke:ai-provider`. The smoke exercises research, outreach and reply analysis through the production adapter and prints model, latency and provider token counts. Deterministic malformed/empty/seller-claim/refund cases remain covered in the normal test suites.
+
+## Controlled-pilot preflight contract
+
+For the supervised production pilot, `npm run pilot:policy` treats the following posture as release-critical rather than advisory:
+
+- `NODE_ENV=production`
+- `SAFE_LAUNCH_MODE=true`
+- `TENANT_GUARD_MODE=enforce`
+- `REPUTATION_GUARD_MODE=enforce`
+- `FOLLOWUPS_ENABLED=false` (explicitly set)
+- `COMPLIANCE_GATE_ENABLED=true|false` (must be explicit; legal approval determines which value)
+- HTTPS `API_URL` and `WEB_URL`
+- database, Redis, JWT/encryption, OpenAI, Stripe plan/webhook, and metrics configuration present
+- a resolvable release commit and release ID
+
+The gate emits `release-preflight.json` and `release-preflight.md`. A FAIL makes the command exit non-zero. WARN is reserved for non-critical posture such as relying on `WEB_URL` as the sole CORS origin fallback.

@@ -32,3 +32,13 @@
 - Queue research job
 - Confirm worker picks it up
 - Confirm DB side-effect exists
+
+## Pilot preflight ordering
+
+The controlled-pilot command now runs the strict configuration policy before any expensive verification:
+
+```bash
+npm run pilot:preflight
+```
+
+Order: policy contract → repository verification → DB/Redis tiers → browser E2E → OpenAI smoke → discovery smoke → release metadata → optional deployed smoke. If deployment smoke URLs are supplied, the smoke must report the same release ID/commit as the candidate currently being certified.

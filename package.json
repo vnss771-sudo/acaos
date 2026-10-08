@@ -63,7 +63,8 @@
     "doctor": "node scripts/doctor.mjs",
     "smoke:ai-provider": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/smoke-ai-provider.ts",
     "smoke:discovery-sources": "NODE_OPTIONS=--conditions=acaos-src tsx scripts/smoke-discovery-sources.mjs",
-    "pilot:preflight": "bash scripts/pilot-preflight.sh"
+    "pilot:preflight": "bash scripts/pilot-preflight.sh",
+    "pilot:policy": "node scripts/preflight-contract.mjs"
   },
   "overrides": {
     "nodemailer": "^10.0.13",

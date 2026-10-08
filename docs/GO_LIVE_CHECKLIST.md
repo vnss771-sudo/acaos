@@ -148,3 +148,15 @@ Mail and the rest of the app:
 - [ ] On-call owner assigned; alerting + dashboards live (see [SLO](./SLO.md)).
 - [ ] `releaseId` recorded in the deploy log.
 - [ ] Stakeholders notified.
+
+## Controlled-pilot policy gate (UQ-02)
+
+Before running the expensive pilot verification tiers, run:
+
+```bash
+npm run pilot:policy
+```
+
+The policy gate is fail-closed for the controlled production pilot. It requires an explicit production posture including `SAFE_LAUNCH_MODE=true`, `TENANT_GUARD_MODE=enforce`, `REPUTATION_GUARD_MODE=enforce`, `FOLLOWUPS_ENABLED=false`, an explicit `COMPLIANCE_GATE_ENABLED=true|false`, HTTPS `API_URL`/`WEB_URL`, required database/Redis/AI/billing/metrics configuration, and a resolvable release commit/ID. It writes machine-readable and human-readable evidence to `dist-pack/preflight/release-preflight.json` and `.md` by default.
+
+`npm run pilot:preflight` now invokes this policy gate first and exits before tests/provider smokes if the deployment configuration is unsafe. When `SMOKE_API_URL`, `SMOKE_WORKER_URL`, or `SMOKE_WEB_URL` are provided, the final deployment smoke is bound to the exact release version/commit/ID being certified.
