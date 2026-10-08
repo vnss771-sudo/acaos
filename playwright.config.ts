@@ -34,6 +34,12 @@ const serverEnv = {
   REPUTATION_GUARD_MODE: 'enforce',
   REPUTATION_MIN_SENDS: '1',
   REPUTATION_MAX_BOUNCE_RATE: '0',
+  // UQ-07 exercises the real Stripe webhook signature/idempotency path with a
+  // deterministic local test secret. No Stripe network request is made.
+  STRIPE_SECRET_KEY: 'sk_test_e2e_local_only',
+  STRIPE_WEBHOOK_SECRET: 'whsec_e2e_local_secret',
+  STRIPE_PRICE_STARTER: 'price_e2e_starter',
+  STRIPE_PRICE_GROWTH: 'price_e2e_growth',
 } as Record<string, string>
 
 export default defineConfig({

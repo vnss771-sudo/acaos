@@ -231,3 +231,9 @@
 - Added append-only allow/deny audit evidence to the centralized outbound acquisition send policy.
 - Added `check:send-authorization` to pin reviewed mail call sites and prevent silent provider-send bypasses.
 - Documented acquisition versus transactional mail authorization boundaries.
+
+### UQ-07 — Billing, delivery, and recovery failure-path E2E
+- Added signed Stripe webhook replay coverage proving first-delivery application plus duplicate acknowledgement without duplicate entitlement mutation.
+- Added real delivery-API coverage for quote → acceptance → job creation and duplicate-job refusal.
+- Added closeout safety coverage for open shifts, unknown-cost preservation, frozen economics, explicit reopen, and closeout versioning.
+- Added real-Postgres stale-SENDING recovery coverage proving stale claims fail closed while recent in-flight sends remain untouched.

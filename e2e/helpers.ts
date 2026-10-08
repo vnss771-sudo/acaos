@@ -59,13 +59,15 @@ export async function getWorkspaceId(request: APIRequestContext, token: string):
   return data.workspaces[0].id as string
 }
 
-export async function createApiAccount(request: APIRequestContext): Promise<{ email: string; token: string; workspaceId: string }> {
+export async function createApiAccount(request: APIRequestContext): Promise<{ email: string; token: string; workspaceId: string; userId: string }> {
   const email = uniqueEmail()
   const res = await request.post('/api/auth/signup', { data: { email, password: PASSWORD, name: 'E2E API Tester' } })
   expect(res.ok(), `signup failed: ${res.status()} ${await res.text()}`).toBeTruthy()
   const body = await res.json() as { token: string; workspace: { id: string } }
   await verifyEmailInDb(email)
-  return { email, token: body.token, workspaceId: body.workspace.id }
+  const user = await db().user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } })
+  if (!user) throw new Error('E2E signup user missing after verification')
+  return { email, token: body.token, workspaceId: body.workspace.id, userId: user.id }
 }
 
 export async function seedRepliedThread(workspaceId: string, toEmail = 'prospect@example.com'): Promise<string> {
@@ -127,4 +129,94 @@ export async function approveDraftForLead(workspaceId: string, leadEmail: string
       reviewedAt: new Date(),
     },
   })
+}
+
+
+/** Seed a minimal public-work opportunity that can be quoted through the real delivery API. */
+export async function seedDeliveryOpportunity(workspaceId: string): Promise<string> {
+  const row = await db().opportunity.create({
+    data: {
+      workspaceId,
+      source: 'e2e',
+      externalId: `e2e_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'CONTRACT_AWARD',
+      title: 'E2E Warehouse Electrical Package',
+      description: 'Delivery-loop E2E fixture',
+      region: 'QLD',
+      score: 91,
+      matchedTrades: ['electrical'],
+      reasons: ['E2E deterministic fixture'],
+      recommendedAction: 'Review and quote',
+      contentHash: `e2e_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    },
+    select: { id: true },
+  })
+  return row.id
+}
+
+export async function seedCrewMember(workspaceId: string, baseRate = 50): Promise<string> {
+  const row = await db().opsCrewMember.create({
+    data: {
+      workspaceId,
+      employeeCode: `E2E-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      fullName: 'E2E Crew Member',
+      role: 'Electrician',
+      baseRate,
+    },
+    select: { id: true },
+  })
+  return row.id
+}
+
+export async function seedShift(input: {
+  workspaceId: string
+  crewMemberId: string
+  jobSiteId: string
+  open?: boolean
+  totalHours?: number
+}): Promise<string> {
+  const now = new Date()
+  const hours = input.totalHours ?? 8
+  const start = new Date(now.getTime() - hours * 60 * 60 * 1000)
+  const row = await db().opsShiftRecord.create({
+    data: {
+      workspaceId: input.workspaceId,
+      crewMemberId: input.crewMemberId,
+      jobSiteId: input.jobSiteId,
+      shiftDate: start,
+      startTime: start,
+      endTime: input.open ? null : now,
+      totalHours: input.open ? 0 : hours,
+    },
+    select: { id: true },
+  })
+  return row.id
+}
+
+export async function closeShift(shiftId: string, totalHours = 8): Promise<void> {
+  await db().opsShiftRecord.update({ where: { id: shiftId }, data: { endTime: new Date(), totalHours } })
+}
+
+export async function readJob(jobId: string) {
+  return db().job.findUnique({ where: { id: jobId } })
+}
+
+export async function seedStaleAndFreshSends(workspaceId: string): Promise<{ staleId: string; freshId: string }> {
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000)
+  const fresh = new Date()
+  const [stale, recent] = await Promise.all([
+    db().outreachSent.create({
+      data: { workspaceId, toEmail: 'stale@example.com', subject: 'stale', body: 'stale', status: 'SENDING', claimedAt: old },
+      select: { id: true },
+    }),
+    db().outreachSent.create({
+      data: { workspaceId, toEmail: 'fresh@example.com', subject: 'fresh', body: 'fresh', status: 'SENDING', claimedAt: fresh },
+      select: { id: true },
+    }),
+  ])
+  return { staleId: stale.id, freshId: recent.id }
+}
+
+export async function readOutreachSend(id: string) {
+  return db().outreachSent.findUnique({ where: { id } })
 }
