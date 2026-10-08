@@ -33,10 +33,9 @@ import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart, assertAiUsageAllowed } from '@acaos/backend-core/lib/limits.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
-import { effectiveApprovalMode, effectiveDailySendLimit, reputationGuardMode, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
-import { bulkCheckConsent, hasConsent } from '@acaos/backend-core/lib/consent.js'
+import { effectiveApprovalMode, effectiveDailySendLimit, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { bulkCheckConsent } from '@acaos/backend-core/lib/consent.js'
 import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
-import { evaluateSenderReputation } from '@acaos/backend-core/lib/senderReputation.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
@@ -49,7 +48,7 @@ import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs, utcDayStart } from '@acaos/backend-core/lib/campaignStats.js'
 import { scheduleNextFollowup } from '@acaos/backend-core/services/followups.js'
-import { canContactRecipient } from '@acaos/backend-core/services/contactPolicy.js'
+import { authorizeOutboundSend } from '@acaos/backend-core/services/sendAuthorization.js'
 import { getSource, type ProspectCandidate, type ProspectSearchInput } from '@acaos/backend-core/lib/prospectSources.js'
 import { importDiscoveredProspects } from '@acaos/backend-core/lib/discoveryImport.js'
 import { enqueueScoreProspects } from '@acaos/backend-core/lib/queues.js'
@@ -1181,15 +1180,6 @@ export async function sendCampaignBatch(
     (workspace?.lawfulBasis === 'consent' || workspace?.targetsCanada === true)
   const consentReason = workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada'
 
-  // Operator drain switch: halt all sends for a suppressed workspace before any
-  // lead work, without touching the global FEATURE_SEND kill-switch. Counted as a
-  // whole-batch skip so the suppression is visible in metrics.
-  if (workspace?.sendSuppressed) {
-    console.log(`[send-campaign] Workspace ${workspaceId} is send-suppressed — skipping campaign ${campaignId}`)
-    incSendOutcome('send-campaign', 'WORKSPACE_SUPPRESSED')
-    return finish()
-  }
-
   // Don't even start a batch for a paused/completed mission.
   const initialBlock = await getMissionSendBlockReason(campaignId)
   if (initialBlock) {
@@ -1226,6 +1216,30 @@ export async function sendCampaignBatch(
   // skipped tally without holding every lead in memory.
   const total = await prisma.lead.count({ where })
 
+  // Canonical platform/workspace/reputation authorization. Recipient-level
+  // checks stay bulk-loaded below for campaign throughput, but the same shared
+  // policy service now protects campaign, follow-up and human-reply dispatch.
+  const batchAuthorization = await authorizeOutboundSend({
+    workspaceId,
+    context: 'campaign',
+    recipientChecks: false,
+  })
+  if (!batchAuthorization.allowed) {
+    console.log(`[send-campaign] Authorization blocked campaign ${campaignId}: ${batchAuthorization.code}`)
+    if (batchAuthorization.code === 'REPUTATION_BLOCKED') {
+      incReputationBlock('send-campaign')
+      skip('REPUTATION_BLOCKED', total)
+    } else if (batchAuthorization.code === 'WORKSPACE_SUPPRESSED') {
+      // Preserve the operator-drain semantics: the batch halts without creating
+      // per-lead state, while still emitting the existing suppression metric.
+      incSendOutcome('send-campaign', 'WORKSPACE_SUPPRESSED')
+    }
+    return finish()
+  }
+  for (const observation of batchAuthorization.observations ?? []) {
+    console.warn(`[send-campaign] authorization observation for workspace ${workspaceId}: ${observation}`)
+  }
+
   // Daily send cap fast path: if the workspace already hit today's cap, skip the
   // whole batch. The authoritative enforcement is still the per-lead atomic
   // reservation (reserveDailySendSlot) inside the claim, which holds across pages.
@@ -1253,24 +1267,6 @@ export async function sendCampaignBatch(
       console.log(`[send-campaign] Monthly limit of ${monthlySendLimit} reached for workspace ${workspaceId}`)
       skip('MONTHLY_CAP', total)
       return finish()
-    }
-  }
-
-  // Sender-reputation circuit breaker: if this workspace's trailing bounce/complaint
-  // rate has degraded past the threshold, halt the whole batch before any dispatch.
-  // 'observe' (default) only logs; 'enforce' actually stops. Fail-safe: it only ever
-  // PREVENTS sends, and a ledger-read error is treated as healthy (never blocks).
-  const guardMode = reputationGuardMode()
-  if (guardMode !== 'off') {
-    const rep = await evaluateSenderReputation(workspaceId).catch(() => null)
-    if (rep && !rep.healthy) {
-      console.warn(`[send-campaign] reputation ${rep.reason} for workspace ${workspaceId} ` +
-        `(bounceRate=${rep.bounceRate.toFixed(3)} complaintRate=${rep.complaintRate.toFixed(3)} sends=${rep.totalSends}) mode=${guardMode}`)
-      if (guardMode === 'enforce') {
-        incReputationBlock('send-campaign')
-        skip('REPUTATION_BLOCKED', total)
-        return finish()
-      }
     }
   }
 
@@ -1510,7 +1506,7 @@ export async function sendCampaignBatch(
 // ── send-followup: dispatch one due sequence step ─────────────────────────────
 // Reuses the claim-first send mechanics for a single FollowupTask. Gated by the
 // campaign's autoFollowupsEnabled AND the global FOLLOWUPS_ENABLED (checked by the
-// worker before calling this). Every dispatch re-runs canContactRecipient, so a
+// worker before calling this). Every dispatch re-runs the canonical send authorization, so a
 // reply/bounce/unsubscribe/terminal-stage/cap that happened since scheduling stops
 // the send. The task is claimed SCHEDULED→PROCESSING atomically so two workers
 // can't double-send.
@@ -1574,38 +1570,28 @@ export async function sendFollowupTask(
   if (!appUrl) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'API_URL_NOT_CONFIGURED' })
   if (sensitiveKinds(`${step.subject ?? ''}\n${step.body}`).length > 0) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SENSITIVE_DATA' })
 
-  // Sender-reputation circuit breaker (same modes as the campaign sender). A
-  // degraded workspace blocks the follow-up in 'enforce'; 'observe' only logs.
-  const guardMode = reputationGuardMode()
-  if (guardMode !== 'off') {
-    const rep = await evaluateSenderReputation(workspaceId).catch(() => null)
-    if (rep && !rep.healthy) {
-      if (guardMode === 'enforce') { incReputationBlock('send-followup'); return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'REPUTATION_BLOCKED' }) }
-      console.warn(`[send-followup] reputation ${rep.reason} for workspace ${workspaceId} (observe) — proceeding`)
-    }
-  }
-
-  // Contact policy: re-checked at send time, not just at scheduling.
-  const decision = await canContactRecipient({ workspaceId, email: lead.email, leadId })
-  if (!decision.allowed) return finish('BLOCKED', 'BLOCKED', { cancelledReason: decision.reason })
-
-  // Compliance gate (dormant unless COMPLIANCE_GATE_ENABLED) — same rule as the
-  // initial campaign send: a consent-basis or Canada-targeting workspace needs an
-  // on-file ConsentRecord for THIS recipient, re-checked at send time since a
-  // follow-up can fire long after the original send (and any consent basis on
-  // file then may no longer apply). Fail closed.
-  if (isComplianceGateEnabled() && (workspace?.lawfulBasis === 'consent' || workspace?.targetsCanada === true)) {
-    const consented = await hasConsent(workspaceId, lead.email)
-    if (!consented) {
-      // Awaited (unlike the campaign-batch per-lead loop above): this runs once
-      // per follow-up task, not in a tight per-lead loop, so durability here
-      // costs nothing worth trading away for the SAR/compliance trail.
+  // Canonical send-time authorization. This closes the previous follow-up hole:
+  // workspace sendSuppressed was loaded above but never enforced. The shared gate
+  // also re-checks FEATURE_SEND, reputation, recipient contact policy and consent
+  // immediately before this task can claim an outbox row.
+  const authorization = await authorizeOutboundSend({
+    workspaceId,
+    context: 'followup',
+    email: lead.email,
+    leadId,
+  })
+  if (!authorization.allowed) {
+    if (authorization.code === 'REPUTATION_BLOCKED') incReputationBlock('send-followup')
+    if (authorization.code === 'CONSENT_REQUIRED') {
       await recordCriticalAudit({
         workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: leadId,
         metadata: { campaignId, reason: workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada', followup: true },
       })
-      return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'CONSENT_REQUIRED' })
     }
+    return finish('BLOCKED', 'BLOCKED', { cancelledReason: authorization.code })
+  }
+  for (const observation of authorization.observations ?? []) {
+    console.warn(`[send-followup] authorization observation for workspace ${workspaceId}: ${observation}`)
   }
 
   // Build the follow-up email from the sequence step, via the SAME renderer the

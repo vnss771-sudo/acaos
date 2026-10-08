@@ -7,7 +7,6 @@ import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import { sendMail, isMailConfigured } from '@acaos/backend-core/services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
-import { isSuppressed } from '@acaos/backend-core/lib/suppressions.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { escapeHtml } from '../lib/html.js'
 import { requireFeature } from '../middleware/featureGate.js'
@@ -16,6 +15,7 @@ import { enforceWorkspaceAiRate } from '../lib/workspaceRateLimit.js'
 import { checkAndIncrementAiUsage, refundAiUsage } from '@acaos/backend-core/lib/limits.js'
 import { parseAiJson, ReplyDraftOutputSchema } from '@acaos/backend-core/lib/aiSchemas.js'
 import { generateReplyDraft } from '@acaos/backend-core/services/openai.js'
+import { authorizeOutboundSend } from '@acaos/backend-core/services/sendAuthorization.js'
 import { parseRiskFlags, RISK_FLAG_LABEL } from '@acaos/backend-core/lib/riskEscalation.js'
 import { describeSensitiveKinds, sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import { effectiveReplyClassification, replyClassificationMinConfidence, REPLY_STAGE, replyOutcomeFor } from '@acaos/backend-core/lib/replyGating.js'
@@ -237,18 +237,29 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
     if (prior?.status === 'SENT') return res.json(sentResponse(reply.toEmail, prior.sentAt, true))
     if (prior?.status === 'SENDING') throw openSendError(prior.attemptedAt)
 
-    const [smtpCfg, workspace] = await Promise.all([
-      prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } }),
-      prisma.workspace.findUnique({ where: { id: workspaceId }, select: { sendSuppressed: true } }),
-    ])
-    if (workspace?.sendSuppressed) throw new ApiError(403, 'Sending is suspended for this workspace')
+    const smtpCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
+
+    // Canonical policy gate for human replies. The reply context intentionally
+    // applies hard recipient suppression rather than the cold-contact frequency
+    // rules (a legitimate human reply necessarily follows an inbound reply).
+    const authorization = await authorizeOutboundSend({
+      workspaceId,
+      context: 'reply',
+      email: reply.toEmail,
+      leadId: reply.leadId,
+    })
+    if (!authorization.allowed) {
+      if (authorization.code === 'FEATURE_SEND_DISABLED') throw new ApiError(503, 'Email sending is temporarily unavailable')
+      if (authorization.code === 'WORKSPACE_SUPPRESSED') throw new ApiError(403, 'Sending is suspended for this workspace')
+      if (authorization.code === 'RECIPIENT_SUPPRESSED') throw new ApiError(409, 'This recipient has unsubscribed or is suppressed — reply not sent')
+      if (authorization.code === 'REPUTATION_BLOCKED') throw new ApiError(409, 'Sending is temporarily blocked to protect sender reputation')
+      throw new ApiError(409, `Reply not sent: ${authorization.code}`)
+    }
+
     // Workspace mailbox only: falling back to the platform SMTP would send the
     // reply from our address, not the one the prospect wrote back to.
     if (!isMailConfigured(smtpCfg)) {
       throw new ApiError(409, 'Workspace mailbox not configured — connect your sending mailbox in Settings before replying')
-    }
-    if (await isSuppressed(workspaceId, reply.toEmail)) {
-      throw new ApiError(409, 'This recipient has unsubscribed or is suppressed — reply not sent')
     }
 
     // Subject is folded to one line and length-capped: CR/LF must never reach a

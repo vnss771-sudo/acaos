@@ -406,6 +406,25 @@ test('reply/send: blocks a suppressed (unsubscribed) recipient', async () => {
   assert.equal(sent.length, 0)
 })
 
+test('reply/send: canonical authorization honors FEATURE_SEND even without route middleware', async () => {
+  const prior = process.env.FEATURE_SEND
+  process.env.FEATURE_SEND = 'false'
+  try {
+    const { user, workspace } = await seedUserWithWorkspace()
+    await withMailbox(workspace.id)
+    const reply = await seedReply(workspace.id)
+
+    const res = await sendReq(user.id, reply.id, { workspaceId: workspace.id, body: 'hi', idempotencyKey: 'key-feature-send-off' })
+    assert.equal(res.status, 503)
+    assert.match(String(res.body.error ?? ''), /temporarily unavailable/i)
+    assert.equal(sent.length, 0)
+    assert.equal(await prisma.inboxReplySend.count(), 0)
+  } finally {
+    if (prior === undefined) delete process.env.FEATURE_SEND
+    else process.env.FEATURE_SEND = prior
+  }
+})
+
 test('reply/send: blocks an operator-suspended workspace', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   await withMailbox(workspace.id)
