@@ -51,8 +51,16 @@ for (const abs of walk(resolve(root, 'apps/web/src'))) {
 const indexHtml = read('apps/web/index.html')
 if (/<style[\s>]/i.test(indexHtml)) failures.push('apps/web/index.html: inline <style> block')
 if (/\sstyle\s*=/i.test(indexHtml)) failures.push('apps/web/index.html: inline style attribute')
-for (const m of indexHtml.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-  if (!/\bsrc\s*=/.test(m[1]) || m[2].trim()) failures.push('apps/web/index.html: inline <script> body')
+// Every <script> must be an external src= script with nothing before its next
+// closing tag. Scanned by index rather than a tag regex so variants such as
+// `</script >` cannot hide an inline body.
+const lowerHtml = indexHtml.toLowerCase()
+for (let at = lowerHtml.indexOf('<script'); at !== -1; at = lowerHtml.indexOf('<script', at + 1)) {
+  const openEnd = lowerHtml.indexOf('>', at)
+  const close = lowerHtml.indexOf('</script', openEnd)
+  const opening = lowerHtml.slice(at, openEnd + 1)
+  const body = openEnd === -1 ? '' : lowerHtml.slice(openEnd + 1, close === -1 ? undefined : close)
+  if (!/\ssrc\s*=/.test(opening) || body.trim()) failures.push('apps/web/index.html: inline <script> body')
 }
 
 // Browser-level enforcement must stay wired: the spec runs the production build
