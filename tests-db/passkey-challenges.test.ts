@@ -1,27 +1,23 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { prisma } from '@acaos/backend-core/lib/prisma.js'
-import { createPasskeyChallenge, consumePasskeyChallenge } from '@acaos/backend-core/lib/passkeyChallenges.js'
+// DB-tier tests for the passkey challenge store: challenges are single-use and
+// scoped to the ceremony purpose they were issued for.
 
-let userId = ''
+import { test, beforeEach, after } from 'node:test'
+import assert from 'node:assert/strict'
+import { createPasskeyChallenge, consumePasskeyChallenge } from '../packages/backend-core/src/lib/passkeyChallenges.ts'
+import { resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
-beforeAll(async () => {
-  const user = await prisma.user.create({ data: { email: `passkey-${Date.now()}@example.test`, name: 'Passkey Test' } })
-  userId = user.id
+after(async () => { await disconnect() })
+beforeEach(async () => { await resetDb() })
+
+test('passkey challenge is consumed exactly once', async () => {
+  const { user } = await seedUserWithWorkspace()
+  const issued = await createPasskeyChallenge({ userId: user.id, purpose: 'registration', ttlMs: 60_000 })
+  assert.equal(await consumePasskeyChallenge({ userId: user.id, purpose: 'registration', challenge: issued.challenge }), true)
+  assert.equal(await consumePasskeyChallenge({ userId: user.id, purpose: 'registration', challenge: issued.challenge }), false)
 })
 
-beforeEach(async () => {
-  await prisma.passkeyChallenge.deleteMany({ where: { userId } })
-})
-
-describe('passkey challenge store', () => {
-  it('consumes a challenge exactly once', async () => {
-    const issued = await createPasskeyChallenge({ userId, purpose: 'registration', ttlMs: 60_000 })
-    await expect(consumePasskeyChallenge({ userId, purpose: 'registration', challenge: issued.challenge })).resolves.toBe(true)
-    await expect(consumePasskeyChallenge({ userId, purpose: 'registration', challenge: issued.challenge })).resolves.toBe(false)
-  })
-
-  it('does not consume a challenge under a different ceremony purpose', async () => {
-    const issued = await createPasskeyChallenge({ userId, purpose: 'registration', ttlMs: 60_000 })
-    await expect(consumePasskeyChallenge({ userId, purpose: 'authentication', challenge: issued.challenge })).resolves.toBe(false)
-  })
+test('passkey challenge is not consumed under a different ceremony purpose', async () => {
+  const { user } = await seedUserWithWorkspace()
+  const issued = await createPasskeyChallenge({ userId: user.id, purpose: 'registration', ttlMs: 60_000 })
+  assert.equal(await consumePasskeyChallenge({ userId: user.id, purpose: 'authentication', challenge: issued.challenge }), false)
 })
