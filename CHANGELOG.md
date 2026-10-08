@@ -237,3 +237,10 @@
 - Added real delivery-API coverage for quote → acceptance → job creation and duplicate-job refusal.
 - Added closeout safety coverage for open shifts, unknown-cost preservation, frozen economics, explicit reopen, and closeout versioning.
 - Added real-Postgres stale-SENDING recovery coverage proving stale claims fail closed while recent in-flight sends remain untouched.
+
+## 2026-10-08 — Release Gate A toolchain drift fix
+
+- Fixed GitHub release, post-deploy smoke, uptime, and eval workflows still using Node 22 after the production toolchain moved to Node 26.
+- Expanded `check:toolchain` so all workflow-level Node pins are verified, preventing future release/runtime drift.
+- Re-ran source-level pilot hardening gates: tenant-resource, send-authorization, workflow pinning, monitoring assets, rollout contract, compose hardening, test-tier isolation, offline Prisma, architecture boundaries, and frontend mutation checks pass.
+- Full dependency-backed verification remains pending in a Node 26 environment with installed dependencies and real pilot provider/deployment credentials.

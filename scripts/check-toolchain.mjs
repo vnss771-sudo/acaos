@@ -77,6 +77,17 @@ if (!runtimeOnly) {
   if (ci.includes("NPM_VERSION: '10.9.2'")) pass('CI npm pin', EXPECTED.npm);
   else fail('CI npm pin', `NPM_VERSION is not ${EXPECTED.npm}`);
 
+  for (const rel of [
+    '.github/workflows/release.yml',
+    '.github/workflows/post-deploy-smoke.yml',
+    '.github/workflows/uptime.yml',
+    '.github/workflows/eval.yml',
+  ]) {
+    const workflow = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    if (workflow.includes("NODE_VERSION: '26'")) pass(`${rel} Node pin`, '26');
+    else fail(`${rel} Node pin`, 'NODE_VERSION is not 26');
+  }
+
   for (const rel of ['Dockerfile.api', 'Dockerfile.worker', 'Dockerfile.web']) {
     const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     if (/FROM node:26-alpine@sha256:/.test(text)) pass(`${rel} Node base`, 'node:26-alpine digest-pinned');
