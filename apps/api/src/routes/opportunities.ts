@@ -10,7 +10,8 @@ import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '.
 import { TRADES, TRADE_IDS } from '@acaos/backend-core/lib/opportunityTaxonomy.js'
 import { AU_REGIONS, OPPORTUNITY_STATUSES } from '@acaos/backend-core/lib/opportunityTypes.js'
 import { OPPORTUNITY_SOURCES } from '@acaos/backend-core/lib/opportunitySources.js'
-import { isOpportunityDiscoveryEnabled } from '@acaos/backend-core/lib/opportunitySweep.js'
+import { isOpportunityDiscoveryEnabled, opportunityDiscoveryIntervalMs } from '@acaos/backend-core/lib/opportunitySweep.js'
+import { sourceHealthSnapshot, type SourceStateCounters, type SourceYield } from '@acaos/backend-core/lib/sourceHealth.js'
 import { enqueueDiscoverOpportunities } from '@acaos/backend-core/lib/queues.js'
 import type { Assert, Extends, UpdateDiscoveryProfileRequest, UpdateOpportunityStatusRequest, CreateJobFromOpportunityRequest } from '@acaos/shared'
 
@@ -31,13 +32,31 @@ const SOURCE_NAMES = OPPORTUNITY_SOURCES.map(s => s.name) as [string, ...string[
 
 const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
-type SourceStateRow = {
-  source: string
-  lastRunAt: Date | null
-  lastSuccessAt: Date | null
-  lastError: string | null
-  lastWarning: string | null
-  lastMatched: number
+type SourceStateRow = SourceStateCounters & { source: string; lastMatched: number }
+
+/** What each source's opportunities became in this workspace, from two grouped queries. */
+async function sourceYields(workspaceId: string): Promise<Map<string, SourceYield>> {
+  const [byStatus, withJob] = await Promise.all([
+    prisma.opportunity.groupBy({ by: ['source', 'status'], where: { workspaceId }, _count: { _all: true } }),
+    prisma.opportunity.groupBy({ by: ['source'], where: { workspaceId, opsJobSiteId: { not: null } }, _count: { _all: true } }),
+  ]) as [Array<{ source: string; status: string; _count: { _all: number } }>, Array<{ source: string; _count: { _all: number } }>]
+  const out = new Map<string, SourceYield>()
+  const get = (source: string) => {
+    let y = out.get(source)
+    if (!y) { y = { opportunities: 0, dismissed: 0, actioned: 0, won: 0, lost: 0, jobsCreated: 0 }; out.set(source, y) }
+    return y
+  }
+  for (const row of byStatus) {
+    const y = get(row.source)
+    const n = row._count._all
+    y.opportunities += n
+    if (row.status === 'DISMISSED') y.dismissed += n
+    if (row.status === 'PURSUING' || row.status === 'WON' || row.status === 'LOST') y.actioned += n
+    if (row.status === 'WON') y.won += n
+    if (row.status === 'LOST') y.lost += n
+  }
+  for (const row of withJob) get(row.source).jobsCreated += row._count._all
+  return out
 }
 
 async function assertMember(userId: string, workspaceId: string) {
@@ -53,10 +72,13 @@ opportunitiesRouter.get(
     const { workspaceId } = parseQuery(workspaceQuerySchema, req)
     await assertMember(user.id, workspaceId)
 
-    const [profile, stateRows] = await Promise.all([
+    const [profile, stateRows, yields] = await Promise.all([
       prisma.discoveryProfile.findUnique({ where: { workspaceId } }),
       prisma.discoverySourceState.findMany({ where: { workspaceId } }),
+      sourceYields(workspaceId),
     ])
+    const now = new Date()
+    const intervalMs = opportunityDiscoveryIntervalMs()
     // Row type spelled out (not inferred) so the build also type-checks against
     // the offline Prisma stub, whose query results are untyped.
     const states = (stateRows as SourceStateRow[])
@@ -77,6 +99,7 @@ opportunitiesRouter.get(
           lastError: st?.lastError ?? null,
           lastWarning: st?.lastWarning ?? null,
           lastMatched: st?.lastMatched ?? 0,
+          health: sourceHealthSnapshot(st ?? null, { now, intervalMs, yieldStats: yields.get(s.name) ?? null }),
         }
       }),
     })

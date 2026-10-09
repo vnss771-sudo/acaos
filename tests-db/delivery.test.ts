@@ -256,10 +256,29 @@ test('report: closed jobs grouped by origin with medians and n; admin-only', asy
   assert.deepEqual(da.hoursVariancePct, { n: 3, median: 0, min: -10, max: 10 })
   // Revenue 20,000; labour 10,000 at 100h; other 5,000 → 25 % gross.
   assert.equal(da.grossMarginPct.median, 25)
+  // The same jobs grouped by where they were: the source opportunity's state.
+  const qld = r.body.regionalReport.groups.find((g: { label: string }) => g.label === 'QLD')
+  assert.equal(qld.jobs, 3)
+  assert.equal(qld.grossMarginPct.median, 25)
 
   const member = await seedUserWithWorkspace()
   await prisma.membership.create({ data: { userId: member.user.id, workspaceId: workspace.id, role: 'member' } })
   assert.equal((await req(member.user.id, 'GET', `/report?workspaceId=${workspace.id}`)).status, 403)
+})
+
+test('report: regional grouping falls back to locality and never invents a region', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const crew = await prisma.opsCrewMember.create({ data: { workspaceId: workspace.id, employeeCode: 'R2', fullName: 'R', role: 'Electrician', baseRate: 100 } })
+  for (const over of [{ region: null, locality: 'Logan  City' }, { region: null, locality: null }]) {
+    const opp = await seedOpportunity(workspace.id, over)
+    const quoteId = await acceptedQuote(user.id, workspace.id, { opportunityId: opp.id }, 2_000_000, 100)
+    const made = await req(user.id, 'POST', `/quotes/${quoteId}/job`, { workspaceId: workspace.id })
+    await seedShift(workspace.id, crew.id, made.body.job.opsJobSiteId, 100)
+    await req(user.id, 'POST', `/jobs/${made.body.job.id}/closeout`, { workspaceId: workspace.id, invoicedRevenueCents: 2_000_000, otherCostCents: 0 })
+  }
+  const r = await req(user.id, 'GET', `/report?workspaceId=${workspace.id}`)
+  const labels = r.body.regionalReport.groups.map((g: { label: string }) => g.label).sort()
+  assert.deepEqual(labels, ['Logan City', 'Unknown region'])
 })
 
 test('outcome graph: an accepted quote is the win and revenue for exactly that commercial opportunity', async () => {

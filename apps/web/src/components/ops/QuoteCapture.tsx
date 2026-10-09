@@ -33,6 +33,16 @@ type Props = {
   onOpenJob?: () => void
 }
 
+/** Where this work sits between finding it and delivering it, from persisted state only. */
+export function quoteLifecycleCue(quote: Pick<QuoteSummary, 'status' | 'job'>): string | null {
+  if (quote.status === 'SUBMITTED') return 'Opportunity → quote sent → awaiting decision'
+  if (quote.status !== 'ACCEPTED') return null
+  if (!quote.job) return 'Opportunity → quote → won → ready to start'
+  if (quote.job.status === 'COMPLETE') return 'Opportunity → quote → won → job complete'
+  if (quote.job.status === 'CANCELLED') return 'Opportunity → quote → won → job cancelled'
+  return 'Opportunity → quote → won → job in delivery'
+}
+
 export function QuoteCapture({ route, toast, workspaceId, target, quote, onChanged, onDecided, onOpenJob }: Props) {
   const targetId = 'opportunityId' in target ? target.opportunityId : target.commercialOpportunityId
   const [open, setOpen] = useState(false)
@@ -80,8 +90,10 @@ export function QuoteCapture({ route, toast, workspaceId, target, quote, onChang
   }
 
   if (quote && (quote.status === 'SUBMITTED' || quote.status === 'ACCEPTED')) {
+    const cue = quoteLifecycleCue(quote)
     return (
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+        {cue && <span style={{ flexBasis: '100%', fontSize: 12, color: colors.textFaint }}>{cue}</span>}
         <span style={{ color: colors.textMuted }}>
           Quoted <strong style={{ color: colors.text }}>{formatCents(quote.amountCents)}</strong>
           {quote.estimatedHours != null && <> · {quote.estimatedHours} h estimated</>}

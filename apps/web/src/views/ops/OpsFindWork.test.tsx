@@ -13,8 +13,10 @@ const PROFILE_META = {
   trades: [{ id: 'electrical', label: 'Electrical' }, { id: 'plumbing', label: 'Plumbing' }],
   regions: ['NSW', 'QLD'],
   sources: [
-    { name: 'austender', label: 'AusTender contracts', description: 'Contracts just awarded', configured: true, lastRunAt: null, lastSuccessAt: null, lastError: null, lastWarning: null, lastMatched: 0 },
-    { name: 'planningalerts', label: 'Council development applications', description: 'DAs near you', configured: false, lastRunAt: null, lastSuccessAt: null, lastError: null, lastWarning: null, lastMatched: 0 },
+    { name: 'austender', label: 'AusTender contracts', description: 'Contracts just awarded', configured: true, lastRunAt: null, lastSuccessAt: null, lastError: null, lastWarning: null, lastMatched: 0,
+      health: { status: 'HEALTHY', summary: 'Healthy · 100% of runs succeed', data: { matchRate: 0.25 }, yield: { opportunities: 12, won: 2, jobsCreated: 1 } } },
+    { name: 'planningalerts', label: 'Council development applications', description: 'DAs near you', configured: false, lastRunAt: null, lastSuccessAt: null, lastError: null, lastWarning: null, lastMatched: 0,
+      health: { status: 'UNKNOWN', summary: 'No health history yet', data: { matchRate: null }, yield: { opportunities: 0, won: 0, jobsCreated: 0 } } },
   ],
 }
 const PROFILE = { enabled: true, trades: ['electrical'], keywords: [], baseLat: -27.47, baseLng: 153.02, radiusKm: 50, regions: ['QLD'], minValue: null, sources: ['austender'] }
@@ -98,6 +100,13 @@ describe('OpsFindWork', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
   })
 
+  test('settings show each source\'s health once it has a history', async () => {
+    render(<OpsFindWork api={mockApi() as never} workspace={workspace} toast={toast as never} setView={setView} canManage />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Discovery settings' }))
+    expect(screen.getByText('Healthy · 100% of runs succeed · 25% of results match your profile · 12 found · 2 won · 1 became jobs')).toBeInTheDocument()
+    expect(screen.queryByText(/No health history yet/)).toBeNull()
+  })
+
   test('settings save the chosen trades, area and sources', async () => {
     const api = mockApi()
     render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} setView={setView} canManage />)
@@ -152,6 +161,7 @@ describe('OpsFindWork', () => {
     })
     render(<OpsFindWork api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
     expect(await screen.findByText('$60,000')).toBeInTheDocument()
+    expect(screen.getByText('Opportunity → quote sent → awaiting decision')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Client accepted' }))
     const [path, init] = posts(api)[0]
     expect(path).toBe('/api/delivery/quotes/q1/status')

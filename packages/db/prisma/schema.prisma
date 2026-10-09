@@ -1597,6 +1597,19 @@ model DiscoverySourceState {
   lastWarning   String?
   lastFetched   Int       @default(0)
   lastMatched   Int       @default(0)
+  // Cumulative health counters (UQ-13). Observation only: never fed into scoring.
+  runCount       Int  @default(0)
+  successCount   Int  @default(0)
+  failureCount   Int  @default(0)
+  skippedCount   Int  @default(0)
+  warningCount   Int  @default(0) // successful runs that reported a warning
+  fetchedTotal   Int  @default(0)
+  matchedTotal   Int  @default(0)
+  createdTotal   Int  @default(0)
+  updatedTotal   Int  @default(0)
+  // Upstream fetch latency of successful runs; a shared feed fetch is measured once.
+  lastLatencyMs  Int?
+  latencyTotalMs Int  @default(0)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

@@ -123,11 +123,19 @@ async function persistCandidates(workspaceId: string, source: string, items: Opp
   return out
 }
 
+/** A source fetch and how long the upstream took; shared feeds are fetched (and timed) once per sweep. */
+type TimedFetch = { result: SourceFetchResult; latencyMs: number }
+
+function timedFetch(source: OpportunitySource, ctx: SourceFetchContext): Promise<TimedFetch> {
+  const started = Date.now()
+  return source.fetch(ctx).then(result => ({ result, latencyMs: Date.now() - started }))
+}
+
 async function runSource(
   profile: ProfileRow,
   source: OpportunitySource,
   now: Date,
-  cache: Map<string, Promise<SourceFetchResult>>,
+  cache: Map<string, Promise<TimedFetch>>,
   fetchImpl: SourceFetchContext['fetchImpl'],
 ): Promise<SourceRunResult> {
   const { workspaceId } = profile
@@ -143,7 +151,10 @@ async function runSource(
 
   const skipReason = !source.isConfigured ? `${source.label} is not configured on this server` : source.unavailableReason(input)
   if (skipReason) {
-    await prisma.discoverySourceState.updateMany({ where: { workspaceId, source: source.name }, data: { lastRunAt: now, lastWarning: skipReason } })
+    await prisma.discoverySourceState.updateMany({
+      where: { workspaceId, source: source.name },
+      data: { lastRunAt: now, lastWarning: skipReason, runCount: { increment: 1 }, skippedCount: { increment: 1 } },
+    })
     return { ...base, reason: skipReason }
   }
 
@@ -152,10 +163,10 @@ async function runSource(
     const key = source.requestKey(ctx)
     let pending = cache.get(key)
     if (!pending) {
-      pending = source.fetch(ctx)
+      pending = timedFetch(source, ctx)
       cache.set(key, pending)
     }
-    const result = await pending
+    const { result, latencyMs } = await pending
     const persisted = await persistCandidates(workspaceId, source.name, result.items, input, now)
     // Everything is stored — only now move the cursor.
     await prisma.discoverySourceState.updateMany({
@@ -168,12 +179,24 @@ async function runSource(
         lastWarning: result.warning ?? null,
         lastFetched: result.items.length,
         lastMatched: persisted.matched,
+        lastLatencyMs: latencyMs,
+        runCount: { increment: 1 },
+        successCount: { increment: 1 },
+        ...(result.warning ? { warningCount: { increment: 1 } } : {}),
+        fetchedTotal: { increment: result.items.length },
+        matchedTotal: { increment: persisted.matched },
+        createdTotal: { increment: persisted.created },
+        updatedTotal: { increment: persisted.updated },
+        latencyTotalMs: { increment: latencyMs },
       },
     })
     return { ...base, status: 'ok', fetched: result.items.length, ...persisted, ...(result.warning ? { warning: result.warning } : {}) }
   } catch (err) {
     const message = errorMessage(err)
-    await prisma.discoverySourceState.updateMany({ where: { workspaceId, source: source.name }, data: { lastRunAt: now, lastError: message } }).catch(() => {})
+    await prisma.discoverySourceState.updateMany({
+      where: { workspaceId, source: source.name },
+      data: { lastRunAt: now, lastError: message, runCount: { increment: 1 }, failureCount: { increment: 1 } },
+    }).catch(() => {})
     return { ...base, status: 'failed', reason: message }
   }
 }
@@ -193,7 +216,7 @@ export async function runOpportunitySweep(opts: { workspaceId?: string } & Sweep
   })
 
   // Shared across workspaces for this sweep: a national feed is fetched once.
-  const cache = new Map<string, Promise<SourceFetchResult>>()
+  const cache = new Map<string, Promise<TimedFetch>>()
   const runs: SourceRunResult[] = []
   for (const profile of profiles as ProfileRow[]) {
     for (const name of [...new Set(profile.sources)]) {

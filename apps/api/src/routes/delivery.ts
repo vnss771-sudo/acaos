@@ -360,8 +360,41 @@ deliveryRouter.get(
 
 const workspaceQuerySchema = z.object({ workspaceId: workspaceIdField })
 
-// GET /api/delivery/report — closed jobs grouped by where the work came from:
-// medians with their n, withheld below the floor. Registered before /jobs/:id.
+// The report also needs where each job was. Kept out of the shared jobInclude so
+// list/detail payloads are unchanged.
+const locatedOpportunity = { select: { ...opportunityOrigin.select, region: true, locality: true } }
+const reportJobInclude = {
+  opsJobSite: { select: { ...jobInclude.opsJobSite.select, location: true, opportunities: locatedOpportunity } },
+  quote: {
+    select: {
+      ...jobInclude.quote.select,
+      opportunity: locatedOpportunity,
+      commercialOpportunity: { select: { ...jobInclude.quote.select.commercialOpportunity.select, prospect: { select: { location: true } } } },
+    },
+  },
+}
+type Located = { region?: string | null; locality?: string | null }
+type ReportJobRow = JobRow & {
+  opsJobSite: { location: string | null; opportunities: Located[] }
+  quote: null | { opportunity: Located | null; commercialOpportunity: { prospect: { location: string | null } | null } | null }
+}
+
+/**
+ * Where the work was, most trustworthy first: the source opportunity's state
+ * code, the commercial opportunity's prospect location, the opportunity's
+ * locality, then the site's location. Free-text values are grouped as written
+ * (case/space-insensitive); a missing location stays "Unknown region".
+ */
+function regionOf(job: ReportJobRow): { key: string; label: string } {
+  const opp = job.quote?.opportunity ?? job.opsJobSite.opportunities[0]
+  const candidates = [opp?.region, job.quote?.commercialOpportunity?.prospect?.location, opp?.locality, job.opsJobSite.location]
+  const label = candidates.map(v => v?.trim().replace(/\s+/g, ' ')).find(v => !!v)
+  return label ? { key: `REGION:${label.toLowerCase()}`, label } : { key: 'REGION:UNKNOWN', label: 'Unknown region' }
+}
+
+// GET /api/delivery/report — closed jobs grouped by where the work came from
+// (report) and by where it was (regionalReport): medians with their n, withheld
+// below the floor. Registered before /jobs/:id.
 deliveryRouter.get(
   '/report',
   asyncHandler(async (req, res) => {
@@ -372,9 +405,10 @@ deliveryRouter.get(
       where: { workspaceId, status: 'COMPLETE' },
       orderBy: { completedAt: 'desc' },
       take: 1000,
-      include: jobInclude,
-    }) as JobRow[]
-    const report = buildDeliveryReport(jobs.filter(j => j.closeout != null).map(j => {
+      include: reportJobInclude,
+    }) as ReportJobRow[]
+    const closed = jobs.filter(j => j.closeout != null)
+    const report = buildDeliveryReport(closed.map(j => {
       const o = originOf(j)
       const kind = o?.kind ?? 'UNKNOWN'
       const label = o == null ? 'Unknown origin'
@@ -382,7 +416,11 @@ deliveryRouter.get(
         : `Signal: ${kind.toLowerCase().replace(/_/g, ' ')}`
       return { originKey: `${o?.type ?? 'NONE'}:${kind}`, originLabel: label, economics: j.closeout as JobEconomics }
     }))
-    res.json({ report })
+    const regionalReport = buildDeliveryReport(closed.map(j => {
+      const r = regionOf(j)
+      return { originKey: r.key, originLabel: r.label, economics: j.closeout as JobEconomics }
+    }))
+    res.json({ report, regionalReport })
   })
 )
 

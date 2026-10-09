@@ -82,10 +82,37 @@ function Figure({ label, value, hint }: { label: string; value: string; hint?: s
 
 type CloseoutForm = { revenue: string; other: string; onCost: string }
 
+function ReportTable({ report, firstColumn }: { report: Report; firstColumn: string }) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ color: colors.textFaint, textAlign: 'left' }}>
+            {[firstColumn, 'Jobs', 'Hours vs estimate', 'Revenue vs quote', 'Labour margin', 'Gross margin'].map(h => <th key={h} style={{ padding: '6px 8px', fontWeight: 500 }}>{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {[report.overall, ...report.groups].map(g => (
+            <tr key={g.key} style={{ borderTop: `1px solid ${colors.border}`, color: colors.text }}>
+              <td style={{ padding: '6px 8px', fontWeight: g.key === 'ALL' ? 600 : 400 }}>{g.label}</td>
+              <td style={{ padding: '6px 8px' }}>{g.jobs}</td>
+              <td style={{ padding: '6px 8px' }}>{statText(g.hoursVariancePct)}</td>
+              <td style={{ padding: '6px 8px' }}>{statText(g.revenueVsQuotePct)}</td>
+              <td style={{ padding: '6px 8px' }}>{statText(g.labourMarginPct)}</td>
+              <td style={{ padding: '6px 8px' }}>{statText(g.grossMarginPct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function OpsDelivery({ api, workspace, toast, canManage = false, setView }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [jobs, setJobs] = useState<DeliveryJob[] | null>(null)
   const [report, setReport] = useState<Report | null>(null)
+  const [regionalReport, setRegionalReport] = useState<Report | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [closing, setClosing] = useState<string | null>(null)
@@ -102,12 +129,13 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
     setLoadError(false)
     Promise.all([
       api<{ jobs: DeliveryJob[] }>(`/api/delivery/jobs?workspaceId=${workspace.id}`),
-      api<{ report: Report }>(`/api/delivery/report?workspaceId=${workspace.id}`),
+      api<{ report: Report; regionalReport?: Report }>(`/api/delivery/report?workspaceId=${workspace.id}`),
     ])
       .then(([j, r]) => {
         if (reqId !== reqRef.current) return
         setJobs(j.jobs)
         setReport(r.report)
+        setRegionalReport(r.regionalReport ?? null)
       })
       .catch(e => {
         if (reqId !== reqRef.current) return
@@ -184,27 +212,18 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
               {report.overall.jobs === 0 ? (
                 <div style={{ color: colors.textMuted, fontSize: 13 }}>No closed jobs yet. Close out a finished job below to start the picture.</div>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ color: colors.textFaint, textAlign: 'left' }}>
-                        {['Where the work came from', 'Jobs', 'Hours vs estimate', 'Revenue vs quote', 'Labour margin', 'Gross margin'].map(h => <th key={h} style={{ padding: '6px 8px', fontWeight: 500 }}>{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[report.overall, ...report.groups].map(g => (
-                        <tr key={g.key} style={{ borderTop: `1px solid ${colors.border}`, color: colors.text }}>
-                          <td style={{ padding: '6px 8px', fontWeight: g.key === 'ALL' ? 600 : 400 }}>{g.label}</td>
-                          <td style={{ padding: '6px 8px' }}>{g.jobs}</td>
-                          <td style={{ padding: '6px 8px' }}>{statText(g.hoursVariancePct)}</td>
-                          <td style={{ padding: '6px 8px' }}>{statText(g.revenueVsQuotePct)}</td>
-                          <td style={{ padding: '6px 8px' }}>{statText(g.labourMarginPct)}</td>
-                          <td style={{ padding: '6px 8px' }}>{statText(g.grossMarginPct)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <ReportTable report={report} firstColumn="Where the work came from" />
+                  {regionalReport && (
+                    <>
+                      <div style={{ fontWeight: 600, color: colors.text, margin: '16px 0 4px' }}>Margins by region</div>
+                      <div style={{ fontSize: 12, color: colors.textMuted, marginBottom: 8 }}>
+                        Where the job was, from the source listing, the client's location or the site. Locations are grouped as written.
+                      </div>
+                      <ReportTable report={regionalReport} firstColumn="Region" />
+                    </>
+                  )}
+                </>
               )}
             </Card>
           )}

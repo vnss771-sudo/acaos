@@ -63,6 +63,10 @@ test('profile: an admin saves it; GET returns it with trade/region choices and s
   assert.equal(aus.configured, true)
   assert.equal(aus.lastError, 'austender: 503')
   assert.equal(aus.lastMatched, 4)
+  // A row with no recorded runs (e.g. from before health tracking) does not fabricate health.
+  assert.equal(aus.health.status, 'UNKNOWN')
+  assert.equal(aus.health.transport.successRate, null)
+  assert.equal(aus.health.yield.opportunities, 0)
   assert.ok(await prisma.auditEvent.findFirst({ where: { type: 'discovery.profile_updated' } }))
 })
 
