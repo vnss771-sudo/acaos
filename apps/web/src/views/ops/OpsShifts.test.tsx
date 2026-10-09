@@ -135,6 +135,23 @@ describe('OpsShifts', () => {
     })
   })
 
+  test('at phone width: shift cards instead of a table, and a full-width Clock In', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: true, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+    }))
+    const api = apiFor({ shifts: [openShift] })
+    render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} canManage setView={vi.fn()} />)
+
+    const card = await screen.findByRole('listitem', {}, { timeout: 5000 })
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(within(card).getByText('Alex Rivera')).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: 'Edit' }).style.minHeight).toBe('44px')
+    const clockIn = await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })
+    expect(clockIn.style.width).toBe('100%')
+    vi.unstubAllGlobals()
+  })
+
   test('the manual-entry modal is hidden for canManage=false', async () => {
     const api = apiFor({ shifts: [openShift] })
     render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} canManage={false} setView={vi.fn()} />)

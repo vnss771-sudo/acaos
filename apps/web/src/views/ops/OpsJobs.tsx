@@ -11,6 +11,7 @@ import { Skeleton } from '../../components/ui/Skeleton.js'
 import { Badge } from '../../components/ui/Badge.js'
 import { Modal } from '../../components/ui/Modal.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
+import { useIsMobile } from '../../hooks/useMediaQuery.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean; setView: (v: View) => void }
 
@@ -117,6 +118,9 @@ function JobFormFields({ form, setForm, isEdit }: { form: JobForm; setForm: Reac
 }
 
 export function OpsJobs({ api, workspace, toast, canManage = false, setView }: Props) {
+  // UQ-21: phone layout — cards with thumb-sized actions.
+  const isMobile = useIsMobile()
+  const tap: React.CSSProperties = isMobile ? { minHeight: 44, flex: 1 } : {}
   const route = useMemo(() => makeRouteApi(api), [api])
   const [jobSites, setJobSites] = useState<OpsJobSite[]>([])
   const [total, setTotal] = useState(0)
@@ -222,8 +226,8 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
     ...(canManage ? [{
       key: 'actions', header: '', render: (j: OpsJobSite) => (
         <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
-          <button style={s.btnSm} onClick={() => openEdit(j)}>Edit</button>
-          {j.status === 'ACTIVE' && <button style={s.btnWarning} onClick={() => setArchiveTarget(j)}>Archive</button>}
+          <button style={{ ...s.btnSm, ...tap }} onClick={() => openEdit(j)}>Edit</button>
+          {j.status === 'ACTIVE' && <button style={{ ...s.btnWarning, ...tap }} onClick={() => setArchiveTarget(j)}>Archive</button>}
         </div>
       ),
     } as Column<OpsJobSite>] : []),
@@ -257,7 +261,7 @@ export function OpsJobs({ api, workspace, toast, canManage = false, setView }: P
             action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add site</button> : undefined}
           />
         ) : (
-          <Table columns={columns} rows={jobSites} rowKey={j => j.id} />
+          <Table columns={columns} rows={jobSites} rowKey={j => j.id} mobileCards />
         )}
 
         {total > LIMIT && (

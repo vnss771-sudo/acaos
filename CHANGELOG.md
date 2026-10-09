@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+### Repeat jobs per site and phone-friendly Field Ops (9 Oct 2026)
+- A site can now host more than one job. Each shift records the job its hours are costed to, so a second project at the same site keeps its own hours, margin, late-shift flags and closeout. Existing shifts were attributed to their site's one job by the migration.
+- Shifts at a site with a single open job are attributed automatically. Where a site has several, clock-in and manual entry ask which job, and the API returns 409 until one is chosen.
+- An accepted quote can start a new job at an existing site (`opsJobSiteId` on `POST /api/delivery/quotes/:id/job`). The pilot scorecard now follows opportunity → quote → job.
+- On phones, Shifts, Sites and Crew show cards instead of sideways-scrolling tables; Clock In/Out is full width; closeout and reopen forms stack into one column with larger buttons.
+
 ### Billing grace and network benchmark privacy (9 Oct 2026)
 - A single failed payment no longer drops a paying workspace to Free limits. `past_due` keeps the purchased plan for a 7-day grace window, set by the first failure and never extended by retries; after that, Free limits apply. `trialing` now counts as active.
 - Stripe webhooks that arrive out of order are acknowledged but not applied when they are older than the newest event already applied, so a late failure can't undo a recovery.

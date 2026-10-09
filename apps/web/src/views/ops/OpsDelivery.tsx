@@ -11,6 +11,7 @@ import { EmptyState } from '../../components/ui/EmptyState.js'
 import { ErrorBanner } from '../../components/ui/ErrorBanner.js'
 import { Skeleton } from '../../components/ui/Skeleton.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
+import { useIsMobile } from '../../hooks/useMediaQuery.js'
 
 // "Jobs & margins" (phase 15B): what each job was quoted at vs what it delivered,
 // closeout at the moment the job is done, and — once enough jobs are closed —
@@ -109,6 +110,12 @@ function ReportTable({ report, firstColumn }: { report: Report; firstColumn: str
 }
 
 export function OpsDelivery({ api, workspace, toast, canManage = false, setView }: Props) {
+  // UQ-21: on phones the closeout and reopen forms stack into one column with
+  // full-width inputs and thumb-sized buttons.
+  const isMobile = useIsMobile()
+  const formRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: isMobile ? 'stretch' : 'flex-end', flexWrap: 'wrap', flexDirection: isMobile ? 'column' : 'row' }
+  const inputWidth = (w: number) => (isMobile ? '100%' : w)
+  const tap: React.CSSProperties = isMobile ? { minHeight: 44 } : {}
   const route = useMemo(() => makeRouteApi(api), [api])
   const [jobs, setJobs] = useState<DeliveryJob[] | null>(null)
   const [report, setReport] = useState<Report | null>(null)
@@ -262,7 +269,7 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
 
                 {(j.shiftsAfterCloseout ?? 0) > 0 && (
                   <div role="status" style={{ fontSize: 12, color: colors.amber, marginBottom: 8 }}>
-                    {j.shiftsAfterCloseout} shift(s) were logged on this site after closeout and aren't in these figures — reopen the job to include them.
+                    {j.shiftsAfterCloseout} shift(s) were logged on this job after closeout and aren't in these figures — reopen the job to include them.
                   </div>
                 )}
 
@@ -278,25 +285,25 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                     {e && e.actualHours === 0 && <span style={{ fontSize: 12, color: colors.textMuted }}>Next: add your crew and log shifts against {j.site.jobCode}.</span>}
                     {e && e.gaps.some(g => g.includes('no base rate')) && <button style={s.btnGhost} onClick={() => setView('ops-crew')}>Set crew rates</button>}
                     <button style={s.btnGhost} onClick={() => setView('ops-shifts')}>Log shifts</button>
-                    <button style={s.btnSm} onClick={() => startCloseout(j)}>Job done — close out</button>
+                    <button style={{ ...s.btnSm, ...tap }} onClick={() => startCloseout(j)}>Job done — close out</button>
                   </div>
                 )}
                 {j.status === 'ACTIVE' && closing === j.id && (
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div style={formRow}>
                     <div>
                       <label style={s.label} htmlFor={`co-rev-${j.id}`}>Invoiced ($)</label>
-                      <input id={`co-rev-${j.id}`} style={{ ...s.input, width: 130 }} inputMode="decimal" value={form.revenue} placeholder="unknown" onChange={ev => setForm(f => ({ ...f, revenue: ev.target.value }))} />
+                      <input id={`co-rev-${j.id}`} style={{ ...s.input, width: inputWidth(130) }} inputMode="decimal" value={form.revenue} placeholder="unknown" onChange={ev => setForm(f => ({ ...f, revenue: ev.target.value }))} />
                     </div>
                     <div>
                       <label style={s.label} htmlFor={`co-oth-${j.id}`}>Materials &amp; subcontractors ($)</label>
-                      <input id={`co-oth-${j.id}`} style={{ ...s.input, width: 130 }} inputMode="decimal" value={form.other} placeholder="unknown" onChange={ev => setForm(f => ({ ...f, other: ev.target.value }))} />
+                      <input id={`co-oth-${j.id}`} style={{ ...s.input, width: inputWidth(130) }} inputMode="decimal" value={form.other} placeholder="unknown" onChange={ev => setForm(f => ({ ...f, other: ev.target.value }))} />
                     </div>
                     <div>
                       <label style={s.label} htmlFor={`co-onc-${j.id}`}>Labour on-costs (%)</label>
-                      <input id={`co-onc-${j.id}`} style={{ ...s.input, width: 90 }} inputMode="decimal" value={form.onCost} placeholder="e.g. 25" onChange={ev => setForm(f => ({ ...f, onCost: ev.target.value }))} />
+                      <input id={`co-onc-${j.id}`} style={{ ...s.input, width: inputWidth(90) }} inputMode="decimal" value={form.onCost} placeholder="e.g. 25" onChange={ev => setForm(f => ({ ...f, onCost: ev.target.value }))} />
                     </div>
-                    <button style={s.btnSm} disabled={busy} onClick={() => closeout(j)}>Close out</button>
-                    <button style={s.btnGhost} disabled={busy} onClick={() => setClosing(null)}>Cancel</button>
+                    <button style={{ ...s.btnSm, ...tap }} disabled={busy} onClick={() => closeout(j)}>Close out</button>
+                    <button style={{ ...s.btnGhost, ...tap }} disabled={busy} onClick={() => setClosing(null)}>Cancel</button>
                   </div>
                 )}
                 {j.status === 'ACTIVE' && closing === j.id && (
@@ -304,15 +311,15 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                     Leave an amount blank if you don't know it yet — it shows as unknown, never as $0.
                   </div>
                 )}
-                {j.status === 'COMPLETE' && reopening !== j.id && <button style={s.btnGhost} onClick={() => { setReopening(j.id); setReason('') }}>Reopen</button>}
+                {j.status === 'COMPLETE' && reopening !== j.id && <button style={{ ...s.btnGhost, ...tap }} onClick={() => { setReopening(j.id); setReason('') }}>Reopen</button>}
                 {j.status === 'COMPLETE' && reopening === j.id && (
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div style={formRow}>
                     <div>
                       <label style={s.label} htmlFor={`ro-${j.id}`}>Why reopen?</label>
-                      <input id={`ro-${j.id}`} style={{ ...s.input, width: 260 }} value={reason} placeholder="e.g. late variation invoice" onChange={ev => setReason(ev.target.value)} />
+                      <input id={`ro-${j.id}`} style={{ ...s.input, width: inputWidth(260) }} value={reason} placeholder="e.g. late variation invoice" onChange={ev => setReason(ev.target.value)} />
                     </div>
-                    <button style={s.btnSm} disabled={busy} onClick={() => reopen(j)}>Reopen job</button>
-                    <button style={s.btnGhost} disabled={busy} onClick={() => setReopening(null)}>Cancel</button>
+                    <button style={{ ...s.btnSm, ...tap }} disabled={busy} onClick={() => reopen(j)}>Reopen job</button>
+                    <button style={{ ...s.btnGhost, ...tap }} disabled={busy} onClick={() => setReopening(null)}>Cancel</button>
                   </div>
                 )}
               </Card>

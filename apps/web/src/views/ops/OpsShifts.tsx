@@ -13,6 +13,7 @@ import { Badge } from '../../components/ui/Badge.js'
 import { Modal } from '../../components/ui/Modal.js'
 import { Grid } from '../../components/ui/Grid.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
+import { useIsMobile } from '../../hooks/useMediaQuery.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean; setView: (v: View) => void }
 
@@ -67,6 +68,10 @@ function JobSelect({ id, choices, value, onChange }: { id: string; choices: OpsS
 const checkboxLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, color: colors.textMuted, fontSize: 13 }
 
 export function OpsShifts({ api, workspace, toast, canManage = false, setView }: Props) {
+  // UQ-21: phone layout — shift cards, and clock actions sized for a thumb.
+  const isMobile = useIsMobile()
+  const tap: React.CSSProperties = isMobile ? { minHeight: 44, flex: 1 } : {}
+  const clockTap: React.CSSProperties = isMobile ? { width: '100%', minHeight: 48 } : {}
   const route = useMemo(() => makeRouteApi(api), [api])
 
   // Shared reference data — active crew + active job sites. Fetched once per
@@ -302,8 +307,8 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
     },
     ...(canManage ? [{
       key: 'actions', header: '', render: (sh: OpsShiftRecord) => (
-        <div onClick={e => e.stopPropagation()}>
-          <button style={s.btnSm} onClick={() => openEdit(sh)}>Edit</button>
+        <div style={{ display: 'flex' }} onClick={e => e.stopPropagation()}>
+          <button style={{ ...s.btnSm, ...tap }} onClick={() => openEdit(sh)}>Edit</button>
         </div>
       ),
     } as Column<OpsShiftRecord>] : []),
@@ -349,13 +354,13 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
               <div style={{ color: colors.text, fontSize: 14 }}>
                 Clocked in at {activeShiftJobSiteName} since {new Date(status.shift.startTime).toLocaleString()}
               </div>
-              <button style={s.btnDanger} disabled={clockWorking} onClick={clockOut}>
+              <button style={{ ...s.btnDanger, ...clockTap }} disabled={clockWorking} onClick={clockOut}>
                 {clockWorking ? 'Clocking Out…' : 'Clock Out'}
               </button>
             </div>
           ) : (
             <div>
-              <button style={s.btnSuccess} disabled={clockWorking || !clockJobSiteId || (clockJobChoices.length > 0 && !clockJobId)} onClick={clockIn}>
+              <button style={{ ...s.btnSuccess, ...clockTap }} disabled={clockWorking || !clockJobSiteId || (clockJobChoices.length > 0 && !clockJobId)} onClick={clockIn}>
                 {clockWorking ? 'Clocking In…' : 'Clock In'}
               </button>
             </div>
@@ -408,7 +413,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
             action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add Manual Entry</button> : undefined}
           />
         ) : (
-          <Table columns={columns} rows={shifts} rowKey={sh => sh.id} />
+          <Table columns={columns} rows={shifts} rowKey={sh => sh.id} mobileCards />
         )}
 
         {shiftsTotal > LIMIT && (

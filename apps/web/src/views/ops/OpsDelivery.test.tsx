@@ -63,7 +63,7 @@ describe('OpsDelivery', () => {
     expect(screen.getAllByText('From: Development application — DA 2026/123')).toHaveLength(2)
     expect(screen.getByText('Gross margin', { selector: 'span' })).toBeInTheDocument()
     expect(screen.getByText('$12,800')).toBeInTheDocument()
-    expect(screen.getByText(/2 shift\(s\) were logged on this site after closeout/)).toBeInTheDocument()
+    expect(screen.getByText(/2 shift\(s\) were logged on this job after closeout/)).toBeInTheDocument()
   })
 
   test('close out sends cents, blank as unknown (null), and on-cost %', async () => {

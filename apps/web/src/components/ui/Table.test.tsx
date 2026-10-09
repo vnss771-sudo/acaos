@@ -90,3 +90,38 @@ describe('Table', () => {
     expect(screen.getByLabelText('Select all rows')).toBeChecked()
   })
 })
+
+// UQ-21: opt-in phone layout.
+describe('Table mobileCards', () => {
+  const phone = () => vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: true, media: query, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }))
+  const withAction: Column<Row>[] = [...columns, { key: 'actions', header: '', render: r => <button>Edit {r.name}</button> }]
+
+  test('at phone width renders one card per row, not a table', () => {
+    phone()
+    render(<Table columns={withAction} rows={rows} rowKey={r => r.id} mobileCards />)
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getAllByText('Score')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Edit Acme' })).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  test('keeps the table on desktop, and on phones when not opted in', () => {
+    render(<Table columns={columns} rows={rows} rowKey={r => r.id} mobileCards />)
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    phone()
+    render(<Table columns={columns} rows={rows} rowKey={r => r.id} />)
+    expect(screen.getAllByRole('table')).toHaveLength(2)
+    vi.unstubAllGlobals()
+  })
+
+  test('shows the empty state in card mode', () => {
+    phone()
+    render(<Table columns={columns} rows={[]} rowKey={r => r.id} mobileCards empty="No shifts" />)
+    expect(screen.getByText('No shifts')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+})
