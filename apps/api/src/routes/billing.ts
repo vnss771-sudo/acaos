@@ -11,6 +11,7 @@ import { isMailConfigured, sendMail } from '@acaos/backend-core/services/mail.js
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { evictCachedWorkspace } from '../lib/ingestCache.js'
 import type { BillingPlan } from '@acaos/shared'
+import { billingEntitlement, graceUntilAfterPastDue, isStaleStripeEvent } from '@acaos/backend-core/lib/billingEntitlements.js'
 
 export const billingRouter = Router()
 
@@ -37,12 +38,14 @@ billingRouter.post(
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { id: true, subscriptionStatus: true, stripeCustomerId: true }
+      select: { id: true, subscriptionStatus: true, stripeCustomerId: true, stripeSubscriptionId: true }
     })
     if (!workspace) throw new ApiError(404, 'Workspace not found')
 
-    if (workspace.subscriptionStatus === 'active') {
-      throw new ApiError(409, 'Workspace already has an active subscription')
+    // Any live subscription (active, trialing, past_due…) blocks a second one: a
+    // past_due customer fixes payment in the portal rather than buying twice.
+    if (workspace.subscriptionStatus === 'active' || (workspace.stripeSubscriptionId && workspace.subscriptionStatus !== 'canceled')) {
+      throw new ApiError(409, 'Workspace already has a subscription — manage it in the billing portal')
     }
 
     const session = await createCheckoutSession(workspaceId, plan, user.email, workspace.stripeCustomerId ?? undefined)
@@ -74,15 +77,21 @@ billingRouter.get(
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { plan: true, subscriptionStatus: true, stripeSubscriptionId: true }
+      select: { plan: true, subscriptionStatus: true, stripeSubscriptionId: true, billingGraceUntil: true }
     })
     if (!workspace) throw new ApiError(404, 'Workspace not found')
 
     const usage = await getMonthlyUsage(workspaceId)
+    const entitlement = billingEntitlement(workspace)
     res.json({
       plan: workspace.plan,
       status: workspace.subscriptionStatus ?? 'none',
       hasSubscription: Boolean(workspace.stripeSubscriptionId),
+      entitlement: {
+        status: entitlement.status,
+        effectivePlan: entitlement.effectivePlan,
+        graceUntil: entitlement.graceUntil?.toISOString() ?? null,
+      },
       usage
     })
   })
@@ -159,7 +168,38 @@ billingRouter.post(
   })
 )
 
-async function handleWebhookEvent(event: { type: string; data: { object: unknown } }) {
+type BillingState = { id: string; billingGraceUntil: Date | null; billingLastStripeEventAt: Date | null }
+const BILLING_STATE_SELECT = { id: true, billingGraceUntil: true, billingLastStripeEventAt: true } as const
+
+/**
+ * Applies one Stripe event to one workspace unless it is older than the newest
+ * event already applied (Stripe does not deliver in order). Records the event
+ * time so a late, older delivery can't roll billing state back. Returns the
+ * updated row, or null when the event was stale.
+ */
+async function applyBillingEvent(
+  ws: BillingState,
+  event: { type: string; created?: number },
+  data: (ws: BillingState) => Record<string, unknown>,
+) {
+  if (isStaleStripeEvent(event.created, ws.billingLastStripeEventAt)) {
+    console.warn(`[billing] ${event.type} ws=${ws.id} is older than the last applied event; ignored`)
+    return null
+  }
+  return prisma.workspace.update({
+    where: { id: ws.id },
+    data: { ...data(ws), ...(event.created != null ? { billingLastStripeEventAt: new Date(event.created * 1000) } : {}) },
+  })
+}
+
+/** Grace bookkeeping for a Stripe subscription status: set once on past_due, cleared when paid again. */
+function graceFor(status: string, ws: BillingState): Record<string, unknown> {
+  if (status === 'past_due') return { billingGraceUntil: graceUntilAfterPastDue(ws.billingGraceUntil) }
+  if (status === 'active' || status === 'trialing') return { billingGraceUntil: null }
+  return {}
+}
+
+async function handleWebhookEvent(event: { type: string; created?: number; data: { object: unknown } }) {
   switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as {
@@ -177,13 +217,19 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
             stripeCustomerId: session.customer ?? undefined,
             stripeSubscriptionId: session.subscription ?? undefined,
             subscriptionStatus: 'active',
+            billingGraceUntil: null,
           }
           if (plan !== null) {
             data.plan = plan
           } else {
             console.error(`[billing] checkout.session.completed workspace=${workspaceId} with unrecognized plan/price; activating without changing plan tier`)
           }
-          const updated = await prisma.workspace.update({ where: { id: workspaceId }, data })
+          const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: BILLING_STATE_SELECT })
+          // A paid checkout for a workspace we can't find is a processing failure:
+          // fail so the claim is released and Stripe redelivers.
+          if (!ws) throw new Error(`checkout.session.completed for unknown workspace ${workspaceId}`)
+          const updated = await applyBillingEvent(ws, event, () => data)
+          if (!updated) break
           // Plan changed: an ingestCache entry cached under this workspace's key
           // would keep serving the stale plan for up to the cache TTL otherwise.
           if (plan !== null && updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
@@ -204,7 +250,7 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
 
         const ws = await prisma.workspace.findFirst({
           where: { stripeSubscriptionId: sub.id },
-          select: { id: true }
+          select: BILLING_STATE_SELECT
         })
         if (ws) {
           // Only touch the plan when the price maps to a known plan. An
@@ -213,10 +259,10 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
           if (plan === null) {
             console.warn(`[billing] subscription.updated ws=${ws.id} unrecognized priceId=${priceId}; preserving existing plan`)
           }
-          const updated = await prisma.workspace.update({
-            where: { id: ws.id },
-            data: { subscriptionStatus: sub.status, ...(plan !== null ? { plan } : {}) }
-          })
+          const updated = await applyBillingEvent(ws, event, (w) => ({
+            subscriptionStatus: sub.status, ...graceFor(sub.status, w), ...(plan !== null ? { plan } : {}),
+          }))
+          if (!updated) break
           if (plan !== null && updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
           console.log(`[billing] subscription.updated ws=${ws.id} status=${sub.status}`)
         }
@@ -227,13 +273,13 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
         const sub = event.data.object as { id: string; status: string }
         const ws = await prisma.workspace.findFirst({
           where: { stripeSubscriptionId: sub.id },
-          select: { id: true }
+          select: BILLING_STATE_SELECT
         })
         if (ws) {
-          const updated = await prisma.workspace.update({
-            where: { id: ws.id },
-            data: { subscriptionStatus: 'canceled', plan: 'free', stripeSubscriptionId: null }
-          })
+          const updated = await applyBillingEvent(ws, event, () => ({
+            subscriptionStatus: 'canceled', plan: 'free', stripeSubscriptionId: null, billingGraceUntil: null,
+          }))
+          if (!updated) break
           if (updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
           console.log(`[billing] subscription.deleted ws=${ws.id}`)
         }
@@ -245,14 +291,12 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
         if (invoice.subscription) {
           const ws = await prisma.workspace.findFirst({
             where: { stripeSubscriptionId: invoice.subscription as string },
-            select: { id: true }
+            select: BILLING_STATE_SELECT
           })
           if (ws) {
-            await prisma.workspace.update({
-              where: { id: ws.id },
-              data: { subscriptionStatus: 'past_due' }
-            })
-            console.log(`[billing] invoice.payment_failed ws=${ws.id}`)
+            const updated = await applyBillingEvent(ws, event, (w) => ({ subscriptionStatus: 'past_due', ...graceFor('past_due', w) }))
+            if (!updated) break
+            console.log(`[billing] invoice.payment_failed ws=${ws.id} graceUntil=${updated.billingGraceUntil?.toISOString()}`)
             // Send dunning email to the workspace owner
             if (isMailConfigured()) {
               const ownerMembership = await prisma.membership.findFirst({
@@ -268,7 +312,7 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
                   'Action required: payment failed for your ACAOS subscription',
                   `<p>Hi,</p>
 <p>We were unable to process the payment for your ACAOS subscription. Your workspace has been marked as <strong>past due</strong>.</p>
-<p>Please update your billing information to avoid any interruption to your service:</p>
+<p>Your plan stays fully available until ${updated.billingGraceUntil ? updated.billingGraceUntil.toUTCString() : 'the end of a short grace period'}. Please update your billing information before then to avoid moving to the Free plan's limits:</p>
 <p><a href="${billingUrl}">${billingUrl}</a></p>
 <p>If you have any questions, please reply to this email.</p>
 <p>Thanks,<br>The ACAOS Team</p>`
@@ -285,14 +329,9 @@ async function handleWebhookEvent(event: { type: string; data: { object: unknown
         if (invoice.subscription) {
           const ws = await prisma.workspace.findFirst({
             where: { stripeSubscriptionId: invoice.subscription as string },
-            select: { id: true }
+            select: BILLING_STATE_SELECT
           })
-          if (ws) {
-            await prisma.workspace.update({
-              where: { id: ws.id },
-              data: { subscriptionStatus: 'active' }
-            })
-          }
+          if (ws) await applyBillingEvent(ws, event, () => ({ subscriptionStatus: 'active', billingGraceUntil: null }))
         }
         break
       }

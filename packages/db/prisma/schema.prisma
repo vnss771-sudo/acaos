@@ -136,6 +136,10 @@ model Workspace {
   stripeCustomerId        String?                  @unique
   stripeSubscriptionId    String?                  @unique
   subscriptionStatus      String?
+  // UQ-26: past_due grace deadline (set once per lapse, never extended) and the
+  // newest Stripe event applied, so out-of-order deliveries can't roll state back.
+  billingGraceUntil       DateTime?
+  billingLastStripeEventAt DateTime?
   ingestApiKey            String?                  @unique
   onboardingCompleted     Boolean                  @default(false)
   senderBusinessName      String?

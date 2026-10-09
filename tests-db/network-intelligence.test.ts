@@ -1,6 +1,7 @@
 // Database-backed tests for phase 13, cross-customer intelligence
 // (lib/networkIntelligence.ts): opt-in only, aggregated and anonymised, with an
-// anonymity floor of 5 workspaces / 30 closed outcomes per published figure.
+// anonymity floor of 10 workspaces / 50 closed outcomes per published figure,
+// and customers read bands and coarse rates, never exact pooled counts.
 
 import { test, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -30,11 +31,11 @@ async function seedClosed(workspaceId: string, eventType: string, status: 'WON' 
   })
 }
 
-/** A workspace with 6 closed capacity-expansion opportunities (2 won) and 1 closed tender. */
+/** A workspace with 5 closed capacity-expansion opportunities (2 won) and 1 closed tender. */
 async function seedContributor(i: number, optIn: boolean) {
   const { user, workspace } = await seedUserWithWorkspace(`owner${i}@acme.test`)
   for (let k = 0; k < 2; k++) await seedClosed(workspace.id, 'CAPACITY_EXPANSION', 'WON')
-  for (let k = 0; k < 4; k++) await seedClosed(workspace.id, 'CAPACITY_EXPANSION', 'LOST')
+  for (let k = 0; k < 3; k++) await seedClosed(workspace.id, 'CAPACITY_EXPANSION', 'LOST')
   await seedClosed(workspace.id, 'TENDER_OPPORTUNITY', 'WON')
   if (optIn) await prisma.workspace.update({ where: { id: workspace.id }, data: { networkOptInAt: new Date() } })
   return { user, workspace }
@@ -42,17 +43,17 @@ async function seedContributor(i: number, optIn: boolean) {
 
 test('only opted-in workspaces are pooled, only above the floor, and nothing identifying is stored', async () => {
   const contributors = []
-  for (let i = 0; i < 5; i++) contributors.push(await seedContributor(i, true))
+  for (let i = 0; i < 10; i++) contributors.push(await seedContributor(i, true))
   // A large workspace that never opted in: its 20 losses must not move the benchmark.
   const outsider = await seedUserWithWorkspace('outsider@acme.test')
   for (let k = 0; k < 20; k++) await seedClosed(outsider.workspace.id, 'CAPACITY_EXPANSION', 'LOST')
 
   const r = await computeNetworkBenchmarks()
-  assert.deepEqual(r, { workspaces: 5, published: 1, withheld: 1 })
+  assert.deepEqual(r, { workspaces: 10, published: 1, withheld: 1 })
   const rows = await prisma.networkBenchmark.findMany()
   assert.equal(rows.length, 1)
   const row = rows[0]
-  assert.deepEqual([row.eventType, row.contributors, row.closed, row.won, row.winRate], ['CAPACITY_EXPANSION', 5, 30, 10, 0.333])
+  assert.deepEqual([row.eventType, row.contributors, row.closed, row.won, row.winRate], ['CAPACITY_EXPANSION', 10, 50, 20, 0.4])
   assert.deepEqual(Object.keys(row).sort(), ['closed', 'computedAt', 'contributors', 'conversationRate', 'conversations', 'eventType', 'id', 'opportunities', 'winRate', 'won'])
   const stored = JSON.stringify(rows)
   for (const c of [...contributors, outsider]) assert.ok(!stored.includes(c.workspace.id))
@@ -62,8 +63,11 @@ test('only opted-in workspaces are pooled, only above the floor, and nothing ide
   const me = contributors[0]
   const res = await opps.request(`/api/commercial-opportunities/network-benchmarks?workspaceId=${me.workspace.id}`, { headers: json(me.user.id) })
   assert.equal(res.status, 200)
-  const body = res.body as { benchmarks: Array<{ eventType: string; winRate: number; yours: { closed: number; won: number; winRate: number } }> }
-  assert.deepEqual(body.benchmarks.map(b => [b.eventType, b.winRate, b.yours]), [['CAPACITY_EXPANSION', 0.333, { closed: 6, won: 2, winRate: 0.333 }]])
+  const body = res.body as { benchmarks: Array<Record<string, unknown>> }
+  assert.deepEqual(body.benchmarks.map(({ computedAt: _c, ...b }) => b), [{
+    eventType: 'CAPACITY_EXPANSION', contributors: '10–24', opportunities: '50–99', closed: '50–99', winRate: 0.4, conversationRate: 0.4,
+    yours: { closed: 5, won: 2, winRate: 0.4 },
+  }], 'pooled figures are banded and rounded; only your own figures are exact')
   // A workspace that hasn't opted in can't read the pool.
   const denied = await opps.request(`/api/commercial-opportunities/network-benchmarks?workspaceId=${outsider.workspace.id}`, { headers: json(outsider.user.id) })
   assert.equal(denied.status, 403)
@@ -73,7 +77,7 @@ test('only opted-in workspaces are pooled, only above the floor, and nothing ide
 
 test('participation: admin-only, audited; opting out removes the workspace at the next recompute', async () => {
   const contributors = []
-  for (let i = 0; i < 5; i++) contributors.push(await seedContributor(i, true))
+  for (let i = 0; i < 10; i++) contributors.push(await seedContributor(i, true))
   await computeNetworkBenchmarks()
   assert.equal(await prisma.networkBenchmark.count(), 1)
 
@@ -95,8 +99,8 @@ test('participation: admin-only, audited; opting out removes the workspace at th
   assert.ok(await prisma.auditEvent.findFirst({ where: { workspaceId: workspace.id, type: 'network.opt_out' } }))
   assert.equal((await opps.request(`/api/commercial-opportunities/network-benchmarks?workspaceId=${workspace.id}`, { headers: json(user.id) })).status, 403)
 
-  // Four contributors remain — below the floor — so the next recompute withholds the kind.
-  assert.deepEqual(await computeNetworkBenchmarks(), { workspaces: 4, published: 0, withheld: 2 })
+  // Nine contributors remain — below the floor — so the next recompute withholds the kind.
+  assert.deepEqual(await computeNetworkBenchmarks(), { workspaces: 9, published: 0, withheld: 2 })
   assert.equal(await prisma.networkBenchmark.count(), 0)
 
   assert.equal((await put(user.id, true)).status, 200)

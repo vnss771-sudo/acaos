@@ -22,7 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function apiFor(status: { plan: string; status: string; hasSubscription: boolean }, extra: Record<string, unknown> = {}) {
+function apiFor(status: { plan: string; status: string; hasSubscription: boolean; entitlement?: unknown }, extra: Record<string, unknown> = {}) {
   return vi.fn((path: string, _init?: unknown) => {
     if (path.startsWith('/api/billing/status')) return Promise.resolve(status)
     if (path === '/api/billing/plans') return Promise.resolve({ plans: PLAN_CATALOG })
@@ -85,6 +85,28 @@ describe('Billing', () => {
 
     expect(await screen.findByRole('button', { name: /Manage Subscription/i })).toBeInTheDocument()
     expect(screen.queryByText('Upgrade your plan')).not.toBeInTheDocument()
+  })
+
+  test('a past_due subscription in grace shows the deadline and no second checkout', async () => {
+    const api = apiFor({
+      plan: 'growth', status: 'past_due', hasSubscription: true,
+      entitlement: { status: 'grace', effectivePlan: 'growth', graceUntil: '2026-10-16T12:00:00.000Z' },
+    })
+    render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
+
+    expect(await screen.findByText(/Your last payment failed/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Manage Subscription/i })).toBeInTheDocument()
+    expect(screen.queryByText('Upgrade your plan')).not.toBeInTheDocument()
+  })
+
+  test('a lapsed paid plan says Free limits apply', async () => {
+    const api = apiFor({
+      plan: 'starter', status: 'past_due', hasSubscription: true,
+      entitlement: { status: 'lapsed', effectivePlan: 'free', graceUntil: '2026-10-01T12:00:00.000Z' },
+    })
+    render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
+
+    expect(await screen.findByText(/Free plan limits apply/i)).toBeInTheDocument()
   })
 
   // Regression: both fetches below previously failed silently (a bare

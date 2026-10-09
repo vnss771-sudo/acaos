@@ -382,7 +382,7 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
         <Card>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ fontSize: 13, color: colors.textMuted, maxWidth: 560 }}>
-              <strong style={{ color: colors.text }}>Cross-customer benchmarks</strong> — share anonymised win counts per signal type (never names, prices or evidence) and see how others convert. Published only once 5+ workspaces contribute.
+              <strong style={{ color: colors.text }}>Cross-customer benchmarks</strong> — share anonymised win counts per signal type (never names, prices or evidence) and see how others convert. Published only once 10+ workspaces contribute, as ranges and rounded rates — never exact counts.
             </div>
             {network === 'in'
               ? <button style={s.btnGhost} onClick={() => setParticipation(false)}>Stop sharing</button>

@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+### Billing grace and network benchmark privacy (9 Oct 2026)
+- A single failed payment no longer drops a paying workspace to Free limits. `past_due` keeps the purchased plan for a 7-day grace window, set by the first failure and never extended by retries; after that, Free limits apply. `trialing` now counts as active.
+- Stripe webhooks that arrive out of order are acknowledged but not applied when they are older than the newest event already applied, so a late failure can't undo a recovery.
+- Checkout is refused for any live subscription (including `past_due`); the Billing page shows the grace deadline or the lapsed state and points to Manage Subscription.
+- Cross-customer benchmarks now publish at 10+ contributing workspaces and 50+ closed outcomes (was 5 / 30), and the read API returns count bands and rates rounded to 5 points, with a rate withheld unless both sides have 5+ observations. Exact pooled counts stay server-side.
+
 ### AI provider compatibility and pilot preflight (8 Oct 2026)
 - Fixed the default GPT-5 reasoning request so reasoning models no longer receive `temperature`; they keep `max_completion_tokens` and the supported reasoning setting, while standard chat models retain `temperature: 0.4` + `max_tokens`.
 - Added a centralized model compatibility registry (`modelProfiles.ts`) so sampling/token/reasoning behaviour cannot drift across helpers.

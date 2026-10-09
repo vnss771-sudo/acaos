@@ -8,8 +8,13 @@
 //   - Aggregated and anonymised. Only per-kind counts leave a workspace; the
 //     published rows carry no workspace id, name, evidence, offer or company.
 //   - Anonymity floor. A kind is published only with at least
-//     MIN_CONTRIBUTORS (5) contributing workspaces AND MIN_CLOSED (30) closed
+//     MIN_CONTRIBUTORS (10) contributing workspaces AND MIN_CLOSED (50) closed
 //     outcomes. Env vars may raise these floors, never lower them.
+//   - No exact pooled counts reach a customer (UQ-30). The stored rows are
+//     exact; the read path returns count bands and rates rounded to 5 points,
+//     and suppresses a rate unless both sides have MIN_RATE_SIDE observations.
+//     A workspace sees its own exact figures beside the pool, so exact pooled
+//     totals would let it subtract itself out and learn the peers' totals.
 //   - Each workspace's figures are computed inside its own tenant context, so
 //     the tenant guard still scopes every query; the pooling is pure.
 // The table is recomputed whole (daily); an opt-out takes effect at the next
@@ -19,8 +24,12 @@ import { runInWorkspaceContext } from './tenantContext.js'
 import { loadCalibrationItems } from './calibrationLearning.js'
 import { buildCalibrationReport, type KindFunnel } from './signalCalibration.js'
 
-export const MIN_CONTRIBUTORS = 5
-export const MIN_CLOSED = 30
+export const MIN_CONTRIBUTORS = 10
+export const MIN_CLOSED = 50
+/** A rate is published only when its hits and misses each reach this count. */
+export const MIN_RATE_SIDE = 5
+const RATE_STEP = 0.05
+const COUNT_BANDS = [10, 25, 50, 100, 250, 500, 1000]
 
 function floor(envName: string, min: number): number {
   const n = Number(process.env[envName])
@@ -43,6 +52,42 @@ export type NetworkBenchmarkRow = {
 }
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000
+
+/** What a customer sees for one kind: bands and coarse rates, never exact pooled counts. */
+export type PublicBenchmarkRow = {
+  eventType: string
+  contributors: string
+  opportunities: string
+  closed: string
+  winRate: number | null
+  conversationRate: number | null
+}
+
+/** A count as a coarse band: '10–24', '25–49', … '1000+' ('<10' below the lowest). */
+export function countBand(n: number): string {
+  for (let i = COUNT_BANDS.length - 1; i >= 0; i--) {
+    if (n < COUNT_BANDS[i]) continue
+    return i === COUNT_BANDS.length - 1 ? `${COUNT_BANDS[i]}+` : `${COUNT_BANDS[i]}–${COUNT_BANDS[i + 1] - 1}`
+  }
+  return `<${COUNT_BANDS[0]}`
+}
+
+/** hits/total rounded to 5 points, or null when either side is too rare to publish. */
+export function publicRate(hits: number, total: number): number | null {
+  if (hits < MIN_RATE_SIDE || total - hits < MIN_RATE_SIDE) return null
+  return Math.round(Math.round(hits / total / RATE_STEP) * RATE_STEP * 100) / 100
+}
+
+export function toPublicBenchmark(row: Pick<NetworkBenchmarkRow, 'eventType' | 'contributors' | 'opportunities' | 'conversations' | 'closed' | 'won'>): PublicBenchmarkRow {
+  return {
+    eventType: row.eventType,
+    contributors: countBand(row.contributors),
+    opportunities: countBand(row.opportunities),
+    closed: countBand(row.closed),
+    winRate: publicRate(row.won, row.closed),
+    conversationRate: row.opportunities ? publicRate(row.conversations, row.opportunities) : null,
+  }
+}
 
 /**
  * Pool per-workspace counts into per-kind benchmarks. A workspace contributes
@@ -108,7 +153,7 @@ export class NetworkAccessError extends Error {
 /** The benchmarks beside the workspace's own figures. Opted-in workspaces only. */
 export async function loadNetworkBenchmarks(workspaceId: string, opts: { now?: Date } = {}): Promise<{
   optedInAt: string
-  benchmarks: Array<NetworkBenchmarkRow & { computedAt: string; yours: { closed: number; won: number; winRate: number | null } | null }>
+  benchmarks: Array<PublicBenchmarkRow & { computedAt: string; yours: { closed: number; won: number; winRate: number | null } | null }>
 }> {
   const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { networkOptInAt: true } }) as { networkOptInAt: Date | null } | null
   if (!ws) throw new NetworkAccessError(404, 'Workspace not found')
@@ -120,11 +165,11 @@ export async function loadNetworkBenchmarks(workspaceId: string, opts: { now?: D
   const mine = new Map(own.funnels.map(f => [f.eventType, f]))
   return {
     optedInAt: ws.networkOptInAt.toISOString(),
-    benchmarks: rows.map(({ eventType, contributors, opportunities, conversations, closed, won, winRate, conversationRate, computedAt }) => {
-      const m = mine.get(eventType)
+    benchmarks: rows.map((row) => {
+      const m = mine.get(row.eventType)
       return {
-        eventType, contributors, opportunities, conversations, closed, won, winRate, conversationRate,
-        computedAt: computedAt.toISOString(),
+        ...toPublicBenchmark(row),
+        computedAt: row.computedAt.toISOString(),
         yours: m ? { closed: m.closed, won: m.won, winRate: m.winRate } : null,
       }
     }),

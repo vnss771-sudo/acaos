@@ -95,3 +95,26 @@ test('status returns plan and subscription state for an owner', async () => {
   assert.equal(res.body.plan, 'starter')
   assert.equal(res.body.hasSubscription, true)
 })
+
+test('checkout 409s for a past_due subscription — fix payment in the portal, never buy twice', async () => {
+  boot(spec({ id: WS, subscriptionStatus: 'past_due', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1' }))
+  const res = await post('/api/billing/checkout', OWNER, { workspaceId: WS, plan: 'starter' })
+  assert.equal(res.status, 409)
+})
+
+test('status reports a past_due workspace inside its grace window as still on its plan', async () => {
+  const graceUntil = new Date(Date.now() + 3 * 86_400_000)
+  boot(spec({ plan: 'growth', subscriptionStatus: 'past_due', stripeSubscriptionId: 'sub_1', billingGraceUntil: graceUntil }))
+  const res = await server.request(`/api/billing/status?workspaceId=${WS}`, { headers: { Authorization: bearer(OWNER) } })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.entitlement.status, 'grace')
+  assert.equal(res.body.entitlement.effectivePlan, 'growth')
+  assert.equal(res.body.entitlement.graceUntil, graceUntil.toISOString())
+})
+
+test('status reports an expired grace window as lapsed to free limits', async () => {
+  boot(spec({ plan: 'growth', subscriptionStatus: 'past_due', stripeSubscriptionId: 'sub_1', billingGraceUntil: new Date(Date.now() - 1000) }))
+  const res = await server.request(`/api/billing/status?workspaceId=${WS}`, { headers: { Authorization: bearer(OWNER) } })
+  assert.equal(res.body.entitlement.status, 'lapsed')
+  assert.equal(res.body.entitlement.effectivePlan, 'free')
+})

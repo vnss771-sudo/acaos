@@ -47,7 +47,8 @@ function baseSpec(workspaceRow: any = { id: 'ws1' }) {
       delete: async (a: any) => { seen.delete(String(a?.where?.id)); return {} },
     },
     workspace: {
-      update: async (args: any) => ({ id: args?.where?.id }),
+      update: async (args: any) => ({ id: args?.where?.id, ...args?.data }),
+      findUnique: async (args: any) => (args?.where?.id === 'ws1' ? { billingGraceUntil: null, billingLastStripeEventAt: null, ...workspaceRow } : null),
       findFirst: async (args: any) =>
         args?.where?.stripeSubscriptionId === 'sub_known' ? workspaceRow : null,
     },
@@ -267,4 +268,63 @@ test('checkout.session.completed rejects a forged plan in metadata (not a known 
   assert.equal(res.status, 200)
   const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
   assert.equal('plan' in data, false, 'an unknown plan string must not be applied')
+})
+
+// --- entitlement grace + event ordering (UQ-26) ---
+
+function useWorkspace(row: Record<string, unknown>) {
+  prisma = createFakePrisma(baseSpec({ id: 'ws1', billingGraceUntil: null, billingLastStripeEventAt: null, ...row }))
+  installPrisma(prisma)
+}
+
+test('invoice.payment_failed starts a 7-day grace window', async () => {
+  useWorkspace({})
+  const before = Date.now()
+  await postWebhook({ type: 'invoice.payment_failed', data: { object: { subscription: 'sub_known' } } })
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  const grace = (data.billingGraceUntil as Date).getTime()
+  assert.ok(grace >= before + 7 * 86_400_000 - 1000 && grace <= Date.now() + 7 * 86_400_000)
+})
+
+test('a repeated payment failure never extends an existing grace window', async () => {
+  const existing = new Date(Date.now() + 2 * 86_400_000)
+  useWorkspace({ subscriptionStatus: 'past_due', billingGraceUntil: existing })
+  await postWebhook({ type: 'invoice.payment_failed', data: { object: { subscription: 'sub_known' } } })
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal((data.billingGraceUntil as Date).getTime(), existing.getTime())
+})
+
+test('payment success and trialing clear the grace window', async () => {
+  useWorkspace({ billingGraceUntil: new Date(Date.now() + 86_400_000) })
+  await postWebhook({ type: 'invoice.payment_succeeded', data: { object: { subscription: 'sub_known' } } })
+  await postWebhook({ type: 'customer.subscription.updated', data: { object: { id: 'sub_known', status: 'trialing', customer: 'cus_1' } } })
+  for (const call of prisma.callsTo('workspace', 'update')) {
+    assert.equal((call.args[0] as any).data.billingGraceUntil, null)
+  }
+})
+
+test('an event older than the last applied one is acknowledged but not applied', async () => {
+  const last = new Date('2026-10-01T12:00:00Z')
+  useWorkspace({ billingLastStripeEventAt: last })
+  const res = await postWebhook({
+    type: 'customer.subscription.updated',
+    created: Math.floor(last.getTime() / 1000) - 60,
+    data: { object: { id: 'sub_known', status: 'past_due', customer: 'cus_1' } },
+  })
+  assert.equal(res.status, 200)
+  assert.equal(prisma.callsTo('workspace', 'update').length, 0)
+})
+
+test('a newer event is applied and records its creation time', async () => {
+  const last = new Date('2026-10-01T12:00:00Z')
+  useWorkspace({ billingLastStripeEventAt: last })
+  const created = Math.floor(last.getTime() / 1000) + 60
+  await postWebhook({
+    type: 'customer.subscription.updated',
+    created,
+    data: { object: { id: 'sub_known', status: 'active', customer: 'cus_1' } },
+  })
+  const data = (prisma.callsTo('workspace', 'update')[0].args[0] as any).data
+  assert.equal(data.subscriptionStatus, 'active')
+  assert.equal((data.billingLastStripeEventAt as Date).getTime(), created * 1000)
 })
