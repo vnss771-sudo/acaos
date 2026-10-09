@@ -20,6 +20,7 @@ import { execSync } from 'node:child_process'
 import { generateLeadResearch } from '@acaos/backend-core/services/openai.js'
 import { appendEvalRun, computeEvalScore, computeLift, formatLift } from './lib/evalHistory.js'
 import { appendStepSummary, readHistoryFile, writeHistoryFile } from './lib/evalHistoryStore.js'
+import { startEvalRun } from './lib/evalRun.js'
 
 const HISTORY_PATH = new URL('../eval-results/research.json', import.meta.url).pathname
 
@@ -158,6 +159,7 @@ export function evaluateResearch(c: ResearchCase, raw: string): Finding[] {
 }
 
 async function main() {
+  const finishRun = startEvalRun()
   if (!process.env.OPENAI_API_KEY) {
     console.log('⏭  OPENAI_API_KEY not set — skipping research eval (set it to run).')
     process.exit(0)
@@ -205,14 +207,23 @@ async function main() {
   appendStepSummary(`### Research eval\n\n${formatLift(lift, score)}\n`)
   let gitSha: string | undefined
   try { gitSha = execSync('git rev-parse HEAD').toString().trim() } catch { /* not fatal */ }
+  const run = finishRun()
   writeHistoryFile(HISTORY_PATH, appendEvalRun(history, {
     recordedAt: new Date().toISOString(),
     gitSha,
-    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    model: run.model,
     score,
     fails: fails.length,
     warns: warns.length,
     cases: RESEARCH_CASES.length,
+    task: 'research',
+    datasetVersion: run.datasetVersion,
+    // The research prompt is not versioned yet; recorded as unknown rather than guessed.
+    promptVersion: null,
+    latencyMs: run.latencyMs,
+    promptTokens: run.promptTokens,
+    completionTokens: run.completionTokens,
+    totalTokens: run.totalTokens,
   }))
 
   process.exit(fails.length > 0 ? 1 : 0)
