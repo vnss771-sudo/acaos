@@ -13,6 +13,14 @@ const crew: OpsCrewMember[] = [
 
 const jobSites: OpsJobSite[] = [
   { id: 'job1', jobCode: 'J1', siteName: 'Main St Site', status: 'ACTIVE', riskLevel: 'LOW', radiusMeters: 500, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  // UQ-24: repeat work — two ACTIVE jobs at one site, so a shift must name its job.
+  {
+    id: 'site2', jobCode: 'S2', siteName: 'Depot', status: 'ACTIVE', riskLevel: 'LOW', radiusMeters: 500, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    jobs: [
+      { id: 'jA', status: 'ACTIVE', startedAt: '2026-08-01T00:00:00.000Z', label: 'Stage 1 fit-out' },
+      { id: 'jB', status: 'ACTIVE', startedAt: '2026-09-01T00:00:00.000Z', label: null },
+    ],
+  },
 ]
 
 const openShift: OpsShiftRecord = {
@@ -105,6 +113,26 @@ describe('OpsShifts', () => {
       expect(body).toEqual({ workspaceId: 'ws1', crewMemberId: 'crew1', jobSiteId: 'job1' })
     })
     expect(toast.success).toHaveBeenCalled()
+  })
+
+  test('a site with several jobs needs the job chosen before Clock In, and sends it', async () => {
+    const api = apiFor({ clockedIn: false })
+    render(<OpsShifts api={api as never} workspace={workspace} toast={toast as never} setView={vi.fn()} />)
+
+    await screen.findByRole('button', { name: /Clock In/i }, { timeout: 5000 })
+    expect(screen.queryByLabelText('Job', { selector: '#clock-job' })).toBeNull()
+    await userEvent.selectOptions(screen.getByLabelText('Site', { selector: '#clock-job-site' }), 'site2')
+    const jobSelect = screen.getByLabelText('Job', { selector: '#clock-job' })
+    expect(within(jobSelect).getByRole('option', { name: 'Stage 1 fit-out' })).toBeInTheDocument()
+    expect(within(jobSelect).getByRole('option', { name: /Job started/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Clock In/i })).toBeDisabled()
+
+    await userEvent.selectOptions(jobSelect, 'jB')
+    await userEvent.click(screen.getByRole('button', { name: /Clock In/i }))
+    await waitFor(() => {
+      const call = findCall(api, p => p === '/api/ops/clock/in')
+      expect(JSON.parse(call![1]!.body!)).toEqual({ workspaceId: 'ws1', crewMemberId: 'crew1', jobSiteId: 'site2', jobId: 'jB' })
+    })
   })
 
   test('the manual-entry modal is hidden for canManage=false', async () => {

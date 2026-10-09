@@ -75,7 +75,7 @@ test('the scorecard counts a week of Find work through quote, win and closeout',
   const crew = await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'E1', fullName: 'Sparky One', role: 'Electrician', baseRate: 50 } })
   const start = new Date(Date.now() - 2 * DAY)
   await prisma.opsShiftRecord.create({
-    data: { workspaceId: ws, crewMemberId: crew.id, jobSiteId: job.body.job.opsJobSiteId, shiftDate: start, startTime: start, endTime: new Date(start.getTime() + 8 * 3_600_000), totalHours: 40 },
+    data: { workspaceId: ws, crewMemberId: crew.id, jobSiteId: job.body.job.opsJobSiteId, jobId: job.body.job.id, shiftDate: start, startTime: start, endTime: new Date(start.getTime() + 8 * 3_600_000), totalHours: 40 },
   })
   const closed = await call(delivery, user.id, 'POST', `/api/delivery/jobs/${job.body.job.id}/closeout`, {
     workspaceId: ws, invoicedRevenueCents: 2_000_000, otherCostCents: 600_000,

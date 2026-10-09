@@ -309,6 +309,7 @@ export async function loadPilotScorecard(
   const weeks = Math.max(1, Math.min(SCORECARD_MAX_WEEKS, Math.floor(opts.weeks ?? SCORECARD_DEFAULT_WEEKS)))
   const start = new Date(now.getTime() - weeks * WEEK_MS)
 
+  const SCORECARD_JOB = { status: true, invoicedRevenueCents: true, completedAt: true, closeout: true } as const
   const [workspace, rows] = await Promise.all([
     prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -323,17 +324,21 @@ export async function loadPilotScorecard(
           { firstSeenAt: { gte: start } },
           { statusChangedAt: { gte: start } },
           { quotes: { some: { submittedAt: { gte: start } } } },
-          { opsJobSite: { is: { job: { is: { completedAt: { gte: start } } } } } },
+          { quotes: { some: { job: { is: { completedAt: { gte: start } } } } } },
+          { opsJobSite: { is: { jobs: { some: { quoteId: null, completedAt: { gte: start } } } } } },
         ],
       },
       orderBy: { firstSeenAt: 'desc' },
       take: MAX_OPPORTUNITIES,
       select: {
         kind: true, status: true, firstSeenAt: true, statusChangedAt: true,
-        quotes: { select: { status: true, amountCents: true, submittedAt: true, createdAt: true } },
-        opsJobSite: { select: { job: { select: { status: true, invoicedRevenueCents: true, completedAt: true, closeout: true } } } },
+        quotes: { select: { status: true, amountCents: true, submittedAt: true, createdAt: true, job: { select: SCORECARD_JOB } } },
+        opsJobSite: { select: { jobs: { where: { quoteId: null }, select: SCORECARD_JOB, take: 1 } } },
       },
-    }) as Promise<Array<Omit<ScorecardOpportunity, 'job'> & { opsJobSite: { job: ScorecardJob | null } | null }>>,
+    }) as Promise<Array<Omit<ScorecardOpportunity, 'job' | 'quotes'> & {
+      quotes: Array<ScorecardOpportunity['quotes'][number] & { job: ScorecardJob | null }>
+      opsJobSite: { jobs: ScorecardJob[] } | null
+    }>>,
   ])
 
   return buildPilotScorecard({
@@ -341,6 +346,12 @@ export async function loadPilotScorecard(
     weeks,
     since: workspace?.discoveryProfile?.createdAt ?? workspace?.createdAt ?? null,
     findWorkSetUp: workspace?.discoveryProfile != null,
-    opportunities: rows.map(({ opsJobSite, ...o }) => ({ ...o, job: opsJobSite?.job ?? null })),
+    // The opportunity's job is the one its quote became (UQ-24: a site can host
+    // other work too), else the quoteless job "won → job site" made for it.
+    opportunities: rows.map(({ opsJobSite, quotes, ...o }) => ({
+      ...o,
+      quotes: quotes.map(({ job: _job, ...q }) => q),
+      job: quotes.find(q => q.job)?.job ?? opsJobSite?.jobs[0] ?? null,
+    })),
   })
 }

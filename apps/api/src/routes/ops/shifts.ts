@@ -6,7 +6,7 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission } from '../../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../../lib/validate.js'
-import { assertOwnership, clampPagination, reconcileShiftAlerts, auditOps, totalHoursFor } from './utils.js'
+import { assertOwnership, clampPagination, reconcileShiftAlerts, auditOps, totalHoursFor, resolveShiftJobId } from './utils.js'
 import type { Assert, Extends, OpsCreateShiftRequest, OpsUpdateShiftRequest } from '@acaos/shared'
 
 // Shift records: clock in/out produces these (see clock.ts); this router covers
@@ -64,6 +64,7 @@ const createSchema = z.object({
   workspaceId: workspaceIdField,
   crewMemberId: idField,
   jobSiteId: idField,
+  jobId: idField.optional(),
   shiftDate: z.string().datetime(),
   startTime: z.string().datetime(),
   endTime: z.string().datetime().optional(),
@@ -91,10 +92,11 @@ shiftsRouter.post(
     const breakMinutes = data.breakMinutes ?? 0
     const outdoorHighRisk = data.outdoorHighRisk ?? false
     const allowanceTag = data.allowanceTag || 'NONE'
+    const jobId = await resolveShiftJobId(data.workspaceId, data.jobSiteId, data.jobId)
 
     const shift = await prisma.opsShiftRecord.create({
       data: {
-        workspaceId: data.workspaceId, crewMemberId: data.crewMemberId, jobSiteId: data.jobSiteId,
+        workspaceId: data.workspaceId, crewMemberId: data.crewMemberId, jobSiteId: data.jobSiteId, jobId,
         shiftDate: new Date(data.shiftDate), startTime, endTime, breakMinutes, allowanceTag, outdoorHighRisk,
         notes: data.notes, totalHours: totalHoursFor(startTime, endTime, breakMinutes),
       },
@@ -111,6 +113,7 @@ const idParamsSchema = z.object({ id: idField })
 const updateSchema = z.object({
   workspaceId: workspaceIdField,
   jobSiteId: idField.optional(),
+  jobId: idField.optional(),
   endTime: z.string().datetime().optional(),
   breakMinutes: z.number().int().min(0).max(1440).optional(),
   allowanceTag: z.string().trim().max(64).optional(),
@@ -139,6 +142,9 @@ shiftsRouter.put(
     const existing = await prisma.opsShiftRecord.findFirst({ where: { id, workspaceId: data.workspaceId } })
     if (!existing) throw new ApiError(404, 'Shift not found')
     if (data.jobSiteId) await assertOwnership(data.workspaceId, { jobSiteId: data.jobSiteId })
+    // Moving the shift to another site, or naming its job, re-runs attribution.
+    const reattribute = (data.jobSiteId && data.jobSiteId !== existing.jobSiteId) || data.jobId
+    const jobId = reattribute ? await resolveShiftJobId(data.workspaceId, data.jobSiteId ?? existing.jobSiteId, data.jobId) : undefined
 
     const endTime = 'endTime' in data && data.endTime !== undefined ? new Date(data.endTime) : existing.endTime
     if (endTime && endTime <= existing.startTime) throw new ApiError(400, 'endTime must be after startTime')
@@ -148,6 +154,7 @@ shiftsRouter.put(
       where: { id },
       data: {
         ...(data.jobSiteId ? { jobSiteId: data.jobSiteId } : {}),
+        ...(jobId !== undefined ? { jobId } : {}),
         ...(data.endTime !== undefined ? { endTime } : {}),
         ...(data.breakMinutes !== undefined ? { breakMinutes } : {}),
         ...(data.allowanceTag !== undefined ? { allowanceTag: data.allowanceTag || 'NONE' } : {}),

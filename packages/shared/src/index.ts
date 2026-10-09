@@ -357,6 +357,8 @@ export interface UpdateQuoteStatusRequest {
 export interface CreateJobFromQuoteRequest {
   workspaceId: string
   jobCode?: string
+  // Repeat work: start the job at this existing site instead of a new one.
+  opsJobSiteId?: string
 }
 
 // POST /api/delivery/jobs/:id/closeout — null/absent money = unknown, never zero.
@@ -638,6 +640,8 @@ export interface OpsCreateShiftRequest {
   workspaceId: string
   crewMemberId: string
   jobSiteId: string
+  // The job the hours are costed to; needed only at a site with several jobs.
+  jobId?: string
   shiftDate: string
   startTime: string
   endTime?: string
@@ -649,6 +653,7 @@ export interface OpsCreateShiftRequest {
 export interface OpsUpdateShiftRequest {
   workspaceId: string
   jobSiteId?: string
+  jobId?: string
   endTime?: string
   breakMinutes?: number
   allowanceTag?: string
@@ -663,6 +668,7 @@ export interface OpsClockInRequest {
   workspaceId: string
   crewMemberId: string
   jobSiteId: string
+  jobId?: string
   lat?: number
   lng?: number
 }

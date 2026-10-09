@@ -45,10 +45,32 @@ opsJobsRouter.get(
       ...(q.status ? { status: q.status } : {}),
     }
 
-    const [jobSites, total] = await Promise.all([
-      prisma.opsJobSite.findMany({ where, orderBy: [{ status: 'asc' }, { siteName: 'asc' }], skip, take: limit }),
+    const [rows, total] = await Promise.all([
+      prisma.opsJobSite.findMany({
+        where, orderBy: [{ status: 'asc' }, { siteName: 'asc' }], skip, take: limit,
+        // UQ-24: the site's jobs (not cancelled), so a shift can name the one it is for.
+        // Identity and status only — readers here include crew, so no quote
+        // amounts, margins or closeout figures.
+        include: {
+          jobs: {
+            where: { status: { not: 'CANCELLED' } }, orderBy: { startedAt: 'asc' },
+            select: {
+              id: true, status: true, startedAt: true,
+              quote: { select: { opportunity: { select: { title: true } }, commercialOpportunity: { select: { eventTitle: true } } } },
+            },
+          },
+        },
+      }),
       prisma.opsJobSite.count({ where }),
     ])
+    type SiteJob = { id: string; status: string; startedAt: Date; quote: { opportunity: { title: string } | null; commercialOpportunity: { eventTitle: string } | null } | null }
+    const jobSites = (rows as Array<Record<string, unknown> & { jobs: SiteJob[] }>).map(({ jobs, ...site }) => ({
+      ...site,
+      jobs: jobs.map(j => ({
+        id: j.id, status: j.status, startedAt: j.startedAt,
+        label: j.quote?.opportunity?.title ?? j.quote?.commercialOpportunity?.eventTitle ?? null,
+      })),
+    }))
 
     res.json({ jobSites, total, page, limit, pages: Math.ceil(total / limit) })
   })

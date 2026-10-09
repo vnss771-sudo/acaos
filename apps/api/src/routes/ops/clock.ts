@@ -5,7 +5,7 @@ import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { parseQuery, parseBody, workspaceIdField, idField } from '../../lib/validate.js'
-import { assertOwnership, reconcileShiftAlerts, totalHoursFor, utcDayStart, auditOps, geofenceViolationMeters, assertCanActAsCrewMember } from './utils.js'
+import { assertOwnership, reconcileShiftAlerts, totalHoursFor, utcDayStart, auditOps, geofenceViolationMeters, assertCanActAsCrewMember, resolveShiftJobId } from './utils.js'
 import type { Assert, Extends, OpsClockInRequest, OpsClockOutRequest } from '@acaos/shared'
 
 // Crew self-service clock in/out. Deliberately membership-level, not
@@ -28,6 +28,8 @@ const clockInSchema = z.object({
   workspaceId: workspaceIdField,
   crewMemberId: idField,
   jobSiteId: idField,
+  // Required only at a site with more than one job (see resolveShiftJobId).
+  jobId: idField.optional(),
   lat: geoField,
   lng: lngField,
 })
@@ -56,12 +58,13 @@ clockRouter.post(
     if (overMeters !== null) {
       throw new ApiError(400, `Clock-in location is ${overMeters}m outside the job site's geofence`)
     }
+    const jobId = await resolveShiftJobId(data.workspaceId, data.jobSiteId, data.jobId)
 
     const now = new Date()
     try {
       const shift = await prisma.opsShiftRecord.create({
         data: {
-          workspaceId: data.workspaceId, crewMemberId: data.crewMemberId, jobSiteId: data.jobSiteId,
+          workspaceId: data.workspaceId, crewMemberId: data.crewMemberId, jobSiteId: data.jobSiteId, jobId,
           shiftDate: utcDayStart(now), startTime: now, endTime: null,
           clockInLat: data.lat, clockInLng: data.lng,
         },

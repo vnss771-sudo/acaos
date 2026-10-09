@@ -1458,7 +1458,8 @@ model OpsJobSite {
   shifts        OpsShiftRecord[]
   rosterEntries OpsRosterEntry[]
   opportunities Opportunity[]
-  job           Job?
+  // UQ-24: a site can host repeat work, so many Jobs over time.
+  jobs          Job[]
 
   @@unique([workspaceId, jobCode])
   @@index([workspaceId, status])
@@ -1472,6 +1473,10 @@ model OpsShiftRecord {
   crewMember         OpsCrewMember @relation(fields: [crewMemberId], references: [id])
   jobSiteId          String
   jobSite            OpsJobSite    @relation(fields: [jobSiteId], references: [id])
+  // UQ-24: the delivery Job this labour is costed to. Null only for a site with
+  // no Job (plain Field Ops use); economics and closeout read this, never the site.
+  jobId              String?
+  job                Job?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
   shiftDate          DateTime
   startTime          DateTime
   // Nullable: null represents an open (in-progress) shift. A migration-only
@@ -1502,6 +1507,7 @@ model OpsShiftRecord {
 
   @@index([workspaceId, shiftDate])
   @@index([workspaceId, crewMemberId, endTime])
+  @@index([workspaceId, jobId])
 }
 
 model OpsAlert {
@@ -1983,7 +1989,7 @@ model Quote {
 model Job {
   id                   String     @id @default(cuid())
   workspaceId          String
-  opsJobSiteId         String     @unique
+  opsJobSiteId         String
   quoteId              String?    @unique
   // ACTIVE -> COMPLETE (closeout) -> ACTIVE (reopen); ACTIVE -> CANCELLED.
   status               String     @default("ACTIVE")
@@ -2002,6 +2008,8 @@ model Job {
   // cascades to both rows in one statement. Sites are archived, never deleted.
   opsJobSite           OpsJobSite @relation(fields: [opsJobSiteId], references: [id], onDelete: NoAction)
   quote                Quote?     @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  shifts               OpsShiftRecord[]
 
   @@index([workspaceId, status])
+  @@index([workspaceId, opsJobSiteId])
 }

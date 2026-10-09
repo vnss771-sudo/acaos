@@ -161,19 +161,21 @@ deliveryRouter.patch(
 const createJobSchema = z.object({
   workspaceId: workspaceIdField,
   jobCode: z.string().trim().min(1).max(64).optional(),
+  opsJobSiteId: idField.optional(),
 })
 type _CreateJobConforms = Assert<Extends<z.infer<typeof createJobSchema>, CreateJobFromQuoteRequest>>
 
 // POST /api/delivery/quotes/:id/job — start delivering an accepted quote: a
 // Field Ops job site plus its Job. If the quoted Work-discovery opportunity
 // already has a site (created before quotes existed), the quote attaches to
-// that site's Job instead of creating a second site.
+// that site's Job instead of creating a second site. Repeat work (UQ-24): with
+// opsJobSiteId, the job starts at that existing site beside any earlier jobs.
 deliveryRouter.post(
   '/quotes/:id/job',
   asyncHandler(async (req, res) => {
     const user = requireUser(req)
     const { id } = parseParams(idParamsSchema, req)
-    const { workspaceId, jobCode } = parseBody(createJobSchema, req)
+    const { workspaceId, jobCode, opsJobSiteId } = parseBody(createJobSchema, req)
     await assertWorkspacePermission(user.id, workspaceId, 'ops:manage')
     const quote = await prisma.quote.findFirst({
       where: { id, workspaceId },
@@ -193,18 +195,36 @@ deliveryRouter.post(
 
     const opp = quote.opportunity
     const co = quote.commercialOpportunity
+    if (opsJobSiteId) {
+      const site = await prisma.opsJobSite.findFirst({ where: { id: opsJobSiteId, workspaceId }, select: { id: true } })
+      if (!site) throw new ApiError(404, 'Job site not found')
+    }
     let job
     try {
       job = await prisma.$transaction(async (tx) => {
-        if (opp?.opsJobSiteId) {
-          const siteJob = await tx.job.findFirst({ where: { workspaceId, opsJobSiteId: opp.opsJobSiteId } }) as { id: string; quoteId: string | null } | null
-          if (siteJob?.quoteId) throw new ApiError(409, 'This opportunity\'s job already has an accepted quote')
-          if (siteJob) {
-            const linked = await tx.job.updateMany({ where: { id: siteJob.id, workspaceId, quoteId: null }, data: { quoteId: quote.id } })
-            if (linked.count === 0) throw new ApiError(409, 'This opportunity\'s job already has an accepted quote')
-            return tx.job.findFirst({ where: { id: siteJob.id, workspaceId } })
+        // A new Job at an existing site. If the site had no Job yet, its
+        // site-only shifts were this work's, so they move onto the new Job.
+        const jobAtSite = async (siteId: string) => {
+          const prior = await tx.job.count({ where: { workspaceId, opsJobSiteId: siteId, status: { not: 'CANCELLED' } } })
+          const created = await tx.job.create({ data: { workspaceId, opsJobSiteId: siteId, quoteId: quote.id } })
+          if (prior === 0) await tx.opsShiftRecord.updateMany({ where: { workspaceId, jobSiteId: siteId, jobId: null }, data: { jobId: created.id } })
+          return created
+        }
+        const existingSiteId = opsJobSiteId ?? opp?.opsJobSiteId
+        if (existingSiteId) {
+          if (opp?.opsJobSiteId === existingSiteId) {
+            // The opportunity's own site: its quoteless Job (made by "won → job
+            // site" before any quote existed) is this work, so the quote attaches.
+            const siteJob = await tx.job.findFirst({ where: { workspaceId, opsJobSiteId: existingSiteId, quoteId: null, status: { not: 'CANCELLED' } } }) as { id: string } | null
+            if (siteJob) {
+              const linked = await tx.job.updateMany({ where: { id: siteJob.id, workspaceId, quoteId: null }, data: { quoteId: quote.id } })
+              if (linked.count === 0) throw new ApiError(409, 'This opportunity\'s job already has an accepted quote')
+              return tx.job.findFirst({ where: { id: siteJob.id, workspaceId } })
+            }
+          } else if (opp && !opp.opsJobSiteId) {
+            await tx.opportunity.updateMany({ where: { id: opp.id, workspaceId, opsJobSiteId: null }, data: { opsJobSiteId: existingSiteId } })
           }
-          return tx.job.create({ data: { workspaceId, opsJobSiteId: opp.opsJobSiteId, quoteId: quote.id } })
+          return jobAtSite(existingSiteId)
         }
         const title = opp ? opp.title : `${co?.prospect.companyName ?? 'Client'} — ${co?.eventTitle ?? 'job'}`
         const notes = [
@@ -284,9 +304,9 @@ async function liveEconomics(workspaceId: string, jobs: JobRow[]): Promise<Map<s
   const live = jobs.filter(j => j.closeout == null)
   if (live.length === 0) return out
   const shifts = await prisma.opsShiftRecord.findMany({
-    where: { workspaceId, jobSiteId: { in: live.map(j => j.opsJobSiteId) } },
-    select: { jobSiteId: true, crewMemberId: true, totalHours: true, endTime: true },
-  }) as Array<{ jobSiteId: string; crewMemberId: string; totalHours: number; endTime: Date | null }>
+    where: { workspaceId, jobId: { in: live.map(j => j.id) } },
+    select: { jobId: true, crewMemberId: true, totalHours: true, endTime: true },
+  }) as Array<{ jobId: string; crewMemberId: string; totalHours: number; endTime: Date | null }>
   const crewIds = [...new Set(shifts.map(s => s.crewMemberId))]
   const crew = crewIds.length
     ? await prisma.opsCrewMember.findMany({ where: { workspaceId, id: { in: crewIds } }, select: { id: true, baseRate: true } }) as Array<{ id: string; baseRate: number | null }>
@@ -294,7 +314,7 @@ async function liveEconomics(workspaceId: string, jobs: JobRow[]): Promise<Map<s
   const rates = new Map(crew.map(c => [c.id, c.baseRate]))
   for (const j of live) {
     out.set(j.id, computeJobEconomics({
-      shifts: shifts.filter(s => s.jobSiteId === j.opsJobSiteId),
+      shifts: shifts.filter(s => s.jobId === j.id),
       rates,
       quote: j.quote ? { amountCents: j.quote.amountCents, estimatedHours: j.quote.estimatedHours } : null,
       revenueCents: j.invoicedRevenueCents,
@@ -311,11 +331,11 @@ async function lateShiftCounts(workspaceId: string, jobs: JobRow[]): Promise<Map
   const out = new Map<string, number>()
   if (closed.length === 0) return out
   const rows = await prisma.opsShiftRecord.findMany({
-    where: { workspaceId, jobSiteId: { in: closed.map(j => j.opsJobSiteId) } },
-    select: { jobSiteId: true, createdAt: true },
-  }) as Array<{ jobSiteId: string; createdAt: Date }>
+    where: { workspaceId, jobId: { in: closed.map(j => j.id) } },
+    select: { jobId: true, createdAt: true },
+  }) as Array<{ jobId: string; createdAt: Date }>
   for (const j of closed) {
-    const n = rows.filter(r => r.jobSiteId === j.opsJobSiteId && r.createdAt > j.completedAt!).length
+    const n = rows.filter(r => r.jobId === j.id && r.createdAt > j.completedAt!).length
     if (n > 0) out.set(j.id, n)
   }
   return out
@@ -484,7 +504,7 @@ deliveryRouter.post(
     if (job.status !== 'ACTIVE') throw new ApiError(409, `A ${job.status} job can't be closed out`)
 
     const shifts = await prisma.opsShiftRecord.findMany({
-      where: { workspaceId: b.workspaceId, jobSiteId: job.opsJobSiteId },
+      where: { workspaceId: b.workspaceId, jobId: job.id },
       select: { crewMemberId: true, totalHours: true, endTime: true },
     }) as Array<{ crewMemberId: string; totalHours: number; endTime: Date | null }>
     const open = shifts.filter(s => s.endTime == null).length

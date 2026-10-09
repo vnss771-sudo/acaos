@@ -355,12 +355,17 @@ export type OpsJobSite = {
   notes?: string | null
   createdAt: string
   updatedAt: string
+  // UQ-24: the site's jobs (not cancelled) — identity and status only.
+  jobs?: OpsSiteJob[]
 }
+
+export type OpsSiteJob = { id: string; status: string; startedAt: string; label: string | null }
 
 export type OpsShiftRecord = {
   id: string
   crewMemberId: string
   jobSiteId: string
+  jobId?: string | null
   shiftDate: string
   startTime: string
   endTime?: string | null
