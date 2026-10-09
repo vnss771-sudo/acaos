@@ -82,6 +82,9 @@ platform starts conservative.
 | `OPENAI_BASE_URL` | SDK default | api, worker | Optional OpenAI-compatible endpoint override; also accepts `OPENAI_API_BASE`. |
 | `OPENAI_MODEL` | `gpt-5-mini` | api, worker | Generation model; unknown values fall back to the default. |
 | `OPENAI_MODEL_ALLOWLIST` | `''` | api, worker | Comma-separated additional models to allow; the default safe model list remains enabled. |
+| `OPENAI_SHADOW_MODEL` | `''` | api, worker | Allow-listed model that receives a copy of sampled requests for comparison. Its output is always discarded; only model ids, latency, success and output hashes are logged (`ai.shadow_comparison`). |
+| `OPENAI_SHADOW_SAMPLE_RATE` | `0` | api, worker | Share of requests shadowed, 0–1 (deterministic per request). Off by default: each shadowed request is a second, billed provider call. |
+| `OPENAI_FALLBACK_MODEL` | `''` | api, worker | Recorded in the model registry only. There is no automatic fail-over; promote by changing `OPENAI_MODEL`, roll back by changing it back. |
 | `OPENAI_TIMEOUT_MS` | `30000` | api, worker | Per-call request timeout. |
 | `OPENAI_MAX_TOKENS_RESEARCH` / `_OUTREACH` / `_REPLY` | per-task (capped at 4000) | api, worker | Completion-token ceilings per task; GPT-5/reasoning families use `max_completion_tokens`. |
 | `AI_COST_CENTS_RESEARCH` / `_OUTREACH` / `_REPLY` | `0.32` / `0.25` / `0.22` | api, worker | Rough GPT-5-mini cents-per-call estimates for the `acaos_ai_cost_cents_total` metric; tune for actual model usage. |

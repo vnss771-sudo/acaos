@@ -29,6 +29,14 @@ export type EvalRunRecord = {
   fails: number
   warns: number
   cases: number
+  // Run metadata (UQ-17). Optional so older history entries stay valid.
+  task?: string
+  datasetVersion?: string
+  promptVersion?: number | null
+  latencyMs?: number
+  promptTokens?: number | null
+  completionTokens?: number | null
+  totalTokens?: number | null
 }
 
 export type EvalHistory = EvalRunRecord[]

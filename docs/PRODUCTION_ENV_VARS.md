@@ -17,6 +17,8 @@
 - OPENAI_BASE_URL — optional OpenAI-compatible API endpoint; the OpenAI SDK default is used when unset. For Manus's sandbox gateway, use its configured base URL.
 - OPENAI_MODEL — allow-listed model to use; defaults to `gpt-5-mini`. An unrecognized value falls back to the default rather than silently selecting a potentially costly model.
 - OPENAI_MODEL_ALLOWLIST — optional comma-separated extra models to permit for `OPENAI_MODEL` (e.g. `gpt-5` or `gpt-5.5` after checking availability and cost).
+- OPENAI_SHADOW_MODEL / OPENAI_SHADOW_SAMPLE_RATE — optional shadow comparison of a candidate model on a sampled share of requests. Leave the rate at 0 unless the extra provider spend is budgeted; shadow output never reaches customers.
+- OPENAI_FALLBACK_MODEL — optional, recorded only; nothing fails over to it automatically.
 - Reasoning models (`gpt-5*`, `o*`) are sent `max_completion_tokens`; other supported chat models use `max_tokens`.
 
 ## Stripe

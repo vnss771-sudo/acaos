@@ -1,0 +1,28 @@
+{
+  "version": "v1",
+  "description": "ACAOS AI evaluation suites. Offline suites are deterministic tests that need no provider key or network; live suites call the configured model and are billed.",
+  "suites": [
+    {
+      "task": "research",
+      "offline": ["tests/lib-research-gate.test.ts", "tests/eval-research.test.ts"],
+      "live": "eval:research"
+    },
+    {
+      "task": "outreach",
+      "offline": ["tests/lib-outreach-gate.test.ts", "tests/lib-outreach-tone.test.ts", "tests/lib-openai-guardrails.test.ts", "tests/openai-provenance.test.ts", "tests/services-openai-request.test.ts"],
+      "live": "eval:outreach"
+    },
+    {
+      "task": "reply-classification",
+      "offline": ["tests/reply-gating.test.ts", "tests/lib-classification-accuracy.test.ts", "tests/lib-reply-draft.test.ts"]
+    },
+    {
+      "task": "claim-grounding",
+      "offline": ["tests/lib-draft-grounding.test.ts"]
+    },
+    {
+      "task": "recommendations",
+      "offline": ["tests/lib-recommendation-engine.test.ts", "tests/lib-recommendation-policy.test.ts"]
+    }
+  ]
+}

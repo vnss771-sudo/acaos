@@ -47,6 +47,11 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
+      # Deterministic suites from eval/datasets/v1/manifest.json: no key, no
+      # network. A regression here stops the run before any billed model call.
+      - name: Offline AI eval
+        run: npm run eval:offline
+
       # Both scripts exit 0 (skip) if OPENAI_API_KEY is unset, so this step is
       # safe even if the secret is missing — but that would silently defeat the
       # point of this workflow, so fail loudly instead of reporting a false green.

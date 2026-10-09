@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto'
 import { ApiError } from '../lib/errors.js'
 import { hasEnv } from '../lib/env.js'
 import { openAiBreaker, CircuitOpenError } from '../lib/circuit.js'
-import { BUILTIN_OPENAI_MODELS, DEFAULT_OPENAI_MODEL, modelProfile } from '../lib/modelProfiles.js'
+import { DEFAULT_OPENAI_MODEL, modelProfile } from '../lib/modelProfiles.js'
+import { resolveModelRegistry, inShadowSample, outputHash, type ModelDeploymentState } from '../lib/modelRegistry.js'
+import { logger } from '../lib/logger.js'
 
-function getOpenAiClient() {
+function getOpenAiClient(opts: { maxRetries?: number } = {}) {
   if (!hasEnv(['OPENAI_API_KEY'])) throw new ApiError(503, 'OpenAI is not configured')
   // Bounded timeout + retries so a hung provider socket can't pin a worker slot
   // or HTTP request indefinitely.
@@ -13,31 +15,24 @@ function getOpenAiClient() {
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE,
     timeout: Number(process.env.OPENAI_TIMEOUT_MS || 30_000),
-    maxRetries: 2,
+    maxRetries: opts.maxRetries ?? 2,
   })
 }
 
-const DEFAULT_MODEL = DEFAULT_OPENAI_MODEL
-// Cost guardrail: only allow-listed models are used. Operators can extend the list
-// via OPENAI_MODEL_ALLOWLIST (comma-separated), but a typo or an accidentally
-// expensive OPENAI_MODEL value falls back to the cheap default rather than silently
-// running up spend on every AI call.
-const ALLOWED_MODELS = new Set<string>([
-  ...BUILTIN_OPENAI_MODELS,
-  // Higher-cost/newer variants remain operator opt-in. Compatibility still comes
-  // from modelProfile(), so family-specific request rules stay centralized.
-  ...(process.env.OPENAI_MODEL_ALLOWLIST || '').split(',').map((s) => s.trim()).filter(Boolean),
-])
+// Cost guardrail: only allow-listed models are used (see modelRegistry.ts).
+// Operators can extend the list via OPENAI_MODEL_ALLOWLIST, but a typo or an
+// accidentally expensive OPENAI_MODEL falls back to the cheap default rather
+// than silently running up spend on every AI call.
 let warnedModel = false
+/** The ACTIVE model: the one that produces every customer-visible result. */
 export function model() {
+  const registry = resolveModelRegistry()
   const configured = (process.env.OPENAI_MODEL || '').trim()
-  if (!configured) return DEFAULT_MODEL
-  if (ALLOWED_MODELS.has(configured)) return configured
-  if (!warnedModel) {
+  if (configured && registry.active.model !== configured && !warnedModel) {
     warnedModel = true
-    console.warn(`[openai] OPENAI_MODEL="${configured}" is not allow-listed; using ${DEFAULT_MODEL}. Add it to OPENAI_MODEL_ALLOWLIST to enable.`)
+    console.warn(`[openai] OPENAI_MODEL="${configured}" is not allow-listed; using ${DEFAULT_OPENAI_MODEL}. Add it to OPENAI_MODEL_ALLOWLIST to enable.`)
   }
-  return DEFAULT_MODEL
+  return registry.active.model
 }
 
 // Cap free-text notes before they enter a prompt: notes are operator-entered and
@@ -235,6 +230,7 @@ function paragraph(section: string): string {
 
 export type AiProviderCallMeta = {
   model: string
+  deploymentState: ModelDeploymentState
   latencyMs: number
   promptTokens: number | null
   completionTokens: number | null
@@ -249,22 +245,78 @@ export function setAiProviderCallObserver(observer: ((meta: AiProviderCallMeta) 
   providerCallObserver = observer
 }
 
+/** What a shadow comparison observed: model ids, timing and output hashes only, never content. */
+export type ShadowComparison = {
+  activeModel: string
+  shadowModel: string
+  activeLatencyMs: number
+  shadowLatencyMs: number
+  shadowOk: boolean
+  shadowError?: string
+  activeOutputHash: string
+  shadowOutputHash: string | null
+  sameOutput: boolean
+}
+
+let shadowObserver: ((c: ShadowComparison) => void) | undefined
+export function setShadowComparisonObserver(observer: ((c: ShadowComparison) => void) | undefined): void {
+  shadowObserver = observer
+}
+
+/** One chat request for `modelName`, with that model's compatibility options and the shared token policy. */
+function chatRequest(modelName: string, system: string, user: string, maxTokens: number) {
+  return {
+    model: modelName,
+    response_format: { type: 'json_object' },
+    ...samplingOptions(modelName),
+    ...tokenLimitOptions(modelName, maxTokens),
+    ...reasoningOptions(modelName, process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE),
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ]
+  } as Parameters<OpenAI['chat']['completions']['create']>[0]
+}
+
+/**
+ * Sends a sampled copy of a request to the SHADOW model and records the
+ * comparison. Runs after the active result is already decided, outside the
+ * circuit breaker, without retries, and never throws: a shadow failure can't
+ * change, delay or fail the customer-visible result.
+ */
+async function runShadow(shadowModel: string, system: string, user: string, maxTokens: number, active: { model: string; latencyMs: number; text: string }): Promise<void> {
+  const startedAt = Date.now()
+  let text: string | null = null
+  let error: string | undefined
+  try {
+    const completion = await getOpenAiClient({ maxRetries: 0 }).chat.completions.create(chatRequest(shadowModel, system, user, maxTokens))
+    if (!('choices' in completion)) throw new Error('empty response')
+    text = completionText(completion)
+  } catch (err) {
+    error = (err instanceof Error ? err.message : String(err)).slice(0, 200)
+  }
+  const activeOutputHash = outputHash(active.text)
+  const shadowOutputHash = text == null ? null : outputHash(text)
+  const comparison: ShadowComparison = {
+    activeModel: active.model, shadowModel,
+    activeLatencyMs: active.latencyMs, shadowLatencyMs: Date.now() - startedAt,
+    shadowOk: text != null, ...(error ? { shadowError: error } : {}),
+    activeOutputHash, shadowOutputHash, sameOutput: shadowOutputHash === activeOutputHash,
+  }
+  try {
+    logger.info('ai.shadow_comparison', comparison)
+    shadowObserver?.(comparison)
+  } catch {
+    // Telemetry must never affect generation.
+  }
+}
+
 async function chat(system: string, user: string, maxTokens: number): Promise<string> {
   try {
     return await openAiBreaker.call(async () => {
       const client = getOpenAiClient()
       const selectedModel = model()
-      const request = {
-        model: selectedModel,
-        response_format: { type: 'json_object' },
-        ...samplingOptions(selectedModel),
-        ...tokenLimitOptions(selectedModel, maxTokens),
-        ...reasoningOptions(selectedModel, process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE),
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user }
-        ]
-      } as Parameters<typeof client.chat.completions.create>[0]
+      const request = chatRequest(selectedModel, system, user, maxTokens)
       const startedAt = Date.now()
       const completion = await client.chat.completions.create(request)
       const usage = 'usage' in completion ? completion.usage : undefined
@@ -272,6 +324,7 @@ async function chat(system: string, user: string, maxTokens: number): Promise<st
         try {
           providerCallObserver({
             model: selectedModel,
+            deploymentState: 'ACTIVE',
             latencyMs: Date.now() - startedAt,
             promptTokens: usage?.prompt_tokens ?? null,
             completionTokens: usage?.completion_tokens ?? null,
@@ -284,7 +337,12 @@ async function chat(system: string, user: string, maxTokens: number): Promise<st
       if (!('choices' in completion)) {
         throw new ApiError(502, 'AI provider returned an empty response')
       }
-      return completionText(completion)
+      const text = completionText(completion)
+      const shadow = resolveModelRegistry().shadow
+      if (shadow && inShadowSample(shadow.sampleRate, system, user)) {
+        void runShadow(shadow.model, system, user, maxTokens, { model: selectedModel, latencyMs: Date.now() - startedAt, text })
+      }
+      return text
     })
   } catch (err) {
     if (err instanceof CircuitOpenError) {
