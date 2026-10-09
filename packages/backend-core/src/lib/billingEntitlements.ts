@@ -10,13 +10,12 @@
 //
 // The grace deadline is set by the first past_due transition and never moved by
 // repeated past_due events, so retries can't extend it indefinitely.
-import type { BillingPlan } from '@prisma/client'
 
 export const BILLING_GRACE_DAYS = 7
 const DAY_MS = 86_400_000
 
 export type BillingFacts = {
-  plan: BillingPlan | string | null
+  plan: string | null
   subscriptionStatus: string | null
   billingGraceUntil: Date | null
 }
