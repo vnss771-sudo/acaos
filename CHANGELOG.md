@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+### Operator diagnostics per workspace (10 Oct 2026)
+- Admin → Workspaces has a **Diagnose** action: a read-only view of one workspace's sending (last 24h by status, sends stuck in SENDING, reputation, automatic-sending posture), billing entitlement, mailbox posture (OAuth needing reconnection, reply sync, domain health), follow-ups, discovery source errors, the last week's failure events and the API release.
+- `GET /api/admin/workspaces/:id/diagnostics` is platform-admin only and every view is audited. It never returns message content, recipients, credentials, tokens or audit metadata.
+
 ### Automatic outreach needs an explicit, earned go-ahead (10 Oct 2026)
 - Turning off approval mode no longer, on its own, lets unreviewed drafts send. Outside safe-launch it used to; now automatic sending also needs `AUTONOMOUS_OUTREACH_MODE=active` (default off), sending on, the workspace not suppressed, a current versioned opt-in by an admin (step-up, audited), healthy sender reputation on its minimum sample, at least 20 human-reviewed drafts, a 90%+ approval rate and at most 5% of drafts held for policy review. If any one fails, drafts wait for approval.
 - The worker and the campaign readiness/launch API share the same decision, so the UI never promises an automatic send the worker would hold.
