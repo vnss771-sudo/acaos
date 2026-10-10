@@ -103,6 +103,7 @@ platform starts conservative.
 | Var | Default | Scope | Notes |
 |---|---|---|---|
 | `SENTRY_DSN` | unset (no-op) | api, worker | Enables the zero-dependency Sentry HTTP transport. |
+| `VITE_SENTRY_DSN` | unset (no-op) | web (build time) | Enables browser error reporting (`apps/web/src/lib/errorReporting.ts`). Baked into the bundle, so a change needs a web rebuild. Use a separate Sentry project from the API's. |
 | `SENTRY_RATE_PER_MIN` | `30` | api, worker | Outbound error-report rate (token-bucket refill). |
 | `SENTRY_BURST` | `10` | api, worker | Burst allowance before throttling. |
 | `SENTRY_DEDUP_MS` | `5000` | api, worker | Window collapsing identical errors to one report. |
