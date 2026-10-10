@@ -11,7 +11,7 @@ import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
 import { resetWorkerMetrics, renderWorkerMetrics } from '../apps/worker/src/lib/metrics.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb(); resetWorkerMetrics() })
@@ -34,6 +34,8 @@ async function seedSmtp(workspaceId: string) {
   await prisma.workspaceEmailConfig.create({
     data: { workspaceId, smtpHost: 'smtp.acme.test', smtpFrom: 'sales@acme.test' },
   })
+  // Generated (unreviewed) drafts send only for an autonomy-ready workspace (UQ-40).
+  await allowAutonomousSending(workspaceId)
 }
 async function seedCampaign(workspaceId: string) {
   return prisma.campaign.create({ data: { workspaceId, name: 'Q3 Outreach', goalType: 'BOOK_MEETINGS' } })

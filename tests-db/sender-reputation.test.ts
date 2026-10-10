@@ -101,7 +101,9 @@ test('campaign observe: a degraded workspace still sends (logs only)', async () 
 
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' } })
-  await prisma.outreachDraft.create({ data: { leadId: lead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there' } })
+  // Human-approved: a degraded reputation (rightly) rules out automatic sending
+  // (UQ-40), so an approved draft isolates what this test checks — the guard.
+  await prisma.outreachDraft.create({ data: { leadId: lead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there', status: 'APPROVED' } })
 
   const mailer = recordingMailer()
   const result = await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
