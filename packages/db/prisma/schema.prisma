@@ -166,6 +166,10 @@ model Workspace {
   // audit trail / operator note.
   sendSuppressed          Boolean                  @default(false)
   sendSuppressedReason    String?
+  // UQ-40: explicit, versioned opt-in to automatic (unreviewed) outreach. Null
+  // or an old version means human approval, whatever ICP.approvalMode says.
+  autonomyOptInAt         DateTime?
+  autonomyConsentVersion  String?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   memberships             Membership[]

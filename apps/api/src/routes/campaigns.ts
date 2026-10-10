@@ -6,7 +6,8 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { enqueueSendCampaign } from '@acaos/backend-core/lib/queues.js'
-import { effectiveApprovalMode, effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
+import { effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
+import { approvalRequiredFor } from '@acaos/backend-core/lib/autonomyReadiness.js'
 import { trackEvent } from '@acaos/backend-core/lib/analytics.js'
 import { emitWebhookEvent } from '@acaos/backend-core/lib/webhooks.js'
 import { getCampaignAttribution } from '@acaos/backend-core/lib/campaignAttribution.js'
@@ -366,7 +367,7 @@ campaignsRouter.get(
     // approvalMode is off (otherwise the API would report "ready" for a launch the
     // worker then holds for approval).
     const icp = await prisma.workspaceICP.findUnique({ where: { workspaceId: campaign.workspaceId } })
-    const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
+    const approvalRequired = await approvalRequiredFor(campaign.workspaceId, Boolean(icp?.approvalMode))
     let approvedEligible = totalEligible
 
     if (approvalRequired) {
@@ -499,7 +500,7 @@ campaignsRouter.post(
 
     // Use the EFFECTIVE approval mode — SAFE_LAUNCH_MODE forces approval even when
     // the workspace's own approvalMode is off, exactly as the worker enforces it.
-    const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
+    const approvalRequired = await approvalRequiredFor(campaign.workspaceId, Boolean(icp?.approvalMode))
     if (approvalRequired) {
       // Approval mode: require explicit opt-in flag in the request body.
       // The frontend sends { approved: true } after the user confirms the modal.

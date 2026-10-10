@@ -9,7 +9,7 @@ import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
 import { suppress } from '../packages/backend-core/src/lib/suppressions.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -52,6 +52,9 @@ async function seedSmtp(workspaceId: string) {
   await prisma.workspaceEmailConfig.create({
     data: { workspaceId, smtpHost: 'smtp.acme.test', smtpFrom: 'sales@acme.test' },
   })
+  // These tests send drafts no person approved; UQ-40 allows that only for an
+  // autonomy-ready workspace (no ICP has always meant approval mode off).
+  await allowAutonomousSending(workspaceId)
 }
 
 test('skips suppressed addresses — never dispatches, never records a send', async () => {
@@ -125,6 +128,7 @@ test('pagination: a daily cap reached mid-paging stops and tallies the remainder
   await prisma.workspaceICP.create({
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 2, targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await seedCampaign(workspace.id)
   for (let n = 0; n < 6; n++) {
     await seedSendableLead(workspace.id, campaign.id, `cap${n}@buyer.test`)
@@ -297,6 +301,7 @@ test('policy review: a draft flagged POLICY_REVIEW is never auto-sent', async ()
   await prisma.workspaceICP.create({
     data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const lead = await prisma.lead.create({
     data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' },
   })
@@ -408,6 +413,7 @@ test('selection tracking: each considered lead is recorded with decision, reason
   await prisma.workspaceICP.create({
     data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: ['HVAC'], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await seedCampaign(workspace.id)
   const good = await seedSendableLead(workspace.id, campaign.id, 'reach@buyer.test')
   await prisma.lead.update({ where: { id: good.id }, data: { score: 83 } })
@@ -435,6 +441,7 @@ test('selection tracking: fingerprints change when targeting or the scoring mode
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)
   await prisma.workspaceICP.create({ data: { workspaceId: workspace.id, approvalMode: false, targetIndustries: ['HVAC'], targetGeos: [], excludedIndustries: [] } })
+  await allowAutonomousSending(workspace.id)
   const campaign = await seedCampaign(workspace.id)
   const mailer = recordingMailer()
   await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: mailer.fn })
@@ -453,6 +460,7 @@ test('selection tracking: bulk cut-offs are captured in run totals; mid-run cap 
   const { workspace } = await seedUserWithWorkspace()
   await seedSmtp(workspace.id)
   await prisma.workspaceICP.create({ data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 2, targetIndustries: [], targetGeos: [], excludedIndustries: [] } })
+  await allowAutonomousSending(workspace.id)
   const campaign = await seedCampaign(workspace.id)
   for (let n = 0; n < 5; n++) await seedSendableLead(workspace.id, campaign.id, `c${n}@buyer.test`)
   await sendCampaignBatch(campaign.id, workspace.id, undefined, undefined, { sendMail: recordingMailer().fn, pageSize: 2 })

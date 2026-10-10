@@ -15,11 +15,13 @@ const safe = () => ({
 const get = (r, id) => r.checks.find((c) => c.id === id)?.status
 
 assert.equal(evaluatePilotPolicy(safe()).safe, true)
+assert.equal(evaluatePilotPolicy({ ...safe(), AUTONOMOUS_OUTREACH_MODE: 'off' }).safe, true)
 for (const [key, value, id] of [
   ['TENANT_GUARD_MODE', 'observe', 'policy.tenant_guard'],
   ['REPUTATION_GUARD_MODE', 'observe', 'policy.reputation_guard'],
   ['SAFE_LAUNCH_MODE', 'false', 'policy.safe_launch'],
   ['FOLLOWUPS_ENABLED', 'true', 'policy.followups'],
+  ['AUTONOMOUS_OUTREACH_MODE', 'active', 'policy.autonomy'],
   ['API_URL', 'http://api.example.com', 'url.api_url'],
 ]) {
   const env = safe(); env[key] = value

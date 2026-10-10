@@ -20,6 +20,7 @@ import { ApiKeysSection } from '../components/settings/ApiKeysSection.js'
 import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSection.js'
 import { AccessReviewSection } from '../components/settings/AccessReviewSection.js'
 import { LearningSection } from '../components/settings/LearningSection.js'
+import { AutonomySection } from '../components/settings/AutonomySection.js'
 import { SETTINGS_SECTIONS, scrollToSettingsSection, type SettingsSection } from '../lib/settingsSections.js'
 
 // Settings is a long page; this bar lets a user jump straight to the part they
@@ -645,6 +646,9 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
           startingWarmup={startingWarmup}
           onStartWarmup={startWarmup}
         />
+        <div style={{ marginTop: 12 }}>
+          <AutonomySection api={api} workspaceId={workspace.id} toast={toast} canManage={isOwnerOrAdmin} />
+        </div>
         </div>
       )}
 

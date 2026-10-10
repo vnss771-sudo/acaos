@@ -6,7 +6,7 @@ import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendFollowupTask } from '../apps/worker/src/processors.ts'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -37,6 +37,7 @@ test('campaign: the batch halts once the monthly ceiling is reached', async () =
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 1000, monthlySendLimit: 3,
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedSentThisMonth(workspace.id, campaign.id, 3) // already at the monthly ceiling
   await seedLead(workspace.id, campaign.id, 'new@buyer.test')
@@ -56,6 +57,7 @@ test('campaign: under the monthly ceiling it sends normally', async () => {
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 1000, monthlySendLimit: 100,
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedSentThisMonth(workspace.id, campaign.id, 2)
   await seedLead(workspace.id, campaign.id, 'new@buyer.test')
@@ -72,6 +74,7 @@ test('campaign: no monthly limit configured → unchanged (sends)', async () => 
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 1000,
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedSentThisMonth(workspace.id, campaign.id, 50)
   await seedLead(workspace.id, campaign.id, 'new@buyer.test')
@@ -88,6 +91,7 @@ test('follow-up: defers (parked at SCHEDULED) when the monthly ceiling is hit', 
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 1000, monthlySendLimit: 3,
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'Seq', goalType: 'BOOK_MEETINGS', autoFollowupsEnabled: true } })
   await seedSentThisMonth(workspace.id, campaign.id, 3)
   await prisma.outreachSequenceStep.create({ data: { campaignId: campaign.id, stepNumber: 2, delayDays: 3, subject: 'S2', body: 'follow', isActive: true } })

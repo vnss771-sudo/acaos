@@ -8,7 +8,7 @@ import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendFollowupTask } from '../apps/worker/src/processors.ts'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -40,6 +40,7 @@ test('campaign: outside the window the batch halts and leads stay eligible', asy
       sendWindowStartHour: w.start, sendWindowEndHour: w.end, sendTimezone: 'UTC',
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' } })
   await prisma.outreachDraft.create({ data: { leadId: lead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there' } })
@@ -63,6 +64,7 @@ test('campaign: inside an open window it sends normally', async () => {
       sendWindowStartHour: OPEN.start, sendWindowEndHour: OPEN.end, sendTimezone: 'UTC',
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' } })
   await prisma.outreachDraft.create({ data: { leadId: lead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there' } })
@@ -79,6 +81,7 @@ test('campaign: no window configured → unchanged (sends)', async () => {
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 50,
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'RESEARCHED' } })
   await prisma.outreachDraft.create({ data: { leadId: lead.id, workspaceId: workspace.id, subject: 'Hi', emailBody: 'Hello there' } })
@@ -97,6 +100,7 @@ test('follow-up: outside the window the task defers (parked back at SCHEDULED)',
       sendWindowStartHour: w.start, sendWindowEndHour: w.end, sendTimezone: 'UTC',
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'Seq', goalType: 'BOOK_MEETINGS', autoFollowupsEnabled: true } })
   await prisma.outreachSequenceStep.create({ data: { campaignId: campaign.id, stepNumber: 2, delayDays: 3, subject: 'S2', body: 'follow', isActive: true } })
   const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, campaignId: campaign.id, businessName: 'Acme', email: 'reach@buyer.test', stage: 'OUTREACH_SENT' } })

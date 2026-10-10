@@ -547,6 +547,28 @@ export interface UpdateWorkspaceRequest {
 }
 /** Body for DELETE /api/workspaces/:id — confirmName must echo the workspace name. */
 export interface DeleteWorkspaceRequest { confirmName: string }
+/**
+ * Body for PATCH /api/workspaces/:id/autonomy (UQ-40). Opting in must name the
+ * consent version the admin was shown; it must equal the server's current one.
+ */
+export interface AutonomyUpdateRequest {
+  optIn: boolean
+  consentVersion?: string
+}
+
+/** GET/PATCH /api/workspaces/:id/autonomy response. */
+export interface AutonomyStatus {
+  ready: boolean
+  mode: 'off' | 'active'
+  blockers: string[]
+  optedIn: boolean
+  optInAt: string | null
+  consentVersion: string
+  approvalModeOff: boolean
+  metrics: { reviewedDrafts: number; approvalRate: number | null; policyReviewRate: number | null; sends: number; bounceRate: number; complaintRate: number }
+  thresholds: { minReviewedDrafts: number; minApprovalRate: number; maxPolicyReviewRate: number; minSends: number }
+}
+
 /** Body for PATCH /api/workspaces/:id/compliance (compliance posture attestation). */
 export interface ComplianceUpdateRequest {
   lawfulBasis?: string | null
@@ -783,6 +805,8 @@ export interface RouteContracts {
   'DELETE /api/workspaces/:id': { params: { id: string }; body: DeleteWorkspaceRequest; response: { deleted: boolean; workspaceId: string } }
   'GET /api/workspaces/:id/compliance': { params: { id: string }; response: unknown }
   'PATCH /api/workspaces/:id/compliance': { params: { id: string }; body: ComplianceUpdateRequest; response: unknown }
+  'GET /api/workspaces/:id/autonomy': { params: { id: string }; response: AutonomyStatus }
+  'PATCH /api/workspaces/:id/autonomy': { params: { id: string }; body: AutonomyUpdateRequest; response: AutonomyStatus }
   'POST /api/workspaces/:id/consent': { params: { id: string }; body: ConsentRecordRequest; response: { id: string; recordedAt: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
   'PUT /api/workspaces/:id/business-context': { params: { id: string }; body: UpdateBusinessContextRequest; response: { businessContext: string | null } }

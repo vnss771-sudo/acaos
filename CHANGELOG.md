@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+### Automatic outreach needs an explicit, earned go-ahead (10 Oct 2026)
+- Turning off approval mode no longer, on its own, lets unreviewed drafts send. Outside safe-launch it used to; now automatic sending also needs `AUTONOMOUS_OUTREACH_MODE=active` (default off), sending on, the workspace not suppressed, a current versioned opt-in by an admin (step-up, audited), healthy sender reputation on its minimum sample, at least 20 human-reviewed drafts, a 90%+ approval rate and at most 5% of drafts held for policy review. If any one fails, drafts wait for approval.
+- The worker and the campaign readiness/launch API share the same decision, so the UI never promises an automatic send the worker would hold.
+- Settings → Deliverability shows the posture, the metrics and every blocker, with opt-in/opt-out for admins.
+- The controlled-pilot preflight fails if `AUTONOMOUS_OUTREACH_MODE` is set to anything but `off`.
+
 ### Calibration proposals must beat the current weights on unseen outcomes (10 Oct 2026)
 - Event-kind weight proposals are now tested before they can be accepted. The newest 30% of closed outcomes are held back, weights are fitted on the older ones only, and both the live and the candidate weights are scored on the held-back outcomes (Brier error and ranking AUC).
 - Only an `IMPROVED` verdict can be approved; `NO_IMPROVEMENT`, `DEGRADED` and `INSUFFICIENT` (under 20 dated outcomes) return 409. Pending proposals made before this change are refused and regenerated with a verdict at the next learning run.
