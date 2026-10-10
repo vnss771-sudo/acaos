@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
 import { rebuildCampaignStats, utcDayStart, incrementCampaignDailyStats } from '../packages/backend-core/src/lib/campaignStats.ts'
 import { recordContactEvent } from '../packages/backend-core/src/lib/contactEvents.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -25,6 +25,7 @@ async function seedSendableLead(workspaceId: string, campaignId: string, email: 
 test('a successful send increments CampaignDailyStats.sent for today', async () => {
   const { workspace } = await seedUserWithWorkspace()
   await prisma.workspaceEmailConfig.create({ data: { workspaceId: workspace.id, smtpHost: 'smtp.t', smtpFrom: 's@t' } })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedSendableLead(workspace.id, campaign.id, 'a@buyer.test')
   await seedSendableLead(workspace.id, campaign.id, 'b@buyer.test')

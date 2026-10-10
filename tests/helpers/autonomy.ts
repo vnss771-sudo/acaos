@@ -7,7 +7,7 @@ import { AUTONOMY_CONSENT_VERSION } from '../../packages/backend-core/src/lib/au
 export function enableAutonomyEnv(): void {
   process.env.AUTONOMOUS_OUTREACH_MODE = 'active'
   process.env.AUTONOMY_MIN_REVIEWED_DRAFTS = '0'
-  process.env.REPUTATION_MIN_SENDS = '0'
+  process.env.AUTONOMY_MIN_SENDS = '0'
 }
 
 export const autonomyOptIn = () => ({ autonomyOptInAt: new Date(), autonomyConsentVersion: AUTONOMY_CONSENT_VERSION })

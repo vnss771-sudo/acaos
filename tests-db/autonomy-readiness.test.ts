@@ -13,7 +13,7 @@ let server: TestServer
 before(async () => { server = await startTestServer('/api/workspaces', workspaceRouter) })
 after(async () => { await server.close(); await disconnect() })
 beforeEach(async () => { await resetDb() })
-const ENV_KEYS = ['AUTONOMOUS_OUTREACH_MODE', 'AUTONOMY_MIN_REVIEWED_DRAFTS', 'AUTONOMY_MIN_APPROVAL_RATE', 'REPUTATION_MIN_SENDS', 'SAFE_LAUNCH_MODE', 'FEATURE_SEND'] as const
+const ENV_KEYS = ['AUTONOMOUS_OUTREACH_MODE', 'AUTONOMY_MIN_REVIEWED_DRAFTS', 'AUTONOMY_MIN_APPROVAL_RATE', 'REPUTATION_MIN_SENDS', 'AUTONOMY_MIN_SENDS', 'SAFE_LAUNCH_MODE', 'FEATURE_SEND'] as const
 const saved = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]))
 afterEach(() => { for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k] } })
 

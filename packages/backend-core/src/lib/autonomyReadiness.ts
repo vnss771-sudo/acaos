@@ -8,7 +8,8 @@
 //   AUTONOMOUS_OUTREACH_MODE=active   operator switch, default off
 //   FEATURE_SEND on, SAFE_LAUNCH_MODE off, workspace not send-suppressed
 //   the workspace opted in to the CURRENT consent version (admin, audited)
-//   sender reputation healthy, on at least its minimum sample of sends
+//   sender reputation healthy, on at least AUTONOMY_MIN_SENDS sends (default:
+//     the reputation guard's own REPUTATION_MIN_SENDS)
 //   at least AUTONOMY_MIN_REVIEWED_DRAFTS human-reviewed drafts (default 20)
 //   approval rate >= AUTONOMY_MIN_APPROVAL_RATE (default 0.9)
 //   policy-review rate <= AUTONOMY_MAX_POLICY_REVIEW_RATE (default 0.05)
@@ -98,7 +99,8 @@ export async function assessAutonomy(workspaceId: string, now: Date = new Date()
   if (isSafeLaunchMode()) blockers.push('SAFE_LAUNCH')
   if (!ws || ws.sendSuppressed) blockers.push('WORKSPACE_SUPPRESSED')
   if (!optedIn) blockers.push('NOT_OPTED_IN')
-  if (reputation.totalSends < reputation.thresholds.minSends) blockers.push('REPUTATION_SAMPLE_LOW')
+  const minSends = Math.round(envNumber('AUTONOMY_MIN_SENDS', reputation.thresholds.minSends, 0, 1_000_000))
+  if (reputation.totalSends < minSends) blockers.push('REPUTATION_SAMPLE_LOW')
   else if (!reputation.healthy) blockers.push('REPUTATION_UNHEALTHY')
   if (reviewedDrafts < t.minReviewedDrafts) blockers.push('TOO_FEW_REVIEWED_DRAFTS')
   else if (approvalRate != null && approvalRate < t.minApprovalRate) blockers.push('APPROVAL_RATE_LOW')
@@ -112,7 +114,7 @@ export async function assessAutonomy(workspaceId: string, now: Date = new Date()
     optInAt: ws?.autonomyOptInAt?.toISOString() ?? null,
     consentVersion: AUTONOMY_CONSENT_VERSION,
     metrics: { reviewedDrafts, approvalRate, policyReviewRate, sends: reputation.totalSends, bounceRate: reputation.bounceRate, complaintRate: reputation.complaintRate },
-    thresholds: { ...t, minSends: reputation.thresholds.minSends },
+    thresholds: { ...t, minSends },
   }
 }
 
