@@ -219,6 +219,7 @@ model Workspace {
   evidenceLinks           EvidenceLink[]
   quotes                  Quote[]
   jobs                    Job[]
+  jobVariations           JobVariation[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -2013,7 +2014,35 @@ model Job {
   opsJobSite           OpsJobSite @relation(fields: [opsJobSiteId], references: [id], onDelete: NoAction)
   quote                Quote?     @relation(fields: [quoteId], references: [id], onDelete: SetNull)
   shifts               OpsShiftRecord[]
+  variations           JobVariation[]
 
   @@index([workspaceId, status])
   @@index([workspaceId, opsJobSiteId])
+}
+
+// A scope change on a Job (UQ-35). The accepted Quote is never rewritten: an
+// APPROVED variation adjusts the contract baseline beside it. Estimated cost
+// stays an estimate — actual margin uses the closeout's recorded costs.
+// DRAFT -> SUBMITTED -> APPROVED | REJECTED; DRAFT/SUBMITTED -> CANCELLED.
+model JobVariation {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  jobId              String
+  title              String
+  description        String?
+  // Price change to the contract; negative for a scope reduction. Null = not priced yet.
+  revenueCents       Int?
+  estimatedCostCents Int?
+  estimatedHours     Float?
+  status             String    @default("DRAFT")
+  createdByUserId    String?
+  submittedAt        DateTime?
+  decidedAt          DateTime?
+  decidedByUserId    String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, jobId])
 }

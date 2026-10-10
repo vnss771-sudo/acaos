@@ -6,12 +6,13 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
-import { computeJobEconomics, canTransitionQuote, buildDeliveryReport, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
+import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
 import { FIND_WORK_KIND_LABEL, loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type {
   Assert, Extends, CreateQuoteRequest, UpdateQuoteStatusRequest, CreateJobFromQuoteRequest, CloseoutJobRequest, ReopenJobRequest,
+  CreateVariationRequest, UpdateVariationStatusRequest,
 } from '@acaos/shared'
 
 // Commercial capture (phase 15A, docs/ACQUISITION_OS_DELIVERY.md): quotes on
@@ -274,7 +275,19 @@ type JobRow = {
     opportunity: { id: string; kind: string; source: string; title: string } | null
     commercialOpportunity: { id: string; eventType: string; eventFamily: string | null; eventTitle: string } | null
   }
+  variations: VariationRow[]
 }
+
+type VariationRow = {
+  id: string; title: string; description: string | null; revenueCents: number | null; estimatedCostCents: number | null
+  estimatedHours: number | null; status: string; submittedAt: Date | null; decidedAt: Date | null; createdAt: Date
+}
+const variationSelect = {
+  id: true, title: true, description: true, revenueCents: true, estimatedCostCents: true, estimatedHours: true,
+  status: true, submittedAt: true, decidedAt: true, createdAt: true,
+} as const
+/** The variations that adjust the contract (UQ-35): APPROVED only. */
+const approvedVariations = (j: JobRow) => j.variations.filter(v => v.status === 'APPROVED')
 
 const opportunityOrigin = { select: { id: true, kind: true, source: true, title: true } }
 const jobInclude = {
@@ -286,10 +299,11 @@ const jobInclude = {
       commercialOpportunity: { select: { id: true, eventType: true, eventFamily: true, eventTitle: true } },
     },
   },
+  variations: { select: variationSelect, orderBy: { createdAt: 'asc' as const } },
 }
 
 // Where the work came from — the dimension phase 15B groups economics by.
-function originOf(job: JobRow) {
+function originOf(job: Omit<JobRow, 'variations'>) {
   const co = job.quote?.commercialOpportunity
   if (co) return { type: 'COMMERCIAL_OPPORTUNITY' as const, id: co.id, kind: co.eventType, family: co.eventFamily, title: co.eventTitle }
   const opp = job.quote?.opportunity ?? job.opsJobSite.opportunities[0]
@@ -319,6 +333,7 @@ async function liveEconomics(workspaceId: string, jobs: JobRow[]): Promise<Map<s
       quote: j.quote ? { amountCents: j.quote.amountCents, estimatedHours: j.quote.estimatedHours } : null,
       revenueCents: j.invoicedRevenueCents,
       otherCostCents: j.otherCostCents,
+      variations: approvedVariations(j),
     }))
   }
   return out
@@ -394,7 +409,7 @@ const reportJobInclude = {
   },
 }
 type Located = { region?: string | null; locality?: string | null }
-type ReportJobRow = JobRow & {
+type ReportJobRow = Omit<JobRow, 'variations'> & {
   opsJobSite: { location: string | null; opportunities: Located[] }
   quote: null | { opportunity: Located | null; commercialOpportunity: { prospect: { location: string | null } | null } | null }
 }
@@ -526,6 +541,7 @@ deliveryRouter.post(
         revenueCents,
         otherCostCents,
         onCostPct: b.onCostPct,
+        variations: approvedVariations(job),
       }),
       frozenAt: now.toISOString(),
     }
@@ -575,5 +591,89 @@ deliveryRouter.post(
     })
     const updated = await loadJob(id, workspaceId)
     res.json({ job: present(updated, await liveEconomics(workspaceId, [updated])) })
+  })
+)
+
+// ── Variations (UQ-35) ──────────────────────────────────────────────────────
+// Scope changes on a live Job. The accepted Quote is never rewritten; APPROVED
+// variations adjust the contract baseline in the economics. A closed Job must be
+// reopened first, so a frozen closeout can't drift. Every change is audited.
+const signedCentsField = z.number().int().min(-MAX_CENTS).max(MAX_CENTS)
+const createVariationSchema = z.object({
+  workspaceId: workspaceIdField,
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).optional(),
+  revenueCents: signedCentsField.nullable().optional(),
+  estimatedCostCents: centsField.nullable().optional(),
+  estimatedHours: z.number().min(0).max(100_000).nullable().optional(),
+  submit: z.boolean().optional(),
+})
+type _CreateVariationConforms = Assert<Extends<z.infer<typeof createVariationSchema>, CreateVariationRequest>>
+
+deliveryRouter.post(
+  '/jobs/:id/variations',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { id } = parseParams(idParamsSchema, req)
+    const b = parseBody(createVariationSchema, req)
+    await assertWorkspacePermission(user.id, b.workspaceId, 'ops:manage')
+    const job = await prisma.job.findFirst({ where: { id, workspaceId: b.workspaceId }, select: { id: true, status: true } }) as { id: string; status: string } | null
+    if (!job) throw new ApiError(404, 'Job not found')
+    if (job.status !== 'ACTIVE') throw new ApiError(409, job.status === 'COMPLETE' ? 'Reopen the job before recording a variation' : `A ${job.status} job can't take variations`)
+    const now = new Date()
+    const variation = await prisma.jobVariation.create({
+      data: {
+        workspaceId: b.workspaceId, jobId: job.id, title: b.title, description: b.description ?? null,
+        revenueCents: b.revenueCents ?? null, estimatedCostCents: b.estimatedCostCents ?? null, estimatedHours: b.estimatedHours ?? null,
+        status: b.submit ? 'SUBMITTED' : 'DRAFT', submittedAt: b.submit ? now : null, createdByUserId: user.id,
+      },
+      select: variationSelect,
+    })
+    await recordAudit({
+      workspaceId: b.workspaceId, actorUserId: user.id, type: 'job.variation.created', entityType: 'jobVariation', entityId: variation.id,
+      metadata: { jobId: job.id, status: variation.status, revenueCents: variation.revenueCents, estimatedCostCents: variation.estimatedCostCents },
+    })
+    res.status(201).json({ variation })
+  })
+)
+
+const variationStatusSchema = z.object({
+  workspaceId: workspaceIdField,
+  status: z.enum(['SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED']),
+})
+type _VariationStatusConforms = Assert<Extends<z.infer<typeof variationStatusSchema>, UpdateVariationStatusRequest>>
+
+deliveryRouter.patch(
+  '/variations/:id/status',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { id } = parseParams(idParamsSchema, req)
+    const { workspaceId, status } = parseBody(variationStatusSchema, req)
+    await assertWorkspacePermission(user.id, workspaceId, 'ops:manage')
+    const v = await prisma.jobVariation.findFirst({
+      where: { id, workspaceId },
+      select: { id: true, status: true, jobId: true, job: { select: { status: true } } },
+    }) as { id: string; status: string; jobId: string; job: { status: string } } | null
+    if (!v) throw new ApiError(404, 'Variation not found')
+    if (v.job.status !== 'ACTIVE') throw new ApiError(409, 'Reopen the job before changing its variations')
+    if (!canTransitionVariation(v.status, status)) throw new ApiError(409, `A ${v.status.toLowerCase()} variation can't become ${status.toLowerCase()}`)
+    const now = new Date()
+    const decided = status === 'APPROVED' || status === 'REJECTED'
+    // Claim the transition atomically: a concurrent decision makes this a no-op.
+    const moved = await prisma.jobVariation.updateMany({
+      where: { id, workspaceId, status: v.status },
+      data: {
+        status,
+        ...(status === 'SUBMITTED' ? { submittedAt: now } : {}),
+        ...(decided ? { decidedAt: now, decidedByUserId: user.id } : {}),
+      },
+    })
+    if (moved.count === 0) throw new ApiError(409, 'The variation changed — reload and try again')
+    await recordAudit({
+      workspaceId, actorUserId: user.id, type: 'job.variation.status', entityType: 'jobVariation', entityId: id,
+      metadata: { jobId: v.jobId, from: v.status, to: status },
+    })
+    const variation = await prisma.jobVariation.findFirst({ where: { id, workspaceId }, select: variationSelect })
+    res.json({ variation })
   })
 )

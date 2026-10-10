@@ -14,7 +14,8 @@
 // - Missing revenue makes every margin unknown.
 // - Money is integer cents throughout.
 
-export const JOB_ECONOMICS_VERSION = 1
+// v2 (UQ-35): approved variations and the adjusted contract value.
+export const JOB_ECONOMICS_VERSION = 2
 
 export interface EconomicsShift {
   crewMemberId: string
@@ -32,6 +33,8 @@ export interface EconomicsInput {
   otherCostCents: number | null
   // Labour on-cost loading (super, workers' comp, …) as a percentage of base pay.
   onCostPct?: number
+  // APPROVED variations only (UQ-35). Null = not priced / not estimated.
+  variations?: Array<{ revenueCents: number | null; estimatedCostCents: number | null }>
 }
 
 export type MarginBasis = 'GROSS' | 'LABOUR' | 'UNKNOWN'
@@ -54,6 +57,14 @@ export interface JobEconomics {
   // (revenue - quoted) / quoted, as a percentage. Often variations (scope the
   // client added), so it is "revenue vs quote", not an estimating error.
   revenueVsQuotePct: number | null
+  // UQ-35: approved scope changes. The quote above is never rewritten; the
+  // adjusted contract is quote + approved variation prices. Estimated variation
+  // cost stays an estimate and never enters the actual margins below.
+  approvedVariations: number
+  approvedVariationRevenueCents: number | null
+  approvedVariationCostCents: number | null
+  adjustedQuotedCents: number | null
+  revenueVsAdjustedQuotePct: number | null
   labourMarginCents: number | null
   labourMarginPct: number | null
   grossMarginCents: number | null
@@ -104,7 +115,14 @@ export function computeJobEconomics(input: EconomicsInput): JobEconomics {
   const grossMarginCents = labourMarginCents != null && otherCostCents != null ? labourMarginCents - otherCostCents : null
   const marginBasis: MarginBasis = grossMarginCents != null ? 'GROSS' : labourMarginCents != null ? 'LABOUR' : 'UNKNOWN'
 
+  const approved = input.variations ?? []
+  const sumKnown = (xs: Array<number | null>): number | null => (xs.some(x => x == null) ? null : xs.reduce<number>((a, x) => a + (x as number), 0))
+  const approvedVariationRevenueCents = sumKnown(approved.map(v => v.revenueCents))
+  const approvedVariationCostCents = sumKnown(approved.map(v => v.estimatedCostCents))
+  if (approved.length && approvedVariationRevenueCents == null) gaps.push('An approved variation has no price, so the adjusted contract value is unknown')
+
   const quotedCents = input.quote?.amountCents ?? null
+  const adjustedQuotedCents = quotedCents != null && approvedVariationRevenueCents != null ? quotedCents + approvedVariationRevenueCents : null
   const estimatedHours = input.quote?.estimatedHours ?? null
   if (!input.quote) gaps.push('No accepted quote, so there is nothing to compare against')
   else if (estimatedHours == null) gaps.push('The quote has no estimated hours, so hours variance is unknown')
@@ -123,6 +141,11 @@ export function computeJobEconomics(input: EconomicsInput): JobEconomics {
     estimatedHours,
     hoursVariancePct: estimatedHours != null && actualHours > 0 ? pct(actualHours - estimatedHours, estimatedHours) : null,
     revenueVsQuotePct: quotedCents != null && revenueCents != null ? pct(revenueCents - quotedCents, quotedCents) : null,
+    approvedVariations: approved.length,
+    approvedVariationRevenueCents,
+    approvedVariationCostCents,
+    adjustedQuotedCents,
+    revenueVsAdjustedQuotePct: adjustedQuotedCents != null && revenueCents != null ? pct(revenueCents - adjustedQuotedCents, adjustedQuotedCents) : null,
     labourMarginCents,
     labourMarginPct: labourMarginCents != null && revenueCents ? pct(labourMarginCents, revenueCents) : null,
     grossMarginCents,
@@ -206,4 +229,18 @@ export function buildDeliveryReport(jobs: ReportJob[], minJobs = DELIVERY_REPORT
     .map(([key, list]) => group(key, list[0].originLabel, list, minJobs))
     .sort((a, b) => b.jobs - a.jobs || a.label.localeCompare(b.label))
   return { minJobs, overall: group('ALL', 'All closed jobs', jobs, minJobs), groups }
+}
+
+// Variation lifecycle (UQ-35). Decided variations are history, never edited.
+export const VARIATION_STATUSES = ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'] as const
+export type VariationStatus = typeof VARIATION_STATUSES[number]
+const VARIATION_TRANSITIONS: Record<VariationStatus, readonly VariationStatus[]> = {
+  DRAFT: ['SUBMITTED', 'CANCELLED'],
+  SUBMITTED: ['APPROVED', 'REJECTED', 'CANCELLED'],
+  APPROVED: [],
+  REJECTED: [],
+  CANCELLED: [],
+}
+export function canTransitionVariation(from: string, to: string): boolean {
+  return (VARIATION_TRANSITIONS as Record<string, readonly string[]>)[from]?.includes(to) ?? false
 }

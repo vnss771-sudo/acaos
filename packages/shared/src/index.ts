@@ -375,6 +375,24 @@ export interface ReopenJobRequest {
   reason: string
 }
 
+// POST /api/delivery/jobs/:id/variations (UQ-35). Money in cents; revenueCents
+// may be negative (scope reduction); null/absent = not priced yet.
+export interface CreateVariationRequest {
+  workspaceId: string
+  title: string
+  description?: string
+  revenueCents?: number | null
+  estimatedCostCents?: number | null
+  estimatedHours?: number | null
+  submit?: boolean
+}
+
+// PATCH /api/delivery/variations/:id/status
+export interface UpdateVariationStatusRequest {
+  workspaceId: string
+  status: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
+}
+
 // ── Offers & commercial opportunities (Acquisition OS) ───────────────────────
 export type CommercialEventType =
   | 'ACTIVE_PROCUREMENT' | 'CAPACITY_EXPANSION' | 'GROWTH_EVENT' | 'ORGANISATIONAL_CHANGE'
@@ -848,6 +866,8 @@ export interface RouteContracts {
   'POST /api/delivery/quotes/:id/job': { params: { id: string }; body: CreateJobFromQuoteRequest; response: { job: unknown } }
   'POST /api/delivery/jobs/:id/closeout': { params: { id: string }; body: CloseoutJobRequest; response: { job: unknown } }
   'POST /api/delivery/jobs/:id/reopen': { params: { id: string }; body: ReopenJobRequest; response: { job: unknown } }
+  'POST /api/delivery/jobs/:id/variations': { params: { id: string }; body: CreateVariationRequest; response: { variation: unknown } }
+  'PATCH /api/delivery/variations/:id/status': { params: { id: string }; body: UpdateVariationStatusRequest; response: { variation: unknown } }
   'POST /api/offers': { body: CreateOfferRequest; response: { offer: unknown } }
   'PUT /api/offers/:id': { params: { id: string }; body: UpdateOfferRequest; response: { offer: unknown } }
   'PATCH /api/commercial-opportunities/:id/status': { params: { id: string }; body: UpdateCommercialOpportunityStatusRequest; response: { success: boolean; status: CommercialOpportunityStatus } }

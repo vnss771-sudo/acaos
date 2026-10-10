@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeJobEconomics, canTransitionQuote, buildDeliveryReport, type EconomicsShift, type ReportJob } from '../packages/backend-core/src/lib/jobEconomics.ts'
+import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, type EconomicsShift, type ReportJob } from '../packages/backend-core/src/lib/jobEconomics.ts'
 
 const done = new Date('2026-10-01T16:00:00Z')
 const shift = (crewMemberId: string, totalHours: number, endTime: Date | null = done): EconomicsShift => ({ crewMemberId, totalHours, endTime })
@@ -110,4 +110,49 @@ test('delivery report: medians with n per origin, withheld below the floor, gros
   assert.equal(r.overall.grossMarginPct!.n, 3)
   assert.equal(r.overall.grossMarginPct!.median, 30)
   assert.deepEqual(buildDeliveryReport([]).groups, [])
+})
+
+// ── Variations (UQ-35) ──────────────────────────────────────────────────────
+
+const base = () => ({
+  shifts: [shift('a', 300), shift('b', 230)], rates,
+  quote: { amountCents: 6_000_000, estimatedHours: 400 }, revenueCents: 6_600_000, otherCostCents: 2_500_000, onCostPct: 20,
+})
+
+test('approved variations adjust the contract, never the quote or the actual margin', () => {
+  const without = computeJobEconomics(base())
+  const e = computeJobEconomics({ ...base(), variations: [
+    { revenueCents: 500_000, estimatedCostCents: 200_000 },
+    { revenueCents: -100_000, estimatedCostCents: 0 },
+  ] })
+  assert.equal(e.quotedCents, 6_000_000, 'the accepted quote is unchanged')
+  assert.equal(e.approvedVariations, 2)
+  assert.equal(e.approvedVariationRevenueCents, 400_000)
+  assert.equal(e.approvedVariationCostCents, 200_000)
+  assert.equal(e.adjustedQuotedCents, 6_400_000)
+  assert.equal(e.revenueVsQuotePct, 10)
+  assert.equal(e.revenueVsAdjustedQuotePct, 3.1)
+  // Estimated variation cost is not actual cost: margins match the no-variation job.
+  assert.equal(e.grossMarginCents, without.grossMarginCents)
+  assert.equal(e.otherCostCents, 2_500_000)
+})
+
+test('an unpriced approved variation makes the adjusted contract unknown, never zero', () => {
+  const e = computeJobEconomics({ ...base(), variations: [{ revenueCents: 500_000, estimatedCostCents: null }, { revenueCents: null, estimatedCostCents: 100 }] })
+  assert.equal(e.adjustedQuotedCents, null)
+  assert.equal(e.revenueVsAdjustedQuotePct, null)
+  assert.equal(e.approvedVariationCostCents, null)
+  assert.ok(e.gaps.some(g => /variation has no price/.test(g)))
+  const none = computeJobEconomics(base())
+  assert.deepEqual([none.approvedVariations, none.approvedVariationRevenueCents, none.adjustedQuotedCents], [0, 0, 6_000_000])
+})
+
+test('variation lifecycle: drafts submit, submissions are decided, decisions are final', () => {
+  assert.ok(canTransitionVariation('DRAFT', 'SUBMITTED'))
+  assert.ok(canTransitionVariation('DRAFT', 'CANCELLED'))
+  assert.ok(canTransitionVariation('SUBMITTED', 'APPROVED'))
+  assert.ok(canTransitionVariation('SUBMITTED', 'REJECTED'))
+  assert.ok(!canTransitionVariation('DRAFT', 'APPROVED'), 'approval needs a submission first')
+  for (const done of ['APPROVED', 'REJECTED', 'CANCELLED']) assert.ok(!canTransitionVariation(done, 'SUBMITTED'))
+  assert.ok(!canTransitionVariation('APPROVED', 'CANCELLED'), 'an approved variation is history')
 })

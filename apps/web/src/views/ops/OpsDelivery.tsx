@@ -12,6 +12,7 @@ import { ErrorBanner } from '../../components/ui/ErrorBanner.js'
 import { Skeleton } from '../../components/ui/Skeleton.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
 import { useIsMobile } from '../../hooks/useMediaQuery.js'
+import { JobVariations, type JobVariation } from '../../components/ops/JobVariations.js'
 
 // "Jobs & margins" (phase 15B): what each job was quoted at vs what it delivered,
 // closeout at the moment the job is done, and — once enough jobs are closed —
@@ -28,6 +29,9 @@ type Economics = {
   labourMarginCents: number | null; labourMarginPct: number | null
   grossMarginCents: number | null; grossMarginPct: number | null
   marginBasis: 'GROSS' | 'LABOUR' | 'UNKNOWN'; gaps: string[]
+  // v2 (UQ-35); absent on snapshots frozen before variations existed.
+  approvedVariations?: number; adjustedQuotedCents?: number | null; revenueVsAdjustedQuotePct?: number | null
+  approvedVariationCostCents?: number | null
 }
 
 type DeliveryJob = {
@@ -38,6 +42,7 @@ type DeliveryJob = {
   origin: { type: string; kind: string; title: string } | null
   economics: Economics | null; economicsFrozen: boolean
   shiftsAfterCloseout?: number
+  variations?: JobVariation[]
 }
 
 type Stat = { n: number; median: number; min: number; max: number } | null
@@ -255,6 +260,13 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                 {e && (
                   <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 8 }}>
                     <Figure label="Quoted" value={formatCents(e.quotedCents)} hint={e.estimatedHours != null ? `${e.estimatedHours} h estimated` : undefined} />
+                    {(e.approvedVariations ?? 0) > 0 && (
+                      <Figure
+                        label="Adjusted contract"
+                        value={formatCents(e.adjustedQuotedCents)}
+                        hint={`${e.approvedVariations} approved variation${e.approvedVariations === 1 ? '' : 's'}${e.revenueVsAdjustedQuotePct != null ? ` · revenue ${formatPct(e.revenueVsAdjustedQuotePct)}` : ''}`}
+                      />
+                    )}
                     <Figure label="Hours" value={`${e.actualHours} h`} hint={hoursHint(j, e)} />
                     <Figure label="Labour cost" value={formatCents(e.labourCostCents)} hint={e.onCostPct ? `incl. ${e.onCostPct}% on-costs` : undefined} />
                     <Figure label="Other costs" value={formatCents(e.otherCostCents)} />
@@ -277,6 +289,13 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                   <ul style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 12, color: colors.textMuted }}>
                     {e.gaps.map(g => <li key={g}>{g}</li>)}
                   </ul>
+                )}
+
+                {workspace && (
+                  <JobVariations
+                    jobId={j.id} jobActive={j.status === 'ACTIVE'} variations={j.variations ?? []} workspaceId={workspace.id}
+                    route={route} toast={toast} onChanged={load} isMobile={isMobile}
+                  />
                 )}
 
                 {j.status === 'ACTIVE' && closing !== j.id && (
