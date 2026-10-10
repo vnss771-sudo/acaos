@@ -6,6 +6,11 @@
 
 ## Unreleased
 
+### Calibration proposals must beat the current weights on unseen outcomes (10 Oct 2026)
+- Event-kind weight proposals are now tested before they can be accepted. The newest 30% of closed outcomes are held back, weights are fitted on the older ones only, and both the live and the candidate weights are scored on the held-back outcomes (Brier error and ranking AUC).
+- Only an `IMPROVED` verdict can be approved; `NO_IMPROVEMENT`, `DEGRADED` and `INSUFFICIENT` (under 20 dated outcomes) return 409. Pending proposals made before this change are refused and regenerated with a verdict at the next learning run.
+- The Learning Centre shows the verdict, the holdout size and both deltas, and disables Accept unless the proposal improved.
+
 ### Repeat jobs per site and phone-friendly Field Ops (9 Oct 2026)
 - A site can now host more than one job. Each shift records the job its hours are costed to, so a second project at the same site keeps its own hours, margin, late-shift flags and closeout. Existing shifts were attributed to their site's one job by the migration.
 - Shifts at a site with a single open job are attributed automatically. Where a site has several, clock-in and manual entry ask which job, and the API returns 409 until one is chosen.

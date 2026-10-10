@@ -19,7 +19,7 @@ import { auditCreateData } from './audit.js'
 import { sameJson } from './learningLoop.js'
 import { DEFAULT_SCORING_WEIGHTS, DEFAULT_SCORING_METRICS } from './scoring.js'
 import { OPPORTUNITY_CAUSE_TYPE } from './outcomeCauses.js'
-import { WEIGHT_MAX, WEIGHT_MIN } from './signalCalibration.js'
+import { WEIGHT_MAX, WEIGHT_MIN, heldOutOf } from './signalCalibration.js'
 
 /**
  * Advisory proposal types (outcomeLearning.ts): approving one records that a
@@ -170,6 +170,13 @@ export async function decideRecommendation(input: {
       }
       if (!sameJson(live, rec.currentValue ?? null)) {
         throw new DecisionError(409, 'Your settings changed since this was proposed — it no longer applies. A fresh recommendation will be generated.')
+      }
+      // UQ-29: event-kind weights change live win probabilities, so they go
+      // live only when the method beat the current weights on unseen outcomes.
+      if (type === 'EVENT_KIND_WEIGHT') {
+        const heldOut = heldOutOf(rec.evidence)
+        if (!heldOut) throw new DecisionError(409, 'This proposal predates held-out testing — a fresh, tested one will be generated at the next learning run.')
+        if (heldOut.verdict !== 'IMPROVED') throw new DecisionError(409, `Not applied: on the newest outcomes it held back, this calibration did not beat the current weights (${heldOut.verdict.toLowerCase().replace('_', ' ')}). ${heldOut.reason}.`)
       }
       await transition(['PENDING'], 'APPROVED')
       await writeLive(tx, workspaceId, type, rec.proposedValue)

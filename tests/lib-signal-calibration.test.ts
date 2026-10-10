@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildCalibrationReport, eventKindWeight, proposeEventKindWeights, WEIGHT_MAX, WEIGHT_MIN,
+  evaluateEventKindWeights, heldOutOf, MIN_HOLDOUT, MIN_TRAIN,
   type CalibrationItem,
 } from '../packages/backend-core/src/lib/signalCalibration.ts'
 import { scoreOpportunity } from '../packages/backend-core/src/lib/opportunityScoring.ts'
@@ -104,4 +105,63 @@ test('scoring applies the approved weight to probability, bounded, and says so',
   assert.ok(down.probability < base.probability)
   assert.match(down.calibration.reason, /underperformed/)
   assert.ok(scoreOpportunity({ ...input, confidence: 100, offerFit: { score: 100, reason: '' }, eventKindWeight: 1.5 }).probability <= 1)
+})
+
+// ── Held-out evaluation (UQ-29) ──────────────────────────────────────────────
+
+/** `pattern` repeated `batches` times, each item closing one day after the previous. */
+function dated(pattern: Array<[string, 'WON' | 'LOST']>, batches: number): CalibrationItem[] {
+  let day = 0
+  return Array.from({ length: batches }, () => pattern).flat()
+    .map(([kind, final]) => item(kind, final, { closedAt: new Date(Date.UTC(2026, 0, 1 + day++)).toISOString() }))
+}
+// Capacity expansions mostly win, tenders mostly lose — interleaved.
+const STABLE: Array<[string, 'WON' | 'LOST']> = [
+  ['CAPACITY_EXPANSION', 'WON'], ['TENDER_OPPORTUNITY', 'LOST'], ['CAPACITY_EXPANSION', 'WON'], ['TENDER_OPPORTUNITY', 'LOST'],
+  ['CAPACITY_EXPANSION', 'WON'], ['TENDER_OPPORTUNITY', 'WON'], ['CAPACITY_EXPANSION', 'LOST'], ['TENDER_OPPORTUNITY', 'LOST'],
+]
+
+test('held-out: a stable pattern learned on older outcomes beats neutral weights on the newest', () => {
+  const items = dated(STABLE, 4) // 32 closed
+  const e = evaluateEventKindWeights(items, {})
+  assert.equal(e.verdict, 'IMPROVED', e.reason)
+  assert.deepEqual([e.trainSize, e.holdoutSize], [22, 10])
+  assert.equal(e.holdoutFrom, items[22].closedAt)
+  assert.equal(e.holdoutTo, items[31].closedAt)
+  assert.ok(e.brierImprovement! > 0)
+  assert.ok(e.candidate!.brier < e.baseline!.brier)
+})
+
+test('held-out: the holdout never informs the candidate — a pattern that flips in the newest outcomes degrades', () => {
+  const flipped = STABLE.map(([k, f]) => [k, f === 'WON' ? 'LOST' : 'WON'] as [string, 'WON' | 'LOST'])
+  // Older outcomes follow STABLE; the newest 10 follow the opposite pattern.
+  const items = [...dated(STABLE, 3), ...dated(flipped, 2).slice(0, 10)]
+    .map((it, i) => ({ ...it, closedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString() }))
+  const e = evaluateEventKindWeights(items, {})
+  assert.equal(e.verdict, 'DEGRADED', e.reason)
+})
+
+test('held-out: candidate equal to the live weights is no improvement', () => {
+  const items = dated(STABLE, 4)
+  const learned = proposeEventKindWeights(buildCalibrationReport(items.slice(0, 22)))
+  assert.equal(evaluateEventKindWeights(items, learned).verdict, 'NO_IMPROVEMENT')
+})
+
+test('held-out: too few dated outcomes is INSUFFICIENT, never an improvement', () => {
+  const few = dated(STABLE, 2).slice(0, MIN_TRAIN + MIN_HOLDOUT - 1)
+  const e = evaluateEventKindWeights(few, {})
+  assert.equal(e.verdict, 'INSUFFICIENT')
+  assert.equal(e.baseline, null)
+  // Undated closes don't count.
+  const undated = dated(STABLE, 4).map(i => ({ ...i, closedAt: null }))
+  assert.equal(evaluateEventKindWeights(undated, {}).verdict, 'INSUFFICIENT')
+  // Older outcomes with no wins can't propose anything to test.
+  const noWins = dated([['TENDER_OPPORTUNITY', 'LOST']], 30)
+  assert.equal(evaluateEventKindWeights(noWins, {}).verdict, 'INSUFFICIENT')
+})
+
+test('heldOutOf reads only a well-formed stored evaluation', () => {
+  assert.equal(heldOutOf(null), null)
+  assert.equal(heldOutOf({ basis: 'x' }), null)
+  assert.equal(heldOutOf({ heldOut: { verdict: 'IMPROVED' } })?.verdict, 'IMPROVED')
 })

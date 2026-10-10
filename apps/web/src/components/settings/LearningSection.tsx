@@ -83,6 +83,24 @@ function describeRecommendation(r: LearningRecommendationDto): { title: string; 
   return { title: 'Re-weight buying signals by how often they led to wins', from: 'current signal weights', to: `${n} adjusted signal weight${n === 1 ? '' : 's'}` }
 }
 
+// UQ-29: an event-weight proposal is tested on the newest outcomes it never saw;
+// only one that beat the current weights there can be accepted.
+type HeldOut = {
+  verdict: 'IMPROVED' | 'NO_IMPROVEMENT' | 'DEGRADED' | 'INSUFFICIENT'
+  reason: string; holdoutSize: number; brierImprovement: number | null; aucDelta: number | null
+}
+const VERDICT_LABEL: Record<HeldOut['verdict'], string> = {
+  IMPROVED: 'beat the current weights', NO_IMPROVEMENT: 'no measurable gain', DEGRADED: 'did worse than the current weights', INSUFFICIENT: 'not enough outcomes to test',
+}
+function heldOutStatus(r: LearningRecommendationDto): { acceptable: boolean; text: string } | null {
+  if (r.type !== 'EVENT_KIND_WEIGHT') return null
+  const h = (r.evidence as { heldOut?: HeldOut } | null)?.heldOut
+  if (!h) return { acceptable: false, text: 'Not yet tested on held-back outcomes — a tested version replaces it at the next learning run.' }
+  const signed = (x: number | null) => (x == null ? 'n/a' : `${x >= 0 ? '+' : ''}${x.toFixed(3)}`)
+  const figures = h.brierImprovement != null ? ` (error reduced by ${signed(h.brierImprovement)}, ranking ${signed(h.aucDelta)})` : ''
+  return { acceptable: h.verdict === 'IMPROVED', text: `Tested on the ${h.holdoutSize} newest outcomes: ${VERDICT_LABEL[h.verdict]}${figures}.` }
+}
+
 function Evidence({ r }: { r: LearningRecommendationDto }) {
   const e = r.evidence as {
     totalOutcomes?: number; baselineWinRate?: number; industries?: SegmentInsight[]; basis?: string; method?: string
@@ -188,17 +206,26 @@ export function LearningSection({ api, workspaceId, toast, canManage }: Props) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {pending.map(r => {
           const d = describeRecommendation(r)
+          const tested = heldOutStatus(r)
           return (
             <div key={r.id} style={s.cardInner}>
               <div style={{ color: colors.text, fontSize: 14, fontWeight: 600 }}>{d.title}</div>
               <div style={{ fontSize: 13, color: colors.textMuted, marginTop: 4 }}>
                 <span>Now: {d.from}</span> <span aria-hidden="true">→</span> <span style={{ color: colors.text }}>Suggested: {d.to}</span>
               </div>
+              {tested && (
+                <div style={{ fontSize: 12, marginTop: 4, color: tested.acceptable ? colors.green : colors.textMuted }}>{tested.text}</div>
+              )}
               {openEvidence === r.id && <Evidence r={r} />}
               <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                 {canManage && (
                   <>
-                    <button style={s.btn} disabled={busyId === r.id} onClick={() => act(r, 'approve')}>Accept</button>
+                    <button
+                      style={s.btn}
+                      disabled={busyId === r.id || (tested != null && !tested.acceptable)}
+                      title={tested && !tested.acceptable ? 'Only a calibration that beat the current weights on held-back outcomes can be accepted' : undefined}
+                      onClick={() => act(r, 'approve')}
+                    >Accept</button>
                     <button style={s.btnGhost} disabled={busyId === r.id} onClick={() => act(r, 'reject')}>Reject</button>
                   </>
                 )}

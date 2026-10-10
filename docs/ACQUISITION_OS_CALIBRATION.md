@@ -48,13 +48,27 @@ divided by the baseline. It is clamped to 0.5–1.5 and rounded to 2 places.
   job, best-effort. It writes one `EVENT_KIND_WEIGHT` LearningRecommendation:
   - `currentValue`: the live weights
   - `proposedValue`: the live weights merged with the newly learned ones
-  - `evidence`: the funnels and the top 10 combinations
+  - `evidence`: the funnels, the top 10 combinations and `heldOut` (below)
 
   The proposal is PENDING in every mode, **`live` included**. `off` does nothing.
-  An identical PENDING proposal is kept, and a changed one is superseded.
-- **Approve.** This writes the weights only if the live weights still equal
-  `currentValue`; otherwise it returns 409. It's audited and expires like other
-  proposals.
+  An identical PENDING proposal is kept, and a changed one is superseded. One
+  without `heldOut` (made before UQ-29) is superseded even when unchanged.
+- **Held-out test (UQ-29).** `evaluateEventKindWeights` orders the dated closed
+  outcomes by close date and holds back the newest 30% (at least 10). It fits
+  weights on the older outcomes only, then scores the live weights and those
+  candidate weights on the same held-back outcomes. Each predicts win probability
+  as the older outcomes' win rate × the kind's weight.
+  - Metrics: Brier error (calibration) and pairwise AUC (ranking).
+  - `IMPROVED`: Brier error drops by more than 0.002 and AUC falls by no more
+    than 0.02.
+  - `DEGRADED`: Brier error rises by more than 0.002, or AUC falls further.
+  - `NO_IMPROVEMENT`: anything in between.
+  - `INSUFFICIENT`: fewer than 20 dated closed outcomes, or the older ones
+    support no change.
+- **Approve.** This writes the weights only if the verdict is `IMPROVED` and the
+  live weights still equal `currentValue`; otherwise it returns 409. The Learning
+  Centre shows the verdict and disables Accept unless it is `IMPROVED`. It's
+  audited and expires like other proposals.
 - **Revert.** This restores `currentValue` only if the live weights still equal what
   was approved.
 

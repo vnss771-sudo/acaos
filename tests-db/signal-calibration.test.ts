@@ -20,13 +20,14 @@ const DAY = 86_400_000
 let n = 0
 
 /** A closed opportunity of the given event kind (rows written directly — the engine isn't under test here). */
-async function seedClosed(workspaceId: string, eventType: string, status: 'WON' | 'LOST') {
+async function seedClosed(workspaceId: string, eventType: string, status: 'WON' | 'LOST', closedDaysAgo = 2) {
+  const closed = Date.now() - closedDaysAgo * DAY
   const p = await prisma.prospect.create({ data: { workspaceId, companyName: `Co ${++n}` } })
   await prisma.commercialEvent.create({
     data: {
       workspaceId, prospectId: p.id, kind: eventType, family: 'CAPACITY_EXPANSION', title: eventType, implication: '', whyNow: '',
       confidence: 80, independentSources: 2, trustworthySignals: 2, corroborated: true, status: 'ACTIVE',
-      firstDetectedAt: new Date(Date.now() - 20 * DAY), lastConfirmedAt: new Date(), lastAssessedAt: new Date(),
+      firstDetectedAt: new Date(closed - 20 * DAY), lastConfirmedAt: new Date(), lastAssessedAt: new Date(),
     },
   })
   await prisma.commercialOpportunity.create({
@@ -35,16 +36,26 @@ async function seedClosed(workspaceId: string, eventType: string, status: 'WON' 
       evidenceConfidence: 80, independentSources: 2, trustworthySignals: 2, offerFit: 80, intentScore: 70, timingScore: 70,
       contactability: 80, probability: 0.4, urgency: 'MEDIUM', priority: 50, buyingStage: 'ACTIVE_REQUIREMENT',
       recommendedAction: 'CONTACT_NOW', actionLabel: 'Contact now', actionReason: 'x', blockers: [], reasons: [], evidence: [], velocity: [],
-      intelligenceGate: true, status, statusChangedAt: new Date(Date.now() - 2 * DAY), firstDetectedAt: new Date(Date.now() - 10 * DAY),
+      intelligenceGate: true, status, statusChangedAt: new Date(closed), firstDetectedAt: new Date(closed - 10 * DAY),
     },
   })
 }
 
+/** One batch of 12: capacity expansions mostly win, tenders mostly lose, each closing on its own day. */
+async function seedBatch(workspaceId: string, startDaysAgo: number) {
+  const rows: Array<[string, 'WON' | 'LOST']> = [
+    ...Array.from({ length: 5 }, () => ['CAPACITY_EXPANSION', 'WON'] as [string, 'WON']), ['CAPACITY_EXPANSION', 'LOST'],
+    ['TENDER_OPPORTUNITY', 'WON'], ...Array.from({ length: 5 }, () => ['TENDER_OPPORTUNITY', 'LOST'] as [string, 'LOST']),
+  ]
+  // Interleave kinds so any window holds both.
+  const order = [0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]
+  for (const [d, i] of order.entries()) await seedClosed(workspaceId, rows[i][0], rows[i][1], startDaysAgo - d)
+}
+
+/** Two batches with the same pattern, so the older outcomes predict the newer ones (UQ-29 holdout). */
 async function seedHistory(workspaceId: string) {
-  for (let i = 0; i < 5; i++) await seedClosed(workspaceId, 'CAPACITY_EXPANSION', 'WON')
-  await seedClosed(workspaceId, 'CAPACITY_EXPANSION', 'LOST')
-  await seedClosed(workspaceId, 'TENDER_OPPORTUNITY', 'WON')
-  for (let i = 0; i < 5; i++) await seedClosed(workspaceId, 'TENDER_OPPORTUNITY', 'LOST')
+  await seedBatch(workspaceId, 60)
+  await seedBatch(workspaceId, 30)
 }
 
 test('calibration proposes event-kind weights for approval only; approval feeds scoring; revert restores', async () => {
@@ -55,7 +66,7 @@ test('calibration proposes event-kind weights for approval only; approval feeds 
   const res = await opps.request(`/api/commercial-opportunities/calibration?workspaceId=${workspace.id}`, { headers: { Authorization: bearer(user.id) } })
   assert.equal(res.status, 200)
   const body = res.body as { report: { closed: number; won: number; funnels: Array<{ eventType: string; winRate: number }> }; currentWeights: object; proposedWeights: Record<string, number> }
-  assert.deepEqual([body.report.closed, body.report.won], [12, 6])
+  assert.deepEqual([body.report.closed, body.report.won], [24, 12])
   assert.equal(body.report.funnels.find(f => f.eventType === 'CAPACITY_EXPANSION')?.winRate, 0.833)
   assert.deepEqual(body.currentWeights, {})
   assert.ok(body.proposedWeights.CAPACITY_EXPANSION > 1 && body.proposedWeights.TENDER_OPPORTUNITY < 1)
@@ -66,13 +77,16 @@ test('calibration proposes event-kind weights for approval only; approval feeds 
 
   // live: still PENDING — never applied without a human.
   const r = await learnSignalCalibration(workspace.id, { mode: 'live' })
-  assert.deepEqual([r.closed, r.proposed], [12, 1])
+  assert.deepEqual([r.closed, r.proposed], [24, 1])
   const rec = await prisma.learningRecommendation.findFirstOrThrow({ where: { workspaceId: workspace.id, type: 'EVENT_KIND_WEIGHT' } })
   assert.equal(rec.status, 'PENDING')
   assert.deepEqual(rec.currentValue, {})
   assert.deepEqual(rec.proposedValue, body.proposedWeights)
+  // UQ-29: fitted on the older outcomes, it beat the current (neutral) weights on the newest ones.
+  const heldOut = (rec.evidence as { heldOut: { verdict: string; holdoutSize: number; trainSize: number } }).heldOut
+  assert.deepEqual([heldOut.verdict, heldOut.holdoutSize, heldOut.trainSize], ['IMPROVED', 10, 14])
   assert.equal(await prisma.scoringModel.count({ where: { workspaceId: workspace.id } }), 0)
-  assert.deepEqual(await learnSignalCalibration(workspace.id, { mode: 'live' }), { learned: true, closed: 12, proposed: 0, superseded: 0 })
+  assert.deepEqual(await learnSignalCalibration(workspace.id, { mode: 'live' }), { learned: true, closed: 24, proposed: 0, superseded: 0 })
 
   // Approve: the weights land on the scoring model…
   await decideRecommendation({ workspaceId: workspace.id, recommendationId: rec.id, actorUserId: user.id, action: 'approve' })
@@ -98,4 +112,34 @@ test('calibration proposes event-kind weights for approval only; approval feeds 
   // Revert restores the previous (empty) weights.
   await decideRecommendation({ workspaceId: workspace.id, recommendationId: rec.id, actorUserId: user.id, action: 'revert' })
   assert.deepEqual((await prisma.scoringModel.findUniqueOrThrow({ where: { workspaceId: workspace.id } })).eventKindWeights, {})
+})
+
+test('UQ-29: an untested or non-improving event-weight proposal cannot be approved, and an untested one is regenerated', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  // Twelve outcomes all closing together: too few to hold any back.
+  for (let i = 0; i < 5; i++) await seedClosed(workspace.id, 'CAPACITY_EXPANSION', 'WON')
+  await seedClosed(workspace.id, 'CAPACITY_EXPANSION', 'LOST')
+  await seedClosed(workspace.id, 'TENDER_OPPORTUNITY', 'WON')
+  for (let i = 0; i < 5; i++) await seedClosed(workspace.id, 'TENDER_OPPORTUNITY', 'LOST')
+  await learnSignalCalibration(workspace.id, { mode: 'live' })
+  const rec = await prisma.learningRecommendation.findFirstOrThrow({ where: { workspaceId: workspace.id, type: 'EVENT_KIND_WEIGHT', status: 'PENDING' } })
+  assert.equal((rec.evidence as { heldOut: { verdict: string } }).heldOut.verdict, 'INSUFFICIENT')
+  await assert.rejects(
+    decideRecommendation({ workspaceId: workspace.id, recommendationId: rec.id, actorUserId: user.id, action: 'approve' }),
+    (e: unknown) => (e as { status?: number }).status === 409 && /did not beat the current weights \(insufficient\)/.test((e as Error).message),
+  )
+  assert.equal(await prisma.scoringModel.count({ where: { workspaceId: workspace.id } }), 0, 'nothing applied')
+
+  // A proposal from before held-out testing: refused, then replaced by a tested one.
+  const evidence = { ...(rec.evidence as Record<string, unknown>) }
+  delete evidence.heldOut
+  await prisma.learningRecommendation.update({ where: { id: rec.id }, data: { evidence: evidence as object } })
+  await assert.rejects(
+    decideRecommendation({ workspaceId: workspace.id, recommendationId: rec.id, actorUserId: user.id, action: 'approve' }),
+    (e: unknown) => (e as { status?: number }).status === 409 && /predates held-out testing/.test((e as Error).message),
+  )
+  const rerun = await learnSignalCalibration(workspace.id, { mode: 'live' })
+  assert.deepEqual([rerun.proposed, rerun.superseded], [1, 1])
+  const fresh = await prisma.learningRecommendation.findFirstOrThrow({ where: { workspaceId: workspace.id, type: 'EVENT_KIND_WEIGHT', status: 'PENDING' } })
+  assert.ok((fresh.evidence as { heldOut?: unknown }).heldOut)
 })
