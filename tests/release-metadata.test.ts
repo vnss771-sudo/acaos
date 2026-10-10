@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { getRuntimeMetadata, getBuildInfoLabels, getProcessStartTimeSeconds } from '../packages/backend-core/src/lib/release.ts'
 
 test('runtime metadata includes canonical releaseId', () => {
@@ -67,5 +68,22 @@ test('the "unknown" build-time placeholder reads as no build time', () => {
     assert.equal(getRuntimeMetadata('acaos-worker').buildTime, null)
   } finally {
     if (saved === undefined) delete process.env.ACAOS_BUILD_TIME; else process.env.ACAOS_BUILD_TIME = saved
+  }
+})
+
+// Railway passes no build args, so the image's ACAOS_RELEASE_VERSION is the
+// "unknown" placeholder. The version must then come from the root package.json,
+// not report 0.0.0-dev.
+test('the "unknown" version placeholder falls back to the root package.json version', () => {
+  const saved = { v: process.env.ACAOS_RELEASE_VERSION, n: process.env.npm_package_version }
+  process.env.ACAOS_RELEASE_VERSION = 'unknown'
+  delete process.env.npm_package_version
+  try {
+    const rootVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+    assert.equal(getRuntimeMetadata('acaos-api').version, rootVersion)
+    assert.notEqual(rootVersion, '0.0.0-dev')
+  } finally {
+    if (saved.v === undefined) delete process.env.ACAOS_RELEASE_VERSION; else process.env.ACAOS_RELEASE_VERSION = saved.v
+    if (saved.n === undefined) delete process.env.npm_package_version; else process.env.npm_package_version = saved.n
   }
 })

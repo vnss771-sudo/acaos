@@ -34,6 +34,9 @@ const EXEMPT = new Set([
   // post a minimal { token } body (validated server-side by tokenBodySchema) and
   // can't route through the authenticated route client.
   'apps/web/src/App.tsx',
+  // Browser error reporting: posts to the Sentry ingest host, not the ACAOS API,
+  // so there is no route contract to type it against.
+  'apps/web/src/lib/errorReporting.ts',
 ])
 
 function walk(dir) {

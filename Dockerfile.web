@@ -25,6 +25,14 @@ COPY apps/web ./apps/web
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# Browser error reporting (apps/web/src/lib/errorReporting.ts): off unless
+# VITE_SENTRY_DSN is set. Railway passes service variables and its own
+# RAILWAY_GIT_COMMIT_SHA to declared build args, so events carry the commit.
+ARG VITE_SENTRY_DSN
+ARG VITE_SENTRY_ENVIRONMENT=production
+ARG RAILWAY_GIT_COMMIT_SHA
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN VITE_SENTRY_ENVIRONMENT=$VITE_SENTRY_ENVIRONMENT VITE_RELEASE_SHA=$RAILWAY_GIT_COMMIT_SHA
+
 RUN npm --workspace @acaos/web run build
 
 # Unprivileged nginx: runs as UID 101 (non-root), writes its pid + temp paths

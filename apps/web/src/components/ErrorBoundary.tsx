@@ -1,4 +1,5 @@
 import React from 'react'
+import { reportError } from '../lib/errorReporting.js'
 
 type Props = {
   children: React.ReactNode
@@ -19,6 +20,9 @@ export class ErrorBoundary extends React.Component<Props, { hasError: boolean; e
   }
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error }
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    reportError(error, { source: 'ErrorBoundary', componentStack: info.componentStack })
   }
   render() {
     if (this.state.hasError) {
