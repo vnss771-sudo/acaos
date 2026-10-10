@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { AdminView } from './Admin.js'
 import { makeScorecard } from '../test/scorecardFixture.js'
 
@@ -24,6 +25,34 @@ function makeApi() {
 }
 
 describe('AdminView', () => {
+  test('Diagnose opens a read-only diagnostics view for that workspace', async () => {
+    const ws = { id: 'w9', name: 'Pilot Electrical', slug: 'pilot', plan: 'growth', subscriptionStatus: 'past_due', createdAt: new Date().toISOString(), memberCount: 2, leadCount: 10, campaignCount: 1, aiCallsThisMonth: 3 }
+    const diagnostics = {
+      workspace: { id: 'w9', name: 'Pilot Electrical', createdAt: new Date().toISOString(), onboardingCompleted: true },
+      sending: { suppressed: false, suppressedReason: null, last24h: { SENT: 4 }, staleSending: 1, staleAfterMinutes: 120,
+        reputation: { healthy: true, sends: 40, bounceRate: 0.01, complaintRate: 0, reason: null }, autonomy: { ready: false, optedIn: false, blockers: ['MODE_OFF'] } },
+      billing: { plan: 'growth', providerStatus: 'past_due', hasSubscription: true, entitlement: 'grace', effectivePlan: 'growth', graceUntil: new Date().toISOString() },
+      mailbox: { smtpConfigured: true, imapConfigured: true, authMethod: 'GOOGLE_OAUTH', oauthConnected: true, oauthActionRequired: true, replySyncStarted: true, domainHealth: 'healthy', domainHealthCheckedAt: null },
+      followups: {}, discovery: { runsLast7d: { SUCCEEDED: 3 }, sources: [] },
+      recentFailures: [{ type: 'discovery.run_failed', entityType: 'DiscoveryRun', entityId: 'r1', at: new Date().toISOString() }],
+      generatedAt: new Date().toISOString(),
+    }
+    const api = vi.fn((path: string) => {
+      if (path.includes('/overview')) return Promise.resolve({ ...overview, workspaces: [ws] })
+      if (path.includes('/diagnostics')) return Promise.resolve({ diagnostics, release: { version: '1.4.0', commit: 'abcdef1234567890' } })
+      if (path.includes('/queue-stats')) return Promise.resolve({ queues: [] })
+      if (path.includes('/audit')) return Promise.resolve({ events: [] })
+      return Promise.resolve({})
+    })
+    render(<AdminView api={api as never} toast={toast as never} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Diagnose' }))
+    expect(api).toHaveBeenCalledWith('/api/admin/workspaces/w9/diagnostics')
+    expect(await screen.findByText('Diagnostics — Pilot Electrical')).toBeInTheDocument()
+    expect(screen.getByText(/Stuck in SENDING over 120 min: 1/)).toBeInTheDocument()
+    expect(screen.getByText('OAuth needs reconnecting')).toBeInTheDocument()
+    expect(screen.getByText(/discovery.run_failed/)).toBeInTheDocument()
+  })
+
   test('lists each contractor pilot against the targets', async () => {
     const api = vi.fn((path: string) => {
       if (path.includes('/overview')) return Promise.resolve(overview)

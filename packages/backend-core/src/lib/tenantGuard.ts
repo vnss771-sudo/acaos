@@ -39,7 +39,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   'OpsCrewMember', 'OpsJobSite', 'OpsShiftRecord', 'OpsAlert', 'OpsRosterEntry',
   'LearningRecommendation', 'OutreachSelectionRun', 'OutreachSelection',
   'Offer', 'CommercialOpportunity', 'CommercialEvent', 'EvidenceLink',
-  'Quote', 'Job',
+  'Quote', 'Job', 'JobVariation',
 ])
 
 // Tenant-owned foreign keys that transitively scope a query to a workspace: a row

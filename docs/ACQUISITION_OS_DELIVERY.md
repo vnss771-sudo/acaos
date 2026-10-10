@@ -59,6 +59,19 @@ attaches the opportunity's accepted quote if there is one.
 
 Audit types: `quote.created`, `quote.status`, `job.created`, `job.closeout`, `job.reopened`.
 
+### Variations (UQ-35)
+
+| Route | What |
+|---|---|
+| `POST /api/delivery/jobs/:id/variations` | `{ title, description?, revenueCents?, estimatedCostCents?, estimatedHours?, submit? }`. Only on an ACTIVE job (reopen a closed one first). `revenueCents` may be negative (scope reduction). |
+| `PATCH /api/delivery/variations/:id/status` | `DRAFT → SUBMITTED → APPROVED \| REJECTED`; `DRAFT/SUBMITTED → CANCELLED`. Decided variations are final. |
+
+- The accepted quote is never rewritten.
+- Economics (version 2) add `approvedVariations`, `approvedVariationRevenueCents`, `approvedVariationCostCents`, `adjustedQuotedCents` and `revenueVsAdjustedQuotePct`. All of these are from APPROVED variations only.
+- An unpriced approved variation makes the adjusted contract unknown, never zero.
+- Estimated variation cost is never added to actual costs. Margins use the closeout's recorded costs.
+- Audit types: `job.variation.created`, `job.variation.status`.
+
 ## 15B — what shipped
 
 **Capture where the work already happens (web, admins only).**

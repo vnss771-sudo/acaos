@@ -8,6 +8,7 @@ import { PLAN_LABELS } from '../types.js'
 import type { AuditEvent, BillingPlan } from '../types.js'
 import { formatCents } from '../lib/money.js'
 import { marginText, ratePct, type PilotScorecard } from '../lib/scorecard.js'
+import { WorkspaceDiagnosticsModal } from '../components/admin/WorkspaceDiagnosticsModal.js'
 
 type WorkspaceSummary = {
   id: string
@@ -72,6 +73,7 @@ export function AdminView({ api, toast }: Props) {
   const [workspaceSort, setWorkspaceSort] = useState<SortState | undefined>()
   const [queueSort, setQueueSort] = useState<SortState | undefined>()
   const [auditSort, setAuditSort] = useState<SortState | undefined>()
+  const [diagnoseId, setDiagnoseId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -171,6 +173,10 @@ export function AdminView({ api, toast }: Props) {
     {
       key: 'createdAt', header: 'Created', sortable: true,
       render: ws => <span style={{ color: colors.textFaint, fontSize: 12 }}>{new Date(ws.createdAt).toLocaleDateString()}</span>,
+    },
+    {
+      key: 'diagnose', header: '',
+      render: ws => <button style={s.btnSm} onClick={() => setDiagnoseId(ws.id)}>Diagnose</button>,
     },
   ]
 
@@ -316,6 +322,7 @@ export function AdminView({ api, toast }: Props) {
         This view spans every workspace on the platform — separate from any single workspace's own admin or owner role.
         Workspace email credentials are encrypted before they're stored.
       </div>
+      <WorkspaceDiagnosticsModal api={api} workspaceId={diagnoseId} onClose={() => setDiagnoseId(null)} />
     </div>
   )
 }

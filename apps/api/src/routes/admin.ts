@@ -7,7 +7,9 @@ import { getActivationFunnel } from '@acaos/backend-core/lib/analytics.js'
 import { loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { getQueueStats } from '@acaos/backend-core/lib/queues.js'
-import { parseQuery } from '../lib/validate.js'
+import { loadWorkspaceDiagnostics } from '@acaos/backend-core/lib/workspaceDiagnostics.js'
+import { getRuntimeMetadata } from '@acaos/backend-core/lib/release.js'
+import { parseQuery, parseParams, idField } from '../lib/validate.js'
 import { escCsv } from '../lib/csv.js'
 import { pingDatabase, pingRedis, withTimeout, PROBE_TIMEOUT_MS } from '../lib/health.js'
 import {
@@ -220,6 +222,28 @@ adminRouter.get(
       queues,
       timestamp: new Date().toISOString(),
     })
+  })
+)
+
+// Read-only diagnostics for one workspace (UQ-31): sending, billing, mailbox,
+// follow-up and discovery posture, plus recent failure events — enough to
+// support a pilot without database access or impersonation. Never returns
+// message content, recipients, credentials or tokens. Each view is audited,
+// since it is cross-tenant access.
+const diagnosticsParamsSchema = z.object({ workspaceId: idField })
+
+adminRouter.get(
+  '/workspaces/:workspaceId/diagnostics',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const { workspaceId } = parseParams(diagnosticsParamsSchema, req)
+    const diagnostics = await runInWorkspaceContext(workspaceId, () => loadWorkspaceDiagnostics(workspaceId))
+    if (!diagnostics) throw new ApiError(404, 'Workspace not found')
+    await recordCriticalAudit({
+      actorUserId: user.id, workspaceId, type: 'platform_admin.workspace_diagnostics_viewed',
+      entityType: 'Workspace', entityId: workspaceId,
+    })
+    res.json({ diagnostics, release: getRuntimeMetadata('api') })
   })
 )
 
