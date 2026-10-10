@@ -36,6 +36,8 @@ test('launch wiring: the worker skips disabled-feature jobs', () => {
 // Safe-launch safe defaults are applied where outbound is decided.
 test('launch wiring: sendCampaignBatch applies safe-launch defaults', () => {
   const p = read('apps/worker/src/processors/campaignSend.ts')
-  assert.match(p, /effectiveApprovalMode\(/, 'must force approval via effectiveApprovalMode under safe-launch')
+  // Approval goes through the UQ-40 decision, which applies safe-launch first.
+  assert.match(p, /approvalRequiredFor\(/, 'must decide approval via approvalRequiredFor')
+  assert.match(read('packages/backend-core/src/lib/autonomyReadiness.ts'), /if \(effectiveApprovalMode\(workspaceApprovalMode\)\) return true/, 'approvalRequiredFor must force approval under safe-launch')
   assert.match(p, /effectiveDailySendLimit\(/, 'must clamp the daily cap via effectiveDailySendLimit under safe-launch')
 })
