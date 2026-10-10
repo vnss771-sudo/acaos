@@ -417,7 +417,7 @@ export function App() {
           }}>
             <span aria-hidden="true" style={{ fontSize: 16 }}>⚠</span>
             <span style={{ fontSize: 13, color: '#fde68a', flex: 1 }}>
-              Your last payment failed. AI features are limited until billing is updated.
+              Your last payment failed. Update billing before the grace period ends to keep your plan — after that, Free plan limits apply.
             </span>
             <button
               onClick={() => setView('billing')}

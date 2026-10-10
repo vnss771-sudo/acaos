@@ -6,6 +6,29 @@
 
 ## Unreleased
 
+### Automatic outreach needs an explicit, earned go-ahead (10 Oct 2026)
+- Turning off approval mode no longer, on its own, lets unreviewed drafts send. Outside safe-launch it used to; now automatic sending also needs `AUTONOMOUS_OUTREACH_MODE=active` (default off), sending on, the workspace not suppressed, a current versioned opt-in by an admin (step-up, audited), healthy sender reputation on its minimum sample, at least 20 human-reviewed drafts, a 90%+ approval rate and at most 5% of drafts held for policy review. If any one fails, drafts wait for approval.
+- The worker and the campaign readiness/launch API share the same decision, so the UI never promises an automatic send the worker would hold.
+- Settings → Deliverability shows the posture, the metrics and every blocker, with opt-in/opt-out for admins.
+- The controlled-pilot preflight fails if `AUTONOMOUS_OUTREACH_MODE` is set to anything but `off`.
+
+### Calibration proposals must beat the current weights on unseen outcomes (10 Oct 2026)
+- Event-kind weight proposals are now tested before they can be accepted. The newest 30% of closed outcomes are held back, weights are fitted on the older ones only, and both the live and the candidate weights are scored on the held-back outcomes (Brier error and ranking AUC).
+- Only an `IMPROVED` verdict can be approved; `NO_IMPROVEMENT`, `DEGRADED` and `INSUFFICIENT` (under 20 dated outcomes) return 409. Pending proposals made before this change are refused and regenerated with a verdict at the next learning run.
+- The Learning Centre shows the verdict, the holdout size and both deltas, and disables Accept unless the proposal improved.
+
+### Repeat jobs per site and phone-friendly Field Ops (9 Oct 2026)
+- A site can now host more than one job. Each shift records the job its hours are costed to, so a second project at the same site keeps its own hours, margin, late-shift flags and closeout. Existing shifts were attributed to their site's one job by the migration.
+- Shifts at a site with a single open job are attributed automatically. Where a site has several, clock-in and manual entry ask which job, and the API returns 409 until one is chosen.
+- An accepted quote can start a new job at an existing site (`opsJobSiteId` on `POST /api/delivery/quotes/:id/job`). The pilot scorecard now follows opportunity → quote → job.
+- On phones, Shifts, Sites and Crew show cards instead of sideways-scrolling tables; Clock In/Out is full width; closeout and reopen forms stack into one column with larger buttons.
+
+### Billing grace and network benchmark privacy (9 Oct 2026)
+- A single failed payment no longer drops a paying workspace to Free limits. `past_due` keeps the purchased plan for a 7-day grace window, set by the first failure and never extended by retries; after that, Free limits apply. `trialing` now counts as active.
+- Stripe webhooks that arrive out of order are acknowledged but not applied when they are older than the newest event already applied, so a late failure can't undo a recovery.
+- Checkout is refused for any live subscription (including `past_due`); the Billing page shows the grace deadline or the lapsed state and points to Manage Subscription.
+- Cross-customer benchmarks now publish at 10+ contributing workspaces and 50+ closed outcomes (was 5 / 30), and the read API returns count bands and rates rounded to 5 points, with a rate withheld unless both sides have 5+ observations. Exact pooled counts stay server-side.
+
 ### AI provider compatibility and pilot preflight (8 Oct 2026)
 - Fixed the default GPT-5 reasoning request so reasoning models no longer receive `temperature`; they keep `max_completion_tokens` and the supported reasoning setting, while standard chat models retain `temperature: 0.4` + `max_tokens`.
 - Added a centralized model compatibility registry (`modelProfiles.ts`) so sampling/token/reasoning behaviour cannot drift across helpers.

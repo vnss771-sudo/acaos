@@ -30,6 +30,32 @@ function apiWith(recs: unknown[]) {
 }
 
 describe('LearningSection', () => {
+  // UQ-29: event-weight proposals carry a held-out verdict; only IMPROVED can be accepted.
+  const weights = (id: string, heldOut?: Record<string, unknown>) => ({
+    ...base, id, type: 'EVENT_KIND_WEIGHT', status: 'PENDING', decidedAt: null, expired: false,
+    currentValue: {}, proposedValue: { CAPACITY_EXPANSION: 1.3 },
+    evidence: { totalOutcomes: 32, baselineWinRate: 0.5, ...(heldOut ? { heldOut } : {}) },
+  })
+
+  test('an event-weight proposal that beat the current weights on held-back outcomes can be accepted', async () => {
+    const api = apiWith([weights('w1', { verdict: 'IMPROVED', reason: 'x', holdoutSize: 10, brierImprovement: 0.031, aucDelta: 0.05 })])
+    render(<LearningSection api={api as never} workspaceId="ws1" toast={toast as never} canManage />)
+    expect(await screen.findByText(/Tested on the 10 newest outcomes: beat the current weights \(error reduced by \+0\.031, ranking \+0\.050\)/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/workspaces/ws1/learning-recommendations/w1/approve', expect.objectContaining({ method: 'POST' })))
+  })
+
+  test('an untested or non-improving event-weight proposal cannot be accepted', async () => {
+    const recs = [
+      weights('w2', { verdict: 'DEGRADED', reason: 'x', holdoutSize: 10, brierImprovement: -0.02, aucDelta: -0.1 }),
+      weights('w3'),
+    ]
+    render(<LearningSection api={apiWith(recs) as never} workspaceId="ws1" toast={toast as never} canManage />)
+    expect(await screen.findByText(/did worse than the current weights/)).toBeInTheDocument()
+    expect(screen.getByText(/Not yet tested on held-back outcomes/)).toBeInTheDocument()
+    for (const b of screen.getAllByRole('button', { name: 'Accept' })) expect(b).toBeDisabled()
+  })
+
   test('shows a pending proposal in plain language, with evidence on request', async () => {
     render(<LearningSection api={apiWith([pending]) as never} workspaceId="ws1" toast={toast as never} canManage />)
     expect(await screen.findByText('Focus on the industries that are converting best')).toBeInTheDocument()

@@ -44,6 +44,9 @@ type BillingStatus = {
   plan: BillingPlan
   status: string
   hasSubscription: boolean
+  // Which plan's limits apply right now (UQ-26): a past_due subscription keeps
+  // its plan through a bounded grace window, then lapses to Free limits.
+  entitlement?: { status: 'none' | 'active' | 'grace' | 'lapsed'; effectivePlan: BillingPlan; graceUntil: string | null }
   usage?: UsageStats
 }
 
@@ -144,6 +147,9 @@ export function Billing({ api, workspace, toast }: Props) {
 
   const currentPlan = billingStatus?.plan ?? workspace?.plan ?? 'free'
   const isActive = billingStatus?.status === 'active' || billingStatus?.status === 'trialing'
+  // Any live subscription (including past_due) is managed in the portal; the
+  // server 409s a second checkout, so don't offer one.
+  const canCheckout = !isActive && !billingStatus?.hasSubscription
 
   return (
     <div style={s.stack}>
@@ -169,7 +175,7 @@ export function Billing({ api, workspace, toast }: Props) {
             </div>
 
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-              {!isActive && currentPlan === 'free' && (
+              {canCheckout && currentPlan === 'free' && (
                 <button
                   style={{ ...s.btn, background: colors.blue }}
                   disabled={!!checkoutLoading}
@@ -188,6 +194,19 @@ export function Billing({ api, workspace, toast }: Props) {
                 </button>
               )}
             </div>
+          </div>
+        )}
+
+        {billingStatus?.entitlement?.status === 'grace' && (
+          <div role="alert" style={{ marginTop: 16, padding: '10px 14px', borderRadius: 8, border: `1px solid ${colors.amber}`, color: colors.amber, fontSize: 13 }}>
+            Your last payment failed. Your {PLAN_LABELS[currentPlan] ?? currentPlan} plan stays fully available until{' '}
+            {billingStatus.entitlement.graceUntil ? new Date(billingStatus.entitlement.graceUntil).toLocaleDateString() : 'the end of the grace period'}
+            {' '}— update your payment method in Manage Subscription to keep it.
+          </div>
+        )}
+        {billingStatus?.entitlement?.status === 'lapsed' && currentPlan !== 'free' && (
+          <div role="alert" style={{ marginTop: 16, padding: '10px 14px', borderRadius: 8, border: `1px solid ${colors.red}`, color: colors.red, fontSize: 13 }}>
+            Your subscription is not active, so Free plan limits apply. Update your payment method in Manage Subscription to restore your {PLAN_LABELS[currentPlan] ?? currentPlan} plan.
           </div>
         )}
 
@@ -285,7 +304,7 @@ export function Billing({ api, workspace, toast }: Props) {
       </div>
 
       {/* Pricing cards */}
-      {!isActive && (
+      {canCheckout && (
         <>
           <div style={{ color: colors.text, fontSize: 16, fontWeight: 600 }}>Upgrade your plan</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>

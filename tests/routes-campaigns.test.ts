@@ -7,6 +7,10 @@ import {
   createFakePrisma, installPrisma, resetPrisma, startTestServer, bearer,
   type FakePrisma, type TestServer,
 } from './helpers/integration.ts'
+import { enableAutonomyEnv, autonomyOptIn, autonomyReads } from './helpers/autonomy.ts'
+
+// The approvalMode=false cases below need an autonomy-ready workspace (UQ-40).
+enableAutonomyEnv()
 
 const MEMBER = 'u1'
 const OWNED = 'ws1'
@@ -30,7 +34,10 @@ function spec() {
     },
     // Defaults for send-readiness: nothing configured.
     workspaceEmailConfig: { findUnique: async () => null },
-    workspace: { findUnique: async () => ({ senderBusinessName: null, senderPostalAddress: null }) },
+    workspace: { findUnique: async () => ({ senderBusinessName: null, senderPostalAddress: null, sendSuppressed: false, ...autonomyOptIn() }) },
+    outreachDraft: { groupBy: autonomyReads.outreachDraftGroupBy },
+    contactEvent: { count: autonomyReads.contactEventCount },
+    unsubscribeEvent: { count: autonomyReads.unsubscribeEventCount },
   }
 }
 

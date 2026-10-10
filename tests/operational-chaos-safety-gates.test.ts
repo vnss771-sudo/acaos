@@ -38,6 +38,11 @@ import {
   createFakePrisma, installPrisma, resetPrisma,
   type FakePrisma, type FakePrismaSpec, type RecordedCall,
 } from './helpers/integration.ts'
+import { enableAutonomyEnv, autonomyOptIn, autonomyReads } from './helpers/autonomy.ts'
+
+// These tests drive freshly generated drafts through the sender, which UQ-40
+// allows only for an autonomy-ready workspace.
+enableAutonomyEnv()
 
 const WORKSPACE = 'ws1'
 const CAMPAIGN = 'c1'
@@ -74,7 +79,7 @@ function baseSpec(leads: LeadFixture[], overrides: Partial<FakePrismaSpec> = {})
   return {
     workspaceEmailConfig: { findUnique: async () => ({ smtpHost: 'smtp.test', smtpFrom: 'a@test.com' }) },
     workspaceICP: { findUnique: async () => ({ approvalMode: false, dailySendLimit: 0, monthlySendLimit: 0, warmupStartedAt: null, targetIndustries: [], businessType: null, outreachTone: null }) },
-    workspace: { findUnique: async () => ({ senderBusinessName: 'Acme', senderPostalAddress: '1 St', sendSuppressed: false }) },
+    workspace: { findUnique: async () => ({ senderBusinessName: 'Acme', senderPostalAddress: '1 St', sendSuppressed: false, ...autonomyOptIn() }) },
     mission: { findUnique: async () => null },
     workspaceDraftPolicy: { findUnique: async () => null },
     campaign: { findUnique: async () => ({ autoFollowupsEnabled: false }) },
@@ -91,7 +96,8 @@ function baseSpec(leads: LeadFixture[], overrides: Partial<FakePrismaSpec> = {})
       update: async () => ({}),
       delete: async () => ({}),
     },
-    outreachDraft: { findMany: async () => [], create: async () => ({}) },
+    outreachDraft: { findMany: async () => [], create: async () => ({}), groupBy: autonomyReads.outreachDraftGroupBy },
+    unsubscribeEvent: { count: autonomyReads.unsubscribeEventCount },
     outreachIntent: { findMany: async () => [], update: async () => ({}) },
     suppression: { findMany: async () => [] },
     usageRecord: {
@@ -99,7 +105,7 @@ function baseSpec(leads: LeadFixture[], overrides: Partial<FakePrismaSpec> = {})
       upsert: async () => ({}),
       updateMany: async () => ({}),
     },
-    contactEvent: { create: async () => ({}) },
+    contactEvent: { create: async () => ({}), count: autonomyReads.contactEventCount },
     campaignDailyStats: { upsert: async () => ({}) },
     ...overrides,
   }

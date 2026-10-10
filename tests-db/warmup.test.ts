@@ -6,7 +6,7 @@
 import { test, beforeEach, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -42,6 +42,7 @@ test('warmup day 1: caps sends at the first ramp entry, not the full dailySendLi
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 50, warmupStartedAt: new Date(),
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedLeads(workspace.id, campaign.id, 6)
 
@@ -63,6 +64,7 @@ test('warmup complete: a workspace past the ramp sends up to its full limit', as
       warmupStartedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), // 10 days ago → ramp done
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedLeads(workspace.id, campaign.id, 5)
 
@@ -81,6 +83,7 @@ test('no warmup: unchanged behaviour (full limit applies)', async () => {
     data: { workspaceId: workspace.id, approvalMode: false, dailySendLimit: 50, warmupStartedAt: null,
       targetIndustries: [], targetGeos: [], excludedIndustries: [] },
   })
+  await allowAutonomousSending(workspace.id)
   const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: 'C', goalType: 'BOOK_MEETINGS' } })
   await seedLeads(workspace.id, campaign.id, 5)
 

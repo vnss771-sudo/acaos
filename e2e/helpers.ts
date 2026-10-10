@@ -179,11 +179,14 @@ export async function seedShift(input: {
   const now = new Date()
   const hours = input.totalHours ?? 8
   const start = new Date(now.getTime() - hours * 60 * 60 * 1000)
+  // Costed to the site's job, as clock-in would attribute it (UQ-24).
+  const job = await db().job.findFirst({ where: { workspaceId: input.workspaceId, opsJobSiteId: input.jobSiteId }, select: { id: true } })
   const row = await db().opsShiftRecord.create({
     data: {
       workspaceId: input.workspaceId,
       crewMemberId: input.crewMemberId,
       jobSiteId: input.jobSiteId,
+      jobId: job?.id ?? null,
       shiftDate: start,
       startTime: start,
       endTime: input.open ? null : now,

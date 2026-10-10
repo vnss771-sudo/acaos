@@ -8,7 +8,7 @@
 import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -36,6 +36,7 @@ async function seedSendableLead(workspaceId: string, campaignId: string, email: 
 
 async function seedSmtp(workspaceId: string) {
   await prisma.workspaceEmailConfig.create({ data: { workspaceId, smtpHost: 'smtp.acme.test', smtpFrom: 'sales@acme.test' } })
+  await allowAutonomousSending(workspaceId)
 }
 
 // Every test flips COMPLIANCE_GATE_ENABLED explicitly and restores it — other

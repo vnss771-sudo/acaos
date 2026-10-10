@@ -13,7 +13,8 @@ import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput } from '@acaos/backend-core/lib/aiSchemas.js'
 import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
-import { effectiveApprovalMode, effectiveDailySendLimit, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { effectiveDailySendLimit, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { approvalRequiredFor } from '@acaos/backend-core/lib/autonomyReadiness.js'
 import { bulkCheckConsent } from '@acaos/backend-core/lib/consent.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
@@ -646,9 +647,10 @@ export async function sendCampaignBatch(
     ...(leadIds ? { id: { in: leadIds } } : {})
   }
 
-  // SAFE_LAUNCH_MODE forces human approval regardless of the workspace's own
-  // setting, so a controlled launch never auto-sends freshly generated copy.
-  const approvalRequired = effectiveApprovalMode(Boolean(icp?.approvalMode))
+  // Human approval unless the workspace asked for autonomy (approvalMode=false)
+  // AND every UQ-40 readiness condition holds right now; SAFE_LAUNCH_MODE and
+  // the operator's AUTONOMOUS_OUTREACH_MODE (default off) force approval too.
+  const approvalRequired = await approvalRequiredFor(workspaceId, Boolean(icp?.approvalMode))
 
   const workspaceDailyLimit = icp?.dailySendLimit && icp.dailySendLimit > 0 ? icp.dailySendLimit : null
   // Effective cap = safe-launch clamp, then the opt-in warmup ramp (the more

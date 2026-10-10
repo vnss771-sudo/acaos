@@ -5,6 +5,7 @@ import { prisma } from './prisma.js'
 import { ApiError } from './errors.js'
 import { estimateDiscoveryCost, type DiscoveryCostBreakdown } from './discoveryCost.js'
 import { estimateAiCost, type AiCostBreakdown } from './aiCost.js'
+import { billingEntitlement } from './billingEntitlements.js'
 
 // Either the singleton client or an interactive-transaction client.
 type Db = PrismaClient | Prisma.TransactionClient
@@ -63,11 +64,12 @@ function resolvePlan(plan: string | null | undefined): Plan {
 async function getWorkspacePlan(workspaceId: string, client: Db = prisma): Promise<Plan> {
   const ws = await client.workspace.findUnique({
     where: { id: workspaceId },
-    select: { plan: true, subscriptionStatus: true }
+    select: { plan: true, subscriptionStatus: true, billingGraceUntil: true }
   })
-  // Treat lapsed subscriptions as free
-  if (ws?.subscriptionStatus && ws.subscriptionStatus !== 'active') return 'free'
-  return resolvePlan(ws?.plan)
+  if (!ws) return 'free'
+  // Entitlement, not raw Stripe status: a past_due workspace keeps its plan
+  // through a bounded grace period instead of dropping to Free on one failed charge.
+  return billingEntitlement(ws).effectivePlan
 }
 
 /** Seat (member) limit for a plan. Pure. */

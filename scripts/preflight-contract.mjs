@@ -94,6 +94,10 @@ export function evaluatePilotPolicy(env = process.env) {
   checks.push(exactCheck('policy.tenant_guard', 'TENANT_GUARD_MODE', env.TENANT_GUARD_MODE, 'enforce'))
   checks.push(exactCheck('policy.reputation_guard', 'REPUTATION_GUARD_MODE', env.REPUTATION_GUARD_MODE, 'enforce'))
   checks.push(explicitBoolCheck('policy.followups', 'FOLLOWUPS_ENABLED', env.FOLLOWUPS_ENABLED, false))
+  // UQ-40: the controlled pilot is human-approved by construction. Unset means off.
+  checks.push(nonEmpty(env.AUTONOMOUS_OUTREACH_MODE)
+    ? exactCheck('policy.autonomy', 'AUTONOMOUS_OUTREACH_MODE', env.AUTONOMOUS_OUTREACH_MODE, 'off')
+    : { id: 'policy.autonomy', status: 'PASS', message: 'AUTONOMOUS_OUTREACH_MODE unset (off)' })
 
   const compliance = boolToken(env.COMPLIANCE_GATE_ENABLED)
   checks.push(
@@ -172,6 +176,7 @@ export function evaluatePilotPolicy(env = process.env) {
       tenantGuardMode: env.TENANT_GUARD_MODE ?? null,
       reputationGuardMode: env.REPUTATION_GUARD_MODE ?? null,
       followupsEnabled: boolToken(env.FOLLOWUPS_ENABLED),
+      autonomousOutreachMode: env.AUTONOMOUS_OUTREACH_MODE ?? 'off',
       complianceGateEnabled: compliance === undefined || compliance === null ? null : compliance,
     },
     checks,

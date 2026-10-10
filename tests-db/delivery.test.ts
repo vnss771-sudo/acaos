@@ -60,9 +60,11 @@ async function acceptedQuote(userId: string, workspaceId: string, target: Record
 
 async function seedShift(workspaceId: string, crewMemberId: string, jobSiteId: string, totalHours: number, open = false) {
   const start = new Date('2026-09-01T07:00:00Z')
+  // Costed to the site's job, as clock-in would attribute it (UQ-24).
+  const job = await prisma.job.findFirst({ where: { workspaceId, opsJobSiteId: jobSiteId }, select: { id: true } })
   return prisma.opsShiftRecord.create({
     data: {
-      workspaceId, crewMemberId, jobSiteId, shiftDate: start, startTime: start,
+      workspaceId, crewMemberId, jobSiteId, jobId: job?.id ?? null, shiftDate: start, startTime: start,
       endTime: open ? null : new Date(start.getTime() + totalHours * 3_600_000), totalHours: open ? 0 : totalHours,
     },
   })
@@ -135,7 +137,7 @@ test('legacy "won → job site" also creates the Job, carrying the accepted quot
   const quoteId = await acceptedQuote(user.id, workspace.id, { opportunityId: opp.id })
   const made = await req(user.id, 'POST', `/${opp.id}/create-job`, { workspaceId: workspace.id }, oppServer, '/api/opportunities')
   assert.equal(made.status, 201, JSON.stringify(made.body))
-  const job = await prisma.job.findUnique({ where: { opsJobSiteId: made.body.jobSite.id } })
+  const job = await prisma.job.findFirst({ where: { opsJobSiteId: made.body.jobSite.id } })
   assert.equal(job!.quoteId, quoteId)
   assert.equal((await req(user.id, 'POST', `/quotes/${quoteId}/job`, { workspaceId: workspace.id })).status, 409)
 })

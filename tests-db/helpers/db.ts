@@ -95,3 +95,10 @@ export async function seedUserWithWorkspace(
   const workspace = await seedWorkspace(user.id, { role })
   return { user, workspace }
 }
+
+/** Make a workspace autonomy-ready (UQ-40) for tests that send unreviewed drafts. */
+export async function allowAutonomousSending(workspaceId: string): Promise<void> {
+  const { enableAutonomyEnv, autonomyOptIn } = await import('../../tests/helpers/autonomy.ts')
+  enableAutonomyEnv()
+  await prisma.workspace.update({ where: { id: workspaceId }, data: autonomyOptIn() })
+}

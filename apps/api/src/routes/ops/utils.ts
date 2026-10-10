@@ -72,6 +72,35 @@ export async function assertOwnership(
   await Promise.all(checks)
 }
 
+// ── Shift → Job attribution (UQ-24) ─────────────────────────────────────────
+// A site can host several Jobs over time, so a shift records the Job its hours
+// are costed to. Rules, shared by clock-in, manual entry and shift edits:
+//   - a jobId given must be a non-cancelled Job on that same site (404 otherwise);
+//   - otherwise the site's one ACTIVE Job, if it has exactly one;
+//   - otherwise, with no ACTIVE Job, the site's one non-cancelled Job (late work
+//     after a closeout still lands on the job it belongs to);
+//   - a site with no Job at all keeps site-only shifts (jobId null);
+//   - anything else is ambiguous: 409 until the caller picks a jobId, so labour
+//     is never silently costed to the wrong job.
+export async function resolveShiftJobId(workspaceId: string, jobSiteId: string, jobId?: string | null): Promise<string | null> {
+  if (jobId) {
+    const job = await prisma.job.findFirst({
+      where: { id: jobId, workspaceId, opsJobSiteId: jobSiteId, status: { not: 'CANCELLED' } },
+      select: { id: true },
+    }) as { id: string } | null
+    if (!job) throw new ApiError(404, 'Job not found at this site')
+    return job.id
+  }
+  const jobs = await prisma.job.findMany({
+    where: { workspaceId, opsJobSiteId: jobSiteId, status: { not: 'CANCELLED' } },
+    select: { id: true, status: true },
+  }) as Array<{ id: string; status: string }>
+  const active = jobs.filter(j => j.status === 'ACTIVE')
+  if (active.length === 1) return active[0].id
+  if (active.length === 0 && jobs.length <= 1) return jobs[0]?.id ?? null
+  throw new ApiError(409, 'This site has more than one job — choose which job the shift is for')
+}
+
 // Clock in/out is deliberately membership-level (see clock.ts), so "any
 // workspace member" is not enough on its own — this closes the gap: a caller
 // may only clock in/out a crewMemberId linked (OpsCrewMember.userId) to their

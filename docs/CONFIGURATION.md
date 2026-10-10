@@ -49,6 +49,11 @@ platform starts conservative.
 |---|---|---|---|
 | `SAFE_LAUNCH_MODE` | `false` | api, worker | Forces approval mode on and clamps every workspace's daily send to `SAFE_LAUNCH_DAILY_SEND_CAP`, regardless of workspace settings. |
 | `SAFE_LAUNCH_DAILY_SEND_CAP` | `20` | api, worker | The clamp applied while safe-launch is on. |
+| `AUTONOMOUS_OUTREACH_MODE` | `off` | api, worker | `off` \| `active`. A workspace's `approvalMode=false` sends unreviewed drafts only when this is `active` **and** every readiness condition holds: sending on, safe-launch off, workspace not suppressed, a current opt-in (Settings → Deliverability), healthy reputation on its minimum sample, and the draft-quality bars below. Otherwise drafts wait for approval. The pilot preflight requires `off`. |
+| `AUTONOMY_MIN_REVIEWED_DRAFTS` | `20` | api, worker | Human-reviewed drafts (90 days) a workspace needs before autonomy. `0` drops the requirement (not recommended). |
+| `AUTONOMY_MIN_SENDS` | `REPUTATION_MIN_SENDS` | api, worker | Sends (in the reputation window) a workspace needs before autonomy, so reputation is judged on a real sample. |
+| `AUTONOMY_MIN_APPROVAL_RATE` | `0.9` | api, worker | Minimum share of reviewed drafts that were approved. |
+| `AUTONOMY_MAX_POLICY_REVIEW_RATE` | `0.05` | api, worker | Maximum share of drafts held for a policy review. |
 | `ENFORCE_SEND_READINESS` | on (off only in `development`/`test`) | api | Gate sends on SMTP + CAN-SPAM sender identity. Fails **closed** for staging/preview; `false`/`0` disables. |
 | `COMPLIANCE_GATE_ENABLED` | `false` | api | Require lawful-basis / CASL consent before sending (ships dormant until legal copy is signed). |
 | `TENANT_GUARD_MODE` | `observe` in production, `off` elsewhere | api, worker | `off` \| `observe` (log unscoped queries) \| `enforce` (throw). Defense-in-depth over the per-query `workspaceId` filters. |

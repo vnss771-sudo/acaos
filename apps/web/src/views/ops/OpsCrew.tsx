@@ -11,6 +11,7 @@ import { Skeleton } from '../../components/ui/Skeleton.js'
 import { Badge } from '../../components/ui/Badge.js'
 import { Modal } from '../../components/ui/Modal.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
+import { useIsMobile } from '../../hooks/useMediaQuery.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean; setView: (v: View) => void }
 
@@ -90,6 +91,9 @@ function CrewFormFields({ form, setForm, isEdit }: { form: CrewForm; setForm: Re
 }
 
 export function OpsCrew({ api, workspace, toast, canManage = false, setView }: Props) {
+  // UQ-21: phone layout — cards with thumb-sized actions.
+  const isMobile = useIsMobile()
+  const tap: React.CSSProperties = isMobile ? { minHeight: 44, flex: 1 } : {}
   const route = useMemo(() => makeRouteApi(api), [api])
   const [crew, setCrew] = useState<OpsCrewMember[]>([])
   const [total, setTotal] = useState(0)
@@ -194,8 +198,8 @@ export function OpsCrew({ api, workspace, toast, canManage = false, setView }: P
     ...(canManage ? [{
       key: 'actions', header: '', render: (m: OpsCrewMember) => (
         <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
-          <button style={s.btnSm} onClick={() => openEdit(m)}>Edit</button>
-          {m.isActive && <button style={s.btnWarning} onClick={() => setDeactivateTarget(m)}>Deactivate</button>}
+          <button style={{ ...s.btnSm, ...tap }} onClick={() => openEdit(m)}>Edit</button>
+          {m.isActive && <button style={{ ...s.btnWarning, ...tap }} onClick={() => setDeactivateTarget(m)}>Deactivate</button>}
         </div>
       ),
     } as Column<OpsCrewMember>] : []),
@@ -234,7 +238,7 @@ export function OpsCrew({ api, workspace, toast, canManage = false, setView }: P
             action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add Crew Member</button> : undefined}
           />
         ) : (
-          <Table columns={columns} rows={crew} rowKey={m => m.id} />
+          <Table columns={columns} rows={crew} rowKey={m => m.id} mobileCards />
         )}
 
         {total > LIMIT && (

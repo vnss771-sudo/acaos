@@ -17,6 +17,7 @@ import express from 'express'
 import Stripe from 'stripe'
 import { billingRouter } from '../apps/api/src/routes/billing.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace, startTestServer, type TestServer } from './helpers/db.ts'
+import { getMonthlyUsage } from '../packages/backend-core/src/lib/limits.ts'
 
 const WEBHOOK_SECRET = 'whsec_test_secret'
 const GROWTH_PRICE = 'price_growth_db_123'
@@ -132,7 +133,7 @@ test('the real unique PK rejects a second claim for the same event id', async ()
 
 test('a processing failure releases the claim so a later redelivery is reprocessed', async () => {
   // Simulate a clean processing failure: a checkout event whose workspaceId does
-  // not exist makes handleWebhookEvent's prisma.workspace.update throw (P2025).
+  // not exist makes handleWebhookEvent throw.
   // The handler must DELETE the just-created claim so the next delivery is not
   // skipped as a duplicate.
   const failing = checkoutEvent('evt_db_release', 'ws-does-not-exist')
@@ -158,4 +159,30 @@ test('a processing failure releases the claim so a later redelivery is reprocess
   const ws = await prisma.workspace.findUnique({ where: { id: workspace.id } })
   assert.equal(ws!.subscriptionStatus, 'active')
   assert.equal(await prisma.processedStripeEvent.count({ where: { id: 'evt_db_release' } }), 1)
+})
+
+// UQ-26: Stripe delivers out of order. A payment failure created before an
+// already-applied recovery must not flip the workspace back to past_due, and a
+// real failure starts a grace window during which plan limits still apply.
+test('an out-of-order payment failure does not roll back a newer recovery; a fresh one starts grace', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const sub = `sub_db_order_${workspace.id}`
+  await prisma.workspace.update({ where: { id: workspace.id }, data: { plan: 'growth', subscriptionStatus: 'active', stripeSubscriptionId: sub } })
+  const t = Math.floor(Date.now() / 1000)
+
+  await postWebhook({ id: `evt_ok_${workspace.id}`, type: 'invoice.payment_succeeded', created: t, data: { object: { subscription: sub } } })
+  const stale = await postWebhook({ id: `evt_old_${workspace.id}`, type: 'invoice.payment_failed', created: t - 120, data: { object: { subscription: sub } } })
+  assert.equal(stale.status, 200)
+  let ws = await prisma.workspace.findUniqueOrThrow({ where: { id: workspace.id } })
+  assert.equal(ws.subscriptionStatus, 'active')
+  assert.equal(ws.billingGraceUntil, null)
+
+  await postWebhook({ id: `evt_new_${workspace.id}`, type: 'invoice.payment_failed', created: t + 60, data: { object: { subscription: sub } } })
+  ws = await prisma.workspace.findUniqueOrThrow({ where: { id: workspace.id } })
+  assert.equal(ws.subscriptionStatus, 'past_due')
+  assert.ok(ws.billingGraceUntil && ws.billingGraceUntil.getTime() > Date.now() + 6 * 86_400_000)
+  assert.equal((await getMonthlyUsage(workspace.id)).plan, 'growth')
+
+  await prisma.workspace.update({ where: { id: workspace.id }, data: { billingGraceUntil: new Date(Date.now() - 1000) } })
+  assert.equal((await getMonthlyUsage(workspace.id)).plan, 'free')
 })

@@ -5,7 +5,7 @@ import { test, beforeEach, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { sendFollowupTask } from '../apps/worker/src/processors.ts'
 import { sendCampaignBatch } from './helpers/workerJobs.ts'
-import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
+import { prisma, resetDb, disconnect, seedUserWithWorkspace, allowAutonomousSending } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
@@ -24,6 +24,7 @@ function recordingMailer() {
 }
 async function seedSmtp(workspaceId: string) {
   await prisma.workspaceEmailConfig.create({ data: { workspaceId, smtpHost: 'smtp.acme.test', smtpFrom: 'sales@acme.test' } })
+  await allowAutonomousSending(workspaceId)
 }
 async function seedLead(workspaceId: string, campaignId: string, email: string) {
   const lead = await prisma.lead.create({ data: { workspaceId, campaignId, businessName: 'B', email, stage: 'RESEARCHED' } })

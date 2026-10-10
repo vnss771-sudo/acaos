@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { OpsCreateShiftRequest, OpsUpdateShiftRequest, OpsClockInRequest, OpsClockOutRequest } from '@acaos/shared'
 import type { ApiHook } from '../../hooks/useApi.js'
 import type { ToastHook } from '../../hooks/useToast.js'
-import type { View, Workspace, OpsShiftRecord, OpsCrewMember, OpsJobSite } from '../../types.js'
+import type { View, Workspace, OpsShiftRecord, OpsCrewMember, OpsJobSite, OpsSiteJob } from '../../types.js'
 import { colors, s } from '../../styles.js'
 import { makeRouteApi } from '../../lib/routeApi.js'
 import { Card } from '../../components/ui/Card.js'
@@ -13,6 +13,7 @@ import { Badge } from '../../components/ui/Badge.js'
 import { Modal } from '../../components/ui/Modal.js'
 import { Grid } from '../../components/ui/Grid.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
+import { useIsMobile } from '../../hooks/useMediaQuery.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean; setView: (v: View) => void }
 
@@ -30,20 +31,47 @@ function isoToLocalInput(iso?: string | null): string {
 }
 
 const BLANK_MANUAL_FORM = {
-  crewMemberId: '', jobSiteId: '', shiftDate: '', startTime: '', endTime: '',
+  crewMemberId: '', jobSiteId: '', jobId: '', shiftDate: '', startTime: '', endTime: '',
   breakMinutes: '', allowanceTag: '', outdoorHighRisk: false, notes: '',
 }
 type ManualForm = typeof BLANK_MANUAL_FORM
 
 const BLANK_EDIT_FORM = {
-  jobSiteId: '', endTime: '', breakMinutes: '', allowanceTag: '', outdoorHighRisk: false,
+  jobSiteId: '', jobId: '', endTime: '', breakMinutes: '', allowanceTag: '', outdoorHighRisk: false,
   heatCheckCompleted: false, fatigueConcern: false, corRelated: false, reviewed: false, notes: '',
 }
 type EditForm = typeof BLANK_EDIT_FORM
 
+// UQ-24: mirrors the server's resolveShiftJobId — the jobs to choose between
+// when a site's shift can't be attributed automatically; empty when it can.
+function jobChoices(site: OpsJobSite | undefined): OpsSiteJob[] {
+  const jobs = site?.jobs ?? []
+  const active = jobs.filter(j => j.status === 'ACTIVE')
+  if (active.length === 1) return []
+  if (active.length === 0) return jobs.length <= 1 ? [] : jobs
+  return active
+}
+
+function JobSelect({ id, choices, value, onChange }: { id: string; choices: OpsSiteJob[]; value: string; onChange: (jobId: string) => void }) {
+  if (!choices.length) return null
+  return (
+    <div>
+      <label style={s.label} htmlFor={id}>Job</label>
+      <select id={id} style={s.input} value={value} onChange={e => onChange(e.target.value)} required>
+        <option value="">Select job</option>
+        {choices.map(j => <option key={j.id} value={j.id}>{j.label ?? `Job started ${new Date(j.startedAt).toLocaleDateString()}`}</option>)}
+      </select>
+    </div>
+  )
+}
+
 const checkboxLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, color: colors.textMuted, fontSize: 13 }
 
 export function OpsShifts({ api, workspace, toast, canManage = false, setView }: Props) {
+  // UQ-21: phone layout — shift cards, and clock actions sized for a thumb.
+  const isMobile = useIsMobile()
+  const tap: React.CSSProperties = isMobile ? { minHeight: 44, flex: 1 } : {}
+  const clockTap: React.CSSProperties = isMobile ? { width: '100%', minHeight: 48 } : {}
   const route = useMemo(() => makeRouteApi(api), [api])
 
   // Shared reference data — active crew + active job sites. Fetched once per
@@ -75,13 +103,15 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
   // ── Clock in / out widget — membership-level, visible to any crew member ──
   const [selectedCrewId, setSelectedCrewId] = useState('')
   const [clockJobSiteId, setClockJobSiteId] = useState('')
+  const [clockJobId, setClockJobId] = useState('')
+  const clockJobChoices = jobChoices(jobSiteById.get(clockJobSiteId))
   // Tagged with the crew member it was fetched for, so a status that belongs to
   // the previous selection (or none yet) is never rendered as the current one.
   const [status, setStatus] = useState<{ crewMemberId: string; clockedIn: boolean; shift: OpsShiftRecord | null } | null>(null)
   const [statusLoading, setStatusLoading] = useState(false)
   const [clockWorking, setClockWorking] = useState(false)
 
-  useEffect(() => { setClockJobSiteId('') }, [selectedCrewId])
+  useEffect(() => { setClockJobSiteId(''); setClockJobId('') }, [selectedCrewId])
 
   const statusReqRef = useRef(0)
   const fetchStatus = useCallback(() => {
@@ -101,13 +131,14 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
   useEffect(() => { fetchStatus() }, [fetchStatus])
 
   async function clockIn() {
-    if (!workspace || !selectedCrewId || !clockJobSiteId) return
+    if (!workspace || !selectedCrewId || !clockJobSiteId || (clockJobChoices.length && !clockJobId)) return
     setClockWorking(true)
     try {
-      const body: OpsClockInRequest = { workspaceId: workspace.id, crewMemberId: selectedCrewId, jobSiteId: clockJobSiteId }
+      const body: OpsClockInRequest = { workspaceId: workspace.id, crewMemberId: selectedCrewId, jobSiteId: clockJobSiteId, ...(clockJobId ? { jobId: clockJobId } : {}) }
       await route('POST /api/ops/clock/in', { body })
       toast.success('Clocked in')
       setClockJobSiteId('')
+      setClockJobId('')
       fetchStatus()
       fetchShifts()
     } catch (e) {
@@ -175,6 +206,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
     const endTimeLocal = isoToLocalInput(sh.endTime)
     setEditForm({
       jobSiteId: sh.jobSiteId,
+      jobId: sh.jobId ?? '',
       endTime: endTimeLocal,
       breakMinutes: String(sh.breakMinutes ?? 0),
       allowanceTag: sh.allowanceTag ?? '',
@@ -197,6 +229,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
         workspaceId: workspace.id,
         crewMemberId: manualForm.crewMemberId,
         jobSiteId: manualForm.jobSiteId,
+        ...(manualForm.jobId ? { jobId: manualForm.jobId } : {}),
         shiftDate: new Date(manualForm.shiftDate).toISOString(),
         startTime: new Date(manualForm.startTime).toISOString(),
         ...(manualForm.endTime ? { endTime: new Date(manualForm.endTime).toISOString() } : {}),
@@ -228,6 +261,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
         reviewed: editForm.reviewed,
         ...(editForm.notes.trim() ? { notes: editForm.notes.trim() } : {}),
         ...(editForm.jobSiteId && editForm.jobSiteId !== editTarget.jobSiteId ? { jobSiteId: editForm.jobSiteId } : {}),
+        ...(editForm.jobId && editForm.jobId !== (editTarget.jobId ?? '') ? { jobId: editForm.jobId } : {}),
         // CRITICAL: only include endTime when the person actually edited this
         // field in this form session (its value differs from what the shift
         // already had) AND left it non-empty. Omitting the key entirely — never
@@ -273,8 +307,8 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
     },
     ...(canManage ? [{
       key: 'actions', header: '', render: (sh: OpsShiftRecord) => (
-        <div onClick={e => e.stopPropagation()}>
-          <button style={s.btnSm} onClick={() => openEdit(sh)}>Edit</button>
+        <div style={{ display: 'flex' }} onClick={e => e.stopPropagation()}>
+          <button style={{ ...s.btnSm, ...tap }} onClick={() => openEdit(sh)}>Edit</button>
         </div>
       ),
     } as Column<OpsShiftRecord>] : []),
@@ -304,12 +338,13 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
             {!isClockedIn && (
               <div>
                 <label style={s.label} htmlFor="clock-job-site">Site</label>
-                <select id="clock-job-site" style={s.input} value={clockJobSiteId} onChange={e => setClockJobSiteId(e.target.value)}>
+                <select id="clock-job-site" style={s.input} value={clockJobSiteId} onChange={e => { setClockJobSiteId(e.target.value); setClockJobId('') }}>
                   <option value="">Select site</option>
                   {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
                 </select>
               </div>
             )}
+            {!isClockedIn && <JobSelect id="clock-job" choices={clockJobChoices} value={clockJobId} onChange={setClockJobId} />}
           </Grid>
 
           {!selectedCrewId ? null : !statusKnown ? (
@@ -319,13 +354,13 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
               <div style={{ color: colors.text, fontSize: 14 }}>
                 Clocked in at {activeShiftJobSiteName} since {new Date(status.shift.startTime).toLocaleString()}
               </div>
-              <button style={s.btnDanger} disabled={clockWorking} onClick={clockOut}>
+              <button style={{ ...s.btnDanger, ...clockTap }} disabled={clockWorking} onClick={clockOut}>
                 {clockWorking ? 'Clocking Out…' : 'Clock Out'}
               </button>
             </div>
           ) : (
             <div>
-              <button style={s.btnSuccess} disabled={clockWorking || !clockJobSiteId} onClick={clockIn}>
+              <button style={{ ...s.btnSuccess, ...clockTap }} disabled={clockWorking || !clockJobSiteId || (clockJobChoices.length > 0 && !clockJobId)} onClick={clockIn}>
                 {clockWorking ? 'Clocking In…' : 'Clock In'}
               </button>
             </div>
@@ -378,7 +413,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
             action={canManage ? <button style={s.btn} onClick={openAdd}>+ Add Manual Entry</button> : undefined}
           />
         ) : (
-          <Table columns={columns} rows={shifts} rowKey={sh => sh.id} />
+          <Table columns={columns} rows={shifts} rowKey={sh => sh.id} mobileCards />
         )}
 
         {shiftsTotal > LIMIT && (
@@ -401,7 +436,7 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
           <button style={s.btnSecondary} onClick={() => setAddOpen(false)}>Cancel</button>
           <button
             style={s.btn}
-            disabled={saving || !manualForm.crewMemberId || !manualForm.jobSiteId || !manualForm.shiftDate || !manualForm.startTime}
+            disabled={saving || !manualForm.crewMemberId || !manualForm.jobSiteId || !manualForm.shiftDate || !manualForm.startTime || (jobChoices(jobSiteById.get(manualForm.jobSiteId)).length > 0 && !manualForm.jobId)}
             onClick={submitAdd}
           >
             {saving ? 'Saving…' : 'Add Entry'}
@@ -418,11 +453,12 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
           </div>
           <div>
             <label style={s.label} htmlFor="shift-add-job-site">Site</label>
-            <select id="shift-add-job-site" style={s.input} value={manualForm.jobSiteId} onChange={e => setManualForm(f => ({ ...f, jobSiteId: e.target.value }))} required>
+            <select id="shift-add-job-site" style={s.input} value={manualForm.jobSiteId} onChange={e => setManualForm(f => ({ ...f, jobSiteId: e.target.value, jobId: '' }))} required>
               <option value="">Select site</option>
               {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
             </select>
           </div>
+          <JobSelect id="shift-add-job" choices={jobChoices(jobSiteById.get(manualForm.jobSiteId))} value={manualForm.jobId} onChange={jobId => setManualForm(f => ({ ...f, jobId }))} />
           <div>
             <label style={s.label} htmlFor="shift-add-date">Shift Date</label>
             <input id="shift-add-date" type="datetime-local" style={s.input} value={manualForm.shiftDate} onChange={e => setManualForm(f => ({ ...f, shiftDate: e.target.value }))} required />
@@ -470,13 +506,14 @@ export function OpsShifts({ api, workspace, toast, canManage = false, setView }:
         <Grid cols={2}>
           <div>
             <label style={s.label} htmlFor="shift-edit-job-site">Site</label>
-            <select id="shift-edit-job-site" style={s.input} value={editForm.jobSiteId} onChange={e => setEditForm(f => ({ ...f, jobSiteId: e.target.value }))}>
+            <select id="shift-edit-job-site" style={s.input} value={editForm.jobSiteId} onChange={e => setEditForm(f => ({ ...f, jobSiteId: e.target.value, jobId: '' }))}>
               {editForm.jobSiteId && !jobSiteById.has(editForm.jobSiteId) && (
                 <option value={editForm.jobSiteId}>{editTarget?.jobSite?.siteName ?? editForm.jobSiteId} (archived)</option>
               )}
               {jobSites.map(j => <option key={j.id} value={j.id}>{j.siteName}</option>)}
             </select>
           </div>
+          <JobSelect id="shift-edit-job" choices={jobChoices(jobSiteById.get(editForm.jobSiteId))} value={editForm.jobId} onChange={jobId => setEditForm(f => ({ ...f, jobId }))} />
           <div>
             <label style={s.label} htmlFor="shift-edit-end">
               End Time{!originalEndTime && <span style={{ textTransform: 'none', letterSpacing: 0 }}> (leave blank to keep open)</span>}

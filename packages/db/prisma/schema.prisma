@@ -136,6 +136,10 @@ model Workspace {
   stripeCustomerId        String?                  @unique
   stripeSubscriptionId    String?                  @unique
   subscriptionStatus      String?
+  // UQ-26: past_due grace deadline (set once per lapse, never extended) and the
+  // newest Stripe event applied, so out-of-order deliveries can't roll state back.
+  billingGraceUntil       DateTime?
+  billingLastStripeEventAt DateTime?
   ingestApiKey            String?                  @unique
   onboardingCompleted     Boolean                  @default(false)
   senderBusinessName      String?
@@ -162,6 +166,10 @@ model Workspace {
   // audit trail / operator note.
   sendSuppressed          Boolean                  @default(false)
   sendSuppressedReason    String?
+  // UQ-40: explicit, versioned opt-in to automatic (unreviewed) outreach. Null
+  // or an old version means human approval, whatever ICP.approvalMode says.
+  autonomyOptInAt         DateTime?
+  autonomyConsentVersion  String?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   memberships             Membership[]
@@ -1454,7 +1462,8 @@ model OpsJobSite {
   shifts        OpsShiftRecord[]
   rosterEntries OpsRosterEntry[]
   opportunities Opportunity[]
-  job           Job?
+  // UQ-24: a site can host repeat work, so many Jobs over time.
+  jobs          Job[]
 
   @@unique([workspaceId, jobCode])
   @@index([workspaceId, status])
@@ -1468,6 +1477,10 @@ model OpsShiftRecord {
   crewMember         OpsCrewMember @relation(fields: [crewMemberId], references: [id])
   jobSiteId          String
   jobSite            OpsJobSite    @relation(fields: [jobSiteId], references: [id])
+  // UQ-24: the delivery Job this labour is costed to. Null only for a site with
+  // no Job (plain Field Ops use); economics and closeout read this, never the site.
+  jobId              String?
+  job                Job?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
   shiftDate          DateTime
   startTime          DateTime
   // Nullable: null represents an open (in-progress) shift. A migration-only
@@ -1498,6 +1511,7 @@ model OpsShiftRecord {
 
   @@index([workspaceId, shiftDate])
   @@index([workspaceId, crewMemberId, endTime])
+  @@index([workspaceId, jobId])
 }
 
 model OpsAlert {
@@ -1979,7 +1993,7 @@ model Quote {
 model Job {
   id                   String     @id @default(cuid())
   workspaceId          String
-  opsJobSiteId         String     @unique
+  opsJobSiteId         String
   quoteId              String?    @unique
   // ACTIVE -> COMPLETE (closeout) -> ACTIVE (reopen); ACTIVE -> CANCELLED.
   status               String     @default("ACTIVE")
@@ -1998,6 +2012,8 @@ model Job {
   // cascades to both rows in one statement. Sites are archived, never deleted.
   opsJobSite           OpsJobSite @relation(fields: [opsJobSiteId], references: [id], onDelete: NoAction)
   quote                Quote?     @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  shifts               OpsShiftRecord[]
 
   @@index([workspaceId, status])
+  @@index([workspaceId, opsJobSiteId])
 }

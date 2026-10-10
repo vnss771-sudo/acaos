@@ -14,8 +14,8 @@ import { sameJson } from './learningLoop.js'
 import { loadCausedChains } from './outcomeGraphStore.js'
 import { reachedStages } from './outcomeGraph.js'
 import {
-  buildCalibrationReport, proposeEventKindWeights,
-  type CalibrationItem, type CalibrationReport,
+  buildCalibrationReport, proposeEventKindWeights, evaluateEventKindWeights, heldOutOf,
+  type CalibrationItem, type CalibrationReport, type HeldOutEvaluation,
 } from './signalCalibration.js'
 
 export const EVENT_KIND_WEIGHT_TYPE = 'EVENT_KIND_WEIGHT'
@@ -44,6 +44,7 @@ export async function loadCalibrationItems(workspaceId: string, opts: { now?: Da
       reached: [...reachedStages(chain)],
       final: chain.final,
       revenueCents: chain.revenueCents,
+      closedAt: finalNode?.at ?? null,
     }
   })
 }
@@ -53,17 +54,20 @@ async function liveWeights(workspaceId: string): Promise<Record<string, number>>
   return (m?.eventKindWeights ?? {}) as Record<string, number>
 }
 
-/** The report plus the live weights and what would be proposed now. */
+/** The report, the live weights, what would be proposed now, and how that method fares on unseen outcomes. */
 export async function loadCalibration(workspaceId: string, opts: { now?: Date; minClosed?: number } = {}): Promise<{
   report: CalibrationReport
   currentWeights: Record<string, number>
   proposedWeights: Record<string, number>
+  heldOut: HeldOutEvaluation
 }> {
-  const report = buildCalibrationReport(await loadCalibrationItems(workspaceId, opts), opts)
+  const items = await loadCalibrationItems(workspaceId, opts)
+  const report = buildCalibrationReport(items, opts)
   const currentWeights = await liveWeights(workspaceId)
   const learned = proposeEventKindWeights(report, opts)
   // Kinds without enough data keep their approved weight.
-  return { report, currentWeights, proposedWeights: Object.keys(learned).length ? { ...currentWeights, ...learned } : currentWeights }
+  const proposedWeights = Object.keys(learned).length ? { ...currentWeights, ...learned } : currentWeights
+  return { report, currentWeights, proposedWeights, heldOut: evaluateEventKindWeights(items, currentWeights, opts) }
 }
 
 export type CalibrationLearningResult = {
@@ -81,14 +85,15 @@ export async function learnSignalCalibration(
   const mode = opts.mode ?? learningAdaptationMode()
   if (mode === 'off') return { learned: false, reason: 'learning disabled', closed: 0, proposed: 0, superseded: 0 }
   const now = opts.now ?? new Date()
-  const { report, currentWeights, proposedWeights } = await loadCalibration(workspaceId, { now, minClosed: opts.minClosed })
+  const { report, currentWeights, proposedWeights, heldOut } = await loadCalibration(workspaceId, { now, minClosed: opts.minClosed })
   const changed = !sameJson(currentWeights, proposedWeights)
 
   const pending = await prisma.learningRecommendation.findMany({
     where: { workspaceId, status: 'PENDING', type: EVENT_KIND_WEIGHT_TYPE },
-    select: { id: true, proposedValue: true, currentValue: true },
-  }) as Array<{ id: string; proposedValue: unknown; currentValue: unknown }>
-  const keep = changed && pending.some(p => sameJson(p.proposedValue, proposedWeights) && sameJson(p.currentValue, currentWeights))
+    select: { id: true, proposedValue: true, currentValue: true, evidence: true },
+  }) as Array<{ id: string; proposedValue: unknown; currentValue: unknown; evidence: unknown }>
+  // A proposal from before held-out testing is replaced even if unchanged, so it gains a verdict.
+  const keep = changed && pending.some(p => sameJson(p.proposedValue, proposedWeights) && sameJson(p.currentValue, currentWeights) && heldOutOf(p.evidence) != null)
   const stale = keep ? [] : pending
   const create = changed && !keep
 
@@ -115,6 +120,8 @@ export async function learnSignalCalibration(
                 baselineWinRate: report.baselineWinRate,
                 funnels: report.funnels,
                 combinations: report.combinations.slice(0, 10),
+                // UQ-29: the same method fitted on older outcomes, scored on the newest.
+                heldOut,
               } as unknown as Prisma.InputJsonValue,
               sampleSize: report.closed,
               mode,
