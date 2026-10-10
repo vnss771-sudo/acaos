@@ -8,7 +8,8 @@ for detail. Work top to bottom; don't skip the sign-off.
 > [DEPLOY_RUNBOOK](./DEPLOY_RUNBOOK.md) · [PRODUCTION_ENV_VARS](./PRODUCTION_ENV_VARS.md) ·
 > [MIGRATIONS](./MIGRATIONS.md) · [SMOKE_TESTS](./SMOKE_TESTS.md) ·
 > [OPERATIONS](./OPERATIONS.md) · [RUNBOOKS](./RUNBOOKS.md) ·
-> [KEY_ROTATION](./KEY_ROTATION.md) · [SLO](./SLO.md) · [GITHUB_ADMIN](./GITHUB_ADMIN.md)
+> [KEY_ROTATION](./KEY_ROTATION.md) · [SLO](./SLO.md) · [GITHUB_ADMIN](./GITHUB_ADMIN.md) ·
+> Latest full-suite record: [VERIFICATION_2026-10-10](./VERIFICATION_2026-10-10.md)
 
 ---
 

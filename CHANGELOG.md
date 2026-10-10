@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+### Verification record and dependency audit (10 Oct 2026)
+- Recorded a full run of every test tier on Node 26 (unit, web, database, Redis and browser E2E with the tenant guard enforcing) in [`docs/VERIFICATION_2026-10-10.md`](docs/VERIFICATION_2026-10-10.md).
+- Bumped dev-only `source-map-js` 1.2.1 → 1.2.2 (GHSA-68fv-2mgg-jv7q). `npm audit` now reports 0 vulnerabilities.
+
 ### Job variations (10 Oct 2026)
 - Jobs & margins can record scope changes on a running job: what changed, the price change (negative for a reduction), and optional estimated cost and hours. Each variation goes draft → submitted → approved or rejected, and every step is audited.
 - The accepted quote is never rewritten. Approved variations give an **adjusted contract** value. Revenue is compared against both the original quote and the adjusted contract.
