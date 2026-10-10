@@ -57,10 +57,14 @@ the compose placeholders:
 - [ ] DNS for web + api; TLS certs valid.
 - [ ] Email deliverability: SPF + DKIM records published (use `GET /api/mailbox/check-domain`).
 - [ ] Container images built + Trivy-scanned by CI (`Dockerfile.api|worker|web`).
-- [ ] **Observability live, not placeholder:** `ops/monitoring/prometheus.yml` blackbox/probe
-      targets point at the real `https://api.<domain>` / `https://app.<domain>` (the committed
-      `example.com` values are templates); alert routes configured. `SENTRY_DSN` set (else
-      error capture is a silent no-op). `METRICS_TOKEN` set (else `/metrics` 404s).
+- [ ] **Observability live, not placeholder:** the `ops/monitoring/prometheus.yml` blackbox
+      probe targets already point at the live Railway hosts; switch them to
+      `https://api.<domain>` / `https://app.<domain>` once custom domains are added. Prometheus,
+      Alertmanager and the blackbox exporter must actually be hosted somewhere (the repo ships
+      configuration only), the `acaos-api` / `acaos-worker` `/metrics` scrape targets must be
+      pointed at the real API and worker hosts, and alert routes configured with real Slack /
+      PagerDuty destinations. `SENTRY_DSN` set on api and worker, and `VITE_SENTRY_DSN` on web
+      (else error capture is a silent no-op). `METRICS_TOKEN` set (else `/metrics` 404s).
 - [ ] **Operational launch controls reviewed** (all optional, safe defaults — see
       [PRODUCTION_ENV_VARS](./PRODUCTION_ENV_VARS.md)): `TENANT_GUARD_MODE=enforce`,
       `REPUTATION_GUARD_MODE=enforce`, `STATS_RECONCILE_ENABLED=true`; consider `SAFE_LAUNCH_MODE=true` for the supervised pilot.
