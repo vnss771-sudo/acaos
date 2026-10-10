@@ -6,6 +6,9 @@
 
 ## Unreleased
 
+### Release identity on Railway
+- API and worker images built without build args (every Railway deploy) now report the root `package.json` version, e.g. `1.3.0+f803c36a0fa5`, instead of `0.0.0-dev`. The Dockerfiles defaulted `ACAOS_RELEASE_VERSION` to `0.0.0-dev`, which overrode the package version. It now defaults to the `unknown` placeholder that release metadata already ignores. An explicit `ACAOS_RELEASE_VERSION` still takes precedence.
+
 ### Verification record and dependency audit (10 Oct 2026)
 - Recorded a full run of every test tier on Node 26 (unit, web, database, Redis and browser E2E with the tenant guard enforcing) in [`docs/VERIFICATION_2026-10-10.md`](docs/VERIFICATION_2026-10-10.md).
 - Bumped dev-only `source-map-js` 1.2.1 → 1.2.2 (GHSA-68fv-2mgg-jv7q). `npm audit` now reports 0 vulnerabilities.

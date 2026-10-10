@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 const PROCESS_STARTED_AT = new Date()
 
 export type RuntimeMetadata = {
@@ -23,10 +25,27 @@ function readEnv(name: string): string | undefined {
   return value && value.toLowerCase() !== UNSET_PLACEHOLDER ? value : undefined
 }
 
+// The monorepo root package.json carries the product version and ships in both
+// runtime images (/app/package.json). This file sits at the same depth in src/
+// and dist/ (packages/backend-core/{src,dist}/lib), so the relative path holds
+// for both. Read once; undefined if it is missing or unreadable.
+let rootPackageVersion: string | null | undefined
+function readRootPackageVersion(): string | undefined {
+  if (rootPackageVersion === undefined) {
+    try {
+      const pkg = JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'))
+      rootPackageVersion = typeof pkg.version === 'string' && pkg.version.trim() ? pkg.version.trim() : null
+    } catch {
+      rootPackageVersion = null
+    }
+  }
+  return rootPackageVersion ?? undefined
+}
+
 export function getRuntimeMetadata(service: string): RuntimeMetadata {
   const version = readEnv('ACAOS_RELEASE_VERSION')
     ?? readEnv('npm_package_version')
-    ?? process.env.npm_package_version
+    ?? readRootPackageVersion()
     ?? '0.0.0-dev'
   // Commit precedence: an explicitly-stamped release SHA, then CI's GITHUB_SHA,
   // then the platform's built-in deploy SHA. The last lets a Railway deploy

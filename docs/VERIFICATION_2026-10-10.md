@@ -133,6 +133,22 @@ checkouts or webhooks, AI generation calls or email sends.
    one AI research or draft, and run `npm run smoke:ai-provider` and
    `npm run smoke:deploy` from a machine that can reach the live URLs.
 
+## Re-check (10 Oct 2026, 07:30 UTC)
+
+Rechecked read-only against the `Acaos ` environment after the deploy of
+`f803c36` (07:16 UTC). Method: service variable *names* and the API startup
+log. The live URLs are still blocked from the checking environment, so the
+smoke scripts were not run. Nothing in production was changed.
+
+| Item | Status now |
+|---|---|
+| Stripe | **Still broken.** The 07:16 startup logs `Invalid API Key provided` for both price checks. |
+| Sentry | **Still not set up.** No `SENTRY_DSN` on the API or worker. The web app has no Sentry client. Its errors go only to the browser console. |
+| Safety settings | **Still not set explicitly.** `TENANT_GUARD_MODE` is set on both services. `SAFE_LAUNCH_MODE`, `COMPLIANCE_GATE_ENABLED` and `FOLLOWUPS_ENABLED` are unset on both, so they default to off. `REPUTATION_GUARD_MODE` is set on the worker only. `AUTONOMOUS_OUTREACH_MODE` is unset, which means off. |
+| Release identity | Still `0.0.0-dev`, but the commit resolves (`releaseId 0.0.0-dev+f803c36a0fa5`). The cause is in the image: the Dockerfiles defaulted `ACAOS_RELEASE_VERSION` to `0.0.0-dev`. Fixed in code. The next deploy reports `1.3.0+<sha>` with no new variables. |
+| DB pool | No `DB_POOL_SIZE` on either service. Whether `DATABASE_URL` sets `connection_limit` was not checked, because reading it would expose the password. |
+| PlanningAlerts | `PLANNINGALERTS_API_KEY` still unset. |
+
 ## Not covered
 
 - **Live integration smoke scripts**: `smoke:deploy`, `smoke:ai-provider` and
