@@ -10,7 +10,7 @@ const CONFIDENCE_COLOR: Record<string, string> = {
 }
 // Plain-language "what to do next" phrasing for the lead brief, instead of
 // surfacing the raw enum (auto_draft / manual_review_then_draft / skip) to the user.
-const ACTION_NEXT_STEP: Record<string, string> = {
+export const ACTION_NEXT_STEP: Record<string, string> = {
   auto_draft: 'Ready to draft and reach out — the fit is strong and the evidence holds up.',
   manual_review_then_draft: 'Review, then draft — the signals are promising but unconfirmed, so a person should eyeball it before sending.',
   skip: 'Skip for now — not a strong enough fit to spend outreach on.',
