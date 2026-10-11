@@ -6,6 +6,9 @@
 
 ## Unreleased
 
+### Live configuration update (11 Oct 2026)
+- Production Stripe key corrected; the startup price check now passes. API and worker run with `SAFE_LAUNCH_MODE=true`, `REPUTATION_GUARD_MODE=enforce`, `FOLLOWUPS_ENABLED=false` and `COMPLIANCE_GATE_ENABLED=false` (Australia-only pilot). Sentry reporting is active on API and worker, and the release reports `1.3.0+<sha>`. See [`docs/VERIFICATION_2026-10-10.md`](docs/VERIFICATION_2026-10-10.md).
+
 ### Frontend error reporting
 - The web app reports uncaught errors, unhandled promise rejections and React render errors to Sentry when `VITE_SENTRY_DSN` is set at build time. It uses no SDK, which matches the API and worker. It reports each distinct error once per page load, and at most 20 per page. Page URLs are sent without query strings or fragments.
 

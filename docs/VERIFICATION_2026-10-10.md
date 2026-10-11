@@ -149,6 +149,25 @@ smoke scripts were not run. Nothing in production was changed.
 | DB pool | No `DB_POOL_SIZE` on either service. Whether `DATABASE_URL` sets `connection_limit` was not checked, because reading it would expose the password. |
 | PlanningAlerts | `PLANNINGALERTS_API_KEY` still unset. |
 
+## Re-check after operator changes (11 Oct 2026, 08:20 UTC)
+
+The operator changed live configuration and the API and worker were redeployed
+at commit `00806bb` (release `1.3.0+00806bb2ed35`). Method: Railway deploy
+logs only. Variable values were not read, and the live smoke scripts were not
+run.
+
+| Item | Status now |
+|---|---|
+| Stripe | **Price check passes.** The first attempt (07:53 UTC) failed with `This looks like the ID of an API key rather than the key itself`: an API key ID (`mk_…`) had been pasted instead of the secret key. After the operator replaced it, the 07:56 and 08:20 API startups log no Stripe errors. No checkout or webhook has been exercised yet. `STRIPE_WEBHOOK_SECRET` was not checked. |
+| Sentry | **API and worker report `error reporting initialized` (transport `sentry-http`).** The web app's `VITE_SENTRY_DSN` was not checked. |
+| Release identity | **Fixed.** Reports `1.3.0+00806bb2ed35` instead of `0.0.0-dev`. |
+| Safety settings | **Set on API and worker, then redeployed:** `SAFE_LAUNCH_MODE=true`, `REPUTATION_GUARD_MODE=enforce`, `FOLLOWUPS_ENABLED=false`, `COMPLIANCE_GATE_ENABLED=false`. The services do not log these at startup, so the effect is not confirmed from logs; check Settings → Deliverability. |
+| Still open | AI and mailbox proof on a pilot workspace, `smoke:ai-provider` and `smoke:deploy` from a machine that can reach the live URLs, and `PLANNINGALERTS_API_KEY`. |
+
+`COMPLIANCE_GATE_ENABLED=false` is a deliberate choice for an Australia-only
+pilot. Turn it on, once the legal copy is signed off, before any outreach to UK,
+EU or Canadian recipients.
+
 ## Not covered
 
 - **Live integration smoke scripts**: `smoke:deploy`, `smoke:ai-provider` and
