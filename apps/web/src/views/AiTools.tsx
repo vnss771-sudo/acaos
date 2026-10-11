@@ -3,6 +3,7 @@ import type { AiResearchRequest, AiOutreachRequest, AiReplyAnalysisRequest, JobE
 import type { Workspace, Lead } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
+import { AiResultCard } from '../components/AiResultCard.js'
 import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
@@ -170,10 +171,6 @@ export function AiTools({ api, workspace, toast }: Props) {
     finally { setLoading(false) }
   }
 
-  function prettyResult(raw: string) {
-    try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
-  }
-
   function copyResult(text: string) {
     navigator.clipboard.writeText(text).then(() => {
       toast.success('Copied!')
@@ -321,19 +318,7 @@ export function AiTools({ api, workspace, toast }: Props) {
       )}
 
       {/* Result panel */}
-      {result && (
-        <div style={s.card}>
-          <div style={{ ...s.flexBetween, marginBottom: 12 }}>
-            <div style={s.sectionHeader}>Result</div>
-            <button style={s.btnSm} onClick={() => copyResult(result)}>
-              {copied ? '✓ Copied' : 'Copy'}
-            </button>
-          </div>
-          <pre style={{ color: '#e2e8f0', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: 1.6 }}>
-            {prettyResult(result)}
-          </pre>
-        </div>
-      )}
+      {result && <AiResultCard raw={result} copied={copied} onCopy={copyResult} />}
     </div>
   )
 }
