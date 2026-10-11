@@ -66,6 +66,14 @@ export async function createCheckoutSession(
     billing_address_collection: 'auto'
   }
 
+  // Opt-in GST: prices are tax-exclusive, so tax is only added when Stripe Tax
+  // has an AU registration. Off by default so checkout can't fail before then.
+  if (process.env.STRIPE_AUTOMATIC_TAX === 'true') {
+    sessionParams.automatic_tax = { enabled: true }
+    sessionParams.billing_address_collection = 'required'
+    if (existingCustomerId) sessionParams.customer_update = { address: 'auto', name: 'auto' }
+  }
+
   if (existingCustomerId) {
     sessionParams.customer = existingCustomerId
   } else if (customerEmail) {
