@@ -1,6 +1,24 @@
 import React from 'react'
 import { reportError } from '../lib/errorReporting.js'
 
+// A deploy replaces the hashed chunk files, so a tab opened before it fails to
+// import the next lazy view. One reload fetches the new build; the session flag
+// stops a reload loop if the chunk is genuinely unreachable.
+const STALE_CHUNK = /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed/i
+const RELOAD_FLAG = 'acaos:chunk-reload'
+
+function reloadOnceForStaleChunk(error: Error): boolean {
+  if (!STALE_CHUNK.test(error.message)) return false
+  try {
+    if (sessionStorage.getItem(RELOAD_FLAG)) return false
+    sessionStorage.setItem(RELOAD_FLAG, '1')
+  } catch {
+    return false
+  }
+  window.location.reload()
+  return true
+}
+
 type Props = {
   children: React.ReactNode
   // Custom fallback for a scoped boundary (e.g. one optional panel inside a
@@ -22,6 +40,7 @@ export class ErrorBoundary extends React.Component<Props, { hasError: boolean; e
     return { hasError: true, error }
   }
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    if (reloadOnceForStaleChunk(error)) return
     reportError(error, { source: 'ErrorBoundary', componentStack: info.componentStack })
   }
   render() {
