@@ -10,13 +10,22 @@ type AuthScreenProps = {
   inviteToken?: string | null
 }
 
+// Partner link: acaos.app/?ref=CODE. Read once; the API ignores unknown codes.
+function readReferralCode(): string | null {
+  try {
+    return new URLSearchParams(window.location.search).get('ref')?.trim().slice(0, 40) || null
+  } catch {
+    return null
+  }
+}
+
 export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot' | 'reset'>(
-    resetToken ? 'reset' : inviteToken ? 'signup' : 'login'
+    resetToken ? 'reset' : inviteToken || readReferralCode() ? 'signup' : 'login'
   )
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
@@ -73,12 +82,13 @@ export function AuthScreen({ onToken, resetToken, inviteToken }: AuthScreenProps
         password
       }
       if (mode === 'signup' && name.trim()) body.name = name.trim()
+      const referralCode = mode === 'signup' ? readReferralCode() : null
 
       const res = await fetch(`${API}/api/auth/${mode}`, {
         method: 'POST',
         credentials: 'include', // accept the HttpOnly refresh cookie the server sets
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(referralCode ? { ...body, referralCode } : body)
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Authentication failed')

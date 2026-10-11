@@ -17,6 +17,7 @@ import {
   reputationGuardMode,
   areFollowupsEnabled,
 } from '@acaos/backend-core/lib/launchControls.js'
+import { normalizeReferralCode, summariseReferrals } from '@acaos/backend-core/lib/referrals.js'
 import { z } from 'zod'
 import type { AuthUser } from '../types/auth.js'
 
@@ -353,5 +354,48 @@ adminRouter.get(
       ].join(',') + '\n')
     }
     res.end()
+  })
+)
+
+// Referral partners (platform-admin only): create a partner, list partners with
+// referred/paying counts and an estimated monthly commission. Commission is
+// reporting only — payouts are manual.
+const partnerBody = z.object({
+  code: z.string().trim().min(3).max(32),
+  name: z.string().trim().min(1).max(120),
+  contactEmail: z.string().trim().email().max(200).optional(),
+  commissionPercent: z.number().int().min(0).max(100).optional(),
+})
+
+adminRouter.get(
+  '/referral-partners',
+  asyncHandler(async (_req, res) => {
+    const partners = await prisma.referralPartner.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: { workspaces: { select: { plan: true, subscriptionStatus: true } } },
+    })
+    res.json({
+      partners: partners.map(({ workspaces, ...p }: any) => ({ ...p, ...summariseReferrals(workspaces, p.commissionPercent) })),
+    })
+  })
+)
+
+adminRouter.post(
+  '/referral-partners',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const body = partnerBody.safeParse(req.body)
+    if (!body.success) throw new ApiError(400, 'Invalid partner details')
+    const code = normalizeReferralCode(body.data.code)
+    if (!code) throw new ApiError(400, 'Code must be 3-32 letters, numbers, - or _')
+    if (await prisma.referralPartner.findUnique({ where: { code } })) throw new ApiError(409, 'Referral code already exists')
+    const partner = await prisma.referralPartner.create({
+      data: { code, name: body.data.name, contactEmail: body.data.contactEmail, commissionPercent: body.data.commissionPercent ?? 20 },
+    })
+    await recordCriticalAudit({
+      actorUserId: user.id, type: 'platform_admin.referral_partner_created',
+      entityType: 'ReferralPartner', entityId: partner.id, metadata: { code },
+    })
+    res.status(201).json({ partner })
   })
 )

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { resolveReferralPartnerId } from '@acaos/backend-core/lib/referrals.js'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import {
@@ -85,6 +86,7 @@ const signupSchema = z.object({
   email: emailField,
   password: passwordField,
   name: z.string().trim().max(100).optional(),
+  referralCode: z.string().trim().max(40).optional(),
 })
 
 authRouter.post(
@@ -113,13 +115,15 @@ authRouter.post(
     const workspaceName = buildWorkspaceName(name, email)
     const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
 
+    const referralPartnerId = await resolveReferralPartnerId(prisma as any, req.body.referralCode)
+
     const result = await prisma.$transaction(async (tx: any) => {
       const user = await tx.user.create({
         data: { email, name, passwordHash },
         select: { id: true, email: true, name: true }
       })
       const workspace = await tx.workspace.create({
-        data: { name: workspaceName, slug },
+        data: { name: workspaceName, slug, ...(referralPartnerId ? { referralPartnerId } : {}) },
         select: { id: true, name: true, slug: true, plan: true }
       })
       await tx.membership.create({

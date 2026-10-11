@@ -134,6 +134,10 @@ model Workspace {
   slug                    String                   @unique
   plan                    BillingPlan              @default(free)
   stripeCustomerId        String?                  @unique
+  // Referral attribution: the partner whose code the owner used at signup. Set
+  // once at creation and never changed by the user (platform-admin data).
+  referralPartnerId       String?
+  referralPartner         ReferralPartner?         @relation(fields: [referralPartnerId], references: [id], onDelete: SetNull)
   stripeSubscriptionId    String?                  @unique
   subscriptionStatus      String?
   // UQ-26: past_due grace deadline (set once per lapse, never extended) and the
@@ -220,6 +224,8 @@ model Workspace {
   quotes                  Quote[]
   jobs                    Job[]
   jobVariations           JobVariation[]
+
+  @@index([referralPartnerId])
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -2045,4 +2051,19 @@ model JobVariation {
   job                Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, jobId])
+}
+
+// Referral partner (e.g. a trade bookkeeper). Platform-level, not tenant-owned:
+// only platform admins read or write it. Commission is tracked, never paid out
+// by the app.
+model ReferralPartner {
+  id                String      @id @default(cuid())
+  code              String      @unique
+  name              String
+  contactEmail      String?
+  commissionPercent Int         @default(20)
+  status            String      @default("active") // 'active' | 'paused'
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  workspaces        Workspace[]
 }
