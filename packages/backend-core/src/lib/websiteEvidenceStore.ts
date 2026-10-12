@@ -68,6 +68,6 @@ export async function pruneExpiredWebsiteEvidence(db: Pick<DB, 'websiteEvidenceC
     where: { expiresAt: { lte: now } }, orderBy: { id: 'asc' }, take: limit, select: { id: true },
   })
   if (!expired.length) return 0
-  const result = await db.websiteEvidenceClaim.deleteMany({ where: { id: { in: expired.map((e) => e.id) }, expiresAt: { lte: now } } })
+  const result = await db.websiteEvidenceClaim.deleteMany({ where: { id: { in: (expired as Array<{ id: string }>).map((e) => e.id) }, expiresAt: { lte: now } } })
   return result.count
 }
