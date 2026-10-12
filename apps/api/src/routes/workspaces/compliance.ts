@@ -48,6 +48,14 @@ const consentSchema = z.object({
 })
 type _ConsentConforms = Assert<Extends<z.infer<typeof consentSchema>, ConsentRecordRequest>>
 
+// Explicit row shape: keeps this file type-safe under the offline Prisma stub (CI build-deterministic),
+// where model delegates return untyped rows.
+type ConsentListRow = {
+  id: string; emailKey: string; basis: string; source: string; note: string | null; recordedAt: Date
+  evidenceUrl: string | null; evidenceAt: Date | null; evidenceExcerpt: string | null; evidenceHash: string | null
+  addressType: string | null; optOutStatementAbsent: boolean | null; roleRelevant: boolean | null
+}
+
 const consentListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   email: z.string().trim().max(320).optional(),
@@ -189,7 +197,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
       ])
       res.json({
         total,
-        records: rows.map((r) => {
+        records: (rows as ConsentListRow[]).map((r) => {
           const au = isAuConsentBasis(r.basis) ? validateAuConsentEvidence(r) : null
           return {
             id: r.id, email: r.emailKey, basis: r.basis, source: r.source, note: r.note,
