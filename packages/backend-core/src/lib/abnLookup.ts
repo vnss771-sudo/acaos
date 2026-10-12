@@ -90,7 +90,10 @@ export async function lookupAbn(abnInput: string, opts: LookupOptions = {}): Pro
   const guid = (opts.guid ?? process.env.ABR_GUID ?? '').trim()
   if (!guid) throw new AbnLookupNotConfiguredError()
 
-  const url = new URL(ABR_ENDPOINT)
+  // Test seam: lets the browser E2E point the server at a local stub. Honoured only outside
+  // production, so a stray env var can never redirect real lookups (or the GUID) elsewhere.
+  const endpoint = process.env.NODE_ENV !== 'production' && process.env.ABR_ENDPOINT ? process.env.ABR_ENDPOINT : ABR_ENDPOINT
+  const url = new URL(endpoint)
   url.searchParams.set('abn', abn)
   url.searchParams.set('guid', guid)
 

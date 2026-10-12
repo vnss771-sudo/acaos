@@ -120,6 +120,23 @@ test('E5: the discovery smoke workflow carries no secrets and checks AusTender o
   assert.match(y, /issues: write/, 'only the alert job may write issues')
 })
 
+test('ABR_ENDPOINT override is honoured outside production and ignored in production', async () => {
+  const seen: string[] = []
+  const f = async (url: string | URL) => { seen.push(new URL(String(url)).origin); return new Response(body({})) }
+  const prevEnv = process.env.NODE_ENV, prevEp = process.env.ABR_ENDPOINT
+  try {
+    process.env.ABR_ENDPOINT = 'http://127.0.0.1:4599/json/AbnDetails.aspx'
+    process.env.NODE_ENV = 'test'
+    await lookupAbn(ABN, { guid: GUID, breaker: passthrough, fetchImpl: f })
+    process.env.NODE_ENV = 'production'
+    await lookupAbn(ABN, { guid: GUID, breaker: passthrough, fetchImpl: f })
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prevEnv
+    if (prevEp === undefined) delete process.env.ABR_ENDPOINT; else process.env.ABR_ENDPOINT = prevEp
+  }
+  assert.deepEqual(seen, ['http://127.0.0.1:4599', 'https://abr.business.gov.au'])
+})
+
 // ── contract per ABR's official JSON sample (Phase 1 verification) ───────────
 test('lookupAbn: a payload without an `Abn` key (as in ABR\'s sample) is accepted; Message means no result', async () => {
   const noAbnKey = JSON.stringify({ Acn: '', EntityName: 'DEPT OF INDUSTRY', AbnStatus: 'Active', AbnStatusEffectiveFrom: '2000-01-01', EntityTypeName: 'Commonwealth Government Entity', EntityTypeCode: 'CGE', Gst: '2000-07-01', AddressState: 'ACT', AddressPostcode: '2601', BusinessName: [], Message: '' })
