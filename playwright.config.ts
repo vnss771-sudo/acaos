@@ -36,6 +36,10 @@ const serverEnv = {
   REPUTATION_MAX_BOUNCE_RATE: '0',
   // UQ-07 exercises the real Stripe webhook signature/idempotency path with a
   // deterministic local test secret. No Stripe network request is made.
+  // Phase 2 (AU compliance UI): ABN verification runs against a stub the spec starts on :4599.
+  // The fake GUID exists only to make the endpoint configurable; the browser must never see it.
+  ABR_GUID: 'e2e-abr-guid',
+  ABR_ENDPOINT: 'http://127.0.0.1:4599/json/AbnDetails.aspx',
   STRIPE_SECRET_KEY: 'sk_test_e2e_local_only',
   STRIPE_WEBHOOK_SECRET: 'whsec_e2e_local_secret',
   STRIPE_PRICE_STARTER: 'price_e2e_starter',

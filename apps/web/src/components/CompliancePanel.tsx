@@ -5,6 +5,7 @@ import { makeRouteApi } from '../lib/routeApi.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 import type { Workspace } from '../types.js'
+import { AuComplianceSection } from './settings/AuComplianceSection.js'
 
 type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; canManage?: boolean }
 
@@ -18,6 +19,11 @@ type Posture = {
   dpaAcknowledgedAt: string | null
   dpaAckVersion: string | null
   targetsCanada: boolean
+  targetsAustralia?: boolean
+  senderAbn?: string | null
+  senderAbnStatus?: string | null
+  senderAbnEntityName?: string | null
+  senderAbnVerifiedAt?: string | null
 }
 type Subprocessor = { name: string; purpose: string; data: string; conditional?: string }
 type DpaClause = { title: string; body: string }
@@ -78,6 +84,7 @@ export function CompliancePanel({ api, workspace, toast, canManage = true }: Pro
   const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString() : null
 
   return (
+    <>
     <div style={s.card}>
       <div style={{ fontSize: 15, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Compliance</div>
       <div style={{ color: colors.textMuted, fontSize: 12, marginBottom: 16 }}>
@@ -179,6 +186,18 @@ export function CompliancePanel({ api, workspace, toast, canManage = true }: Pro
         Consent records on file: {data.consentCount}
       </div>
     </div>
+    {workspace && (
+      <AuComplianceSection
+        api={api} workspace={workspace} toast={toast} canManage={canManage}
+        posture={{
+          targetsAustralia: p.targetsAustralia === true,
+          senderAbn: p.senderAbn ?? null, senderAbnStatus: p.senderAbnStatus ?? null,
+          senderAbnEntityName: p.senderAbnEntityName ?? null, senderAbnVerifiedAt: p.senderAbnVerifiedAt ?? null,
+        }}
+        onPosture={patchPosture => setData(prev => prev ? { ...prev, posture: { ...prev.posture, ...patchPosture } } : prev)}
+      />
+    )}
+    </>
   )
 }
 

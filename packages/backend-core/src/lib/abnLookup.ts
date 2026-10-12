@@ -86,7 +86,10 @@ export async function lookupAbn(abnInput: string, opts: LookupOptions = {}): Pro
   const guid = (opts.guid ?? process.env.ABR_GUID ?? '').trim()
   if (!guid) throw new AbnLookupNotConfiguredError()
 
-  const url = new URL(ABR_ENDPOINT)
+  // Test seam: lets the browser E2E point the server at a local stub. Honoured only outside
+  // production, so a stray env var can never redirect real lookups (or the GUID) elsewhere.
+  const endpoint = process.env.NODE_ENV !== 'production' && process.env.ABR_ENDPOINT ? process.env.ABR_ENDPOINT : ABR_ENDPOINT
+  const url = new URL(endpoint)
   url.searchParams.set('abn', abn)
   url.searchParams.set('guid', guid)
 
@@ -106,16 +109,17 @@ export async function lookupAbn(abnInput: string, opts: LookupOptions = {}): Pro
         } catch {
           throw new ProviderError('abr', 'AbnDetails', 'server_error', null, 'abr AbnDetails: unreadable response')
         }
-        if (!body.Abn) {
+        if (body.Message) {
           // A rejected GUID is a configuration fault, not "no such business".
           if (/guid/i.test(body.Message)) {
             throw new ProviderError('abr', 'AbnDetails', 'client_error', null, 'abr AbnDetails: the ABR rejected the configured GUID')
           }
           return null
         }
-        if (body.Abn.replace(/\s/g, '') !== abn) return null
+        if (body.Abn && body.Abn.replace(/\s/g, '') !== abn) return null
         const status = body.AbnStatus.toLowerCase()
         if (status !== 'active' && status !== 'cancelled') return null
+        if (!body.EntityName.trim()) return null
         return { abn, status, entityName: body.EntityName.trim().slice(0, 200), entityType: body.EntityTypeName.trim().slice(0, 100) || null }
       },
     })

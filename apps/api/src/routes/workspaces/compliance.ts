@@ -4,7 +4,7 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { assertMinimumWorkspaceRole } from '../../lib/workspaces.js'
 import { normalizeEmail, isValidEmail } from '../../lib/textNormalize.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
-import { parseBody, parseParams, idField } from '../../lib/validate.js'
+import { parseBody, parseParams, parseQuery, idField } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
 import {
   subprocessorDisclosure, dpaDisclosure, COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION, DPA_VERSION,
@@ -47,6 +47,11 @@ const consentSchema = z.object({
   roleRelevant: z.boolean().optional(),
 })
 type _ConsentConforms = Assert<Extends<z.infer<typeof consentSchema>, ConsentRecordRequest>>
+
+const consentListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  email: z.string().trim().max(320).optional(),
+})
 
 const abnVerifySchema = z.object({ abn: z.string().trim().min(1).max(20) })
 
@@ -164,6 +169,40 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
         entityType: 'workspace', entityId: workspaceId, metadata: { consentVersion: body.optIn ? AUTONOMY_CONSENT_VERSION : null },
       })
       res.json(await autonomyStatus(workspaceId))
+    })
+  )
+
+  // Review consent records for the compliance UI. Admin+. Validity for Australia is computed
+  // server-side (lib/auConsent.ts), so the UI only displays the verdict and never decides it.
+  workspaceRouter.get(
+    '/:id/consent',
+    asyncHandler(async (req, res) => {
+      const user = requireUser(req)
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
+      await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+      const { limit, email } = parseQuery(consentListQuerySchema, req)
+
+      const where = { workspaceId, ...(email ? { emailKey: normalizeEmail(email) } : {}) }
+      const [rows, total] = await Promise.all([
+        prisma.consentRecord.findMany({ where, orderBy: { recordedAt: 'desc' }, take: limit }),
+        prisma.consentRecord.count({ where }),
+      ])
+      res.json({
+        total,
+        records: rows.map((r) => {
+          const au = isAuConsentBasis(r.basis) ? validateAuConsentEvidence(r) : null
+          return {
+            id: r.id, email: r.emailKey, basis: r.basis, source: r.source, note: r.note,
+            recordedAt: r.recordedAt.toISOString(),
+            evidenceUrl: r.evidenceUrl, evidenceAt: r.evidenceAt ? r.evidenceAt.toISOString() : null,
+            evidenceExcerpt: r.evidenceExcerpt, addressType: r.addressType,
+            optOutStatementAbsent: r.optOutStatementAbsent, roleRelevant: r.roleRelevant,
+            // null = not an Australian basis (never counts for the Spam Act gate)
+            qualifiesForAustralia: au ? au.ok : false,
+            australiaReasons: au && !au.ok ? au.reasons : (au ? [] : ['Not an Australian consent basis: it does not authorise sends to Australian recipients']),
+          }
+        }),
+      })
     })
   )
 
