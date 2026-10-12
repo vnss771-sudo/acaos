@@ -455,7 +455,7 @@ export function App() {
             {view === 'inbox' && <InboxView {...commonProps} />}
             {view === 'leads' && <Leads {...commonProps} canManage={canManage} />}
             {view === 'ai' && <AiTools {...commonProps} />}
-            {view === 'billing' && <Billing {...commonProps} />}
+            {view === 'billing' && <Billing {...commonProps} onWorkspaceUpdate={handleWorkspaceUpdate} />}
             {view === 'settings' && (
               <Settings
                 {...commonProps}

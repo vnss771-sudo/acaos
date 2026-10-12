@@ -20,6 +20,7 @@ import { isDisposableEmail, disposableBlockingEnabled } from '@acaos/backend-cor
 import { authRateLimit, authRefreshRateLimit } from '../middleware/rateLimit.js'
 import { setRefreshCookie, clearRefreshCookie, readCookie, requireCsrfHeader, REFRESH_COOKIE } from '../lib/cookies.js'
 import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
+import { logger } from '@acaos/backend-core/lib/logger.js'
 import { buildWorkspaceName, normalizeEmail, validatePassword } from '../lib/textNormalize.js'
 import { resolveUniqueWorkspaceSlug, normalizeWorkspaceRole } from '../lib/workspaces.js'
 import { isMailConfigured, sendMail } from '@acaos/backend-core/services/mail.js'
@@ -133,7 +134,12 @@ authRouter.post(
     await recordLogin(result.user.id)
 
     // Send verification email (non-blocking — don't fail signup if SMTP is down)
-    sendVerificationEmail(result.user.id, result.user.email).catch(() => {})
+    // Fire-and-forget so a mail outage can't fail signup, but never silently: an
+    // unverified user can do almost nothing, so a lost email must be visible in
+    // the logs/Sentry. (userId only; no address or token in the log.)
+    sendVerificationEmail(result.user.id, result.user.email)
+      .then(sent => { if (!sent) logger.warn('verification email not sent: mail not configured', { userId: result.user.id }) })
+      .catch(err => logger.error('verification email failed', { userId: result.user.id, err: err instanceof Error ? err.message : String(err) }))
 
     // Refresh token goes in an HttpOnly cookie, never the response body, so it
     // cannot be read by JavaScript. The access token stays in the body (memory).
@@ -614,7 +620,8 @@ authRouter.post(
 
 // ── Email verification ────────────────────────────────────────────────────────
 
-async function sendVerificationEmail(userId: string, email: string) {
+/** Returns true if an email was handed to the mail relay, false if mail is not configured. */
+async function sendVerificationEmail(userId: string, email: string): Promise<boolean> {
   const rawToken = generateRefreshToken()
   const tokenHash = hashRefreshToken(rawToken)
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
@@ -627,12 +634,11 @@ async function sendVerificationEmail(userId: string, email: string) {
   if (isMailConfigured()) {
     const msg = verificationEmail(verifyUrl)
     await sendMail(email, msg.subject, msg.html, undefined, { text: msg.text })
-  } else if (process.env.NODE_ENV === 'production') {
-    // Never log a URL containing the raw verification token in production.
-    console.warn('[auth] SMTP not configured; verification email was not sent')
-  } else {
-    console.log(`[auth] Verification URL (SMTP not configured): ${verifyUrl}`)
+    return true
   }
+  // Never log a URL containing the raw verification token in production.
+  if (process.env.NODE_ENV !== 'production') console.log(`[auth] Verification URL (SMTP not configured): ${verifyUrl}`)
+  return false
 }
 
 // Single-use credential tokens are carried in the POST body, not the URL path,
@@ -675,7 +681,9 @@ authRouter.post(
     const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { emailVerified: true, email: true } })
     if (dbUser?.emailVerified) return res.json({ ok: true }) // already verified
 
-    await sendVerificationEmail(user.id, user.email)
+    // Tell the user when nothing was sent, instead of a success that never arrives.
+    const sent = await sendVerificationEmail(user.id, user.email)
+    if (!sent && process.env.NODE_ENV === 'production') throw new ApiError(503, 'Email is temporarily unavailable — please try again later')
     res.json({ ok: true })
   })
 )

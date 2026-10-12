@@ -97,3 +97,16 @@ describe('useViewRouter', () => {
     expect(screen.getByTestId('view')).toHaveTextContent('today')
   })
 })
+
+describe('Stripe checkout return URLs', () => {
+  test('resolve to the billing view instead of the unknown-path fallback', () => {
+    expect(viewForPath('/billing/success')).toBe('billing')
+    expect(viewForPath('/billing/cancel/')).toBe('billing')
+  })
+  test('checkoutReturn reports the outcome', async () => {
+    const { checkoutReturn } = await import('./router.js')
+    expect(checkoutReturn('/billing/success')).toBe('success')
+    expect(checkoutReturn('/billing/cancel')).toBe('cancel')
+    expect(checkoutReturn('/billing')).toBeNull()
+  })
+})

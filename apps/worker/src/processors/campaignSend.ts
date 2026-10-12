@@ -11,7 +11,7 @@ import { generateOutreach, outreachGenerationMeta } from '@acaos/backend-core/se
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
 import { parseAiJson, OutreachDraftOutputSchema, type OutreachDraftOutput } from '@acaos/backend-core/lib/aiSchemas.js'
-import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
+import { sendMail, isWorkspaceMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
 import { effectiveDailySendLimit, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { approvalRequiredFor } from '@acaos/backend-core/lib/autonomyReadiness.js'
@@ -139,7 +139,7 @@ async function loadCampaignSendConfig(campaignId: string, workspaceId: string) {
       }
     : undefined
   const smtpCfg: SmtpConfig | null = wsCfgRecord ?? null
-  if (!isMailConfigured(smtpCfg)) throw new Error('SMTP not configured — set SMTP_HOST and SMTP_FROM')
+  if (!isWorkspaceMailConfigured(smtpCfg)) throw new Error('Workspace mailbox not configured — connect a sending mailbox in Settings')
   // Every email carries an unsubscribe link built from API_URL. Refuse the whole
   // batch before any send rather than mail out links that can't work.
   const unsubscribeBaseUrl = resolveUnsubscribeBaseUrl()

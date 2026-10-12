@@ -261,6 +261,20 @@ export function isMailboxConfigured(cfg?: ImapConfig | null) {
   )
 }
 
+// Workspace-scoped readiness. These NEVER consult the platform SMTP_*/IMAP_*
+// env credentials: those belong to the system relay (verification, password
+// reset, invites) and must not send or read mail on a customer's behalf.
+export function isWorkspaceMailConfigured(cfg?: SmtpConfig | null): boolean {
+  if (!cfg || oauthWithoutToken(cfg)) return false
+  return Boolean(cfg.smtpHost && cfg.smtpFrom)
+}
+
+export function isWorkspaceMailboxConfigured(cfg?: ImapConfig | null): boolean {
+  if (!cfg || oauthWithoutToken(cfg)) return false
+  if (isOAuthMailConfig(cfg)) return Boolean(cfg.imapHost && cfg.imapUser)
+  return Boolean(cfg.imapHost && cfg.imapUser && cfg.imapPass)
+}
+
 function maybeDecrypt(s: string | null | undefined): string | undefined {
   if (!s) return undefined
   return isEncrypted(s) ? decryptSecret(s) : s
@@ -282,8 +296,11 @@ export function buildTransport(cfg?: SmtpConfig | null, pin?: PinnedHost, access
   const host = pin?.host || cfg?.smtpHost || getRequiredEnv('SMTP_HOST')
   const port = cfg?.smtpPort ?? Number(process.env.SMTP_PORT || 587)
   const secure = cfg?.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465)
-  const user = cfg?.smtpUser || process.env.SMTP_USER
-  const pass = maybeDecrypt(cfg?.smtpPass) || process.env.SMTP_PASS
+  // A workspace-supplied host never inherits the platform's credentials: they
+  // would be sent to a server the customer controls.
+  const ownHost = Boolean(cfg?.smtpHost)
+  const user = ownHost ? (cfg?.smtpUser || undefined) : (cfg?.smtpUser || process.env.SMTP_USER)
+  const pass = ownHost ? maybeDecrypt(cfg?.smtpPass) : (maybeDecrypt(cfg?.smtpPass) || process.env.SMTP_PASS)
 
   const isSystemRelay = !pin && !cfg?.smtpHost && !cfg?.smtpUser && !cfg?.smtpPass
   if (isSystemRelay && systemTransport) return systemTransport
@@ -316,6 +333,9 @@ export function closeMailTransports(): void {
 export type SendMailOptions = { headers?: Record<string, string>; text?: string }
 
 export async function sendMail(to: string, subject: string, html: string, cfg?: SmtpConfig | null, opts?: SendMailOptions) {
+  // A workspace mailbox must send as itself; only the system relay (no
+  // workspace host) may use the platform From address.
+  if (cfg?.smtpHost && !cfg.smtpFrom) throw new ApiError(409, 'Workspace mailbox has no From address')
   const from = cfg?.smtpFrom || getRequiredEnv('SMTP_FROM')
   const message = {
     from,
@@ -638,7 +658,7 @@ function buildEnquiry(
 export async function syncMailboxOnce(
   cfg?: ImapConfig | null,
   workspaceId?: string,
-  deps: { ImapFlow?: unknown; recordProcessedReply?: typeof recordProcessedReply; getAccessToken?: typeof getMailAccessToken } = {},
+  deps: { ImapFlow?: unknown; recordProcessedReply?: typeof recordProcessedReply; getAccessToken?: typeof getMailAccessToken; resolveHost?: typeof resolvePublicMailHost } = {},
 ): Promise<{
   inspected: number
   matched: number
@@ -659,16 +679,18 @@ export async function syncMailboxOnce(
     }
   }
 
+  // Never fall back to the platform IMAP_* mailbox: it holds other tenants' replies.
+  if (!isWorkspaceMailboxConfigured(cfg)) throw new ApiError(409, 'Workspace mailbox is not configured')
   // Workspace-supplied IMAP hosts are an SSRF surface — resolve, reject private
   // targets, and pin the validated IP so imapflow's connect can't re-resolve to
   // a rebind. Env-configured system hosts are trusted and dialed by name.
-  const pin = cfg?.imapHost ? await resolvePublicMailHost(cfg.imapHost, 'imapHost') : undefined
-  const host = pin?.host || cfg?.imapHost || getRequiredEnv('IMAP_HOST')
-  const port = cfg?.imapPort ?? Number(process.env.IMAP_PORT || 993)
-  const secure = cfg?.imapSecure ?? (String(process.env.IMAP_SECURE || 'true') === 'true')
-  const user = cfg?.imapUser || getRequiredEnv('IMAP_USER')
+  const pin = cfg?.imapHost ? await (deps.resolveHost ?? resolvePublicMailHost)(cfg.imapHost, 'imapHost') : undefined
+  const host = pin?.host || cfg!.imapHost!
+  const port = cfg?.imapPort ?? 993
+  const secure = cfg?.imapSecure ?? true
+  const user = cfg!.imapUser!
   const oauth = isOAuthMailConfig(cfg)
-  const pass = oauth ? undefined : maybeDecrypt(cfg?.imapPass) || getRequiredEnv('IMAP_PASS')
+  const pass = oauth ? undefined : maybeDecrypt(cfg!.imapPass)
   const accessToken = oauth ? await (deps.getAccessToken ?? getMailAccessToken)({ ...cfg!, workspaceId: cfg?.workspaceId ?? workspaceId }) : undefined
 
   const client = new ImapFlow({

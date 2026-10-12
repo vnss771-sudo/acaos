@@ -35,3 +35,11 @@ test('assertStripePricesConfigured resolves quietly when Stripe is configured bu
     if (originalGrowth !== undefined) process.env.STRIPE_PRICE_GROWTH = originalGrowth
   }
 })
+
+test('describePriceProblem flags archived and non-monthly prices, accepts an active monthly one', async () => {
+  const { describePriceProblem } = await import('../apps/api/src/services/stripe.ts')
+  assert.equal(describePriceProblem({ active: true, type: 'recurring', recurring: { interval: 'month' } }), null)
+  assert.match(describePriceProblem({ active: false, type: 'recurring', recurring: { interval: 'month' } })!, /archived/)
+  assert.match(describePriceProblem({ active: true, type: 'one_time', recurring: null })!, /monthly recurring/)
+  assert.match(describePriceProblem({ active: true, type: 'recurring', recurring: { interval: 'year' } })!, /monthly recurring/)
+})

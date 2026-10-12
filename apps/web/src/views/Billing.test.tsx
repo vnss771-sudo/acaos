@@ -14,7 +14,7 @@ beforeEach(() => {
   // @ts-expect-error override for test
   delete window.location
   // @ts-expect-error minimal stub
-  window.location = { href: '' }
+  window.location = { href: '', pathname: '/billing' }
 })
 afterEach(() => {
   // @ts-expect-error restore
@@ -45,11 +45,11 @@ describe('Billing', () => {
     render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
 
     expect(await screen.findByText('Upgrade your plan')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Upgrade to Contractor →/i })).toBeInTheDocument()
+    // One paid plan is sold: Contractor Pro, with its list price disclosed (ex GST).
     expect(screen.getByRole('button', { name: /Upgrade to Contractor Pro/i })).toBeInTheDocument()
-    // Who each plan is for, as in POSITIONING.md — not the old agency copy.
-    expect(screen.getByText('For most trade businesses')).toBeInTheDocument()
-    expect(screen.getByText('For multi-crew businesses')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Upgrade to Contractor →/i })).toBeNull()
+    expect(screen.getByText(/A\$349/)).toBeInTheDocument()
+    expect(screen.getByText('For established trade contractors')).toBeInTheDocument()
     expect(screen.queryByText(/agencies/i)).toBeNull()
     expect(api).toHaveBeenCalledWith('/api/billing/status?workspaceId=ws1')
   })
@@ -58,7 +58,7 @@ describe('Billing', () => {
     const api = apiFor({ plan: 'free', status: 'none', hasSubscription: false })
     render(<Billing api={api as never} workspace={workspace} toast={toast as never} />)
 
-    await userEvent.click(await screen.findByRole('button', { name: /Upgrade to Contractor →/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /Upgrade to Contractor Pro/i }))
 
     expect(api).toHaveBeenCalledWith('/api/billing/checkout', expect.objectContaining({ method: 'POST' }))
     const checkoutCall = api.mock.calls.find(c => c[0] === '/api/billing/checkout')!
@@ -74,7 +74,6 @@ describe('Billing', () => {
     // Numbers come from GET /api/billing/plans, not hardcoded copy.
     expect(await screen.findByText('Up to 500 leads')).toBeInTheDocument()        // free card
     expect(screen.getByText('15 AI requests per month')).toBeInTheDocument()      // free card
-    expect(screen.getByText('Up to 10,000 leads')).toBeInTheDocument()            // starter card
     expect(screen.getByText('Unlimited AI requests per month')).toBeInTheDocument() // growth card (null)
     expect(api).toHaveBeenCalledWith('/api/billing/plans')
   })

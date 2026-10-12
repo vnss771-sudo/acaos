@@ -130,3 +130,44 @@ test('buildTransport: port defaults to 587 when SMTP_PORT not set', () => {
     assert.doesNotThrow(() => buildTransport())
   })
 })
+
+// ---------------------------------------------------------------------------
+// Tenant isolation: platform SMTP/IMAP credentials must never serve a workspace
+// ---------------------------------------------------------------------------
+import { isWorkspaceMailConfigured, isWorkspaceMailboxConfigured, sendMail, syncMailboxOnce } from '../packages/backend-core/src/services/mail.ts'
+
+const PLATFORM = { SMTP_HOST: 'smtp.platform.test', SMTP_FROM: 'noreply@platform.test', SMTP_USER: 'platform-user', SMTP_PASS: 'platform-pass', IMAP_HOST: 'imap.platform.test', IMAP_USER: 'inbox@platform.test', IMAP_PASS: 'platform-imap-pass' }
+
+test('workspace readiness ignores platform env: no workspace config means not configured', () => {
+  withEnv(PLATFORM, () => {
+    assert.equal(isWorkspaceMailConfigured(null), false)
+    assert.equal(isWorkspaceMailConfigured(undefined), false)
+    assert.equal(isWorkspaceMailConfigured({ smtpHost: 'smtp.own.test' }), false) // no From
+    assert.equal(isWorkspaceMailConfigured({ smtpHost: 'smtp.own.test', smtpFrom: 'me@own.test' }), true)
+    assert.equal(isWorkspaceMailboxConfigured(null), false)
+    assert.equal(isWorkspaceMailboxConfigured({ imapHost: 'imap.own.test', imapUser: 'me@own.test' }), false) // no password
+    assert.equal(isWorkspaceMailboxConfigured({ imapHost: 'imap.own.test', imapUser: 'me@own.test', imapPass: 'x' }), true)
+  })
+})
+
+test('buildTransport: a workspace host never inherits the platform SMTP credentials', () => {
+  withEnv(PLATFORM, () => {
+    const t: any = buildTransport({ smtpHost: 'smtp.attacker.test', smtpFrom: 'a@attacker.test' })
+    const auth = t.options?.auth
+    assert.equal(auth, undefined, 'must not authenticate with platform SMTP_USER/SMTP_PASS')
+  })
+})
+
+test('sendMail: workspace host without a From address is refused (no platform From)', async () => {
+  await withEnv(PLATFORM, async () => {
+    await assert.rejects(sendMail('x@y.test', 's', '<p>h</p>', { smtpHost: 'smtp.own.test' }), /no From address/)
+  })
+})
+
+test('syncMailboxOnce: refuses to read the platform mailbox for a workspace', async () => {
+  await withEnv(PLATFORM, async () => {
+    class NeverConnect { constructor() { throw new Error('must not connect') } }
+    await assert.rejects(syncMailboxOnce(null, 'ws1', { ImapFlow: NeverConnect }), (e: any) => e instanceof ApiError && e.statusCode === 409)
+    await assert.rejects(syncMailboxOnce({ imapHost: 'imap.own.test', imapUser: 'u' }, 'ws1', { ImapFlow: NeverConnect }), (e: any) => e instanceof ApiError && e.statusCode === 409)
+  })
+})
