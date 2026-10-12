@@ -1,5 +1,7 @@
 import { prisma } from './prisma.js'
 import { normalizeEmail } from './normalize.js'
+import { AU_CONSENT_BASES } from './subprocessors.js'
+import { isQualifyingAuConsent } from './auConsent.js'
 
 // Per-recipient consent-record lookups (ConsentRecord), mirroring suppressions.ts:
 // every check matches on the normalized emailKey via one normalizer, so both sides
@@ -35,4 +37,38 @@ export async function bulkCheckConsent(
   })
   const set = new Set((hits as Array<{ emailKey: string }>).map((h: { emailKey: string }) => h.emailKey))
   return (email: string) => set.has(normalizeEmail(email))
+}
+
+// ── Spam Act 2003 (Australia) ────────────────────────────────────────────────
+// A row counts only if its basis is an AU basis AND its Schedule 2 evidence
+// validates. Legacy CASL/GDPR rows (express_consent, implied_consent,
+// legitimate_interest) never satisfy this check. Any one qualifying row suffices.
+
+const AU_EVIDENCE_SELECT = {
+  emailKey: true, basis: true, evidenceUrl: true, evidenceAt: true, evidenceExcerpt: true,
+  evidenceHash: true, addressType: true, optOutStatementAbsent: true, roleRelevant: true,
+} as const
+
+export async function hasAuConsent(workspaceId: string, email: string): Promise<boolean> {
+  const rows = await prisma.consentRecord.findMany({
+    where: { workspaceId, emailKey: normalizeEmail(email), basis: { in: [...AU_CONSENT_BASES] } },
+    select: AU_EVIDENCE_SELECT,
+  })
+  return (rows as Array<Parameters<typeof isQualifyingAuConsent>[0]>).some((r) => isQualifyingAuConsent(r))
+}
+
+export async function bulkCheckAuConsent(
+  workspaceId: string,
+  emails: string[],
+): Promise<(email: string) => boolean> {
+  const keys = emails.map(normalizeEmail)
+  const rows = await prisma.consentRecord.findMany({
+    where: { workspaceId, emailKey: { in: keys }, basis: { in: [...AU_CONSENT_BASES] } },
+    select: AU_EVIDENCE_SELECT,
+  })
+  const ok = new Set<string>()
+  for (const r of rows as Array<{ emailKey: string } & Parameters<typeof isQualifyingAuConsent>[0]>) {
+    if (isQualifyingAuConsent(r)) ok.add(r.emailKey)
+  }
+  return (email: string) => ok.has(normalizeEmail(email))
 }

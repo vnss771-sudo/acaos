@@ -160,6 +160,12 @@ model Workspace {
   networkOptInAt          DateTime?
   dpaAckVersion           String?
   targetsCanada           Boolean                  @default(false) // gates the CASL consent check
+  // Spam Act 2003 (Cth): an explicit opt-in jurisdiction flag. Sends from a workspace
+  // with this set are blocked outright unless AU_COMMERCIAL_SENDING_ENABLED is on AND
+  // the recipient has a ConsentRecord whose Schedule 2 evidence validates
+  // (lib/auConsent.ts). Defaults false so existing behaviour is unchanged until an
+  // operator opts a workspace in after legal review.
+  targetsAustralia        Boolean                  @default(false)
   // Operator drain switch: when true, the worker halts all sends for THIS workspace
   // (returns SUPPRESSED) without touching the global FEATURE_SEND kill-switch — so a
   // single abusive/compromised tenant can be stopped in isolation. Reason is for the
@@ -1040,6 +1046,16 @@ model ConsentRecord {
   source      String // 'import' | 'manual' | 'form' | 'crm_sync'
   note        String?
   recordedAt  DateTime  @default(now())
+  // Spam Act 2003 evidence (all nullable; only the AU bases 'express' and
+  // 'inferred_conspicuous_publication' read them — see lib/auConsent.ts). PII-adjacent:
+  // deleted with the workspace (cascade) like the rest of the row.
+  evidenceUrl         String?   // page where consent was given / the address was published
+  evidenceAt          DateTime? // date the consent was given or the publication was seen
+  evidenceExcerpt     String?   // short quote only — never a whole page
+  evidenceHash        String?   // sha256 of the captured excerpt/page, for later verification
+  addressType         String?   // 'role' | 'personal' (is the address the person's own?)
+  optOutStatementAbsent Boolean? // verified: no "no unsolicited commercial email" statement
+  roleRelevant        Boolean?  // verified: message is relevant to the recipient's role
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, emailKey])

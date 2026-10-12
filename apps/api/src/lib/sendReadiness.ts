@@ -4,7 +4,7 @@
 // before they ever hit a 422).
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { isWorkspaceMailConfigured } from '@acaos/backend-core/services/mail.js'
-import { isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
+import { isComplianceGateEnabled, isAuCommercialSendingEnabled } from '@acaos/backend-core/lib/launchControls.js'
 
 export type ReadinessCheck = { name: string; label: string; ok: boolean; hint: string }
 export type SendReadiness = { ready: boolean; checks: ReadinessCheck[] }
@@ -16,7 +16,7 @@ export async function getSendReadiness(workspaceId: string): Promise<SendReadine
       where: { id: workspaceId },
       select: {
         senderBusinessName: true, senderPostalAddress: true,
-        lawfulBasis: true, termsAcceptedAt: true, targetsCanada: true,
+        lawfulBasis: true, termsAcceptedAt: true, targetsCanada: true, targetsAustralia: true,
       },
     }),
   ])
@@ -69,6 +69,17 @@ export async function getSendReadiness(workspaceId: string): Promise<SendReadine
         hint: 'CASL requires express/implied consent — record a consent basis before sending to Canadian recipients.',
       })
     }
+  }
+
+  // Spam Act 2003: independent of the compliance gate. Always not-ready while AU
+  // commercial sending is disabled (the default), so the UI explains the block.
+  if (ws?.targetsAustralia) {
+    checks.push({
+      name: 'auCommercialSending',
+      label: 'Australian commercial sending (Spam Act 2003)',
+      ok: isAuCommercialSendingEnabled(),
+      hint: 'Sending to Australian recipients is disabled pending legal review. Each recipient also needs documented express consent, or documented conspicuous-publication evidence, before send.',
+    })
   }
 
   return { ready: checks.every((c) => c.ok), checks }

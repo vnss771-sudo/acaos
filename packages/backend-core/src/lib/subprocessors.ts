@@ -16,6 +16,10 @@ export const COMPLIANCE_TERMS_VERSION = '2026-06-24'
 // Allowed values (kept here so the API schema and any reporting share one source).
 export const LAWFUL_BASES = ['legitimate_interest', 'consent', 'contract'] as const
 export const CONSENT_BASES = ['express_consent', 'implied_consent', 'legitimate_interest'] as const
+/** Spam Act 2003 consent bases. Deliberately NOT part of CONSENT_BASES: imports and the legacy
+ *  record path cannot mint them; they require Schedule 2 evidence (lib/auConsent.ts). */
+export const AU_CONSENT_BASES = ['express', 'inferred_conspicuous_publication'] as const
+export const AU_ADDRESS_TYPES = ['role', 'personal'] as const
 export const CONSENT_SOURCES = ['import', 'manual', 'form', 'crm_sync'] as const
 
 export type Subprocessor = {

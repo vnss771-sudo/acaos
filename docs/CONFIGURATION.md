@@ -55,6 +55,7 @@ platform starts conservative.
 | `AUTONOMY_MIN_APPROVAL_RATE` | `0.9` | api, worker | Minimum share of reviewed drafts that were approved. |
 | `AUTONOMY_MAX_POLICY_REVIEW_RATE` | `0.05` | api, worker | Maximum share of drafts held for a policy review. |
 | `ENFORCE_SEND_READINESS` | on (off only in `development`/`test`) | api | Gate sends on SMTP + CAN-SPAM sender identity. Fails **closed** for staging/preview; `false`/`0` disables. |
+| `AU_COMMERCIAL_SENDING_ENABLED` | `false` | api, worker | Spam Act 2003 master switch. Off = Australia-targeting workspaces cannot send at all; on = per-recipient evidence-backed consent required. Enable only after legal review. |
 | `COMPLIANCE_GATE_ENABLED` | `false` | api | Require lawful-basis / CASL consent before sending (ships dormant until legal copy is signed). |
 | `TENANT_GUARD_MODE` | `observe` in production, `off` elsewhere | api, worker | `off` \| `observe` (log unscoped queries) \| `enforce` (throw). Defense-in-depth over the per-query `workspaceId` filters. |
 | `FOLLOWUPS_ENABLED` | `false` | worker | Master switch for multi-step follow-up sending (opt-in dormant). |

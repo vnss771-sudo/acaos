@@ -39,6 +39,12 @@ async function seedTenantData(workspaceId: string) {
   await prisma.suppression.create({ data: { workspaceId, email: 'x@y.test', emailKey: 'x@y.test' } })
   await prisma.auditEvent.create({ data: { workspaceId, type: 'lead.created', entityId: lead.id } })
   await prisma.consentRecord.create({ data: { workspaceId, emailKey: 'p@y.test', basis: 'express_consent', source: 'manual' } })
+  // Spam Act evidence row (D2): URLs/excerpts are PII-adjacent and must be erased with the workspace.
+  await prisma.consentRecord.create({ data: {
+    workspaceId, emailKey: 'au@y.test', basis: 'inferred_conspicuous_publication', source: 'manual',
+    evidenceUrl: 'https://acme.example/contact', evidenceAt: new Date('2026-09-01'), evidenceExcerpt: 'Email us: au@y.test',
+    evidenceHash: 'h', addressType: 'role', optOutStatementAbsent: true, roleRelevant: true,
+  } })
   const model = await prisma.scoringModel.create({ data: { workspaceId, weights: {}, performanceMetrics: {} } })
   await prisma.scoringOutcome.create({ data: { workspaceId, scoringModelId: model.id, score: 50, replied: false } })
   return { leadId: lead.id, campaignId: campaign.id }
@@ -68,6 +74,7 @@ test('owner erases the workspace: every tenant table is emptied, the user surviv
 
   const before = await tenantRowCounts(workspace.id)
   assert.ok(before.leads === 1 && before.audits === 1 && before.outcomes === 1 && before.workspace, 'data seeded')
+  assert.equal(before.consent, 2, 'both the legacy and the Spam Act evidence ConsentRecord are seeded')
 
   const res = await del(workspace.id, { confirmName: workspace.name }, bearer(user.id))
   assert.equal(res.status, 200, JSON.stringify(res.body))

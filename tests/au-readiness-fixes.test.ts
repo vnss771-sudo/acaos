@@ -144,3 +144,45 @@ test('D1: scrubSecrets masks credential params in free text, leaves benign param
   assert.match(out, /page=2/)
   assert.match(out, /key=\[redacted\]/)
 })
+
+// ── D6 (billable POST audit) ──────────────────────────────────────────────────
+test('D6: a POST receiving 429 or 503 is NOT repeated (billing unknown → fail closed)', async () => {
+  for (const status of [429, 500, 503]) {
+    let calls = 0
+    await assert.rejects(
+      callProvider({
+        provider: 'apollo', operation: 'mixed_companies/search', url: 'https://x.test', init: { method: 'POST' },
+        fetchImpl: async () => { calls++; return res(status, { 'retry-after': '1' }) },
+        sleepImpl: async () => { throw new Error('must not wait/retry') }, onSuccess: () => 'ok',
+      }),
+      (e: unknown) => e instanceof ProviderError && e.providerStatus === status,
+    )
+    assert.equal(calls, 1, `POST ${status} must be attempted once`)
+  }
+})
+
+test('D6: GET still retries 429/5xx; POST retries only with explicit retryUnsafe', async () => {
+  for (const [init, extra, expected] of [
+    [{ method: 'GET' }, {}, 2],
+    [undefined, {}, 2],
+    [{ method: 'POST' }, {}, 1],
+    [{ method: 'POST' }, { retryUnsafe: true }, 2],
+  ] as const) {
+    let calls = 0
+    const r = [res(503), res(200)]
+    await callProvider({
+      provider: 'p', operation: 'o', url: 'https://x.test', init, ...extra,
+      fetchImpl: async () => r.shift()!, sleepImpl: async () => {}, onSuccess: () => 'ok',
+    }).catch(() => undefined).then(() => { calls = 2 - r.length })
+    assert.equal(calls, expected)
+  }
+})
+
+test('D6: no production call site opts a billable POST into retryUnsafe', async () => {
+  const { execSync } = await import('node:child_process')
+  const hits = execSync(
+    "grep -rln 'retryUnsafe' packages apps --include=*.ts --exclude-dir=node_modules || true",
+    { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' },
+  ).trim().split('\n').filter((f) => f && !f.includes('providerClient.ts'))
+  assert.deepEqual(hits, [], 'retryUnsafe may only be set after confirming the provider does not bill ambiguous attempts')
+})

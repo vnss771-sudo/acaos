@@ -67,9 +67,11 @@ export interface CallProviderOptions<T> {
   /** Upper bound on any single wait, including a server-supplied Retry-After (default 10s). */
   maxBackoffMs?: number
   /**
-   * Retry timeouts/network errors even for non-idempotent methods. Default false:
-   * a POST that timed out may already have been processed (and billed), so it is
-   * not repeated unless the caller opts in. 429/5xx responses are still retried.
+   * Retry non-idempotent methods (POST/PUT/PATCH/DELETE) after a timeout, network
+   * error, 429 or 5xx. Default false (fail closed): whether the provider already
+   * processed and billed the first attempt is unknown, so a billable POST is never
+   * repeated unless the caller has confirmed that the provider does not bill
+   * failed or ambiguous attempts. Idempotent methods (GET/HEAD/OPTIONS) always retry.
    */
   retryUnsafe?: boolean
   /** Random source in [0,1) — test seam. */
@@ -160,7 +162,7 @@ async function attempt<T>(opts: CallProviderOptions<T>): Promise<T> {
     }
 
     // Retry transient statuses with backoff before giving up.
-    if (retryOn.includes(res.status) && i < retries) {
+    if (retryOn.includes(res.status) && i < retries && idempotent) {
       // Release the discarded response so its socket is not held open.
       await res.body?.cancel?.().catch?.(() => undefined)
       await backoff(i, parseRetryAfterMs(res.headers?.get?.('retry-after')))

@@ -8,10 +8,12 @@ import { parseBody, parseParams, idField } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
 import {
   subprocessorDisclosure, dpaDisclosure, COMPLIANCE_TERMS_VERSION, SUBPROCESSORS_VERSION, DPA_VERSION,
-  LAWFUL_BASES, CONSENT_BASES, CONSENT_SOURCES,
+  LAWFUL_BASES, CONSENT_BASES, CONSENT_SOURCES, AU_CONSENT_BASES, AU_ADDRESS_TYPES,
 } from '@acaos/backend-core/lib/subprocessors.js'
 import { z } from 'zod'
 import type { Assert, Extends, ComplianceUpdateRequest, ConsentRecordRequest, AutonomyUpdateRequest, AutonomyStatus } from '@acaos/shared'
+import { createHash } from 'node:crypto'
+import { isAuConsentBasis, validateAuConsentEvidence } from '@acaos/backend-core/lib/auConsent.js'
 import { assessAutonomy, AUTONOMY_CONSENT_VERSION } from '@acaos/backend-core/lib/autonomyReadiness.js'
 
 const workspaceParamsSchema = z.object({ id: idField })
@@ -21,6 +23,7 @@ const workspaceParamsSchema = z.object({ id: idField })
 const complianceUpdateSchema = z.object({
   lawfulBasis: z.enum(LAWFUL_BASES).nullable().optional(),
   targetsCanada: z.boolean().optional(),
+  targetsAustralia: z.boolean().optional(),
   acceptTerms: z.boolean().optional(),
   acknowledgeSubprocessors: z.boolean().optional(),
   acknowledgeLia: z.boolean().optional(),
@@ -30,9 +33,16 @@ type _ComplianceUpdateConforms = Assert<Extends<z.infer<typeof complianceUpdateS
 
 const consentSchema = z.object({
   email: z.string().trim().min(1),
-  basis: z.enum(CONSENT_BASES),
+  basis: z.enum([...CONSENT_BASES, ...AU_CONSENT_BASES]),
   source: z.enum(CONSENT_SOURCES),
   note: z.string().trim().max(500).optional(),
+  // Spam Act 2003 evidence — validated below for the AU bases (lib/auConsent.ts).
+  evidenceUrl: z.string().trim().max(2000).optional(),
+  evidenceAt: z.string().trim().max(40).optional(),
+  evidenceExcerpt: z.string().trim().max(500).optional(),
+  addressType: z.enum(AU_ADDRESS_TYPES).optional(),
+  optOutStatementAbsent: z.boolean().optional(),
+  roleRelevant: z.boolean().optional(),
 })
 type _ConsentConforms = Assert<Extends<z.infer<typeof consentSchema>, ConsentRecordRequest>>
 
@@ -53,7 +63,7 @@ async function autonomyStatus(workspaceId: string): Promise<AutonomyStatus> {
 
 const POSTURE_SELECT = {
   lawfulBasis: true, liaAcknowledgedAt: true, termsAcceptedAt: true, termsVersion: true,
-  subprocessorsAckAt: true, subprocessorsAckVersion: true, targetsCanada: true,
+  subprocessorsAckAt: true, subprocessorsAckVersion: true, targetsCanada: true, targetsAustralia: true,
   dpaAcknowledgedAt: true, dpaAckVersion: true,
 } as const
 
@@ -97,6 +107,7 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
       const data: Record<string, unknown> = {}
       if (body.lawfulBasis !== undefined) data.lawfulBasis = body.lawfulBasis
       if (body.targetsCanada !== undefined) data.targetsCanada = body.targetsCanada
+      if (body.targetsAustralia !== undefined) data.targetsAustralia = body.targetsAustralia
       if (body.acceptTerms) { data.termsAcceptedAt = new Date(); data.termsVersion = COMPLIANCE_TERMS_VERSION }
       if (body.acknowledgeSubprocessors) { data.subprocessorsAckAt = new Date(); data.subprocessorsAckVersion = SUBPROCESSORS_VERSION }
       if (body.acknowledgeLia) data.liaAcknowledgedAt = new Date()
@@ -163,8 +174,29 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
       const body = parseBody(consentSchema, req)
       if (!isValidEmail(body.email)) throw new ApiError(400, 'A valid recipient email is required')
 
+      const isAu = isAuConsentBasis(body.basis)
+      const evidenceAt = body.evidenceAt ? new Date(body.evidenceAt) : null
+      if (isAu) {
+        // Fail closed: an Australian-basis record without valid Schedule 2 evidence is
+        // never stored, so it can never be mistaken for consent later.
+        const verdict = validateAuConsentEvidence({
+          basis: body.basis, evidenceUrl: body.evidenceUrl, evidenceAt, evidenceExcerpt: body.evidenceExcerpt,
+          addressType: body.addressType, optOutStatementAbsent: body.optOutStatementAbsent, roleRelevant: body.roleRelevant,
+        })
+        if (!verdict.ok) throw new ApiError(400, `Insufficient Spam Act consent evidence: ${verdict.reasons.join('; ')}`)
+      }
+      const evidenceHash = isAu && (body.evidenceExcerpt || body.evidenceUrl)
+        ? createHash('sha256').update(`${body.evidenceUrl ?? ''}\n${body.evidenceExcerpt ?? ''}`).digest('hex')
+        : null
       const row = await prisma.consentRecord.create({
-        data: { workspaceId, emailKey: normalizeEmail(body.email), basis: body.basis, source: body.source, note: body.note ?? null },
+        data: {
+          workspaceId, emailKey: normalizeEmail(body.email), basis: body.basis, source: body.source, note: body.note ?? null,
+          ...(isAu ? {
+            evidenceUrl: body.evidenceUrl ?? null, evidenceAt, evidenceExcerpt: body.evidenceExcerpt ?? null, evidenceHash,
+            addressType: body.addressType ?? null, optOutStatementAbsent: body.optOutStatementAbsent ?? null,
+            roleRelevant: body.roleRelevant ?? null,
+          } : {}),
+        },
         select: { id: true, recordedAt: true },
       })
       void recordAudit({

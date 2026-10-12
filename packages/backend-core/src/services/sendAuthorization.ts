@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js'
-import { isFeatureEnabled, isComplianceGateEnabled, reputationGuardMode } from '../lib/launchControls.js'
+import { isFeatureEnabled, isComplianceGateEnabled, isAuCommercialSendingEnabled, reputationGuardMode } from '../lib/launchControls.js'
 import { evaluateSenderReputation } from '../lib/senderReputation.js'
-import { hasConsent } from '../lib/consent.js'
+import { hasConsent, hasAuConsent } from '../lib/consent.js'
 import { isSuppressed } from '../lib/suppressions.js'
 import { canContactRecipient, type ContactPolicyReason } from './contactPolicy.js'
 import { recordAudit } from '../lib/audit.js'
@@ -18,6 +18,8 @@ export type OutboundSendReasonCode =
   | 'RECIPIENT_REQUIRED'
   | 'RECIPIENT_SUPPRESSED'
   | 'CONSENT_REQUIRED'
+  | 'AU_SENDING_DISABLED'
+  | 'AU_CONSENT_REQUIRED'
   | ContactPolicyReason
 
 export interface OutboundSendDecision {
@@ -116,7 +118,7 @@ export async function authorizeOutboundSend(input: AuthorizeOutboundSendInput): 
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
-    select: { sendSuppressed: true, lawfulBasis: true, targetsCanada: true },
+    select: { sendSuppressed: true, lawfulBasis: true, targetsCanada: true, targetsAustralia: true },
   })
   if (!workspace) return finalizeDecision(input, deny('WORKSPACE_NOT_FOUND'))
   if (workspace.sendSuppressed) return finalizeDecision(input, deny('WORKSPACE_SUPPRESSED'))
@@ -133,6 +135,15 @@ export async function authorizeOutboundSend(input: AuthorizeOutboundSendInput): 
       if (guardMode === 'enforce') return finalizeDecision(input, deny('REPUTATION_BLOCKED'))
       observations.push(`REPUTATION_DEGRADED:${reputation.reason}`)
     }
+  }
+
+  // Spam Act 2003. Evaluated BEFORE (and independent of) the dormant compliance gate and
+  // the batch fast-path: an Australia-targeting workspace is blocked outright for
+  // commercial contexts until AU sending is explicitly enabled after legal review.
+  // Human replies to inbound mail are unaffected. Non-Australian workspaces skip this.
+  const targetsAustralia = workspace.targetsAustralia === true
+  if (targetsAustralia && input.context !== 'reply' && !isAuCommercialSendingEnabled()) {
+    return finalizeDecision(input, deny('AU_SENDING_DISABLED', observations))
   }
 
   if (input.recipientChecks === false) return finalizeDecision(input, allow(observations))
@@ -156,6 +167,11 @@ export async function authorizeOutboundSend(input: AuthorizeOutboundSendInput): 
     if (!(await hasConsent(input.workspaceId, input.email))) {
       return finalizeDecision(input, deny('CONSENT_REQUIRED', observations))
     }
+  }
+
+  // Spam Act: per-recipient, evidence-backed consent. Fail closed on any gap.
+  if (targetsAustralia && !(await hasAuConsent(input.workspaceId, input.email))) {
+    return finalizeDecision(input, deny('AU_CONSENT_REQUIRED', observations))
   }
 
   return finalizeDecision(input, allow(observations))
