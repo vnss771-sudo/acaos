@@ -15,7 +15,7 @@ test('D1: FetchTimeoutError message never contains the query string', () => {
   const err = new FetchTimeoutError('https://www.planningalerts.org.au/api/applications.json?key=secret&page=1', 1000)
   assert.ok(!err.message.includes('secret'))
   assert.ok(!err.message.includes('key='))
-  assert.match(err.message, /planningalerts\.org\.au\/api\/applications\.json/)
+  assert.equal(err.message, 'Request to https://www.planningalerts.org.au/api/applications.json timed out after 1000ms')
 })
 
 test('D1: redactUrl strips userinfo, query and fragment; tolerates junk', () => {
