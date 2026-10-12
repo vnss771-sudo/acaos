@@ -13,14 +13,28 @@ const prisma = new PrismaClient({ log: ['error'] })
 const RE = /[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)=[^&\s"'<>)]+/i
 
 try {
-  const rows = await prisma.discoverySourceState.findMany({
-    select: { workspaceId: true, source: true, lastError: true, lastWarning: true },
-  })
-  const hits = rows.filter((r) => RE.test(r.lastError ?? '') || RE.test(r.lastWarning ?? ''))
-  console.log(`checked ${rows.length} rows; ${hits.length} contain a credential-like query parameter`)
-  for (const h of hits) console.log(`  workspace=${h.workspaceId} source=${h.source}`)
-  if (hits.length) console.log('ACTION NEEDED: rotate the affected provider key and scrub these rows (with explicit approval).')
-  process.exitCode = hits.length ? 1 : 0
+  let checked = 0
+  let affected = 0
+  let cursor
+  const batchSize = 500
+  for (;;) {
+    const rows = await prisma.discoverySourceState.findMany({
+      select: { id: true, lastError: true, lastWarning: true },
+      orderBy: { id: 'asc' },
+      take: batchSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    })
+    for (const row of rows) {
+      if (RE.test(row.lastError ?? '') || RE.test(row.lastWarning ?? '')) affected++
+    }
+    checked += rows.length
+    if (rows.length < batchSize) break
+    cursor = rows[rows.length - 1].id
+  }
+  // No emails, key values, diagnostics, or workspace identifiers are printed.
+  console.log(`checked ${checked} rows; ${affected} contain a credential-like query parameter`)
+  if (affected) console.log('ACTION NEEDED: assess affected provider secrets before approved rotation and cleanup.')
+  process.exitCode = affected ? 1 : 0
 } finally {
   await prisma.$disconnect()
 }

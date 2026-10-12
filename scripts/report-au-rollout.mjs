@@ -7,8 +7,9 @@
  *   DATABASE_URL=... NODE_OPTIONS=--conditions=acaos-src node scripts/report-au-rollout.mjs [--json] [--days=90]
  */
 import { PrismaClient } from '@prisma/client'
+import { parseRolloutDays, summarizeSentRecord, classifyRolloutExposure } from './lib-au-rollout.mjs'
 
-const days = Number((process.argv.find((a) => a.startsWith('--days=')) ?? '--days=90').slice(7)) || 90
+const days = parseRolloutDays(process.argv.slice(2))
 const asJson = process.argv.includes('--json')
 const prisma = new PrismaClient({ log: ['error'] })
 const since = new Date(Date.now() - days * 86_400_000)
@@ -20,23 +21,25 @@ try {
     prisma.workspace.count({ where: { targetsCanada: true } }),
   ])
 
-  // Recipient jurisdiction signal from what was actually sent (TLD only; the address itself is never output).
-  const sent = await prisma.outreachSent.findMany({
-    where: { sentAt: { gte: since } },
-    select: { workspaceId: true, toEmail: true },
-  })
+  // Read only: bounded keyset pagination. Do not materialize every recipient email
+  // into memory or log raw addresses. The .au TLD is a signal, NOT a legal ruling.
   const byWs = new Map()
-  for (const r of sent) {
-    const host = String(r.toEmail ?? '').split('@')[1]?.toLowerCase() ?? ''
-    const isAu = host.endsWith('.au')
-    const w = byWs.get(r.workspaceId) ?? { sent: 0, au: 0 }
-    w.sent += 1; if (isAu) w.au += 1
-    byWs.set(r.workspaceId, w)
+  const pageSize = 500
+  let cursor
+  while (true) {
+    const page = await prisma.outreachSent.findMany({
+      where: { sentAt: { gte: since } },
+      select: { id: true, workspaceId: true, toEmail: true },
+      orderBy: { id: 'asc' },
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    })
+    for (const r of page) summarizeSentRecord(byWs, r.workspaceId, r.toEmail)
+    if (page.length < pageSize) break
+    cursor = page.at(-1).id
   }
   const flaggedIds = new Set((await prisma.workspace.findMany({ where: { targetsAustralia: true }, select: { id: true } })).map((w) => w.id))
-  const sendingWorkspaces = [...byWs.entries()]
-  const auRecipientWorkspaces = sendingWorkspaces.filter(([, v]) => v.au > 0)
-  const unflaggedWithAu = auRecipientWorkspaces.filter(([id]) => !flaggedIds.has(id))
+  const exposure = classifyRolloutExposure(byWs, flaggedIds)
 
   const consentByBasis = await prisma.consentRecord.groupBy({ by: ['basis'], _count: { _all: true } })
 
@@ -45,14 +48,13 @@ try {
     windowDays: days,
     workspaces: { total, targetsAustralia: flagged, targetsCanada: canada },
     sendingInWindow: {
-      workspaces: sendingWorkspaces.length,
-      workspacesWithAuTldRecipients: auRecipientWorkspaces.length,
-      unflaggedWorkspacesWithAuTldRecipients: unflaggedWithAu.length,
-      messages: sent.length,
-      messagesToAuTld: sendingWorkspaces.reduce((n, [, v]) => n + v.au, 0),
+      workspaces: exposure.sendingWorkspaces,
+      workspacesWithAuTldRecipients: exposure.workspacesWithAuTldRecipients,
+      unflaggedWorkspacesWithAuTldRecipients: exposure.unflaggedWorkspacesWithAuTldRecipients,
+      messages: exposure.messages,
+      messagesToAuTld: exposure.messagesToAuTld,
     },
-    // IDs only. These are the workspaces that send to .au recipients today but are NOT covered by the D2 gate.
-    unflaggedAuSenderWorkspaceIds: unflaggedWithAu.map(([id, v]) => ({ id, sent: v.sent, toAuTld: v.au })),
+    unflaggedAuSenderWorkspaceIds: exposure.unflaggedAuSenderWorkspaceIds,
     consentRecordsByBasis: Object.fromEntries(consentByBasis.map((g) => [g.basis, g._count._all])),
     note: 'TLD ".au" is a heuristic for an Australian link (Spam Act s7 also covers other connections). No addresses or names are printed.',
   }

@@ -36,6 +36,6 @@ test('checker: flags leaked key=/token= rows, exits 1, never prints the secret, 
   assert.equal(r.status, 1)
   assert.match(r.stdout, /3 rows; 2 contain/)
   assert.ok(!r.stdout.includes(SECRET) && !r.stderr.includes(SECRET), 'the secret must never be printed')
-  assert.match(r.stdout, /source=planningalerts/)
+  assert.ok(!r.stdout.includes(workspace.id) && !/source=|workspace=/.test(r.stdout), 'aggregate counts only: no workspace ids or sources')
   assert.deepEqual(await prisma.discoverySourceState.findMany({ orderBy: { source: 'asc' } }), before, 'read-only: no row changed')
 })

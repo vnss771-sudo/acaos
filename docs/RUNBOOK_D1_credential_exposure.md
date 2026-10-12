@@ -20,7 +20,7 @@ still *stored* until cleaned below.
 ```
 DATABASE_URL=<read-only replica or prod URL> node scripts/check-leaked-source-errors.mjs
 ```
-Prints row counts and `workspace=… source=…` identifiers only — never the matched text.
+Prints aggregate row counts only; no workspace identifiers, matched text or secret values.
 Exit 0 = clean; exit 1 = at least one row contains a credential-like parameter.
 Also consider whether the leaked text could exist elsewhere: application logs, log drains,
 Sentry events, backups/snapshots of the DB. Search them for `key=` against the PlanningAlerts
@@ -43,10 +43,10 @@ Run inside a transaction and check the row count matches step 1 before COMMIT:
 ```sql
 BEGIN;
 UPDATE "DiscoverySourceState"
-   SET "lastError"   = regexp_replace("lastError",   '([?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=)[^&[:space:]"''<>)]*', '\1[redacted]', 'gi'),
-       "lastWarning" = regexp_replace("lastWarning", '([?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=)[^&[:space:]"''<>)]*', '\1[redacted]', 'gi')
- WHERE "lastError" ~* '[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)='
-    OR "lastWarning" ~* '[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=';
+   SET "lastError"   = regexp_replace("lastError",   '([?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)=)[^&[:space:]"''<>)]*', '\1[redacted]', 'gi'),
+       "lastWarning" = regexp_replace("lastWarning", '([?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)=)[^&[:space:]"''<>)]*', '\1[redacted]', 'gi')
+ WHERE "lastError" ~* '[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)='
+    OR "lastWarning" ~* '[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)=';
 -- expect the same count the checker reported
 COMMIT;  -- or ROLLBACK
 ```
@@ -74,3 +74,11 @@ If any tenant's data could be implicated, assess notification obligations with c
 - The leak could only exist if `PLANNINGALERTS_API_KEY` was ever set on the **worker** service. Check the variable **names** (not values) in the Railway dashboard first; if it was never set, step 1's result is expected to be clean and no rotation is needed.
 - Sentry project `acaos` (org `benjamin-box`, EU region): search it for `planningalerts` + `key=` for step 5. Only one unresolved issue existed (an unrelated stale-chunk error).
 - Run step 1 from a machine you control using a **read-only** database role; do not paste the connection string into tickets.
+
+## D1 checker/reporting hardening addendum (Phase 1)
+- The check script scans in bounded, 500-row pages and prints aggregate counts only.
+- The database diagnostic check cannot exclude leaked values in old logs, Sentry, exported reports or backups. Investigate those separately with approved access.
+- Scrub logic now includes `guid=` in both matching and replacement expressions, consistent with the checker.
+- Do not conclude that a matching `guid=` value is definitely an ABR credential: investigate which endpoint and provider it came from without logging the secret.
+- A database snapshot or concurrent writes can change totals between the checker and the scrub. Re-check counts within the authorized transaction and roll back unexpected differences.
+- Test scrubbing against sanitized fixtures and a backup before any production UPDATE.
