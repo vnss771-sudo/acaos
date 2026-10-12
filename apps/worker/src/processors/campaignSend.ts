@@ -24,6 +24,7 @@ import type { Prisma } from '@prisma/client'
 import { bulkCheckSuppression } from '@acaos/backend-core/lib/suppressions.js'
 import { checkDraftPolicy, checkClaimGrounding, sensitiveDataViolation, type DraftPolicyConfig, type DraftPolicyViolation } from '@acaos/backend-core/lib/policyCheck.js'
 import { assertOutreachTone, OutreachToneError } from '@acaos/backend-core/lib/outreachTone.js'
+import { verifiedAbn } from '@acaos/backend-core/lib/abnLookup.js'
 import { buildOutreachEmail, resolveUnsubscribeBaseUrl } from '@acaos/backend-core/lib/emailFooter.js'
 import { isDeliverableEmail } from '@acaos/backend-core/lib/normalize.js'
 import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
@@ -113,7 +114,7 @@ async function loadCampaignSendConfig(campaignId: string, workspaceId: string) {
     prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: {
-        senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true,
+        senderBusinessName: true, senderPostalAddress: true, senderAbn: true, senderAbnStatus: true, sendSuppressed: true,
         lawfulBasis: true, targetsCanada: true, targetsAustralia: true,
       },
     }),
@@ -496,6 +497,7 @@ async function dispatchOutreachEmail(p: {
   unsubscribeToken: string
   senderBusinessName: string | null | undefined
   senderPostalAddress: string | null | undefined
+  senderAbn?: string | null
   linkedIntent: { id: string } | null
   autoFollowupsEnabled: boolean
 }): Promise<{ ok: true } | { ok: false }> {
@@ -504,6 +506,7 @@ async function dispatchOutreachEmail(p: {
   const { htmlBody, textBody, unsubscribeUrl } = buildOutreachEmail({
     body: p.body, appUrl: p.appUrl, unsubscribeToken: p.unsubscribeToken,
     senderBusinessName: p.senderBusinessName, senderPostalAddress: p.senderPostalAddress,
+    senderAbn: p.senderAbn,
   })
 
   try {
@@ -955,6 +958,7 @@ export async function sendCampaignBatch(
       workspaceId, campaignId, appUrl, unsubscribeToken,
       senderBusinessName: workspace?.senderBusinessName,
       senderPostalAddress: workspace?.senderPostalAddress,
+      senderAbn: verifiedAbn(workspace),
       linkedIntent, autoFollowupsEnabled,
     })
     if (dispatchOutcome.ok) {

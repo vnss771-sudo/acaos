@@ -1,0 +1,71 @@
+name: Discovery source smoke check
+
+# Weekly live check of the AusTender connector (no API key) so an upstream format
+# change is caught before customers see empty results. PlanningAlerts is NOT checked
+# here: it needs a paid API key, and keys must stay out of this public workflow.
+on:
+  schedule:
+    - cron: '17 21 * * 0' # Sunday 21:17 UTC (Monday morning in Australia)
+  workflow_dispatch:
+
+concurrency:
+  group: discovery-smoke
+  cancel-in-progress: false
+
+# Least privilege by default; only the alert job below can write issues.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '26'
+
+jobs:
+  smoke:
+    name: AusTender live smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Smoke-test AusTender
+        # Deliberately no secrets in this step's environment.
+        env:
+          NODE_OPTIONS: --conditions=acaos-src
+          PLANNINGALERTS_API_KEY: ''
+        run: npx tsx scripts/smoke-discovery-sources.mjs --source=austender
+
+  alert:
+    name: Open an issue on failure
+    needs: smoke
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Discovery smoke check failing (AusTender)"
+          existing=$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          body="The weekly AusTender smoke check failed: $RUN_URL
+
+          Likely causes: upstream format change, API outage, or the evidence-link format. Run \`npx tsx scripts/smoke-discovery-sources.mjs --source=austender\` locally to reproduce."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi

@@ -13,6 +13,8 @@ import {
 import { z } from 'zod'
 import type { Assert, Extends, ComplianceUpdateRequest, ConsentRecordRequest, AutonomyUpdateRequest, AutonomyStatus } from '@acaos/shared'
 import { createHash } from 'node:crypto'
+import { lookupAbn, normalizeAbn, isValidAbnChecksum, AbnLookupNotConfiguredError } from '@acaos/backend-core/lib/abnLookup.js'
+import { ProviderError } from '@acaos/backend-core/lib/providerClient.js'
 import { isAuConsentBasis, validateAuConsentEvidence } from '@acaos/backend-core/lib/auConsent.js'
 import { assessAutonomy, AUTONOMY_CONSENT_VERSION } from '@acaos/backend-core/lib/autonomyReadiness.js'
 
@@ -46,6 +48,8 @@ const consentSchema = z.object({
 })
 type _ConsentConforms = Assert<Extends<z.infer<typeof consentSchema>, ConsentRecordRequest>>
 
+const abnVerifySchema = z.object({ abn: z.string().trim().min(1).max(20) })
+
 const autonomyUpdateSchema = z.object({
   optIn: z.boolean(),
   consentVersion: z.string().trim().max(64).optional(),
@@ -65,6 +69,7 @@ const POSTURE_SELECT = {
   lawfulBasis: true, liaAcknowledgedAt: true, termsAcceptedAt: true, termsVersion: true,
   subprocessorsAckAt: true, subprocessorsAckVersion: true, targetsCanada: true, targetsAustralia: true,
   dpaAcknowledgedAt: true, dpaAckVersion: true,
+  senderAbn: true, senderAbnStatus: true, senderAbnEntityName: true, senderAbnVerifiedAt: true,
 } as const
 
 export function registerComplianceRoutes(workspaceRouter: Router) {
@@ -204,6 +209,46 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
         entityType: 'consentRecord', entityId: row.id, metadata: { basis: body.basis, source: body.source },
       })
       res.status(201).json({ id: row.id, recordedAt: row.recordedAt.toISOString() })
+    })
+  )
+
+  // Verify the sender's ABN against the Australian Business Register and store the result.
+  // Admin+. The ABN is persisted only when the ABR reports it ACTIVE (the footer prints it only
+  // then). The ABR GUID never appears in a response, log or audit row.
+  workspaceRouter.post(
+    '/:id/compliance/abn',
+    asyncHandler(async (req, res) => {
+      const user = requireUser(req)
+      const { id: workspaceId } = parseParams(workspaceParamsSchema, req)
+      await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
+      const body = parseBody(abnVerifySchema, req)
+
+      const abn = normalizeAbn(body.abn)
+      if (!abn || !isValidAbnChecksum(abn)) throw new ApiError(400, 'That is not a valid ABN (11 digits with a valid checksum)')
+
+      let result
+      try {
+        result = await lookupAbn(abn)
+      } catch (err) {
+        if (err instanceof AbnLookupNotConfiguredError) throw new ApiError(503, 'ABN verification is not configured on this server')
+        if (err instanceof ProviderError) throw new ApiError(502, 'The ABN register could not be reached; try again shortly')
+        throw err
+      }
+      if (!result) throw new ApiError(404, 'No such ABN was found in the Australian Business Register')
+
+      const active = result.status === 'active'
+      await prisma.workspace.update({
+        where: { id: workspaceId },
+        data: active
+          ? { senderAbn: result.abn, senderAbnStatus: 'active', senderAbnEntityName: result.entityName, senderAbnVerifiedAt: new Date() }
+          : { senderAbn: null, senderAbnStatus: null, senderAbnEntityName: null, senderAbnVerifiedAt: null },
+      })
+      void recordAudit({
+        workspaceId, actorUserId: user.id, type: 'compliance.abn.verified',
+        entityType: 'workspace', entityId: workspaceId, metadata: { abn: result.abn, status: result.status },
+      })
+      if (!active) throw new ApiError(422, 'That ABN is cancelled, so it will not be shown in your email footer')
+      res.json({ abn: result.abn, status: result.status, entityName: result.entityName, entityType: result.entityType })
     })
   )
 }

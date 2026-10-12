@@ -144,6 +144,12 @@ model Workspace {
   onboardingCompleted     Boolean                  @default(false)
   senderBusinessName      String?
   senderPostalAddress     String?
+  // ABN Lookup verification (ABR web services). Set only by the verify endpoint, only for an
+  // Active ABN; the footer shows the ABN only while senderAbnStatus === 'active'.
+  senderAbn               String?
+  senderAbnStatus         String?
+  senderAbnEntityName     String?
+  senderAbnVerifiedAt     DateTime?
   // Compliance posture (operator-attested). Null = not yet completed. Surfaced via
   // the compliance API + Settings panel; enforced by getSendReadiness only when
   // COMPLIANCE_GATE_ENABLED is on (ships dormant).
