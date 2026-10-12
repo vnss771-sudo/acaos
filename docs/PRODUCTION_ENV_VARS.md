@@ -143,3 +143,5 @@ For the supervised production pilot, `npm run pilot:policy` treats the following
 - a resolvable release commit and release ID
 
 The gate emits `release-preflight.json` and `release-preflight.md`. A FAIL makes the command exit non-zero. WARN is reserved for non-critical posture such as relying on `WEB_URL` as the sole CORS origin fallback.
+
+- `AU_JURISDICTION_REVIEW_REQUIRED` — optional staged rollout stop (default off). When `true`, campaign and follow-up dispatch for all workspaces with `targetsAustralia !== true` is denied (`AU_JURISDICTION_REVIEW_REQUIRED`). This also blocks legitimate non-Australian workspaces, so only enable after a workspace inventory, impact assessment and owner approval. Replies remain governed by existing suppression checks. This is not jurisdiction classification or legal validation.

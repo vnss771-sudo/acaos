@@ -122,6 +122,9 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
       await assertMinimumWorkspaceRole(user.id, workspaceId, 'admin')
 
       const body = parseBody(complianceUpdateSchema, req)
+      // An admin must not be able to remove an already-recorded Australian link
+      // and thereby disable Australia-specific outbound restrictions. A legally
+      // reviewed correction requires a separate operator-controlled procedure.
       const data: Record<string, unknown> = {}
       if (body.lawfulBasis !== undefined) data.lawfulBasis = body.lawfulBasis
       if (body.targetsCanada !== undefined) data.targetsCanada = body.targetsCanada
@@ -132,7 +135,20 @@ export function registerComplianceRoutes(workspaceRouter: Router) {
       if (body.acknowledgeDpa) { data.dpaAcknowledgedAt = new Date(); data.dpaAckVersion = DPA_VERSION }
       if (Object.keys(data).length === 0) throw new ApiError(400, 'No compliance fields to update')
 
-      const posture = await prisma.workspace.update({ where: { id: workspaceId }, data, select: POSTURE_SELECT })
+      // Atomic compare-and-update: a concurrent request must not be able to
+      // disable AU targeting after another request has enabled it.
+      let posture
+      if (body.targetsAustralia === false) {
+        const changed = await prisma.workspace.updateMany({
+          where: { id: workspaceId, targetsAustralia: false }, data,
+        })
+        if (changed.count !== 1) {
+          throw new ApiError(409, 'Australian targeting cannot be disabled in self-service; contact support for a reviewed correction')
+        }
+        posture = await prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: POSTURE_SELECT })
+      } else {
+        posture = await prisma.workspace.update({ where: { id: workspaceId }, data, select: POSTURE_SELECT })
+      }
       void recordAudit({
         workspaceId, actorUserId: user.id, type: 'compliance.updated',
         entityType: 'workspace', entityId: workspaceId, metadata: { fields: Object.keys(data) },
