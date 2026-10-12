@@ -15,6 +15,8 @@ export interface OutreachEmailParams {
   /** Sender identity for the legally-required physical-address line. */
   senderBusinessName?: string | null
   senderPostalAddress?: string | null
+  /** A VERIFIED, active ABN (11 digits). Pass null/undefined unless ABN Lookup confirmed it. */
+  senderAbn?: string | null
 }
 
 export interface RenderedOutreachEmail {
@@ -38,6 +40,12 @@ export function resolveUnsubscribeBaseUrl(env: NodeJS.ProcessEnv = process.env):
   return env.NODE_ENV === 'production' ? null : 'http://localhost:4000'
 }
 
+/** "51824753556" -> "51 824 753 556"; anything that is not exactly 11 digits is dropped. */
+function formatAbn(abn: string | null | undefined): string | null {
+  const d = (abn ?? '').replace(/\s+/g, '')
+  return /^\d{11}$/.test(d) ? `${d.slice(0, 2)} ${d.slice(2, 5)} ${d.slice(5, 8)} ${d.slice(8)}` : null
+}
+
 /**
  * Render the HTML + text bodies for an outreach email, including the unsubscribe
  * link and (when configured) the sender business name + physical postal address.
@@ -49,8 +57,9 @@ export function buildOutreachEmail(p: OutreachEmailParams): RenderedOutreachEmai
 
   const name = p.senderBusinessName?.trim()
   const addr = p.senderPostalAddress?.trim()
-  const senderHtml = name ? `<br>${escapeHtml(name)}${addr ? `, ${escapeHtml(addr)}` : ''}` : ''
-  const senderText = name ? `\n${name}${addr ? `, ${addr}` : ''}` : ''
+  const abn = formatAbn(p.senderAbn)
+  const senderHtml = name ? `<br>${escapeHtml(name)}${addr ? `, ${escapeHtml(addr)}` : ''}${abn ? `<br>ABN ${abn}` : ''}` : ''
+  const senderText = name ? `\n${name}${addr ? `, ${addr}` : ''}${abn ? `\nABN ${abn}` : ''}` : ''
 
   const footer = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:12px;color:#999">${FOOTER_NOTICE} <a href="${unsubscribeUrl}" style="color:#999">unsubscribe here</a>.${senderHtml}</p>`
   const htmlBody = `<p>${escapeHtml(p.body).replace(/\n/g, '<br>')}</p>${footer}`

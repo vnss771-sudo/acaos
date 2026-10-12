@@ -10,7 +10,7 @@
 import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient({ log: ['error'] })
-const RE = /[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=[^&\s"'<>)]+/i
+const RE = /[?&;](api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)=[^&\s"'<>)]+/i
 
 try {
   const rows = await prisma.discoverySourceState.findMany({

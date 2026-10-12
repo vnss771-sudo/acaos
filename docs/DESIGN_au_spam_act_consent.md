@@ -35,3 +35,17 @@ Rollback: drop the columns (no data other than new evidence is lost).
 Consent evidence rules and thresholds, role-address vs personal-address treatment, evidence
 retention period, whether `express` evidence excerpts are sufficient, sender-identification
 and unsubscribe copy for AU, and whether replies/transactional mail need separate treatment.
+
+## E2 — ABN verification of the sender (implemented)
+`POST /api/workspaces/:id/compliance/abn` (admin) checks the ABN checksum locally, then calls the ABR
+JSON service (`lib/abnLookup.ts`, GET, breaker `abr-lookup`). Only an **Active** ABN is stored on
+`Workspace.senderAbn*` and printed as an `ABN xx xxx xxx xxx` footer line (`verifiedAbn`); a cancelled
+ABN clears any stored one. The `ABR_GUID` secret travels as `guid=` and is scrubbed from all errors,
+logs and diagnostics. Not yet done: verifying *prospect* entities, and a Settings UI field.
+**Unverified assumption:** the ABR JSON field names (`Abn`, `AbnStatus`, `EntityName`,
+`EntityTypeName`, `Message`) and JSONP wrapper are coded from ABR's published service and fixtures;
+confirm against the live service with a real GUID (use ABR's documented test ABNs) before enabling.
+
+## E5 — weekly discovery smoke check (implemented)
+`.github/workflows/discovery-smoke.yml`: Sundays 21:17 UTC + manual dispatch; AusTender only (no key,
+no secrets); on failure opens/comments a single tracking issue (`issues: write` on that job only).

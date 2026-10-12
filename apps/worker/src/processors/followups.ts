@@ -14,6 +14,7 @@ import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
 import { resolveSendWindow, isWithinSendWindow } from '@acaos/backend-core/lib/sendWindow.js'
 import type { Prisma } from '@prisma/client'
+import { verifiedAbn } from '@acaos/backend-core/lib/abnLookup.js'
 import { buildOutreachEmail, resolveUnsubscribeBaseUrl } from '@acaos/backend-core/lib/emailFooter.js'
 import { contactEventData } from '@acaos/backend-core/lib/contactEvents.js'
 import { campaignDailyStatsUpsertArgs, utcDayStart } from '@acaos/backend-core/lib/campaignStats.js'
@@ -87,7 +88,7 @@ export async function sendFollowupTask(
     // message needs it, follow-ups included (previously omitted here).
     prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true, lawfulBasis: true, targetsCanada: true, targetsAustralia: true },
+      select: { senderBusinessName: true, senderPostalAddress: true, senderAbn: true, senderAbnStatus: true, sendSuppressed: true, lawfulBasis: true, targetsCanada: true, targetsAustralia: true },
     }),
   ])
 
@@ -144,6 +145,7 @@ export async function sendFollowupTask(
     body, appUrl, unsubscribeToken,
     senderBusinessName: workspace?.senderBusinessName,
     senderPostalAddress: workspace?.senderPostalAddress,
+    senderAbn: verifiedAbn(workspace),
   })
 
   // UTC day boundary — see the matching comment in sendCampaignBatch; must stay

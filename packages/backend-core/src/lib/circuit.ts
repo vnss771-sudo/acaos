@@ -140,7 +140,7 @@ export class CircuitBreaker {
 // Wire a shared store onto every singleton breaker. Called once at startup (api
 // and worker) when a Redis connection is available; no-op-safe to omit.
 export function attachBreakerStore(store: BreakerStore): void {
-  for (const b of [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, hunterBreaker, austenderBreaker, planningAlertsBreaker, stripeBreaker]) {
+  for (const b of [openAiBreaker, apolloBreaker, apolloSearchBreaker, googlePlacesBreaker, hunterBreaker, austenderBreaker, planningAlertsBreaker, abrBreaker, stripeBreaker]) {
     b.setStore(store)
   }
 }
@@ -153,6 +153,7 @@ export const googlePlacesBreaker = new CircuitBreaker('google-places', 5, 60_000
 export const hunterBreaker      = new CircuitBreaker('hunter',         5, 60_000)
 export const austenderBreaker   = new CircuitBreaker('austender',      5, 5 * 60_000)
 export const planningAlertsBreaker = new CircuitBreaker('planningalerts', 5, 5 * 60_000)
+export const abrBreaker         = new CircuitBreaker('abr-lookup',     5, 60_000)
 export const stripeBreaker      = new CircuitBreaker('stripe',         5, 30_000)
 
 // Point-in-time snapshot of every singleton breaker for the /metrics scrape, so an

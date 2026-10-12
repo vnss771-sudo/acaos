@@ -20,7 +20,7 @@ export function redactUrl(url: string): string {
   }
 }
 
-const SECRET_PARAM_RE = /([?&;](?:api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=)[^&\s"'<>)]*/gi
+const SECRET_PARAM_RE = /([?&;](?:api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature|guid)=)[^&\s"'<>)]*/gi
 
 /** Mask credential-bearing query parameters in any free text (errors, logs, stored diagnostics). */
 export function scrubSecrets(text: string): string {

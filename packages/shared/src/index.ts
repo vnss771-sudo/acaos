@@ -833,6 +833,7 @@ export interface RouteContracts {
   'PATCH /api/workspaces/:id/compliance': { params: { id: string }; body: ComplianceUpdateRequest; response: unknown }
   'GET /api/workspaces/:id/autonomy': { params: { id: string }; response: AutonomyStatus }
   'PATCH /api/workspaces/:id/autonomy': { params: { id: string }; body: AutonomyUpdateRequest; response: AutonomyStatus }
+  'POST /api/workspaces/:id/compliance/abn': { params: { id: string }; body: { abn: string }; response: { abn: string; status: string; entityName: string; entityType: string | null } }
   'POST /api/workspaces/:id/consent': { params: { id: string }; body: ConsentRecordRequest; response: { id: string; recordedAt: string } }
   'PUT /api/workspaces/:id/icp': { params: { id: string }; body: UpdateIcpRequest; response: unknown }
   'PUT /api/workspaces/:id/business-context': { params: { id: string }; body: UpdateBusinessContextRequest; response: { businessContext: string | null } }
