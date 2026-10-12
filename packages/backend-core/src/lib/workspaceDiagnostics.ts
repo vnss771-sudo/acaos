@@ -5,6 +5,7 @@
 // SMTP/IMAP passwords, OAuth tokens or mailbox content. Recent failures expose
 // only event type, entity identity and time — never audit metadata. Callers run
 // it inside the workspace's tenant context; every query is workspace-scoped.
+import { scrubSecrets } from './fetchWithTimeout.js'
 import { prisma } from './prisma.js'
 import { billingEntitlement } from './billingEntitlements.js'
 import { staleSendRecoveryMinutes } from './staleSends.js'
@@ -14,7 +15,7 @@ import { evaluateSenderReputation } from './senderReputation.js'
 const DAY_MS = 86_400_000
 /** Audit-event type fragments that indicate something went wrong. */
 const FAILURE_MARKERS = ['fail', 'error', 'block', 'deny', 'denied', 'reject', 'suppress']
-const clip = (s: string | null | undefined, n = 200) => (s ? s.replace(/\s+/g, ' ').trim().slice(0, n) : null)
+const clip = (s: string | null | undefined, n = 200) => (s ? scrubSecrets(s.replace(/\s+/g, ' ').trim()).slice(0, n) : null)
 
 type MailPosture = {
   smtpHost: string | null; smtpFrom: string | null; imapHost: string | null; authMethod: string

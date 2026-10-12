@@ -134,3 +134,13 @@ test('D6: POST timeout is not retried unless retryUnsafe', async () => {
   await assert.rejects(callProvider({ ...base, retryUnsafe: true }), ProviderError)
   assert.equal(calls, 3)
 })
+
+// ── D1 (read paths / historical rows) ─────────────────────────────────────────
+import { scrubSecrets } from '../packages/backend-core/src/lib/fetchWithTimeout.ts'
+test('D1: scrubSecrets masks credential params in free text, leaves benign params', () => {
+  const t = 'GET https://x.test/a?page=2&key=abc123&token=zzz failed; api_key=Q'
+  const out = scrubSecrets(t)
+  assert.ok(!/abc123|zzz/.test(out))
+  assert.match(out, /page=2/)
+  assert.match(out, /key=\[redacted\]/)
+})

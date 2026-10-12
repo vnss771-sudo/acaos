@@ -8,6 +8,8 @@
 // Observation only. Nothing here feeds opportunity scoring or ranking: early,
 // low-volume outcomes would otherwise reinforce whatever happened to win first.
 
+import { scrubSecrets } from './fetchWithTimeout.js'
+
 export type SourceHealthStatus = 'HEALTHY' | 'DEGRADED' | 'STALE' | 'FAILING' | 'SKIPPED' | 'UNKNOWN'
 
 export type SourceStateCounters = {
@@ -124,7 +126,7 @@ export function sourceHealthSnapshot(
     summary = s.lastWarning ? `Not running: ${s.lastWarning}` : 'Not running'
   } else if (failingNow) {
     status = 'FAILING'
-    summary = `Last run failed: ${s.lastError}`
+    summary = `Last run failed: ${scrubSecrets(s.lastError ?? '')}`
   } else if (!s.lastSuccessAt || opts.now.getTime() - s.lastSuccessAt.getTime() > STALE_AFTER_INTERVALS * opts.intervalMs) {
     status = 'STALE'
     summary = transport.hoursSinceSuccess != null ? `No successful read for ${Math.round(transport.hoursSinceSuccess)} h` : 'No successful read yet'

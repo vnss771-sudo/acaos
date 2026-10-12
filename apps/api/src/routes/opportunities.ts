@@ -9,6 +9,7 @@ import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import { TRADES, TRADE_IDS } from '@acaos/backend-core/lib/opportunityTaxonomy.js'
 import { AU_REGIONS, OPPORTUNITY_STATUSES } from '@acaos/backend-core/lib/opportunityTypes.js'
+import { scrubSecrets } from '@acaos/backend-core/lib/fetchWithTimeout.js'
 import { OPPORTUNITY_SOURCES } from '@acaos/backend-core/lib/opportunitySources.js'
 import { isOpportunityDiscoveryEnabled, opportunityDiscoveryIntervalMs } from '@acaos/backend-core/lib/opportunitySweep.js'
 import { sourceHealthSnapshot, type SourceStateCounters, type SourceYield } from '@acaos/backend-core/lib/sourceHealth.js'
@@ -96,7 +97,7 @@ opportunitiesRouter.get(
           configured: s.isConfigured,
           lastRunAt: st?.lastRunAt ?? null,
           lastSuccessAt: st?.lastSuccessAt ?? null,
-          lastError: st?.lastError ?? null,
+          lastError: st?.lastError ? scrubSecrets(st.lastError) : null,
           lastWarning: st?.lastWarning ?? null,
           lastMatched: st?.lastMatched ?? 0,
           health: sourceHealthSnapshot(st ?? null, { now, intervalMs, yieldStats: yields.get(s.name) ?? null }),

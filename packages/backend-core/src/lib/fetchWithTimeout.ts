@@ -20,6 +20,13 @@ export function redactUrl(url: string): string {
   }
 }
 
+const SECRET_PARAM_RE = /([?&;](?:api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=)[^&\s"'<>)]*/gi
+
+/** Mask credential-bearing query parameters in any free text (errors, logs, stored diagnostics). */
+export function scrubSecrets(text: string): string {
+  return text.replace(SECRET_PARAM_RE, '$1[redacted]')
+}
+
 export class FetchTimeoutError extends Error {
   constructor(url: string, timeoutMs: number) {
     super(`Request to ${redactUrl(url)} timed out after ${timeoutMs}ms`)
