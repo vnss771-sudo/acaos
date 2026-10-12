@@ -181,7 +181,7 @@ test('D6: GET still retries 429/5xx; POST retries only with explicit retryUnsafe
 test('D6: no production call site opts a billable POST into retryUnsafe', async () => {
   const { execSync } = await import('node:child_process')
   const hits = execSync(
-    "grep -rln 'retryUnsafe' packages apps --include=*.ts --exclude-dir=node_modules || true",
+    "grep -rln 'retryUnsafe' packages apps --include=*.ts --exclude-dir=node_modules --exclude-dir=dist || true",
     { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' },
   ).trim().split('\n').filter((f) => f && !f.includes('providerClient.ts'))
   assert.deepEqual(hits, [], 'retryUnsafe may only be set after confirming the provider does not bill ambiguous attempts')
