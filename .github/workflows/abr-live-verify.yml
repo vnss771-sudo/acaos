@@ -1,0 +1,39 @@
+name: ABR live verification
+
+# Manual only. Runs scripts/verify-abr-live.mjs against the real ABN Lookup JSON service using the
+# repository secret ABR_GUID and ABR's documented test ABNs. Never runs on PRs or schedules, so the
+# secret is never exposed to fork code.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '26'
+
+jobs:
+  verify:
+    name: ABN Lookup live contract check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Verify ABR contract
+        env:
+          NODE_OPTIONS: --conditions=acaos-src
+          ABR_GUID: ${{ secrets.ABR_GUID }}
+        run: |
+          if [ -z "$ABR_GUID" ]; then echo "::error::Repository secret ABR_GUID is not set"; exit 2; fi
+          npx tsx scripts/verify-abr-live.mjs

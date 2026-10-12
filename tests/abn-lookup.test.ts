@@ -136,3 +136,14 @@ test('ABR_ENDPOINT override is honoured outside production and ignored in produc
   }
   assert.deepEqual(seen, ['http://127.0.0.1:4599', 'https://abr.business.gov.au'])
 })
+
+// ── contract per ABR's official JSON sample (Phase 1 verification) ───────────
+test('lookupAbn: a payload without an `Abn` key (as in ABR\'s sample) is accepted; Message means no result', async () => {
+  const noAbnKey = JSON.stringify({ Acn: '', EntityName: 'DEPT OF INDUSTRY', AbnStatus: 'Active', AbnStatusEffectiveFrom: '2000-01-01', EntityTypeName: 'Commonwealth Government Entity', EntityTypeCode: 'CGE', Gst: '2000-07-01', AddressState: 'ACT', AddressPostcode: '2601', BusinessName: [], Message: '' })
+  const out = await lookupAbn(ABN, { guid: GUID, breaker: passthrough, fetchImpl: ok(`callback(${noAbnKey})`) })
+  assert.equal(out?.status, 'active'); assert.equal(out?.entityName, 'DEPT OF INDUSTRY')
+  const withMsg = JSON.stringify({ EntityName: '', AbnStatus: '', Message: 'Search text is not a valid ABN or ACN', BusinessName: [] })
+  assert.equal(await lookupAbn(ABN, { guid: GUID, breaker: passthrough, fetchImpl: ok(`callback(${withMsg})`) }), null)
+  const suppressed = JSON.stringify({ EntityName: '', AbnStatus: 'Active', Message: '', BusinessName: [] })
+  assert.equal(await lookupAbn(ABN, { guid: GUID, breaker: passthrough, fetchImpl: ok(`callback(${suppressed})`) }), null, 'suppressed (nameless) entities cannot be verified')
+})
