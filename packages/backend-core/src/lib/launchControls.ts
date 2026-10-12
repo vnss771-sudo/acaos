@@ -90,6 +90,16 @@ export function isAuCommercialSendingEnabled(): boolean {
   return parseBool(process.env.AU_COMMERCIAL_SENDING_ENABLED, false)
 }
 
+/**
+ * Opt-in operational stop (DEFAULT OFF) for jurisdiction review: when true, campaign/follow-up sends from every
+ * workspace that is NOT flagged targetsAustralia are denied (AU_JURISDICTION_REVIEW_REQUIRED). It does not guess
+ * jurisdiction. It also blocks legitimate non-Australian workspaces, so enable only after an impact assessment
+ * and explicit owner approval. Read live, so it can be flipped without a deploy.
+ */
+export function isAuJurisdictionReviewRequired(): boolean {
+  return parseBool(process.env.AU_JURISDICTION_REVIEW_REQUIRED, false)
+}
+
 export type ReputationGuardMode = 'off' | 'observe' | 'enforce'
 
 /**

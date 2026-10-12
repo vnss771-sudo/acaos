@@ -118,6 +118,12 @@ describe('AuComplianceSection — targeting + readiness', () => {
     expect(onPosture).toHaveBeenCalledWith({ targetsAustralia: true })
   })
 
+  test('Australian targeting cannot be switched off through the settings checkbox', () => {
+    renderIt(makeApi({}, [], false), posture({ targetsAustralia: true }))
+    expect(screen.getByRole('checkbox', { name: /Australian link/ })).toBeDisabled()
+    expect(screen.getByText(/locked on once enabled/)).toBeInTheDocument()
+  })
+
   test('with targeting on and AU sending disabled, the blocked-send explanation and failing readiness check are shown', async () => {
     renderIt(makeApi({}, [], false), posture({ targetsAustralia: true }))
     expect(await screen.findByText(/Sending is currently blocked for this workspace/)).toBeInTheDocument()

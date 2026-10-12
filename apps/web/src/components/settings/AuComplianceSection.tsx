@@ -213,10 +213,15 @@ export function AuComplianceSection({ api, workspace, toast, canManage, posture,
       {/* Targeting */}
       <div style={{ fontWeight: 600, color: colors.text, fontSize: 13, margin: '14px 0 8px' }}>Australian recipients</div>
       <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, color: colors.text, fontSize: 13, marginBottom: 8 }}>
-        <input type="checkbox" checked={posture.targetsAustralia} disabled={!canManage || savingTargeting}
+        <input type="checkbox" checked={posture.targetsAustralia} disabled={!canManage || savingTargeting || posture.targetsAustralia}
           onChange={e => setTargeting(e.target.checked)} />
         <span>We send to recipients with an Australian link (requires documented consent per recipient)</span>
       </label>
+      {posture.targetsAustralia && (
+        <div role="note" style={{ color: colors.textFaint, fontSize: 12, marginBottom: 8 }}>
+          Australian targeting is locked on once enabled. Contact support for a reviewed correction.
+        </div>
+      )}
       {posture.targetsAustralia && (
         <div role="note" style={{ color: colors.amber, fontSize: 12, marginBottom: 10 }}>
           {auCheck && !auCheck.ok

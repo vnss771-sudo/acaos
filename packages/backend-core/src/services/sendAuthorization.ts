@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js'
-import { isFeatureEnabled, isComplianceGateEnabled, isAuCommercialSendingEnabled, reputationGuardMode } from '../lib/launchControls.js'
+import { isFeatureEnabled, isComplianceGateEnabled, isAuCommercialSendingEnabled, isAuJurisdictionReviewRequired, reputationGuardMode } from '../lib/launchControls.js'
 import { evaluateSenderReputation } from '../lib/senderReputation.js'
 import { hasConsent, hasAuConsent } from '../lib/consent.js'
 import { isSuppressed } from '../lib/suppressions.js'
@@ -18,6 +18,7 @@ export type OutboundSendReasonCode =
   | 'RECIPIENT_REQUIRED'
   | 'RECIPIENT_SUPPRESSED'
   | 'CONSENT_REQUIRED'
+  | 'AU_JURISDICTION_REVIEW_REQUIRED'
   | 'AU_SENDING_DISABLED'
   | 'AU_CONSENT_REQUIRED'
   | ContactPolicyReason
@@ -142,6 +143,13 @@ export async function authorizeOutboundSend(input: AuthorizeOutboundSendInput): 
   // commercial contexts until AU sending is explicitly enabled after legal review.
   // Human replies to inbound mail are unaffected. Non-Australian workspaces skip this.
   const targetsAustralia = workspace.targetsAustralia === true
+  // Optional rollout safeguard: while enabled, every unclassified/non-AU workspace
+  // must be reviewed before campaign/follow-up dispatch. This deliberately pauses ALL
+  // non-AU workspaces; targetsAustralia=false cannot establish jurisdiction safely.
+  // Enable only after an operator-led inventory and impact assessment.
+  if (!targetsAustralia && input.context !== 'reply' && isAuJurisdictionReviewRequired()) {
+    return finalizeDecision(input, deny('AU_JURISDICTION_REVIEW_REQUIRED', observations))
+  }
   if (targetsAustralia && input.context !== 'reply' && !isAuCommercialSendingEnabled()) {
     return finalizeDecision(input, deny('AU_SENDING_DISABLED', observations))
   }

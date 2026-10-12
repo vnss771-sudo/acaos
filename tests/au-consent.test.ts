@@ -16,10 +16,10 @@ const express = (over: Record<string, unknown> = {}) => ({
   basis: 'express', evidenceAt: PAST, evidenceExcerpt: 'Ticked "yes, email me quotes" on form', ...over,
 })
 
-const saved = { au: process.env.AU_COMMERCIAL_SENDING_ENABLED, gate: process.env.COMPLIANCE_GATE_ENABLED, rep: process.env.REPUTATION_GUARD_MODE }
+const saved = { au: process.env.AU_COMMERCIAL_SENDING_ENABLED, gate: process.env.COMPLIANCE_GATE_ENABLED, rep: process.env.REPUTATION_GUARD_MODE, jurisdiction: process.env.AU_JURISDICTION_REVIEW_REQUIRED }
 afterEach(() => {
   resetPrisma()
-  for (const [k, v] of [['AU_COMMERCIAL_SENDING_ENABLED', saved.au], ['COMPLIANCE_GATE_ENABLED', saved.gate], ['REPUTATION_GUARD_MODE', saved.rep]] as const) {
+  for (const [k, v] of [['AU_COMMERCIAL_SENDING_ENABLED', saved.au], ['COMPLIANCE_GATE_ENABLED', saved.gate], ['REPUTATION_GUARD_MODE', saved.rep], ['AU_JURISDICTION_REVIEW_REQUIRED', saved.jurisdiction]] as const) {
     if (v === undefined) delete process.env[k]; else process.env[k] = v
   }
 })
@@ -152,4 +152,32 @@ test('AU workspace: human replies (inbox) are not blocked by the commercial gate
   installWorkspace({ targetsAustralia: true })
   const r = await authorizeOutboundSend({ workspaceId: 'ws', context: 'reply', email: 'a@x.test' }).catch((e) => e)
   assert.notEqual((r as any).code, 'AU_SENDING_DISABLED')
+})
+
+// Optional staged rollout: fail closed for all workspaces not flagged AU, including
+// an existing false value, until an operator has made a jurisdiction decision.
+test('jurisdiction review rollout gate blocks campaign batches and followups for unflagged workspaces', async () => {
+  process.env.REPUTATION_GUARD_MODE = 'off'
+  process.env.AU_JURISDICTION_REVIEW_REQUIRED = 'true'
+  installWorkspace({ targetsAustralia: false }, [])
+  for (const input of [
+    { workspaceId: 'ws', context: 'campaign' as const, recipientChecks: false },
+    { workspaceId: 'ws', context: 'followup' as const, email: 'a@x.test' },
+  ]) {
+    const decision = await authorizeOutboundSend(input)
+    assert.equal(decision.allowed, false)
+    assert.equal(decision.code, 'AU_JURISDICTION_REVIEW_REQUIRED')
+  }
+})
+
+test('jurisdiction review gate does not replace AU disabled gate or block human replies', async () => {
+  process.env.REPUTATION_GUARD_MODE = 'off'
+  process.env.AU_JURISDICTION_REVIEW_REQUIRED = 'true'
+  delete process.env.AU_COMMERCIAL_SENDING_ENABLED
+  installWorkspace({ targetsAustralia: true }, [])
+  assert.equal((await authorizeOutboundSend({ workspaceId: 'ws', context: 'campaign', recipientChecks: false })).code, 'AU_SENDING_DISABLED')
+  resetPrisma()
+  installWorkspace({ targetsAustralia: false }, [])
+  const reply = await authorizeOutboundSend({ workspaceId: 'ws', context: 'reply', email: 'a@x.test' })
+  assert.notEqual(reply.code, 'AU_JURISDICTION_REVIEW_REQUIRED')
 })

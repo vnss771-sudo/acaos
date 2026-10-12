@@ -71,6 +71,7 @@ export type SendSkipReason =
   | 'OUTSIDE_SEND_WINDOW'
   | 'CONSENT_REQUIRED'
   | 'AU_SENDING_DISABLED'
+  | 'AU_JURISDICTION_REVIEW_REQUIRED'
   | 'AU_CONSENT_REQUIRED'
   | 'HOLDOUT'
 
@@ -619,7 +620,7 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, SENSITIVE_DATA: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, AU_SENDING_DISABLED: 0, AU_CONSENT_REQUIRED: 0, HOLDOUT: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, AU_SENDING_DISABLED: 0, AU_JURISDICTION_REVIEW_REQUIRED: 0, AU_CONSENT_REQUIRED: 0, HOLDOUT: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
@@ -699,6 +700,8 @@ export async function sendCampaignBatch(
       skip('REPUTATION_BLOCKED', total)
     } else if (batchAuthorization.code === 'AU_SENDING_DISABLED') {
       skip('AU_SENDING_DISABLED', total)
+    } else if (batchAuthorization.code === 'AU_JURISDICTION_REVIEW_REQUIRED') {
+      skip('AU_JURISDICTION_REVIEW_REQUIRED', total)
     } else if (batchAuthorization.code === 'WORKSPACE_SUPPRESSED') {
       // Preserve the operator-drain semantics: the batch halts without creating
       // per-lead state, while still emitting the existing suppression metric.
