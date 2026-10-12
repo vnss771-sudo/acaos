@@ -1,6 +1,6 @@
 # Runbook — PlanningAlerts credential exposure (audit D1)
 
-**Status: prepared, NOT executed.** Every step that touches production needs explicit
+**Status: prepared, NOT executed. (Updated 2026-10-12 for the live topology.)** Every step that touches production needs explicit
 approval from the owner. Nothing here has been run against production.
 
 ## Background
@@ -59,3 +59,18 @@ than the fix per your retention policy. Document anything that cannot be purged.
 ## 6. Record
 Add an incident note: window, scope, rotation time, scrub counts, and who approved each step.
 If any tenant's data could be implicated, assess notification obligations with counsel.
+
+## Approval gates (nothing below happens without a written "yes" for that exact step)
+| Step | Destructive / outward? | Approver | Approved (who / when / scope) |
+|---|---|---|---|
+| 1 Run `check-leaked-source-errors.mjs` (read-only) | No (reads only; prints IDs, never text) | Owner | |
+| 3 Rotate the PlanningAlerts key (new key → set var → redeploy worker → revoke old) | **Yes – credential rotation, brief worker restart** | Owner | |
+| 4 Scrub rows (`UPDATE … regexp_replace`) after a DB backup | **Yes – production data change** | Owner | |
+| 5 Purge residual copies (logs/Sentry/backups) | **Yes – deletes telemetry** | Owner | |
+
+## Live topology (read from the Railway/Sentry connectors on 2026-10-12, read-only)
+- Production runs in the Railway project **ACAOS**, environment named **"Acaos "** (note the trailing space): services `@acaos/api`, `@acaos/worker`, `@acaos/web`, Postgres 18.6, Redis 8.2. All latest deployments were SUCCESS from `master` @ `c117df0`; **merges to `master` auto-deploy**, so the D1 fix (error scrubbing + read-path masking) is already live. Step 0's precondition is met.
+- A second environment named **"production"** exists with one *staged, uncommitted* change on the legacy service `acaos` (since 2026-10-10). Review and discard or apply it deliberately; it is unrelated to D1.
+- The leak could only exist if `PLANNINGALERTS_API_KEY` was ever set on the **worker** service. Check the variable **names** (not values) in the Railway dashboard first; if it was never set, step 1's result is expected to be clean and no rotation is needed.
+- Sentry project `acaos` (org `benjamin-box`, EU region): search it for `planningalerts` + `key=` for step 5. Only one unresolved issue existed (an unrelated stale-chunk error).
+- Run step 1 from a machine you control using a **read-only** database role; do not paste the connection string into tickets.
