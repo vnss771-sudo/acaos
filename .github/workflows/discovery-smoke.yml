@@ -42,7 +42,7 @@ jobs:
         env:
           NODE_OPTIONS: --conditions=acaos-src
           PLANNINGALERTS_API_KEY: ''
-        run: npx tsx scripts/smoke-discovery-sources.mjs --source=austender
+        run: node -e "console.error(\"forced failure to test alerting\"); process.exit(1)"
 
   alert:
     name: Open an issue on failure
