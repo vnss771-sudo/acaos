@@ -85,7 +85,9 @@ export async function collectProspectEvidence(
   try {
     rules = parseRobots((await fetchDoc(`${origin}/robots.txt`)).text)
   } catch (e) {
-    if (e instanceof WebsiteFetchError && e.reason === 'upstream_status' && (e.status === 404 || e.status === 410)) rules = { allow: [], disallow: [] }
+    const fe = e as { name?: string; reason?: string; status?: number }
+    // Duck-typed (not instanceof): the error class can be loaded through more than one module path.
+    if (fe?.name === 'WebsiteFetchError' && fe.reason === 'upstream_status' && (fe.status === 404 || fe.status === 410)) rules = { allow: [], disallow: [] }
     else return { status: 'robots_unavailable' }
   }
   if (!EVIDENCE_PATHS.some((p) => isPathAllowed(rules, p))) return { status: 'robots_disallows_all' }
@@ -107,7 +109,7 @@ export async function collectProspectEvidence(
     } catch (e) {
       // Ownership/contract errors from the store must not be swallowed as a mere page failure.
       if (e instanceof Error && /^(prospect_not_found_in_workspace|missing_scope|invalid_)/.test(e.message)) throw e
-      pages.push({ path, outcome: 'fetch_failed', reason: e instanceof WebsiteFetchError ? e.reason : 'error' })
+      pages.push({ path, outcome: 'fetch_failed', reason: (e as { name?: string }).name === 'WebsiteFetchError' ? (e as WebsiteFetchError).reason : 'error' })
     }
   }
   return { status: 'ok', pages, claimsSaved }
