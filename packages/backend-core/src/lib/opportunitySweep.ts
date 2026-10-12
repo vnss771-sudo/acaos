@@ -15,6 +15,7 @@ import { prisma } from './prisma.js'
 import { runInWorkspaceContext } from './tenantContext.js'
 import { matchOpportunity, isRejection, candidateContentHash } from './opportunityMatch.js'
 import { OPPORTUNITY_SOURCES, type OpportunitySource, type SourceFetchContext, type SourceFetchResult } from './opportunitySources.js'
+import { scrubSecrets } from './fetchWithTimeout.js'
 import type { DiscoveryProfileInput, OpportunityCandidate } from './opportunityTypes.js'
 
 /** Opt-in (default OFF): the sweep calls third-party APIs on a schedule. */
@@ -60,7 +61,9 @@ function profileInput(p: ProfileRow): DiscoveryProfileInput {
 }
 
 function errorMessage(err: unknown): string {
-  return (err instanceof Error ? err.message : String(err)).slice(0, 500)
+  const raw = err instanceof Error ? err.message : String(err)
+  // Defence in depth: never persist a credential-bearing query parameter.
+  return scrubSecrets(raw).slice(0, 500)
 }
 
 type Persisted = { created: number; updated: number; matched: number }

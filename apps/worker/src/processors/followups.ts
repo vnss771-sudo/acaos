@@ -87,7 +87,7 @@ export async function sendFollowupTask(
     // message needs it, follow-ups included (previously omitted here).
     prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true, lawfulBasis: true, targetsCanada: true },
+      select: { senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true, lawfulBasis: true, targetsCanada: true, targetsAustralia: true },
     }),
   ])
 
@@ -122,10 +122,10 @@ export async function sendFollowupTask(
       return { taskId, status: 'SKIPPED', reason: 'REPUTATION_UNAVAILABLE' }
     }
     if (authorization.code === 'REPUTATION_BLOCKED') incReputationBlock('send-followup')
-    if (authorization.code === 'CONSENT_REQUIRED') {
+    if (authorization.code === 'CONSENT_REQUIRED' || authorization.code === 'AU_CONSENT_REQUIRED') {
       await recordCriticalAudit({
         workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: leadId,
-        metadata: { campaignId, reason: workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada', followup: true },
+        metadata: { campaignId, reason: authorization.code === 'AU_CONSENT_REQUIRED' ? 'targets_australia' : workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada', followup: true },
       })
     }
     return finish('BLOCKED', 'BLOCKED', { cancelledReason: authorization.code })

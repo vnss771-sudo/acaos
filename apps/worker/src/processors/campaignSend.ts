@@ -15,7 +15,7 @@ import { sendMail, isWorkspaceMailConfigured, type SmtpConfig } from '@acaos/bac
 import { checkAndIncrementAiUsage, refundAiUsage, reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
 import { effectiveDailySendLimit, isComplianceGateEnabled } from '@acaos/backend-core/lib/launchControls.js'
 import { approvalRequiredFor } from '@acaos/backend-core/lib/autonomyReadiness.js'
-import { bulkCheckConsent } from '@acaos/backend-core/lib/consent.js'
+import { bulkCheckConsent, bulkCheckAuConsent } from '@acaos/backend-core/lib/consent.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { applyWarmupCap } from '@acaos/backend-core/lib/warmup.js'
 import { perDomainDailyCap, emailDomain } from '@acaos/backend-core/lib/sendPacing.js'
@@ -69,6 +69,8 @@ export type SendSkipReason =
   | 'DOMAIN_PACED'
   | 'OUTSIDE_SEND_WINDOW'
   | 'CONSENT_REQUIRED'
+  | 'AU_SENDING_DISABLED'
+  | 'AU_CONSENT_REQUIRED'
   | 'HOLDOUT'
 
 type SendCampaignResult = {
@@ -112,7 +114,7 @@ async function loadCampaignSendConfig(campaignId: string, workspaceId: string) {
       where: { id: workspaceId },
       select: {
         senderBusinessName: true, senderPostalAddress: true, sendSuppressed: true,
-        lawfulBasis: true, targetsCanada: true,
+        lawfulBasis: true, targetsCanada: true, targetsAustralia: true,
       },
     }),
     // Per-mission outreach overrides (offer + target customer), if this campaign
@@ -163,6 +165,7 @@ async function loadPageFastPathSets(
   // compliance posture actually requires it — see the CONSENT_REQUIRED check
   // in sendCampaignBatch for what sets this.
   consentRequired = false,
+  auConsentRequired = false,
 ) {
   const pageLeadIds = page.map((l) => l.id)
   const pageEmails = page.map((l) => l.email!).filter(Boolean)
@@ -207,7 +210,14 @@ async function loadPageFastPathSets(
     }
   }
 
-  return { isSuppressed, hasConsent, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId }
+  // Spam Act: evidence-validated, fail-closed (no emails to check → nobody passes).
+  const hasAuConsent = auConsentRequired && pageEmails.length > 0
+    ? await bulkCheckAuConsent(workspaceId, pageEmails)
+    : auConsentRequired
+      ? () => false
+      : () => true
+
+  return { isSuppressed, hasConsent, hasAuConsent, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId }
 }
 
 export type DraftSourceDecision =
@@ -606,7 +616,7 @@ export async function sendCampaignBatch(
   const skippedByReason: Record<SendSkipReason, number> = {
     ALREADY_SENT: 0, SUPPRESSED: 0, WORKSPACE_SUPPRESSED: 0, INVALID_EMAIL: 0, NO_APPROVED_DRAFT: 0,
     POLICY_REVIEW: 0, SENSITIVE_DATA: 0, AI_LIMIT: 0, AI_GENERATION_FAILED: 0, DAILY_CAP: 0, MONTHLY_CAP: 0, MISSION_PAUSED: 0,
-    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, HOLDOUT: 0,
+    REPUTATION_BLOCKED: 0, DOMAIN_PACED: 0, OUTSIDE_SEND_WINDOW: 0, CONSENT_REQUIRED: 0, AU_SENDING_DISABLED: 0, AU_CONSENT_REQUIRED: 0, HOLDOUT: 0,
   }
   const skip = (reason: SendSkipReason, n = 1) => { skipped += n; skippedByReason[reason] += n; incSendOutcome('send-campaign', reason, n) }
   const result = (): SendCampaignResult => ({ campaignId, sent, skipped, failed, skippedByReason })
@@ -628,6 +638,9 @@ export async function sendCampaignBatch(
   // skipped, never sent.
   const consentRequired = isComplianceGateEnabled() &&
     (workspace?.lawfulBasis === 'consent' || workspace?.targetsCanada === true)
+  // Spam Act 2003: per-recipient evidence-backed consent. Independent of the dormant
+  // compliance gate (AU sending is separately fail-closed in authorizeOutboundSend).
+  const auConsentRequired = workspace?.targetsAustralia === true
   const consentReason = workspace?.lawfulBasis === 'consent' ? 'lawful_basis_consent' : 'targets_canada'
 
   // Don't even start a batch for a paused/completed mission.
@@ -681,6 +694,8 @@ export async function sendCampaignBatch(
     if (batchAuthorization.code === 'REPUTATION_BLOCKED') {
       incReputationBlock('send-campaign')
       skip('REPUTATION_BLOCKED', total)
+    } else if (batchAuthorization.code === 'AU_SENDING_DISABLED') {
+      skip('AU_SENDING_DISABLED', total)
     } else if (batchAuthorization.code === 'WORKSPACE_SUPPRESSED') {
       // Preserve the operator-drain semantics: the batch halts without creating
       // per-lead state, while still emitting the existing suppression metric.
@@ -788,8 +803,8 @@ export async function sendCampaignBatch(
     // page instead of one for the whole campaign). These are pre-filters/caches
     // only; the atomic per-lead claim (unique (campaignId, leadId)) remains the
     // real race guard. Mission status is NOT cached — it's re-checked per lead.
-    const { isSuppressed, hasConsent, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId } =
-      await loadPageFastPathSets(page, workspaceId, campaignId, consentRequired)
+    const { isSuppressed, hasConsent, hasAuConsent, alreadySentLeadIds, policyReviewLeadIds, linkedIntentByLeadId } =
+      await loadPageFastPathSets(page, workspaceId, campaignId, consentRequired, auConsentRequired)
 
     for (const lead of page) {
     // Single-lead exclusions are recorded per lead (bulk cut-offs below that
@@ -836,6 +851,15 @@ export async function sendCampaignBatch(
       void recordAudit({
         workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: lead.id,
         metadata: { campaignId, reason: consentReason },
+      })
+      continue
+    }
+
+    if (auConsentRequired && !hasAuConsent(lead.email!)) {
+      exclude('AU_CONSENT_REQUIRED')
+      void recordAudit({
+        workspaceId, type: 'consent.enforcement.skipped', entityType: 'lead', entityId: lead.id,
+        metadata: { campaignId, reason: 'targets_australia' },
       })
       continue
     }

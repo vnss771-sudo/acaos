@@ -30,6 +30,26 @@ function sourceTypeFor(evidenceType: string, hasUrl: boolean): string {
 }
 
 /**
+ * "confirmed" means a source was actually read. Research does not yet fetch the
+ * website, so a model-supplied "confirmed" is unverifiable: downgrade every
+ * confirmed item to "inferred" (dropping its sourceUrl) unless fetched content
+ * was supplied for that URL's host. Pure.
+ */
+export function downgradeUnverifiedEvidence(
+  evidence: EvidenceItem[] | undefined | null,
+  fetchedUrls: readonly string[] = [],
+): EvidenceItem[] {
+  if (!Array.isArray(evidence)) return []
+  return evidence.map((e) => {
+    if (e.type !== 'confirmed') return e
+    const verified = typeof e.sourceUrl === 'string' && fetchedUrls.some((u) => urlHostnameMatchesDomain(e.sourceUrl as string, u))
+    if (verified) return e
+    const { sourceUrl: _drop, ...rest } = e
+    return { ...rest, type: 'inferred' } as EvidenceItem
+  })
+}
+
+/**
  * Map validated research evidence items to LeadEvidenceSource row inputs. Pure.
  * Unknown/missing type or confidence degrade to the weakest tier (inferred/low) so
  * a drifting field never lets a guess masquerade as a confirmed fact; a sourceUrl

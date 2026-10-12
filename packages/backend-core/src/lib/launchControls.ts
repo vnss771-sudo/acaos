@@ -79,6 +79,17 @@ export function isComplianceGateEnabled(): boolean {
   return parseBool(process.env.COMPLIANCE_GATE_ENABLED, false)
 }
 
+/**
+ * Australian commercial sending (Spam Act 2003). DEFAULT OFF and fail-closed: while
+ * off, every send from a workspace with targetsAustralia=true is denied
+ * (AU_SENDING_DISABLED) irrespective of COMPLIANCE_GATE_ENABLED or any consent
+ * record. Turn on only after independent legal review of the consent copy and
+ * evidence rules in lib/auConsent.ts. Read live, so it is also an instant kill switch.
+ */
+export function isAuCommercialSendingEnabled(): boolean {
+  return parseBool(process.env.AU_COMMERCIAL_SENDING_ENABLED, false)
+}
+
 export type ReputationGuardMode = 'off' | 'observe' | 'enforce'
 
 /**

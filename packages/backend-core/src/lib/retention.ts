@@ -23,6 +23,22 @@ function days(envVar: string, def: number): number {
   return Number.isFinite(n) && n > 0 ? n : def
 }
 
+/**
+ * Unsubscribe tokens live on OutreachSent and must keep working for at least 30
+ * days after sending (Spam Act s18(1)(e)); sender details likewise (s17(1)(d)).
+ * Env overrides below this floor are raised to it.
+ */
+export const OUTREACH_SENT_MIN_DAYS = 60
+
+function outreachSentDays(): number {
+  const n = days('RETENTION_OUTREACH_SENT_DAYS', 548)
+  if (n < OUTREACH_SENT_MIN_DAYS) {
+    console.warn(`RETENTION_OUTREACH_SENT_DAYS=${n} is below the ${OUTREACH_SENT_MIN_DAYS}-day floor (unsubscribe links must work); using ${OUTREACH_SENT_MIN_DAYS}`)
+    return OUTREACH_SENT_MIN_DAYS
+  }
+  return n
+}
+
 export type RetentionWindows = {
   processedEmailDays: number
   outreachSentDays: number
@@ -42,7 +58,7 @@ export type RetentionWindows = {
 export function retentionWindows(): RetentionWindows {
   return {
     processedEmailDays: days('RETENTION_PROCESSED_EMAIL_DAYS', 90),
-    outreachSentDays: days('RETENTION_OUTREACH_SENT_DAYS', 548), // 18 months
+    outreachSentDays: outreachSentDays(), // default 18 months, floor 60
     discoveryRunDays: days('RETENTION_DISCOVERY_RUN_DAYS', 365), // 12 months
     auditEventDays: days('RETENTION_AUDIT_EVENT_DAYS', 730),     // 24 months
     analyticsEventDays: days('RETENTION_ANALYTICS_EVENT_DAYS', 365), // 12 months (cohort analysis)

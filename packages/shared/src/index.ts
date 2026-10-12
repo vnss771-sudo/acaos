@@ -591,6 +591,7 @@ export interface AutonomyStatus {
 export interface ComplianceUpdateRequest {
   lawfulBasis?: string | null
   targetsCanada?: boolean
+  targetsAustralia?: boolean
   acceptTerms?: boolean
   acknowledgeSubprocessors?: boolean
   acknowledgeLia?: boolean
@@ -602,6 +603,13 @@ export interface ConsentRecordRequest {
   basis: string
   source: string
   note?: string
+  /** Spam Act 2003 evidence — required for the 'express' and 'inferred_conspicuous_publication' bases. */
+  evidenceUrl?: string
+  evidenceAt?: string
+  evidenceExcerpt?: string
+  addressType?: 'role' | 'personal'
+  optOutStatementAbsent?: boolean
+  roleRelevant?: boolean
 }
 export interface WorkspaceMemberInviteRequest { email: string; role: string }
 export interface EmailConfigRequest {

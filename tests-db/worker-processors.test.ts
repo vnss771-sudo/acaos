@@ -360,7 +360,7 @@ test('applyReplyAnalysis feeds the SAME learning loop as POST /api/outcomes: the
 
 // --- researchLead (extracted from worker.ts's research-lead handler) ---
 
-test('researchLead persists the intelligence snapshot, evidence rows, and score; advances the lead to RESEARCHED', async () => {
+test('researchLead persists the intelligence snapshot, evidence rows (confirmed downgraded to inferred, D4), and score; advances the lead to RESEARCHED', async () => {
   const { workspace } = await seedUserWithWorkspace()
   const lead = await prisma.lead.create({
     data: { workspaceId: workspace.id, businessName: 'Acme Plumbing', website: 'https://acmeplumbing.test', category: 'plumbing', stage: 'NEW' },
@@ -392,7 +392,11 @@ test('researchLead persists the intelligence snapshot, evidence rows, and score;
 
   const evidenceRows = await prisma.leadEvidenceSource.findMany({ where: { leadId: lead.id } })
   assert.equal(evidenceRows.length, 1)
-  assert.equal(evidenceRows[0]!.sourceUrl, 'https://acmeplumbing.test/careers', 'sourceUrl matches the lead\'s own website domain, so it is kept')
+  // D4: research never fetches the page, so a model-claimed "confirmed" is unverifiable and is
+  // downgraded to inferred with no sourceUrl (until fetched content backs it — enhancement E3).
+  assert.equal(evidenceRows[0]!.evidenceType, 'inferred')
+  assert.equal(evidenceRows[0]!.sourceUrl, null)
+  assert.equal(evidenceRows[0]!.sourceType, 'inference')
 })
 
 test('researchLead drops a sourceUrl whose domain is unrelated to the lead\'s own website', async () => {

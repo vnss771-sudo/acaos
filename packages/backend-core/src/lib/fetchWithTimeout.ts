@@ -6,9 +6,30 @@
 
 const DEFAULT_TIMEOUT_MS = 12_000
 
+/**
+ * Origin + path only. Some providers (e.g. PlanningAlerts) take their API key as a
+ * `?key=` query parameter, and error messages are persisted and shown to tenants,
+ * so the query string and any userinfo must never reach one.
+ */
+export function redactUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${u.origin}${u.pathname}`
+  } catch {
+    return url.split(/[?#]/)[0] ?? ''
+  }
+}
+
+const SECRET_PARAM_RE = /([?&;](?:api[_-]?key|key|token|secret|access[_-]?token|auth|password|sig|signature)=)[^&\s"'<>)]*/gi
+
+/** Mask credential-bearing query parameters in any free text (errors, logs, stored diagnostics). */
+export function scrubSecrets(text: string): string {
+  return text.replace(SECRET_PARAM_RE, '$1[redacted]')
+}
+
 export class FetchTimeoutError extends Error {
   constructor(url: string, timeoutMs: number) {
-    super(`Request to ${url} timed out after ${timeoutMs}ms`)
+    super(`Request to ${redactUrl(url)} timed out after ${timeoutMs}ms`)
     this.name = 'FetchTimeoutError'
   }
 }
