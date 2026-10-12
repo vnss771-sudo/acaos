@@ -11,9 +11,13 @@
 //  - The lookup is a GET (idempotent), so callProvider's retry/backoff/Retry-After apply.
 //  - ABR terms (rate/display) must be accepted before enabling: see docs/DESIGN_au_spam_act_consent.md.
 //
-// Response contract (ABR "AbnDetails.aspx" JSON, JSONP-wrapped): { Abn, AbnStatus, EntityName,
-// EntityTypeName, Message, ... }. A non-empty Message with no Abn is an ABR-side error. Parsing is
-// strict about what it relies on and ignores everything else.
+// Response contract, verified against ABR's official JSON sample code
+// (https://abr.business.gov.au/json/ + Script/abnlookup-sample.js, v9.1): request
+// `AbnDetails.aspx?abn=&guid=&callback=`; JSONP response whose callback receives an object with
+// Acn, EntityName, AbnStatus, AbnStatusEffectiveFrom, EntityTypeName, EntityTypeCode, Gst,
+// AddressState, AddressPostcode, BusinessName[] and Message. The sample reads `Message` as the error
+// text. The sample never reads an `Abn` key, so it is optional here: when present it must match the
+// ABN asked for, when absent the match is implied by the request. Everything else is ignored.
 
 import { z } from 'zod'
 import { callProvider, ProviderError, type BreakerLike } from './providerClient.js'
@@ -106,16 +110,17 @@ export async function lookupAbn(abnInput: string, opts: LookupOptions = {}): Pro
         } catch {
           throw new ProviderError('abr', 'AbnDetails', 'server_error', null, 'abr AbnDetails: unreadable response')
         }
-        if (!body.Abn) {
+        if (body.Message) {
           // A rejected GUID is a configuration fault, not "no such business".
           if (/guid/i.test(body.Message)) {
             throw new ProviderError('abr', 'AbnDetails', 'client_error', null, 'abr AbnDetails: the ABR rejected the configured GUID')
           }
           return null
         }
-        if (body.Abn.replace(/\s/g, '') !== abn) return null
+        if (body.Abn && body.Abn.replace(/\s/g, '') !== abn) return null
         const status = body.AbnStatus.toLowerCase()
         if (status !== 'active' && status !== 'cancelled') return null
+        if (!body.EntityName.trim()) return null
         return { abn, status, entityName: body.EntityName.trim().slice(0, 200), entityType: body.EntityTypeName.trim().slice(0, 100) || null }
       },
     })
