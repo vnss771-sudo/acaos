@@ -193,6 +193,7 @@ model Workspace {
   prospects               Prospect[]
   signals                 Signal[]
   leadEvidenceSources     LeadEvidenceSource[]
+  websiteEvidenceClaims   WebsiteEvidenceClaim[]
   recommendations         Recommendation[]
   outreachIntents         OutreachIntent[]
   prospectOutcomes        ProspectOutcome[]
@@ -1140,6 +1141,7 @@ model Prospect {
   @@index([workspaceId, companyNameKey])
   @@index([workspaceId, emailKey])
   @@index([missionId])
+  websiteEvidenceClaims   WebsiteEvidenceClaim[]
 }
 
 model Signal {
@@ -1179,6 +1181,29 @@ model Signal {
 // observed, how trustworthy it is, and when it goes stale. Lets every signal /
 // recommendation answer "what's the source?" — the basis for evidence-backed,
 // auditable recommendations.
+// Raw website observations: NOT verified business truth, legal consent, or outbound permission.
+// Deduplicate per tenant+prospect+source+claim; snapshots expire and can be deleted.
+model WebsiteEvidenceClaim {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  prospectId   String
+  claimId      String
+  sourceUrl    String
+  sourceHash   String
+  quote        String
+  category     String
+  capturedAt   DateTime
+  firstSeenAt  DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  expiresAt    DateTime
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect     Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, prospectId, claimId])
+  @@index([workspaceId, expiresAt])
+  @@index([workspaceId, prospectId, lastSeenAt])
+}
+
 model EvidenceSource {
   id          String    @id @default(cuid())
   workspaceId String
