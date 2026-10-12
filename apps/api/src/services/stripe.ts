@@ -106,6 +106,15 @@ export async function createBillingPortalSession(customerId: string) {
 // CONFIGURED-but-broken price is loud (logger.error), since silently granting
 // the wrong plan tier is a real product/billing bug, not a "feature disabled"
 // state.
+// A price can resolve and still be unusable: an archived price (active=false)
+// retrieves fine but Checkout rejects it, and a one-off price would sell a
+// subscription plan as a single payment. Returns the problem, or null if usable.
+export function describePriceProblem(price: { active?: boolean; type?: string; recurring?: { interval?: string } | null }): string | null {
+  if (price.active === false) return 'the price is archived (inactive) in Stripe'
+  if (price.type !== 'recurring' || price.recurring?.interval !== 'month') return 'the price is not a monthly recurring price'
+  return null
+}
+
 export async function assertStripePricesConfigured(): Promise<void> {
   if (!hasEnv(['STRIPE_SECRET_KEY'])) return
 
@@ -121,7 +130,14 @@ export async function assertStripePricesConfigured(): Promise<void> {
     // validateConfig() in production; nothing further to check here.
     if (!id) continue
     try {
-      await stripe.prices.retrieve(id)
+      const price = await stripe.prices.retrieve(id)
+      const problem = describePriceProblem(price)
+      if (problem) {
+        logger.error(
+          `Stripe price check failed: ${envVar} ("${id}", the ${plan} plan): ${problem}. Checkout for this plan will fail or bill wrongly.`,
+          { envVar, plan, problem },
+        )
+      }
     } catch (err) {
       logger.error(
         `Stripe price check failed: ${envVar} ("${id}", the ${plan} plan) does not resolve against the ` +

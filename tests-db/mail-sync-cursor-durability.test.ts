@@ -6,23 +6,15 @@
 // recorded. Drives the real syncMailboxOnce against the real DB with a fake
 // IMAP client (no network) and an injectable recordProcessedReply.
 
-import { test, before, after, beforeEach } from 'node:test'
+import { test, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { syncMailboxOnce, recordProcessedReply } from '../packages/backend-core/src/services/mail.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
-const ENV_KEYS = ['IMAP_HOST', 'IMAP_USER', 'IMAP_PASS'] as const
-const savedEnv: Record<string, string | undefined> = {}
-before(() => {
-  for (const k of ENV_KEYS) savedEnv[k] = process.env[k]
-  process.env.IMAP_HOST = 'imap.acme.test'
-  process.env.IMAP_USER = 'sales@acme.test'
-  process.env.IMAP_PASS = 'x'
-})
-after(async () => {
-  for (const k of ENV_KEYS) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k] }
-  await disconnect()
-})
+// Sync only ever uses the workspace's own mailbox (never platform IMAP_* env).
+const wsCfg = { imapHost: 'imap.acme.test', imapUser: 'sales@acme.test', imapPass: 'x' }
+const resolveHost = async (host: string) => ({ host, servername: host }) as any
+after(async () => { await disconnect() })
 beforeEach(async () => { await resetDb() })
 
 type FakeMsg = { uid: number; from: string; subject: string; text: string; messageId: string }
@@ -65,12 +57,12 @@ test('a persistence failure leaves the cursor in place, and the next sync record
 
   // 1st sync: fetching works, but recording the reply fails (e.g. Postgres blip).
   const failing = (async () => { throw new Error('connection terminated unexpectedly') }) as typeof recordProcessedReply
-  await assert.rejects(syncMailboxOnce(null, workspace.id, { ImapFlow, recordProcessedReply: failing }), /connection terminated/)
+  await assert.rejects(syncMailboxOnce(wsCfg, workspace.id, { resolveHost, ImapFlow, recordProcessedReply: failing }), /connection terminated/)
   assert.equal(await cursorOf(workspace.id), 99, 'cursor must not advance past a message that was not persisted')
   assert.equal(await prisma.processedEmail.count(), 0)
 
   // 2nd sync: the same UID is fetched again and durably recorded; only now does the cursor move.
-  await syncMailboxOnce(null, workspace.id, { ImapFlow })
+  await syncMailboxOnce(wsCfg, workspace.id, { resolveHost, ImapFlow })
   const rows = await prisma.processedEmail.findMany({ where: { workspaceId: workspace.id } })
   assert.deepEqual(rows.map(r => r.uid), [100])
   assert.equal(await cursorOf(workspace.id), 100)
@@ -89,10 +81,10 @@ test('a failure part-way through a batch never skips the unrecorded tail, and re
     if (p.uid === 101) throw new Error('deadlock detected')
     return recordProcessedReply(p)
   }) as typeof recordProcessedReply
-  await assert.rejects(syncMailboxOnce(null, workspace.id, { ImapFlow, recordProcessedReply: failOn101 }), /deadlock/)
+  await assert.rejects(syncMailboxOnce(wsCfg, workspace.id, { resolveHost, ImapFlow, recordProcessedReply: failOn101 }), /deadlock/)
   assert.equal(await cursorOf(workspace.id), 99)
 
-  await syncMailboxOnce(null, workspace.id, { ImapFlow })
+  await syncMailboxOnce(wsCfg, workspace.id, { resolveHost, ImapFlow })
   const uids = (await prisma.processedEmail.findMany({ where: { workspaceId: workspace.id }, orderBy: { uid: 'asc' } })).map(r => r.uid)
   assert.deepEqual(uids, [100, 101], 'UID 101 recovered; UID 100 not recorded twice')
   assert.equal(await cursorOf(workspace.id), 101)
@@ -104,6 +96,6 @@ test('a clean sync with nothing to record still advances the cursor', async () =
   // Too short to be a reply → inspected but intentionally not recorded.
   const ImapFlow = fakeImap([{ uid: 100, from: 'a@x.test', subject: 'hi', text: 'ok', messageId: '<m100@x.test>' }])
 
-  await syncMailboxOnce(null, workspace.id, { ImapFlow })
+  await syncMailboxOnce(wsCfg, workspace.id, { resolveHost, ImapFlow })
   assert.equal(await cursorOf(workspace.id), 100)
 })

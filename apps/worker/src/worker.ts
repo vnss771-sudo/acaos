@@ -163,7 +163,7 @@ const mailboxWorker = new Worker(
   async (job) => withConsumerSpan('sync-mailbox', job.name, job.data?.traceparent, { 'acaos.request_id': job.data?.requestId, 'acaos.workspace_id': job.data?.workspaceId }, async () => {
     const { workspaceId, autoSync } = parseJobPayload(SyncMailboxPayloadSchema, 'sync-mailbox', job.data)
     if (!isFeatureEnabled('mailboxSync')) { log('sync-mailbox', 'skipped: FEATURE_MAILBOX_SYNC disabled'); return { skipped: true, reason: 'FEATURE_MAILBOX_SYNC disabled' } }
-    const { syncMailboxOnce, isMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
+    const { syncMailboxOnce, isWorkspaceMailboxConfigured } = await import('@acaos/backend-core/services/mail.js')
 
     if (autoSync) {
       log('sync-mailbox', 'Auto-scanning all workspace mailboxes')
@@ -172,7 +172,7 @@ const mailboxWorker = new Worker(
       })
       let synced = 0
       for (const cfg of configs) {
-        if (!isMailboxConfigured(cfg)) continue
+        if (!isWorkspaceMailboxConfigured(cfg)) continue
         try {
           await syncMailboxOnce(cfg as any, cfg.workspaceId)
           synced++
@@ -189,7 +189,7 @@ const mailboxWorker = new Worker(
     const cfg = workspaceId
       ? await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
       : null
-    if (!isMailboxConfigured(cfg ?? undefined)) {
+    if (!isWorkspaceMailboxConfigured(cfg)) {
       log('sync-mailbox', `No IMAP config for workspaceId=${workspaceId}, skipping`)
       await job.updateProgress(100)
       return { inspected: 0, matched: 0, queued: 0 }

@@ -6,7 +6,7 @@
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordPreSendFeatures } from '@acaos/backend-core/lib/messageRelevance.js'
 import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
-import { sendMail, isMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
+import { sendMail, isWorkspaceMailConfigured, type SmtpConfig } from '@acaos/backend-core/services/mail.js'
 import { reserveDailySendSlot, reserveDomainSendSlot, utcMonthStart } from '@acaos/backend-core/lib/limits.js'
 import { effectiveDailySendLimit } from '@acaos/backend-core/lib/launchControls.js'
 import { recordCriticalAudit } from '@acaos/backend-core/lib/audit.js'
@@ -98,7 +98,7 @@ export async function sendFollowupTask(
   if (!lead?.email) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'LEAD_GONE' })
   if (!step || !step.isActive) return finish('CANCELLED', 'CANCELLED', { cancelledReason: 'STEP_INACTIVE' })
   const smtpCfg: SmtpConfig | null = wsCfg ?? null
-  if (!isMailConfigured(smtpCfg)) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SMTP_NOT_CONFIGURED' })
+  if (!isWorkspaceMailConfigured(smtpCfg)) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SMTP_NOT_CONFIGURED' })
   const appUrl = resolveUnsubscribeBaseUrl()
   if (!appUrl) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'API_URL_NOT_CONFIGURED' })
   if (sensitiveKinds(`${step.subject ?? ''}\n${step.body}`).length > 0) return finish('BLOCKED', 'BLOCKED', { cancelledReason: 'SENSITIVE_DATA' })

@@ -1,13 +1,14 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useRef } from 'react'
 import type { BillingPlan, Workspace } from '../types.js'
 import { PLAN_LABELS } from '../types.js'
 import { s, colors } from '../styles.js'
 import { Spinner } from '../components/Spinner.js'
 import { makeRouteApi } from '../lib/routeApi.js'
+import { checkoutReturn } from '../lib/router.js'
 import type { ApiHook } from '../hooks/useApi.js'
 import type { ToastHook } from '../hooks/useToast.js'
 
-type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook }
+type Props = { api: ApiHook; workspace: Workspace | null; toast: ToastHook; onWorkspaceUpdate?: (w: Workspace) => void }
 
 // Defense in depth: the checkout/portal URL is produced by our own backend, but
 // we still only ever redirect to Stripe over HTTPS, so a buggy or tampered
@@ -55,6 +56,12 @@ type BillingStatus = {
 // (GET /api/billing/plans → PLAN_LIMITS in packages/backend-core/src/lib/limits.ts,
 // the single source of truth) via limitBullets(), so the UI can never drift from
 // the enforced limits.
+// Only the Contractor Pro plan is sold (the A$149 'starter' tier is retired from
+// sale; its key stays in code so existing subscribers and webhooks still resolve).
+// The monthly price lives in Stripe; this is the disclosed list price (ex GST).
+const SELLABLE_PLANS = ['growth'] as const
+const LIST_PRICE_AUD = 349
+
 const PLAN_FEATURES: Record<string, string[]> = {
   free: [
     'Find work: tenders and development applications for your trade',
@@ -69,11 +76,13 @@ const PLAN_FEATURES: Record<string, string[]> = {
     'Replies sorted by intent'
   ],
   growth: [
-    'Everything in Contractor',
-    'Up to 25 team members (crews and office)',
-    'Multiple workspaces',
-    'Dedicated onboarding and success manager',
-    'Custom SLA and support'
+    'Find work: tenders and development applications for your trade and area',
+    'AI-assisted research and outreach — nothing sends without your approval',
+    'Quotes, opportunity and job management',
+    'Crew scheduling, shifts and job costing',
+    'Profitability reporting and recommendations',
+    'Up to 25 team members',
+    'Fair-use limits apply to AI and discovery'
   ]
 }
 
@@ -97,7 +106,7 @@ const STATUS_COLOR: Record<string, string> = {
   none: colors.textFaint
 }
 
-export function Billing({ api, workspace, toast }: Props) {
+export function Billing({ api, workspace, toast, onWorkspaceUpdate }: Props) {
   const route = useMemo(() => makeRouteApi(api), [api])
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null)
   const [plans, setPlans] = useState<Record<string, PlanLimits> | null>(null)
@@ -120,6 +129,39 @@ export function Billing({ api, workspace, toast }: Props) {
       .then(setBillingStatus)
       .catch(() => toast.error('Failed to load billing status'))
       .finally(() => setLoading(false))
+  }, [workspace?.id])
+
+  // Returning from Stripe Checkout. Read the outcome once, then tidy the URL.
+  // On success the plan is granted by the Stripe webhook, which can land a few
+  // seconds after the redirect, so poll briefly instead of showing a stale Free plan.
+  const returned = useRef(typeof window !== 'undefined' ? checkoutReturn(window.location.pathname) : null)
+  const [activating, setActivating] = useState(returned.current === 'success')
+  useEffect(() => {
+    if (!returned.current) return
+    window.history.replaceState({}, '', '/billing')
+    if (returned.current === 'cancel') { toast.info?.('Checkout cancelled — you have not been charged.'); return }
+    if (!workspace) return
+    let tries = 0
+    let stopped = false
+    const timer = setInterval(async () => {
+      tries++
+      try {
+        const st = await api<BillingStatus>(`/api/billing/status?workspaceId=${workspace.id}`)
+        if (stopped) return
+        setBillingStatus(st)
+        if (st.plan !== 'free' || st.hasSubscription) {
+          clearInterval(timer); setActivating(false)
+          onWorkspaceUpdate?.({ ...workspace, plan: st.plan })
+          toast.success(`Payment received — you are now on ${PLAN_LABELS[st.plan] ?? st.plan}.`)
+          return
+        }
+      } catch { /* keep polling; a transient error must not strand the banner */ }
+      if (tries >= 10) {
+        clearInterval(timer); setActivating(false)
+        toast.info?.('Payment received. Your plan is still activating — refresh in a minute, or contact support if it does not change.')
+      }
+    }, 3000)
+    return () => { stopped = true; clearInterval(timer) }
   }, [workspace?.id])
 
   async function startCheckout(priceKey: string) {
@@ -153,6 +195,11 @@ export function Billing({ api, workspace, toast }: Props) {
 
   return (
     <div style={s.stack}>
+      {activating && (
+        <div role="status" style={{ ...s.card, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <Spinner size={16} /> <span>Payment received — activating your plan…</span>
+        </div>
+      )}
       {/* Current status card */}
       <div style={s.card}>
         <div style={s.sectionHeader}>Current Plan</div>
@@ -179,7 +226,7 @@ export function Billing({ api, workspace, toast }: Props) {
                 <button
                   style={{ ...s.btn, background: colors.blue }}
                   disabled={!!checkoutLoading}
-                  onClick={() => startCheckout('starter')}
+                  onClick={() => startCheckout('growth')}
                 >
                   {checkoutLoading === 'starter' ? <><Spinner size={14} color="#fff" /> Loading…</> : 'Upgrade Plan →'}
                 </button>
@@ -307,17 +354,17 @@ export function Billing({ api, workspace, toast }: Props) {
       {canCheckout && (
         <>
           <div style={{ color: colors.text, fontSize: 16, fontWeight: 600 }}>Upgrade your plan</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-            {(['starter', 'growth'] as const).map(plan => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 420px)', gap: 20 }}>
+            {SELLABLE_PLANS.map(plan => (
               <div
                 key={plan}
                 style={{
                   ...s.card,
-                  borderColor: plan === 'starter' ? colors.purple + '80' : colors.border,
+                  borderColor: plan === 'growth' ? colors.purple + '80' : colors.border,
                   position: 'relative'
                 }}
               >
-                {plan === 'starter' && (
+                {plan === 'growth' && (
                   <div style={{
                     position: 'absolute', top: -10, right: 16,
                     background: colors.purple, color: '#fff',
@@ -333,7 +380,10 @@ export function Billing({ api, workspace, toast }: Props) {
                     {PLAN_LABELS[plan]}
                   </div>
                   <div style={{ color: colors.textFaint, fontSize: 13, marginTop: 4 }}>
-                    {plan === 'starter' ? 'For most trade businesses' : 'For multi-crew businesses'}
+                    For established trade contractors
+                  </div>
+                  <div style={{ color: colors.text, fontSize: 22, fontWeight: 700, marginTop: 8 }}>
+                    A${LIST_PRICE_AUD}<span style={{ fontSize: 13, fontWeight: 400, color: colors.textFaint }}> / month, ex GST</span>
                   </div>
                 </div>
 
@@ -345,7 +395,7 @@ export function Billing({ api, workspace, toast }: Props) {
                   style={{
                     ...s.btn,
                     width: '100%',
-                    background: plan === 'starter' ? colors.purple : colors.blue,
+                    background: colors.purple,
                     opacity: checkoutLoading === plan ? 0.7 : 1
                   }}
                   disabled={!!checkoutLoading}

@@ -7,7 +7,7 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { parseBody, parseQuery, workspaceIdField } from '../lib/validate.js'
 import { mailRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { enforceWorkspaceMailRate } from '../lib/workspaceRateLimit.js'
-import { isMailConfigured, isMailboxConfigured, sendMail, syncMailboxOnce } from '@acaos/backend-core/services/mail.js'
+import { isWorkspaceMailConfigured, isWorkspaceMailboxConfigured, sendMail, syncMailboxOnce } from '@acaos/backend-core/services/mail.js'
 import { isValidEmail } from '../lib/textNormalize.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { userHasWorkspaceAccess } from '../lib/workspaces.js'
@@ -57,7 +57,7 @@ mailboxRouter.post(
     const html = typeof parsed.html === 'string' ? parsed.html : '<p>Hello</p>'
 
     const emailCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
-    if (!isMailConfigured(emailCfg)) throw new ApiError(503, 'SMTP is not configured')
+    if (!isWorkspaceMailConfigured(emailCfg)) throw new ApiError(503, 'SMTP is not configured')
 
     if (!to || !isValidEmail(to)) throw new ApiError(400, 'Valid recipient email required')
 
@@ -86,7 +86,7 @@ mailboxRouter.post(
 
     const emailCfg = await prisma.workspaceEmailConfig.findUnique({ where: { workspaceId } })
 
-    if (!isMailboxConfigured(emailCfg)) {
+    if (!isWorkspaceMailboxConfigured(emailCfg)) {
       throw new ApiError(503, 'IMAP is not configured')
     }
 

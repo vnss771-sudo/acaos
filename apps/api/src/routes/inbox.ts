@@ -6,7 +6,7 @@ import { asyncHandler, ApiError, requireUser } from '../lib/http.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { userBelongsToWorkspace } from '../lib/workspaces.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
-import { sendMail, isMailConfigured } from '@acaos/backend-core/services/mail.js'
+import { sendMail, isWorkspaceMailConfigured } from '@acaos/backend-core/services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { contactEventData, recordContactEvent } from '@acaos/backend-core/lib/contactEvents.js'
 import { escapeHtml } from '../lib/html.js'
@@ -261,7 +261,7 @@ export function createInboxReplySendHandler(deps: { sendMail?: typeof sendMail }
 
     // Workspace mailbox only: falling back to the platform SMTP would send the
     // reply from our address, not the one the prospect wrote back to.
-    if (!isMailConfigured(smtpCfg)) {
+    if (!isWorkspaceMailConfigured(smtpCfg)) {
       throw new ApiError(409, 'Workspace mailbox not configured — connect your sending mailbox in Settings before replying')
     }
 

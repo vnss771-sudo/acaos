@@ -46,8 +46,20 @@ function normalizePath(pathname: string): string {
   return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
 }
 
+// Stripe Checkout returns here (see createCheckoutSession). Without this they
+// fell through to the unknown-path fallback and the customer saw no result.
+const CHECKOUT_RETURN_PATHS = ['/billing/success', '/billing/cancel']
+
 export function viewForPath(pathname: string): View | null {
-  return PATH_VIEWS[normalizePath(pathname)] ?? null
+  const path = normalizePath(pathname)
+  if (CHECKOUT_RETURN_PATHS.includes(path)) return 'billing'
+  return PATH_VIEWS[path] ?? null
+}
+
+/** 'success' | 'cancel' when the current URL is a Stripe Checkout return, else null. */
+export function checkoutReturn(pathname: string): 'success' | 'cancel' | null {
+  const path = normalizePath(pathname)
+  return path === '/billing/success' ? 'success' : path === '/billing/cancel' ? 'cancel' : null
 }
 
 // Tracks the current top-level view against the real URL: Back/Forward moves

@@ -9,14 +9,16 @@ import {
 } from './helpers/integration.ts'
 
 let server: TestServer
+let emailCfg: any = null // workspaceEmailConfig row served to the routes
 
 beforeEach(async () => {
+  emailCfg = null
   // Ensure mail/mailbox are not configured.
   for (const k of ['SMTP_HOST', 'SMTP_FROM', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASS']) delete process.env[k]
   installPrisma(createFakePrisma({
     user: { findUnique: async () => ({ id: 'u1', email: 'u1@a.test', name: null, emailVerified: true }) },
     membership: { findFirst: async (a: any) => (a?.where?.userId === 'u1' && a?.where?.workspaceId === 'ws1' ? { id: 'm1', role: 'owner' } : null) },
-    workspaceEmailConfig: { findUnique: async () => null },
+    workspaceEmailConfig: { findUnique: async () => emailCfg },
   }))
   server = await startTestServer('/api/mailbox', mailboxRouter)
 })
@@ -41,13 +43,22 @@ test('send-test returns 503 when SMTP is not configured', async () => {
 })
 
 test('send-test validates the recipient when SMTP IS configured', async () => {
-  process.env.SMTP_HOST = 'smtp.test'
-  process.env.SMTP_FROM = 'noreply@test'
+  emailCfg = { workspaceId: 'ws1', smtpHost: 'smtp.test', smtpFrom: 'noreply@test' }
   const res = await server.request('/api/mailbox/send-test', {
     method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.3' },
     body: JSON.stringify({ to: 'not-an-email', workspaceId: 'ws1' }),
   })
   assert.equal(res.status, 400)
+})
+
+test('send-test ignores platform SMTP env when the workspace has no mailbox', async () => {
+  process.env.SMTP_HOST = 'smtp.platform.test'
+  process.env.SMTP_FROM = 'noreply@platform.test'
+  const res = await server.request('/api/mailbox/send-test', {
+    method: 'POST', headers: { ...jsonAuth, 'X-Forwarded-For': '1.1.1.4' },
+    body: JSON.stringify({ to: 'a@b.test', workspaceId: 'ws1' }),
+  })
+  assert.equal(res.status, 503)
 })
 
 test('check-domain DKIM lookup targets the selector subdomain, not the root', () => {

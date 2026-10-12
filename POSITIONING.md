@@ -56,22 +56,30 @@ shows it honestly — unknowns as unknown, patterns only with enough jobs behind
 
 Job costing on its own is table stakes; we have it, but we never lead with it.
 
-## Pricing (proposed, AUD, ex GST)
+## Pricing (AUD, ex GST)
 
 Plan keys in code stay `free` / `starter` / `growth` (they map to Stripe prices
-server-side); customers see the names below. **The Stripe prices must be set to
-these amounts before launch** — the app never hardcodes a price.
+server-side); customers see the names below. The Stripe price must match the
+list price. The app shows the list price from a constant in `Billing.tsx`
+(`LIST_PRICE_AUD`), so change both together.
 
 | Plan | Price | For | Includes |
 |---|---|---|---|
 | **Free** | $0 | Trying it | Find work for your trade; quotes, jobs, crew, shifts and margins; up to 2 team members |
-| **Contractor** | $149 / month | Most trade businesses | Everything in Free; up to 5 team members; client signals and AI research; email outreach with approval; reply sorting |
-| **Contractor Pro** | $349 / month | Multi-crew businesses | Everything in Contractor; up to 25 team members; multiple workspaces; dedicated onboarding; custom SLA |
+| **Contractor Pro** | **$349 / month** + GST | Established trade contractors (about 3–30 people) | Everything in Free; opportunity discovery and intelligence; AI-assisted research and outreach with approval; reply sorting; up to 25 team members; profitability reporting and recommendations. Fair-use limits apply to AI and discovery |
 
-Rationale: one won job typically covers a year of Contractor. Seat limits, AI
-requests and discovery volume are the only gated items (see `PLAN_LIMITS` in
-`packages/backend-core/src/lib/limits.ts`); the core loop is never paywalled,
-because the margin data only exists if contractors use it.
+The earlier $149 "Contractor" tier is retired from sale (key `starter` stays in
+code for compatibility; its Stripe price is not offered).
+
+**Founding-member offer:** the first 10 customers pay **$249 / month for their
+first 12 months**, then the standard $349 / month. Implemented as a Stripe
+coupon ($100 off, repeating, 12 months, 10 redemptions) behind the promotion code
+`FOUNDING10`, so the price returns to $349 on its own. Disclose the renewal price
+wherever the offer is shown. After 10 customers, test whether the next 10 accept
+$349 before considering any permanent discount.
+
+Cost guard: `AI_SPEND_CEILING_CENTS_GROWTH=6000` (set on api and worker) caps AI
+spend per workspace per month well under the subscription price.
 
 Pilot offer for the first 5 customers: free for 3 months in exchange for closing
 out every job in ACAOS — the data is worth more than the revenue.
