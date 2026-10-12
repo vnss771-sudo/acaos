@@ -11,7 +11,7 @@ window (e.g. lifecycle-bound data) are noted in the Enforcement column.
 |---|---|---|---|
 | Inbound email bodies processed for reply detection | `ProcessedEmail` | 90 days | Automated (daily purge job) |
 | Outreach drafts (AI-generated copy) | `OutreachDraft` | Life of the lead; purged with the workspace | With tenant deletion |
-| Sent-outreach records (delivery/outbox) | `OutreachSent` | 18 months (deliverability/audit) | Automated (daily purge job) |
+| Sent-outreach records (delivery/outbox) | `OutreachSent` | 18 months (deliverability/audit); env override floored at 60 days so unsubscribe links keep working | Automated (daily purge job) |
 | AI research / enrichment results | `Lead.aiSummary`, `Signal`, `EvidenceSource` | Life of the prospect/lead | With tenant deletion |
 | Provider discovery runs | `DiscoveryRun` | 12 months | Automated (daily purge job) |
 | Audit events | `AuditEvent` | 24 months (append-only, FK-free by design) | Automated (daily purge job) |

@@ -8,6 +8,7 @@ import { explainLeadScore, getWorkspaceWeights, getWorkspaceIcpTargets } from '@
 import { generateLeadResearch, generateOutreach, outreachGenerationMeta, toIcpContext } from '@acaos/backend-core/services/openai.js'
 import { resolvePromptVersionId } from '@acaos/backend-core/lib/aiPromptRegistry.js'
 import { sensitiveKinds } from '@acaos/backend-core/lib/sensitiveData.js'
+import { downgradeUnverifiedEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
 import { resolveResearchAction } from '@acaos/backend-core/lib/researchGate.js'
 import { resolveOutreachGate } from '@acaos/backend-core/lib/outreachGate.js'
 import { replaceLeadEvidence } from '@acaos/backend-core/lib/leadEvidence.js'
@@ -78,6 +79,8 @@ export async function researchLead(
   // Lenient: research is best-effort enrichment, so a malformed field is
   // dropped (not fatal) and the scorer falls back to its computed score.
   const parsed = parseLeadResearchJson(raw)
+  // No page content is fetched for research yet, so no "confirmed" claim is verifiable.
+  if (parsed.evidence) parsed.evidence = downgradeUnverifiedEvidence(parsed.evidence)
 
   const researchedAt = new Date()
   const enrichedLead = {

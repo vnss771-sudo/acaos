@@ -62,8 +62,18 @@ export interface CallProviderOptions<T> {
   retries?: number
   /** HTTP statuses that should be retried with backoff. */
   retryOnStatus?: number[]
-  /** Base backoff in ms; attempt i waits baseBackoffMs * 2^i. */
+  /** Base backoff in ms; attempt i waits a random 0..baseBackoffMs * 2^i (full jitter). */
   baseBackoffMs?: number
+  /** Upper bound on any single wait, including a server-supplied Retry-After (default 10s). */
+  maxBackoffMs?: number
+  /**
+   * Retry timeouts/network errors even for non-idempotent methods. Default false:
+   * a POST that timed out may already have been processed (and billed), so it is
+   * not repeated unless the caller opts in. 429/5xx responses are still retried.
+   */
+  retryUnsafe?: boolean
+  /** Random source in [0,1) — test seam. */
+  randomImpl?: () => number
   breaker?: BreakerLike
   /** Map a successful (2xx) response to the result. */
   onSuccess: (res: Response) => Promise<T> | T
@@ -76,6 +86,15 @@ export interface CallProviderOptions<T> {
   // ── Test seams (no network / no real waiting) ────────────────────────────────
   fetchImpl?: (url: string | URL, init: RequestInit, timeoutMs: number) => Promise<Response>
   sleepImpl?: (ms: number) => Promise<void>
+}
+
+/** Parse a Retry-After header (delta-seconds or HTTP-date) to ms, or null. */
+export function parseRetryAfterMs(value: string | null | undefined, now: number = Date.now()): number | null {
+  if (!value) return null
+  const v = value.trim()
+  if (/^\d+$/.test(v)) return Number(v) * 1000
+  const at = Date.parse(v)
+  return Number.isNaN(at) ? null : Math.max(0, at - now)
 }
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -110,7 +129,13 @@ async function attempt<T>(opts: CallProviderOptions<T>): Promise<T> {
   const sleep = opts.sleepImpl ?? realSleep
 
   const record = (outcome: ProviderOutcome) => incProviderCall(provider, operation, outcome)
-  const backoff = (i: number) => sleep(baseBackoffMs * 2 ** i)
+  const maxBackoffMs = opts.maxBackoffMs ?? 10_000
+  const random = opts.randomImpl ?? Math.random
+  const method = (opts.init?.method ?? 'GET').toUpperCase()
+  const idempotent = method === 'GET' || method === 'HEAD' || method === 'OPTIONS' || opts.retryUnsafe === true
+  // Full jitter; a valid Retry-After wins over the computed backoff, both capped.
+  const backoff = (i: number, retryAfterMs: number | null = null) =>
+    sleep(Math.min(maxBackoffMs, retryAfterMs ?? random() * baseBackoffMs * 2 ** i))
 
   let lastError: ProviderError | undefined
 
@@ -121,7 +146,7 @@ async function attempt<T>(opts: CallProviderOptions<T>): Promise<T> {
     } catch (err) {
       const kind: ProviderErrorKind = err instanceof FetchTimeoutError ? 'timeout' : 'network'
       lastError = new ProviderError(provider, operation, kind, null, `${provider} ${operation}: ${(err as Error).message}`)
-      if (i < retries) {
+      if (i < retries && idempotent) {
         await backoff(i)
         continue
       }
@@ -136,7 +161,9 @@ async function attempt<T>(opts: CallProviderOptions<T>): Promise<T> {
 
     // Retry transient statuses with backoff before giving up.
     if (retryOn.includes(res.status) && i < retries) {
-      await backoff(i)
+      // Release the discarded response so its socket is not held open.
+      await res.body?.cancel?.().catch?.(() => undefined)
+      await backoff(i, parseRetryAfterMs(res.headers?.get?.('retry-after')))
       continue
     }
 

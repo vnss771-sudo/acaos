@@ -60,7 +60,9 @@ function profileInput(p: ProfileRow): DiscoveryProfileInput {
 }
 
 function errorMessage(err: unknown): string {
-  return (err instanceof Error ? err.message : String(err)).slice(0, 500)
+  const raw = err instanceof Error ? err.message : String(err)
+  // Defence in depth: never persist a credential-bearing query parameter.
+  return raw.replace(/([?&](?:api_?key|key|token|secret|access_token)=)[^&\s"')]*/gi, '$1[redacted]').slice(0, 500)
 }
 
 type Persisted = { created: number; updated: number; matched: number }
