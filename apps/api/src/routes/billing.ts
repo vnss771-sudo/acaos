@@ -7,6 +7,7 @@ import { createCheckoutSession, constructWebhookEvent, createBillingPortalSessio
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { getMonthlyUsage, getPlanCatalog } from '@acaos/backend-core/lib/limits.js'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
+import type { Prisma } from '@prisma/client'
 import { isMailConfigured, sendMail } from '@acaos/backend-core/services/mail.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { evictCachedWorkspace } from '../lib/ingestCache.js'
@@ -140,37 +141,38 @@ billingRouter.post(
       throw new ApiError(400, `Webhook signature invalid: ${err instanceof Error ? err.message : ''}`)
     }
 
-    // Idempotency: Stripe delivers at-least-once. Claim the event id first; if
-    // it already exists we've handled this delivery, so acknowledge and stop.
-    try {
-      await prisma.processedStripeEvent.create({ data: { id: event.id, type: event.type } })
-    } catch (err) {
-      // P2002 is the Prisma unique-constraint violation on
-      // ProcessedStripeEvent.id. Other DB errors must fail the request so
-      // Stripe retries instead of acknowledging an unprocessed event.
-      if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-        return res.json({ received: true, duplicate: true })
+    // SERIALIZABLE makes event-time state transitions safe against concurrent
+    // deliveries with different event ids. Commit idempotency and state together.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const afterCommit: Array<() => Promise<void> | void> = []
+      let claimCreated = false
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.processedStripeEvent.create({ data: { id: event.id, type: event.type } })
+          claimCreated = true
+          await handleWebhookEvent(tx, event, afterCommit)
+        }, { isolationLevel: 'Serializable', timeout: 15000 })
+      } catch (err) {
+        const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined
+        if (!claimCreated && code === 'P2002') {
+          return res.json({ received: true, duplicate: true })
+        }
+        if (code === 'P2034' && attempt < 2) continue
+        void recordAudit({
+          type: 'billing.webhook.processing_failed',
+          entityType: 'stripeWebhook', entityId: event.id,
+          metadata: { eventType: event.type, reason: err instanceof Error ? err.message : 'unknown' },
+        })
+        throw err
       }
-      throw err
+      // Side effects must not fail the committed webhook request.
+      for (const action of afterCommit) {
+        try { await action() }
+        catch (err) { console.error('[billing] post-commit action failed', err instanceof Error ? err.message : 'unknown') }
+      }
+      return res.json({ received: true })
     }
 
-    try {
-      await handleWebhookEvent(event)
-    } catch (err) {
-      // Processing failed after claiming the event — release the claim so
-      // Stripe's redelivery is reprocessed rather than skipped as a duplicate.
-      await prisma.processedStripeEvent.delete({ where: { id: event.id } }).catch(() => {})
-      // Audit the processing failure. Record only the event id/type + safe error
-      // reason — never any signature or secret material.
-      void recordAudit({
-        type: 'billing.webhook.processing_failed',
-        entityType: 'stripeWebhook', entityId: event.id,
-        metadata: { eventType: event.type, reason: err instanceof Error ? err.message : 'unknown' },
-      })
-      throw err
-    }
-
-    res.json({ received: true })
   })
 )
 
@@ -184,6 +186,7 @@ const BILLING_STATE_SELECT = { id: true, billingGraceUntil: true, billingLastStr
  * updated row, or null when the event was stale.
  */
 async function applyBillingEvent(
+  tx: Prisma.TransactionClient,
   ws: BillingState,
   event: { type: string; created?: number },
   data: (ws: BillingState) => Record<string, unknown>,
@@ -192,7 +195,7 @@ async function applyBillingEvent(
     console.warn(`[billing] ${event.type} ws=${ws.id} is older than the last applied event; ignored`)
     return null
   }
-  return prisma.workspace.update({
+  return tx.workspace.update({
     where: { id: ws.id },
     data: { ...data(ws), ...(event.created != null ? { billingLastStripeEventAt: new Date(event.created * 1000) } : {}) },
   })
@@ -205,7 +208,7 @@ function graceFor(status: string, ws: BillingState): Record<string, unknown> {
   return {}
 }
 
-async function handleWebhookEvent(event: { type: string; created?: number; data: { object: unknown } }) {
+async function handleWebhookEvent(tx: Prisma.TransactionClient, event: { type: string; created?: number; data: { object: unknown } }, afterCommit: Array<() => Promise<void> | void>) {
   switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as {
@@ -230,15 +233,16 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
           } else {
             console.error(`[billing] checkout.session.completed workspace=${workspaceId} with unrecognized plan/price; activating without changing plan tier`)
           }
-          const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: BILLING_STATE_SELECT })
+          const ws = await tx.workspace.findUnique({ where: { id: workspaceId }, select: BILLING_STATE_SELECT })
           // A paid checkout for a workspace we can't find is a processing failure:
           // fail so the claim is released and Stripe redelivers.
           if (!ws) throw new Error(`checkout.session.completed for unknown workspace ${workspaceId}`)
-          const updated = await applyBillingEvent(ws, event, () => data)
+          const updated = await applyBillingEvent(tx, ws, event, () => data)
           if (!updated) break
           // Plan changed: an ingestCache entry cached under this workspace's key
           // would keep serving the stale plan for up to the cache TTL otherwise.
-          if (plan !== null && updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
+          const key = updated.ingestApiKey
+          if (plan !== null && key) afterCommit.push(() => evictCachedWorkspace(key))
           console.log(`[billing] checkout.session.completed workspace=${workspaceId} plan=${plan ?? 'unchanged'}`)
         }
         break
@@ -254,7 +258,7 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
         const priceId = sub.items?.data?.[0]?.price?.id
         const plan = resolvePlanFromPrice(priceId)
 
-        const ws = await prisma.workspace.findFirst({
+        const ws = await tx.workspace.findFirst({
           where: { stripeSubscriptionId: sub.id },
           select: BILLING_STATE_SELECT
         })
@@ -265,11 +269,12 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
           if (plan === null) {
             console.warn(`[billing] subscription.updated ws=${ws.id} unrecognized priceId=${priceId}; preserving existing plan`)
           }
-          const updated = await applyBillingEvent(ws, event, (w) => ({
+          const updated = await applyBillingEvent(tx, ws, event, (w) => ({
             subscriptionStatus: sub.status, ...graceFor(sub.status, w), ...(plan !== null ? { plan } : {}),
           }))
           if (!updated) break
-          if (plan !== null && updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
+          const key = updated.ingestApiKey
+          if (plan !== null && key) afterCommit.push(() => evictCachedWorkspace(key))
           console.log(`[billing] subscription.updated ws=${ws.id} status=${sub.status}`)
         }
         break
@@ -277,16 +282,17 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
 
       case 'customer.subscription.deleted': {
         const sub = event.data.object as { id: string; status: string }
-        const ws = await prisma.workspace.findFirst({
+        const ws = await tx.workspace.findFirst({
           where: { stripeSubscriptionId: sub.id },
           select: BILLING_STATE_SELECT
         })
         if (ws) {
-          const updated = await applyBillingEvent(ws, event, () => ({
+          const updated = await applyBillingEvent(tx, ws, event, () => ({
             subscriptionStatus: 'canceled', plan: 'free', stripeSubscriptionId: null, billingGraceUntil: null,
           }))
           if (!updated) break
-          if (updated.ingestApiKey) evictCachedWorkspace(updated.ingestApiKey)
+          const key = updated.ingestApiKey
+          if (key) afterCommit.push(() => evictCachedWorkspace(key))
           console.log(`[billing] subscription.deleted ws=${ws.id}`)
         }
         break
@@ -295,17 +301,17 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
       case 'invoice.payment_failed': {
         const invoice = event.data.object as { subscription?: string }
         if (invoice.subscription) {
-          const ws = await prisma.workspace.findFirst({
+          const ws = await tx.workspace.findFirst({
             where: { stripeSubscriptionId: invoice.subscription as string },
             select: BILLING_STATE_SELECT
           })
           if (ws) {
-            const updated = await applyBillingEvent(ws, event, (w) => ({ subscriptionStatus: 'past_due', ...graceFor('past_due', w) }))
+            const updated = await applyBillingEvent(tx, ws, event, (w) => ({ subscriptionStatus: 'past_due', ...graceFor('past_due', w) }))
             if (!updated) break
             console.log(`[billing] invoice.payment_failed ws=${ws.id} graceUntil=${updated.billingGraceUntil?.toISOString()}`)
             // Send dunning email to the workspace owner
             if (isMailConfigured()) {
-              const ownerMembership = await prisma.membership.findFirst({
+              const ownerMembership = await tx.membership.findFirst({
                 where: { workspaceId: ws.id, role: 'owner' },
                 select: { user: { select: { email: true } } }
               })
@@ -313,7 +319,7 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
               if (ownerEmail) {
                 const appUrl = process.env.APP_URL || 'http://localhost:5173'
                 const billingUrl = `${appUrl}/settings/billing`
-                await sendMail(
+                afterCommit.push(async () => { await sendMail(
                   ownerEmail,
                   'Action required: payment failed for your ACAOS subscription',
                   `<p>Hi,</p>
@@ -322,7 +328,7 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
 <p><a href="${billingUrl}">${billingUrl}</a></p>
 <p>If you have any questions, please reply to this email.</p>
 <p>Thanks,<br>The ACAOS Team</p>`
-                ).catch(() => {})
+                ).catch(() => {}) })
               }
             }
           }
@@ -333,11 +339,11 @@ async function handleWebhookEvent(event: { type: string; created?: number; data:
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object as { subscription?: string }
         if (invoice.subscription) {
-          const ws = await prisma.workspace.findFirst({
+          const ws = await tx.workspace.findFirst({
             where: { stripeSubscriptionId: invoice.subscription as string },
             select: BILLING_STATE_SELECT
           })
-          if (ws) await applyBillingEvent(ws, event, () => ({ subscriptionStatus: 'active', billingGraceUntil: null }))
+          if (ws) await applyBillingEvent(tx, ws, event, () => ({ subscriptionStatus: 'active', billingGraceUntil: null }))
         }
         break
       }

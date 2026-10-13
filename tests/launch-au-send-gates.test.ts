@@ -27,6 +27,9 @@ function workspace(targetsAustralia: boolean) {
       targetsAustralia,
     }) },
     auditEvent: { create: async () => ({}) },
+    suppression: { findUnique: async () => null },
+    contactEvent: { findFirst: async () => null, count: async () => 0 },
+    consentRecord: { findMany: async () => [] },
   })
   installPrisma(db)
   process.env.FEATURE_SEND = 'true'
@@ -73,4 +76,17 @@ test('reply is exempt from the Australian commercial-outreach pause at batch gat
   const result = await authorizeOutboundSend({ workspaceId: 'au-ws', context: 'reply', recipientChecks: false })
   assert.equal(result.allowed, true)
   assert.equal(result.code, 'ALLOWED')
+})
+
+
+test('AU recipient identity cannot bypass missing consent by setting recipientChecks=false', async () => {
+  workspace(true)
+  process.env.AU_COMMERCIAL_SENDING_ENABLED = 'true'
+  process.env.AU_JURISDICTION_REVIEW_REQUIRED = 'true'
+  const result = await authorizeOutboundSend({
+    workspaceId: 'au-ws', context: 'campaign', email: 'person@example.com',
+    recipientChecks: false,
+  })
+  assert.equal(result.allowed, false)
+  assert.equal(result.code, 'AU_CONSENT_REQUIRED')
 })

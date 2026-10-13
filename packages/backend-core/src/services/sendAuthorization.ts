@@ -154,7 +154,12 @@ export async function authorizeOutboundSend(input: AuthorizeOutboundSendInput): 
     return finalizeDecision(input, deny('AU_SENDING_DISABLED', observations))
   }
 
-  if (input.recipientChecks === false) return finalizeDecision(input, allow(observations))
+  // A batch preflight can omit email because it performs bulk recipient checks.
+  // A known Australian commercial recipient must never bypass individual policy.
+  const auRecipientDispatch = targetsAustralia && input.context !== 'reply' && Boolean(input.email)
+  if (input.recipientChecks === false && !auRecipientDispatch) {
+    return finalizeDecision(input, allow(observations))
+  }
   if (!input.email) return finalizeDecision(input, deny('RECIPIENT_REQUIRED', observations))
 
   if (input.context === 'reply') {
