@@ -100,6 +100,14 @@ export function isAuJurisdictionReviewRequired(): boolean {
   return parseBool(process.env.AU_JURISDICTION_REVIEW_REQUIRED, false)
 }
 
+/**
+ * Website evidence collection (E3.4). DEFAULT OFF: no prospect website is fetched unless true. Read live so it is also
+ * an instant kill switch. Enabling needs legal sign-off on retention/collection and an egress policy review.
+ */
+export function isWebsiteEvidenceEnabled(): boolean {
+  return parseBool(process.env.WEBSITE_EVIDENCE_ENABLED, false)
+}
+
 export type ReputationGuardMode = 'off' | 'observe' | 'enforce'
 
 /**

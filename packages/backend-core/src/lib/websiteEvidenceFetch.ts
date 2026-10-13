@@ -9,7 +9,7 @@ const MAX_REDIRECTS = 3
 const TIMEOUT_MS = 8_000
 
 export class WebsiteFetchError extends Error {
-  constructor(public readonly reason: string) {
+  constructor(public readonly reason: string, public readonly status?: number) {
     super(`Website collection rejected: ${reason}`)
     this.name = 'WebsiteFetchError'
   }
@@ -129,7 +129,7 @@ export async function collectWebsiteDocument(input: string, deps: FetchDependenc
       url = parseTarget(new URL(location, url).href)
       continue
     }
-    if (response.status !== 200) throw new WebsiteFetchError('upstream_status')
+    if (response.status !== 200) throw new WebsiteFetchError('upstream_status', response.status)
     const ct = response.headers['content-type']
     const contentType = Array.isArray(ct) ? ct[0] ?? '' : ct ?? ''
     if (!/^text\/(html|plain)(?:\s*;|\s*$)/i.test(contentType)) throw new WebsiteFetchError('unsupported_content_type')
