@@ -15,6 +15,8 @@ const safeEnv = (): NodeJS.ProcessEnv => ({
   REPUTATION_GUARD_MODE: 'enforce',
   FOLLOWUPS_ENABLED: 'false',
   COMPLIANCE_GATE_ENABLED: 'false',
+  AU_JURISDICTION_REVIEW_REQUIRED: 'true',
+  AU_COMMERCIAL_SENDING_ENABLED: 'false',
   DATABASE_URL: 'postgres://example',
   REDIS_URL: 'redis://example',
   JWT_SECRET: 'x'.repeat(64),
