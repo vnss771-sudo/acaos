@@ -186,3 +186,53 @@ test('an out-of-order payment failure does not roll back a newer recovery; a fre
   await prisma.workspace.update({ where: { id: workspace.id }, data: { billingGraceUntil: new Date(Date.now() - 1000) } })
   assert.equal((await getMonthlyUsage(workspace.id)).plan, 'free')
 })
+
+// Atomic webhook regression: failures must roll back the claim and billing state.
+test('failed processing leaves no committed claim or billing mutation', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const before = await prisma.workspace.findUniqueOrThrow({ where: { id: workspace.id } })
+  const missingWorkspace = checkoutEvent('evt_atomic_rollback', 'missing-atomic-workspace')
+  const response = await postWebhook(missingWorkspace)
+  assert.equal(response.status, 500)
+  assert.equal(await prisma.processedStripeEvent.count({ where: { id: 'evt_atomic_rollback' } }), 0)
+  const after = await prisma.workspace.findUniqueOrThrow({ where: { id: workspace.id } })
+  assert.equal(after.plan, before.plan)
+  assert.equal(after.subscriptionStatus, before.subscriptionStatus)
+})
+
+test('concurrent duplicate deliveries commit exactly one claim', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const event = checkoutEvent('evt_atomic_concurrent_same', workspace.id)
+  const responses = await Promise.all([postWebhook(event), postWebhook(event)])
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 200])
+  assert.equal(await prisma.processedStripeEvent.count({ where: { id: event.id } }), 1)
+  const after = await prisma.workspace.findUniqueOrThrow({ where: { id: workspace.id } })
+  assert.equal(after.subscriptionStatus, 'active')
+  assert.equal(after.plan, 'growth')
+})
+
+test('concurrent distinct event ids never apply an older billing timestamp after a newer one', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  const subscription = `sub_atomic_${workspace.id}`
+  await prisma.workspace.update({
+    where: { id: workspace.id },
+    data: { plan: 'growth', subscriptionStatus: 'active', stripeSubscriptionId: subscription },
+  })
+  const t = Math.floor(Date.now() / 1000)
+  const recovered = {
+    id: 'evt_atomic_recovered', type: 'invoice.payment_succeeded', created: t + 10,
+    data: { object: { subscription } },
+  }
+  const failed = {
+    id: 'evt_atomic_failed', type: 'invoice.payment_failed', created: t,
+    data: { object: { subscription } },
+  }
+  const responses = await Promise.all([postWebhook(recovered), postWebhook(failed)])
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 200])
+  const after = await prisma.workspace.findUniqueOrThrow({ where: { id: workspace.id } })
+  assert.equal(after.subscriptionStatus, 'active')
+  assert.equal(after.billingLastStripeEventAt?.getTime(), (t + 10) * 1000)
+  assert.equal(await prisma.processedStripeEvent.count({
+    where: { id: { in: [recovered.id, failed.id] } },
+  }), 2)
+})
