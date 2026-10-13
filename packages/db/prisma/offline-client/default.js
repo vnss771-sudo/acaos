@@ -35,7 +35,7 @@ class PrismaClient {
 
   async $connect() {}
   async $disconnect() {}
-  async $transaction(arg) {
+  async $transaction(arg, _options) {
     if (typeof arg === 'function') {
       return arg(this)
     }

@@ -29,7 +29,7 @@ export class PrismaClient {
   constructor(...args: any[])
   $connect(): Promise<void>
   $disconnect(): Promise<void>
-  $transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T> | T): Promise<T>
+  $transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T> | T, options?: { maxWait?: number; timeout?: number; isolationLevel?: string }): Promise<T>
   $transaction<T extends readonly unknown[]>(operations: T): Promise<T>
   $queryRaw(...args: any[]): Promise<never>
   $executeRaw(...args: any[]): Promise<never>
