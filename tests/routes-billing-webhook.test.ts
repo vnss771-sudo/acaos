@@ -40,7 +40,7 @@ function baseSpec(workspaceRow: any = { id: 'ws1' }) {
     processedStripeEvent: {
       create: async (a: any) => {
         const id = String(a?.data?.id)
-        if (seen.has(id)) throw new Error('duplicate event')
+        if (seen.has(id)) throw Object.assign(new Error('duplicate event'), { code: 'P2002' })
         seen.add(id)
         return { id }
       },
@@ -196,6 +196,23 @@ test('an unhandled event type is acknowledged as a no-op', async () => {
 })
 
 // --- idempotency (BILL-1) ---
+
+test('claim storage failure is not acknowledged as a duplicate', async () => {
+  prisma = createFakePrisma({
+    ...baseSpec(),
+    processedStripeEvent: {
+      create: async () => { throw new Error('claim storage unavailable') },
+    },
+  })
+  installPrisma(prisma)
+  const response = await postWebhook({
+    id: 'evt_claim_storage_unavailable',
+    type: 'checkout.session.completed',
+    data: { object: { customer: 'cus_1', subscription: 'sub_1', metadata: { workspaceId: 'ws1', priceId: GROWTH_PRICE } } },
+  })
+  assert.equal(response.status, 500)
+  assert.equal(prisma.callsTo('workspace', 'update').length, 0)
+})
 
 test('a re-delivered event (same id) is processed only once', async () => {
   const event = {

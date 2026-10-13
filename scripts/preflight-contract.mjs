@@ -108,6 +108,20 @@ export function evaluatePilotPolicy(env = process.env) {
         : { id: 'policy.compliance_gate', status: 'PASS', message: `COMPLIANCE_GATE_ENABLED=${env.COMPLIANCE_GATE_ENABLED} (explicit ${compliance ? 'enabled' : 'disabled'} posture)` },
   )
 
+  // All unclassified workspaces must be held for review during the controlled
+  // Australian pilot. This augments the canonical send gate rather than adding
+  // a separate dispatch policy. It does not certify recipient jurisdiction.
+  checks.push(explicitBoolCheck(
+    'policy.au_jurisdiction_review',
+    'AU_JURISDICTION_REVIEW_REQUIRED',
+    env.AU_JURISDICTION_REVIEW_REQUIRED,
+    true,
+  ))
+  const auCommercial = boolToken(env.AU_COMMERCIAL_SENDING_ENABLED)
+  checks.push(auCommercial === undefined || auCommercial === null
+    ? { id: 'policy.au_commercial_sending', status: 'FAIL', message: 'AU_COMMERCIAL_SENDING_ENABLED must be explicitly set to true or false' }
+    : { id: 'policy.au_commercial_sending', status: 'PASS', message: `AU commercial sending switch explicitly ${auCommercial ? 'enabled (requires separate legal approval evidence)' : 'disabled'}` })
+
   for (const key of [
     'DATABASE_URL',
     'REDIS_URL',
@@ -120,6 +134,14 @@ export function evaluatePilotPolicy(env = process.env) {
     'STRIPE_PRICE_GROWTH',
     'METRICS_TOKEN',
   ]) checks.push(requiredSecretCheck(key, env))
+
+  // Distinct configured plan prices are a local invariant. The Stripe account,
+  // price ownership, tax handling and live checkout still need provider smoke.
+  const starter = env.STRIPE_PRICE_STARTER?.trim()
+  const growth = env.STRIPE_PRICE_GROWTH?.trim()
+  checks.push(starter && growth && starter === growth
+    ? { id: 'billing.distinct_plan_prices', status: 'FAIL', message: 'Starter and Growth must use different Stripe price IDs' }
+    : { id: 'billing.distinct_plan_prices', status: starter && growth ? 'PASS' : 'FAIL', message: starter && growth ? 'Starter and Growth price IDs are distinct (provider validation pending)' : 'Both Stripe plan price IDs are required' })
 
   checks.push(urlCheck('API_URL', env.API_URL))
   checks.push(urlCheck('WEB_URL', env.WEB_URL))

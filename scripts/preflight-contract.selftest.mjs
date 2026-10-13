@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { evaluatePilotPolicy } from './preflight-contract.mjs'
 
 const safe = () => ({
   NODE_ENV: 'production', SAFE_LAUNCH_MODE: 'true', TENANT_GUARD_MODE: 'enforce',
   REPUTATION_GUARD_MODE: 'enforce', FOLLOWUPS_ENABLED: 'false', COMPLIANCE_GATE_ENABLED: 'false',
+  AU_JURISDICTION_REVIEW_REQUIRED: 'true', AU_COMMERCIAL_SENDING_ENABLED: 'false',
   DATABASE_URL: 'postgres://example', REDIS_URL: 'redis://example', JWT_SECRET: 'x'.repeat(64),
   EMAIL_ENCRYPTION_KEY: 'x'.repeat(64), OPENAI_API_KEY: 'test', STRIPE_SECRET_KEY: 'sk_live_test',
   STRIPE_WEBHOOK_SECRET: 'whsec_test', STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_GROWTH: 'price_growth',
@@ -12,6 +14,9 @@ const safe = () => ({
   ALLOWED_ORIGINS: 'https://app.example.com', ACAOS_RELEASE_SHA: '0123456789abcdef0123456789abcdef01234567',
   ACAOS_RELEASE_ID: '1.4.0+0123456789ab',
 })
+const hasGit = (() => {
+  try { execFileSync('git', ['rev-parse', 'HEAD'], { stdio: 'ignore' }); return true } catch { return false }
+})()
 const get = (r, id) => r.checks.find((c) => c.id === id)?.status
 
 assert.equal(evaluatePilotPolicy(safe()).safe, true)
@@ -23,6 +28,7 @@ for (const [key, value, id] of [
   ['FOLLOWUPS_ENABLED', 'true', 'policy.followups'],
   ['AUTONOMOUS_OUTREACH_MODE', 'active', 'policy.autonomy'],
   ['API_URL', 'http://api.example.com', 'url.api_url'],
+  ['AU_JURISDICTION_REVIEW_REQUIRED', 'false', 'policy.au_jurisdiction_review'],
 ]) {
   const env = safe(); env[key] = value
   const report = evaluatePilotPolicy(env)
@@ -36,6 +42,27 @@ for (const [key, id] of [
   const env = safe(); delete env[key]
   if (key === 'ACAOS_RELEASE_SHA') delete env.ACAOS_RELEASE_ID
   const report = evaluatePilotPolicy(env)
+  // The preflight falls back to `git rev-parse HEAD`, so a missing SHA only
+  // fails outside a git checkout.
+  if (key === 'ACAOS_RELEASE_SHA' && hasGit) {
+    assert.equal(get(report, id), 'PASS')
+    continue
+  }
   assert.equal(get(report, id), 'FAIL')
 }
+for (const key of ['AU_JURISDICTION_REVIEW_REQUIRED', 'AU_COMMERCIAL_SENDING_ENABLED']) {
+  const env = safe(); delete env[key]
+  const report = evaluatePilotPolicy(env)
+  assert.equal(report.safe, false, `${key} must be explicit`)
+}
+for (const badValue of ['invalid', '', 'sometimes']) {
+  const report = evaluatePilotPolicy({ ...safe(), AU_COMMERCIAL_SENDING_ENABLED: badValue })
+  assert.equal(get(report, 'policy.au_commercial_sending'), 'FAIL')
+}
+const duplicate = evaluatePilotPolicy({ ...safe(), STRIPE_PRICE_GROWTH: 'price_starter' })
+assert.equal(duplicate.safe, false)
+assert.equal(get(duplicate, 'billing.distinct_plan_prices'), 'FAIL')
+// A true AU switch is not proof of legal approval. Preflight only checks the
+// deliberate configuration; a signed approval remains a separate release gate.
+assert.equal(get(evaluatePilotPolicy({ ...safe(), AU_COMMERCIAL_SENDING_ENABLED: 'true' }), 'policy.au_commercial_sending'), 'PASS')
 console.log('preflight-contract selftest: PASS')
