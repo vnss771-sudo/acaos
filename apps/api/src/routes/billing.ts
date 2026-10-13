@@ -144,8 +144,14 @@ billingRouter.post(
     // it already exists we've handled this delivery, so acknowledge and stop.
     try {
       await prisma.processedStripeEvent.create({ data: { id: event.id, type: event.type } })
-    } catch {
-      return res.json({ received: true, duplicate: true })
+    } catch (err) {
+      // P2002 is the Prisma unique-constraint violation on
+      // ProcessedStripeEvent.id. Other DB errors must fail the request so
+      // Stripe retries instead of acknowledging an unprocessed event.
+      if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+        return res.json({ received: true, duplicate: true })
+      }
+      throw err
     }
 
     try {
