@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { evaluatePilotPolicy } from './preflight-contract.mjs'
 
 const safe = () => ({
@@ -13,6 +14,9 @@ const safe = () => ({
   ALLOWED_ORIGINS: 'https://app.example.com', ACAOS_RELEASE_SHA: '0123456789abcdef0123456789abcdef01234567',
   ACAOS_RELEASE_ID: '1.4.0+0123456789ab',
 })
+const hasGit = (() => {
+  try { execFileSync('git', ['rev-parse', 'HEAD'], { stdio: 'ignore' }); return true } catch { return false }
+})()
 const get = (r, id) => r.checks.find((c) => c.id === id)?.status
 
 assert.equal(evaluatePilotPolicy(safe()).safe, true)
@@ -38,6 +42,12 @@ for (const [key, id] of [
   const env = safe(); delete env[key]
   if (key === 'ACAOS_RELEASE_SHA') delete env.ACAOS_RELEASE_ID
   const report = evaluatePilotPolicy(env)
+  // The preflight falls back to `git rev-parse HEAD`, so a missing SHA only
+  // fails outside a git checkout.
+  if (key === 'ACAOS_RELEASE_SHA' && hasGit) {
+    assert.equal(get(report, id), 'PASS')
+    continue
+  }
   assert.equal(get(report, id), 'FAIL')
 }
 for (const key of ['AU_JURISDICTION_REVIEW_REQUIRED', 'AU_COMMERCIAL_SENDING_ENABLED']) {
