@@ -30,6 +30,7 @@ const VIEW_PATHS: Record<View, string> = {
   'ops-find-work': '/ops/find-work',
   'ops-delivery': '/ops/delivery',
   'ops-scorecard': '/ops/scorecard',
+  'ops-technician': '/ops/technician',
 }
 
 const PATH_VIEWS = Object.fromEntries(

@@ -12,7 +12,7 @@ describe('hubs model', () => {
       'today', 'dashboard', 'intelligence', 'prospects', 'missions', 'campaigns',
       'approvals', 'inbox', 'leads', 'ai', 'billing', 'settings', 'admin',
       'ops-dashboard', 'ops-crew', 'ops-jobs', 'ops-shifts', 'ops-roster', 'ops-fatigue', 'ops-alerts',
-      'ops-find-work', 'ops-delivery', 'ops-scorecard',
+      'ops-find-work', 'ops-delivery', 'ops-scorecard', 'ops-technician',
     ]
     for (const v of ALL_VIEWS) {
       const owning = HUBS.filter(h => h.tabs.some(t => t.view === v))

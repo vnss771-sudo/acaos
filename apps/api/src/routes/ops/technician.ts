@@ -62,6 +62,39 @@ async function access(userId: string, workspaceId: string, jobId: string) {
   return { job, crewMemberId: crew.id }
 }
 
+// The caller's own active job assignments, for the mobile technician view.
+// Strictly identity-level fields: no quote amounts, margins, customer details or
+// jobs assigned to anyone else. A member without a linked crew account is not an
+// error here (the UI explains it), so this returns linked:false rather than 403.
+technicianRouter.get('/assigned', asyncHandler(async (req, res) => {
+  const user = requireUser(req)
+  const { workspaceId } = parseQuery(scope, req)
+  if (!(await userBelongsToWorkspace(user.id, workspaceId))) throw new ApiError(403, 'Access denied')
+  const crew = await prisma.opsCrewMember.findFirst({
+    where: { workspaceId, userId: user.id, isActive: true }, select: { id: true },
+  })
+  if (!crew) return res.json({ linked: false, jobs: [] })
+  const rows = await prisma.jobTechnicianAssignment.findMany({
+    where: { workspaceId, crewMemberId: crew.id, job: { status: 'ACTIVE' } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: 100,
+    select: {
+      createdAt: true,
+      job: { select: { id: true, status: true, opsJobSite: { select: { siteName: true, jobCode: true } } } },
+    },
+  })
+  res.json({
+    linked: true,
+    jobs: rows.map((r) => ({
+      id: r.job.id,
+      status: r.job.status,
+      siteName: r.job.opsJobSite?.siteName ?? null,
+      jobCode: r.job.opsJobSite?.jobCode ?? null,
+      assignedAt: r.createdAt,
+    })),
+  })
+}))
+
 // Admin-only assignment; both resources must belong to the same workspace.
 technicianRouter.post('/:jobId/assignments', asyncHandler(async (req, res) => {
   const user = requireUser(req)

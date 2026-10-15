@@ -322,7 +322,7 @@ export type StatsData = {
 }
 
 export type View = 'dashboard' | 'today' | 'intelligence' | 'prospects' | 'missions' | 'campaigns' | 'approvals' | 'inbox' | 'leads' | 'ai' | 'billing' | 'settings' | 'admin'
-  | 'ops-dashboard' | 'ops-crew' | 'ops-jobs' | 'ops-shifts' | 'ops-roster' | 'ops-fatigue' | 'ops-alerts' | 'ops-find-work' | 'ops-delivery' | 'ops-scorecard'
+  | 'ops-dashboard' | 'ops-crew' | 'ops-jobs' | 'ops-shifts' | 'ops-roster' | 'ops-fatigue' | 'ops-alerts' | 'ops-find-work' | 'ops-delivery' | 'ops-scorecard' | 'ops-technician'
 
 // ── Ops module (field crew / shift / job-site management) ──────────────────────
 

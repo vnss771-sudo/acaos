@@ -21,6 +21,7 @@ const GROUPS: { label: string; tabs: { view: View; label: string }[] }[] = [
     { view: 'ops-jobs', label: 'Sites' },
     { view: 'ops-fatigue', label: 'Fatigue' },
     { view: 'ops-alerts', label: 'Alerts' },
+    { view: 'ops-technician', label: 'My jobs' },
   ] },
 ]
 
