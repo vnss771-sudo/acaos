@@ -496,8 +496,8 @@ test('the real closeout route racing finalisation never leaves an AVAILABLE file
     const f = await fileRow(fileId)
     const keys = [...store.objects.keys()].filter(k => k.includes(`/job/${job.id}/`))
     if (f.status === 'AVAILABLE') {
-      assert.equal(keys.length, 1, 'finalised before the closeout: exactly the final object')
-      assert.ok(keys[0].includes('/final/'))
+      assert.equal(keys.length, 2, 'finalised before the closeout: exactly the final object and its thumbnail')
+      assert.deepEqual(keys.map((k) => k.split('/').slice(-2, -1)[0]).sort(), ['final', 'thumb'])
     } else {
       assert.equal(f.status, 'REJECTED')
       assert.equal(keys.length, 0, 'rejected: no object left behind')
@@ -521,7 +521,7 @@ test('revocation racing finalisation is consistent', async () => {
     const f = await fileRow(fileId)
     const keys = [...store.objects.keys()].filter(k => k.includes(`/job/${job.id}/`))
     assert.ok(['AVAILABLE', 'REJECTED'].includes(f.status))
-    assert.equal(keys.length, f.status === 'AVAILABLE' ? 1 : 0)
+    assert.equal(keys.length, f.status === 'AVAILABLE' ? 2 : 0)
     assert.deepEqual(await fin(w, fileId, { store }).then(r => r.outcome), f.status === 'AVAILABLE' ? 'already_final' : 'skipped')
   }
 })
