@@ -6,9 +6,9 @@ import assert from 'node:assert/strict'
 import sharp from 'sharp'
 import { resolveEvidenceStorage, describeEvidenceStorageProblems } from '../packages/backend-core/src/lib/evidenceStorageConfig.ts'
 import {
-  createS3EvidenceStore, MemoryEvidenceStore, newEvidenceKeys, assertKeyInWorkspace, setEvidenceStoreForTests,
+  createS3EvidenceStore, MemoryEvidenceStore, newEvidenceKeys, thumbKeyFor, assertKeyForJob, assertKeyInWorkspace, setEvidenceStoreForTests,
 } from '../packages/backend-core/src/lib/evidenceStorage.ts'
-import { sniffImageType, sanitizeEvidenceImage } from '../packages/backend-core/src/lib/evidenceImage.ts'
+import { sniffImageType, sanitizeEvidenceImage, makeEvidenceThumbnail } from '../packages/backend-core/src/lib/evidenceImage.ts'
 
 const GOOD = {
   EVIDENCE_UPLOADS_ENABLED: 'true',
@@ -375,4 +375,55 @@ test('the memory store mirrors conditional-write semantics', async () => {
   assert.equal(hooked, 'fresh')
   m.failNext = { op: 'putBytes', times: 1 }
   await assert.rejects(() => m.putBytesIf('z', Buffer.from('y'), 'image/jpeg', { ifNoneMatch: true }), /injected/)
+})
+
+// ── C5a: signed GET, thumbnail keys and thumbnails ───────────────────────────
+
+test('the thumbnail key is derived from the final key and stays inside its job', () => {
+  const k = newEvidenceKeys('wsA', 'job1')
+  assert.match(k.thumbKey, /^ws\/wsA\/job\/job1\/thumb\/[A-Za-z0-9_-]{32}$/)
+  assert.equal(k.thumbKey, thumbKeyFor(k.primaryKey))
+  assert.equal(k.thumbKey.split('/').pop(), k.primaryKey.split('/').pop())
+  assert.doesNotThrow(() => assertKeyForJob(k.thumbKey, 'wsA', 'job1'))
+  assert.throws(() => assertKeyForJob(k.thumbKey, 'wsA', 'job2'))
+  assert.equal(thumbKeyFor('ws/a/job/b/upload/x'), 'ws/a/job/b/upload/x', 'only final keys are mapped')
+})
+
+test('the real presigner forces the response headers and a short expiry on a GET URL', async () => {
+  const cfg = { ...(resolveEvidenceStorage(GOOD) as { enabled: true; config: never }).config }
+  const store = createS3EvidenceStore(cfg as never)
+  const { url } = await store.presignGet({ key: 'ws/w1/job/j1/final/abc', contentType: 'image/jpeg', expiresInSeconds: 60 })
+  const u = new URL(url)
+  assert.ok(u.pathname.endsWith('ws/w1/job/j1/final/abc'))
+  assert.equal(u.searchParams.get('X-Amz-Expires'), '60')
+  assert.equal(u.searchParams.get('response-content-type'), 'image/jpeg')
+  assert.equal(u.searchParams.get('response-content-disposition'), 'inline')
+  assert.equal(u.searchParams.get('response-cache-control'), 'private, no-store')
+  assert.ok(!url.includes(GOOD.EVIDENCE_S3_SECRET_ACCESS_KEY), 'secret not in URL')
+})
+
+test('the memory store serves a signed GET with forced headers, and refuses unknown or expired URLs', async () => {
+  const store = new MemoryEvidenceStore()
+  await store.putBytes('ws/w1/x', Buffer.from('abc'), 'text/html') // stored type is NOT what is served
+  const s = await store.presignGet({ key: 'ws/w1/x', contentType: 'image/jpeg', expiresInSeconds: 60 })
+  const ok = store.clientGet(s.url)
+  assert.equal(ok.status, 200)
+  assert.deepEqual(ok.headers, { 'Content-Type': 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-store' })
+  assert.equal(store.clientGet('memory://get/nope').status, 403)
+  const missing = await store.presignGet({ key: 'ws/w1/none', contentType: 'image/jpeg', expiresInSeconds: 60 })
+  assert.equal(store.clientGet(missing.url).status, 404)
+  store.now = () => Date.now() + 61_000
+  assert.equal(store.clientGet(s.url).status, 403, 'expired')
+})
+
+test('thumbnails are small, metadata-free JPEGs and never enlarge', async () => {
+  const big = await sharp({ create: { width: 1600, height: 900, channels: 3, background: '#aa5500' } }).jpeg().toBuffer()
+  const t = await makeEvidenceThumbnail(big, { maxPixels: 50_000_000 })
+  assert.deepEqual([t.width, t.height], [320, 180])
+  assert.match(t.sha256, /^[0-9a-f]{64}$/)
+  assert.ok(t.bytes.length < big.length)
+  const small = await sharp({ create: { width: 100, height: 80, channels: 3, background: '#000' } }).jpeg().toBuffer()
+  const t2 = await makeEvidenceThumbnail(small, { maxPixels: 50_000_000 })
+  assert.deepEqual([t2.width, t2.height], [100, 80])
+  await assert.rejects(() => makeEvidenceThumbnail(Buffer.from('not an image'), { maxPixels: 50_000_000 }))
 })

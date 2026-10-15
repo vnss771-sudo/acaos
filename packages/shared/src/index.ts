@@ -771,6 +771,35 @@ export type TechnicianEvidenceRequest =
   | { workspaceId: string; submissionId: string; kind: 'NOTE'; note: string }
   | { workspaceId: string; submissionId: string; kind: 'CHECKLIST'; checklist: TechnicianChecklistItem[] }
 
+/** Technician photo evidence (C2 upload + C5a read side). Object keys never appear in any response. */
+export type EvidenceFileStatus = 'PENDING' | 'AVAILABLE' | 'REJECTED'
+export interface EvidenceFileInitRequest {
+  workspaceId: string
+  /** One per photo, generated once on the device; makes retries idempotent. */
+  submissionId: string
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp'
+  sizeBytes: number
+  evidenceId?: string
+}
+export interface EvidenceFileRef { id: string; status: string; kind: string }
+export interface EvidenceFileSummary {
+  id: string
+  status: EvidenceFileStatus
+  kind: string
+  contentType: string | null
+  sizeBytes: number | null
+  width: number | null
+  height: number | null
+  evidenceId: string | null
+  createdAt: string
+  finalizedAt: string | null
+  hasThumb: boolean
+  /** Present for managers only. */
+  uploadedBy?: { crewMemberId: string; name: string }
+}
+export interface EvidenceFileListResponse { files: EvidenceFileSummary[]; nextCursor: string | null }
+export interface EvidenceFileContentResponse { url: string; expiresAt: string; variant: 'full' | 'thumb' }
+
 export interface RouteContracts {
   // Campaigns
   'POST /api/campaigns': { body: CreateCampaignRequest; response: { campaign: CampaignDTO } }
@@ -896,6 +925,9 @@ export interface RouteContracts {
   'POST /api/ops/clock/in': { body: OpsClockInRequest; response: unknown }
   'POST /api/ops/clock/out': { body: OpsClockOutRequest; response: unknown }
   'POST /api/ops/technician/:jobId/evidence': { params: { jobId: string }; body: TechnicianEvidenceRequest; response: { evidence: { id: string; kind: string; createdAt: string } } }
+  'POST /api/ops/technician/:jobId/files/init': { params: { jobId: string }; body: EvidenceFileInitRequest; response: { file: EvidenceFileRef; upload?: { method: 'PUT'; url: string; headers: Record<string, string>; expiresAt: string } } }
+  'POST /api/ops/technician/:jobId/files/:fileId/complete': { params: { jobId: string; fileId: string }; body: { workspaceId: string }; response: { file: EvidenceFileRef; processing?: boolean } }
+  'DELETE /api/ops/technician/:jobId/files/:fileId': { params: { jobId: string; fileId: string }; body: { workspaceId: string }; response: { file: EvidenceFileRef } }
   'POST /api/ops/roster': { body: OpsCreateRosterEntryRequest; response: unknown }
   'POST /api/ops/roster/bulk': { body: OpsBulkCreateRosterRequest; response: { created: number; requested: number } }
   'PUT /api/ops/roster/:id': { params: { id: string }; body: OpsUpdateRosterEntryRequest; response: unknown }

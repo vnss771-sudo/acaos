@@ -85,7 +85,7 @@ test('members without a usable crew link get linked:false, not an error', async 
   for (const who of [unlinked, inactive, { user: w.owner }]) {
     const r = await assigned(who.user.id, w.ws.id)
     assert.equal(r.status, 200)
-    assert.deepEqual(r.body, { linked: false, jobs: [] })
+    assert.deepEqual(r.body, { linked: false, photos: false, jobs: [] })
   }
 })
 

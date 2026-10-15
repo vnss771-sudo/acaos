@@ -72,3 +72,22 @@ export async function sanitizeEvidenceImage(
     return { ok: false, reason: /pixel limit/i.test((e as Error).message) ? 'too_many_pixels' : 'decode_failed' }
   }
 }
+
+export type ThumbnailResult = { bytes: Buffer; width: number; height: number; sha256: string }
+
+/**
+ * A small JPEG for gallery grids, made from bytes that already went through
+ * sanitizeEvidenceImage (so the input is a metadata-free JPEG we produced).
+ * Throws on failure; the caller decides whether a missing thumbnail matters.
+ */
+export async function makeEvidenceThumbnail(
+  sanitizedJpeg: Buffer,
+  opts: { maxEdge?: number; quality?: number; maxPixels: number },
+): Promise<ThumbnailResult> {
+  const sharp = await loadSharp()
+  const { data, info } = await sharp(sanitizedJpeg, { limitInputPixels: opts.maxPixels, failOn: 'error' })
+    .resize({ width: opts.maxEdge ?? 320, height: opts.maxEdge ?? 320, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: opts.quality ?? 72 })
+    .toBuffer({ resolveWithObject: true })
+  return { bytes: data, width: info.width, height: info.height, sha256: createHash('sha256').update(data).digest('hex') }
+}
