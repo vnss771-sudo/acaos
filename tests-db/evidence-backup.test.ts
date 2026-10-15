@@ -145,6 +145,9 @@ test('a primary that no longer matches its recorded hash is an incident and is n
   assert.equal(row.status, 'FAILED'); assert.equal(row.lastError, 'primary_mismatch')
   primary.objects.delete(f.key)
   assert.deepEqual(await rep(w, f.file.id), { outcome: 'failed', reason: 'primary_missing' })
+  // a vanished primary is data loss: it is reported as an incident by the sweep, not just retried quietly
+  const sweep = await sweepEvidenceBackups({ enqueue: async () => {} })
+  assert.ok('integrityIncidents' in sweep && sweep.integrityIncidents === 1)
 })
 
 test('an existing backup object with different bytes is an incident and is never overwritten', async () => {
@@ -490,4 +493,104 @@ test('restore reports active legal holds and does not depend on them', async () 
   await prisma.legalHold.create({ data: { workspaceId: w.ws.id, scope: 'JOB', jobId: w.job.id, reason: 'dispute', placedByUserId: w.owner.id } })
   assert.equal((await restore(w, f)).activeHolds, 1)
   assert.equal((await restore(w, f, { execute: true, approvedByUserId: w.owner.id, reason: 'drill' })).outcome, 'restored')
+})
+
+// ── restore overwrite races (post-merge verification) ──────────────────────
+
+const OPERATOR = (w: World) => ({ execute: true, approvedByUserId: w.owner.id, reason: 'race drill' })
+const settle = () => new Promise((r) => setTimeout(r, 50))   // let fire-and-forget audit writes land
+
+test('concurrent restores of a missing primary write it exactly once and never overwrite each other', async () => {
+  const w = await world('a@example.test')
+  const f = await backedUp(w)
+  primary.objects.delete(f.key)
+  let writesToKey = 0
+  primary.onPut = (key) => { if (key === f.key) writesToKey++ }
+  const results = await Promise.all(Array.from({ length: 8 }, () => restore(w, f, OPERATOR(w)).catch((e) => e)))
+  const outcomes = results.map((r) => (r instanceof Error ? `error:${r.message}` : r.outcome))
+  assert.equal(outcomes.filter((o) => o === 'restored').length, 1, JSON.stringify(outcomes))
+  assert.ok(outcomes.every((o) => o === 'restored' || o === 'primary_valid'), JSON.stringify(outcomes))
+  assert.equal(writesToKey, 1, 'the primary key was written once')
+  assert.deepEqual(primary.objects.get(f.key)?.bytes, f.bytes)
+  assert.deepEqual([...primary.objects.keys()], [f.key], 'no staging objects left')
+})
+
+test('concurrent restores of a corrupted primary replace it exactly once', async () => {
+  const w = await world('a@example.test')
+  const f = await backedUp(w)
+  primary.objects.set(f.key, { bytes: Buffer.from('damaged'), contentType: 'image/jpeg' })
+  let writesToKey = 0
+  primary.onPut = (key) => { if (key === f.key) writesToKey++ }
+  const results = await Promise.all(Array.from({ length: 6 }, () => restore(w, f, OPERATOR(w)).catch((e) => e)))
+  const outcomes = results.map((r) => (r instanceof Error ? `error:${r.message}` : r.outcome))
+  assert.equal(outcomes.filter((o) => o === 'restored').length, 1, JSON.stringify(outcomes))
+  // a loser either sees the now-valid object or is told the object changed; nobody overwrites it
+  assert.ok(outcomes.every((o) => ['restored', 'primary_valid', 'error:restore refused: primary object changed during restore; re-run'].includes(o)), JSON.stringify(outcomes))
+  assert.equal(writesToKey, 1)
+  assert.deepEqual(primary.objects.get(f.key)?.bytes, f.bytes)
+})
+
+test('an object that appears between inspection and promotion is never overwritten', async () => {
+  const w = await world('a@example.test')
+  const f = await backedUp(w)
+  primary.objects.delete(f.key)
+  const marker = 'image/jpeg;written-by-someone-else'
+  primary.beforeConditionalWrite = (key) => { primary.objects.set(key, { bytes: f.bytes, contentType: marker }) }
+  const r = await restore(w, f, OPERATOR(w))
+  assert.equal(r.outcome, 'primary_valid')
+  assert.equal(primary.objects.get(f.key)?.contentType, marker, 'the racing writer\'s object is untouched')
+  assert.deepEqual([...primary.objects.keys()], [f.key])
+  // and if what appeared is NOT valid, restore stops rather than clobbering it
+  const g = await backedUp(w)
+  primary.objects.delete(g.key)
+  const theirs = Buffer.from('not the evidence')
+  primary.beforeConditionalWrite = (key) => { primary.objects.set(key, { bytes: theirs, contentType: marker }) }
+  await refused(restore(w, g, OPERATOR(w)), /changed during restore/)
+  assert.deepEqual(primary.objects.get(g.key)?.bytes, theirs)
+})
+
+test('a corrupted primary that changes between inspection and promotion is never overwritten (ETag match)', async () => {
+  const w = await world('a@example.test')
+  const f = await backedUp(w)
+  primary.objects.set(f.key, { bytes: Buffer.from('damaged'), contentType: 'image/jpeg' })
+  const newer = Buffer.from('damaged differently')
+  primary.beforeConditionalWrite = (key) => { primary.objects.set(key, { bytes: newer, contentType: 'image/jpeg' }) }
+  await refused(restore(w, f, OPERATOR(w)), /changed during restore/)
+  assert.deepEqual(primary.objects.get(f.key)?.bytes, newer)
+  assert.deepEqual([...primary.objects.keys()], [f.key], 'staging object removed')
+  // removed entirely in the window: a conditional "if match" write must not recreate it either
+  primary.objects.set(f.key, { bytes: Buffer.from('damaged'), contentType: 'image/jpeg' })
+  primary.beforeConditionalWrite = (key) => { primary.objects.delete(key) }
+  await refused(restore(w, f, OPERATOR(w)), /changed during restore/)
+  assert.ok(!primary.objects.has(f.key))
+})
+
+test('restore stops if the file record changes while it is staging', async () => {
+  const w = await world('a@example.test')
+  const f = await backedUp(w)
+  primary.objects.delete(f.key)
+  primary.onPut = async (key) => {
+    if (key.includes('/restore/')) await prisma.evidenceFile.update({ where: { id: f.file.id }, data: { status: 'DELETING' } })
+  }
+  await refused(restore(w, f, OPERATOR(w)), /record changed/)
+  assert.ok(!primary.objects.has(f.key), 'nothing was promoted')
+  assert.deepEqual([...primary.objects.keys()], [], 'staging removed')
+})
+
+// ── audit records for replication ───────────────────────────────────────────
+
+test('replication writes audit records: verified, and an incident with its code', async () => {
+  const w = await world('a@example.test')
+  const ok = await available(w); const bad = await available(w)
+  await rep(w, ok.file.id)
+  backup.objects.set(bad.key, { bytes: Buffer.from('foreign'), contentType: 'image/jpeg' })
+  await rep(w, bad.file.id)
+  await settle()
+  const ev = await prisma.auditEvent.findMany({ where: { workspaceId: w.ws.id, type: { startsWith: 'ops.technician.file.backup_' } } })
+  const byFile = (id: string) => ev.filter((e: { entityId: string | null }) => e.entityId === id).map((e: { type: string }) => e.type)
+  assert.deepEqual(byFile(ok.file.id), ['ops.technician.file.backup_verified'])
+  assert.deepEqual(byFile(bad.file.id), ['ops.technician.file.backup_incident'])
+  const incident = ev.find((e: { entityId: string | null }) => e.entityId === bad.file.id)!
+  assert.equal((incident.metadata as { code: string }).code, 'backup_conflict')
+  assert.ok(!JSON.stringify(ev).includes('ws/'), 'audit metadata carries no object keys')
 })

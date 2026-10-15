@@ -31,6 +31,7 @@ npm run evidence:restore -- --workspace <id> --job <id> --file <id> --execute \
 
 - Workspace, job and file must all match the database. The file must be `AVAILABLE` with a `VERIFIED` backup.
 - A primary that is present and matches the recorded hash is **never overwritten** (`primary_valid`).
+- Promotion is a **conditional write** (`If-None-Match: *` when the primary was missing, `If-Match: <ETag inspected>` when it was corrupted), and the file record is re-checked just before it. An object that appears or changes after inspection makes the write fail instead of being overwritten; concurrent restores write the key once. This relies on the storage provider enforcing S3 conditional writes: **verify that on the actual Railway and R2 buckets before trusting it** (step 0 below).
 - Executing needs an **owner of that workspace** as approver and a reason; the audit record (`restore_started`) is written before anything changes and the restore is refused if it cannot be written. The bytes are staged under a temporary key, verified, the primary is re-checked, then promoted and verified again; `restore_completed` is audited.
 - Legal holds do not block a restore (it only adds data back) and are shown in the report.
 - Exit code 2 = refused by a safety check; 1 = unexpected error.
@@ -39,6 +40,7 @@ npm run evidence:restore -- --workspace <id> --job <id> --file <id> --execute \
 
 Prerequisites (owner approvals): a staging Railway bucket and a staging R2 bucket created for this drill, scoped tokens as in the table, `EVIDENCE_UPLOADS_ENABLED` and `EVIDENCE_BACKUP_ENABLED` set on a **staging** worker only.
 
+0. Run the integration suite against the staging buckets (`ACAOS_S3_IT=1`, see `tests-db/evidence-s3-integration.test.ts`); in particular the conditional-write test must PASS. If a provider ignores `If-None-Match`/`If-Match`, restore must not be used without a human checking the primary first.
 1. Record commit SHA, environment, bucket aliases, operator, UTC time.
 2. Upload a test photo through staging; wait for finalisation. Note file id, workspace id, SHA-256 and length from the database.
 3. Wait for the sweep (or queue the file); confirm the backup row is `VERIFIED` and **read-back checksum equals the primary**.
@@ -61,7 +63,7 @@ Prerequisites (owner approvals): a staging Railway bucket and a staging R2 bucke
 | Dry-run identifies the missing primary and mutates nothing | PASS / FAIL |
 | Approved restore recovers the exact SHA-256 and length | PASS / FAIL |
 | Non-owner and cross-workspace restore denied and audited | PASS / FAIL |
-| Valid primary not overwritten | PASS / FAIL |
+| Valid primary not overwritten; conditional writes enforced by the provider | PASS / FAIL |
 | Corrupted backup detected and alerted | PASS / FAIL |
 | RPO / RTO measured, alerts observed | PASS / FAIL |
 

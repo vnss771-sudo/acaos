@@ -1,7 +1,7 @@
 // Provider-neutral object storage for evidence files. The rest of the code talks
 // to `EvidenceObjectStore`; only createS3EvidenceStore knows it is an S3-compatible
 // service, and which vendor sits behind the endpoint is configuration.
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import {
   S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand,
 } from '@aws-sdk/client-s3'
@@ -25,7 +25,17 @@ export interface EvidenceObjectStore {
   head(key: string): Promise<{ size: number } | null>
   /** The object's bytes (null if missing). Throws EvidenceObjectTooLargeError past maxBytes. */
   getBytes(key: string, maxBytes: number): Promise<Buffer | null>
+  /** Like getBytes, plus the object's ETag so a later write can be conditional on "unchanged since I read it". */
+  getBytesWithEtag(key: string, maxBytes: number): Promise<{ bytes: Buffer; etag: string } | null>
   putBytes(key: string, body: Buffer, contentType: string): Promise<void>
+  /**
+   * Write only if the precondition holds: `ifNoneMatch` = the key must not exist,
+   * `ifMatch` = the object must still have this ETag. Used by restore so it can never
+   * overwrite an object that appeared or changed after it looked. Relies on the
+   * provider enforcing S3 conditional writes (verified against the real service in the
+   * drill; a provider that ignores the headers would silently weaken this).
+   */
+  putBytesIf(key: string, body: Buffer, contentType: string, cond: { ifNoneMatch: true } | { ifMatch: string }): Promise<'written' | 'precondition_failed'>
   /** Idempotent: deleting a missing object succeeds. */
   delete(key: string): Promise<void>
 }
@@ -99,10 +109,10 @@ export function createS3EvidenceStore(
         throw e
       }
     },
-    async getBytes(key, maxBytes) {
-      let r: { ContentLength?: number; Body?: unknown }
+    async getBytesWithEtag(key, maxBytes) {
+      let r: { ContentLength?: number; Body?: unknown; ETag?: string }
       try {
-        r = (await send(new GetObjectCommand({ Bucket, Key: key }))) as { ContentLength?: number; Body?: unknown }
+        r = (await send(new GetObjectCommand({ Bucket, Key: key }))) as { ContentLength?: number; Body?: unknown; ETag?: string }
       } catch (e) {
         if (isMissing(e)) return null
         throw e
@@ -116,7 +126,24 @@ export function createS3EvidenceStore(
         if (total > maxBytes) throw new EvidenceObjectTooLargeError(maxBytes)
         chunks.push(b)
       }
-      return Buffer.concat(chunks)
+      return { bytes: Buffer.concat(chunks), etag: r.ETag ?? '' }
+    },
+    async getBytes(key, maxBytes) {
+      return (await this.getBytesWithEtag(key, maxBytes))?.bytes ?? null
+    },
+    async putBytesIf(key, body, contentType, cond) {
+      try {
+        await send(new PutObjectCommand({
+          Bucket, Key: key, Body: body, ContentType: contentType, ContentLength: body.length,
+          ...('ifNoneMatch' in cond ? { IfNoneMatch: '*' } : { IfMatch: cond.ifMatch }),
+        }))
+        return 'written'
+      } catch (e) {
+        const x = e as { name?: string; $metadata?: { httpStatusCode?: number } }
+        // 412 = precondition failed; 409 = a concurrent conditional write is in flight.
+        if (x?.name === 'PreconditionFailed' || x?.$metadata?.httpStatusCode === 412 || x?.$metadata?.httpStatusCode === 409) return 'precondition_failed'
+        throw e
+      }
     },
     async putBytes(key, body, contentType) {
       await send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType, ContentLength: body.length }))
@@ -176,6 +203,41 @@ export class MemoryEvidenceStore implements EvidenceObjectStore {
     if (o.bytes.length > maxBytes) throw new EvidenceObjectTooLargeError(maxBytes)
     return Buffer.from(o.bytes)
   }
+  private etags = new Map<string, string>()
+  private version = 0
+  private etagOf(key: string): string | null {
+    const o = this.objects.get(key)
+    if (!o) return null
+    // Any change to the stored bytes yields a new ETag (tests assign to .objects directly).
+    const sig = `${o.bytes.length}:${createHash('md5').update(o.bytes).digest('hex')}`
+    const prev = this.etags.get(key)
+    if (prev && prev.startsWith(`${sig}:`)) return prev
+    const next = `${sig}:${++this.version}`
+    this.etags.set(key, next)
+    return next
+  }
+  /** Runs between a conditional write's precondition check and the write (tests inject a racing writer here). */
+  beforeConditionalWrite: ((key: string) => Promise<void> | void) | null = null
+  async getBytesWithEtag(key: string, maxBytes: number) {
+    this.maybeFail('getBytes')
+    const o = this.objects.get(key)
+    if (!o) return null
+    if (o.bytes.length > maxBytes) throw new EvidenceObjectTooLargeError(maxBytes)
+    return { bytes: Buffer.from(o.bytes), etag: this.etagOf(key) as string }
+  }
+  async putBytesIf(key: string, body: Buffer, contentType: string, cond: { ifNoneMatch: true } | { ifMatch: string }) {
+    this.maybeFail('putBytes')
+    this.conditionalAttempts++
+    if (this.beforeConditionalWrite) await this.beforeConditionalWrite(key)
+    // The check and the write below are synchronous, like a provider's atomic conditional put.
+    const exists = this.objects.has(key)
+    const ok = 'ifNoneMatch' in cond ? !exists : exists && this.etagOf(key) === cond.ifMatch
+    if (!ok) return 'precondition_failed' as const
+    this.objects.set(key, { bytes: Buffer.from(body), contentType })
+    if (this.onPut) await this.onPut(key)
+    return 'written' as const
+  }
+  conditionalAttempts = 0
   async putBytes(key: string, body: Buffer, contentType: string) {
     this.maybeFail('putBytes')
     this.objects.set(key, { bytes: Buffer.from(body), contentType })
