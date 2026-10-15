@@ -7,12 +7,13 @@ import { colors } from '../styles.js'
 // on. Renders nothing for single-view hubs (Home, Inbox) — there's nothing to switch
 // between, so no chrome. Selecting a tab routes via the existing `setView`, so the
 // underlying page rendering is unchanged.
-export function HubTabs({ view, setView, isAdmin }: {
+export function HubTabs({ view, setView, isAdmin, fieldWorker = false }: {
   view: View
   setView: (v: View) => void
   isAdmin: boolean
+  fieldWorker?: boolean
 }) {
-  const hub = hubForView(view)
+  const hub = hubForView(view, fieldWorker)
   const tabs = visibleTabs(hub, isAdmin)
   if (tabs.length <= 1) return null
 

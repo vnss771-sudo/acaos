@@ -2,7 +2,7 @@ import React from 'react'
 import type { View, Workspace } from '../types.js'
 import { PLAN_LABELS } from '../types.js'
 import { colors } from '../styles.js'
-import { HUBS, hubForView, defaultViewForHub } from '../lib/hubs.js'
+import { hubsFor, hubForView, defaultViewForHub } from '../lib/hubs.js'
 
 type NavItem = { id: View; label: string; icon: string }
 type NavGroup = { heading?: string; items: NavItem[] }
@@ -57,9 +57,13 @@ type SidebarProps = {
   // When true, render the consolidated 5-hub nav (behind VITE_HUB_NAV);
   // otherwise the flat grouped nav. Defaults to the grouped nav.
   hubNav?: boolean
+  /** Reduced "My work" menu for technician accounts (hub nav only). */
+  fieldWorker?: boolean
+  /** Present when the user may switch between the simple and full menu. */
+  onToggleMenu?: () => void
 }
 
-export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hubNav }: SidebarProps) {
+export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hubNav, fieldWorker = false, onToggleMenu }: SidebarProps) {
   const plan = workspace?.plan ?? 'free'
   const isPro = plan !== 'free'
 
@@ -89,8 +93,8 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hu
           // Consolidated hub nav: five hubs, the active one derived from which hub
           // owns the current view. Selecting a hub opens its first tab. Admin is a
           // tab inside Settings here, so there's no separate Admin button.
-          HUBS.map(hub => {
-            const active = hubForView(view).id === hub.id
+          hubsFor(fieldWorker).map(hub => {
+            const active = hubForView(view, fieldWorker).id === hub.id
             return (
               <button
                 key={hub.id}
@@ -190,6 +194,19 @@ export function Sidebar({ view, setView, email, workspace, onLogout, isAdmin, hu
         <div style={{ fontSize: 12, color: colors.textFaint, marginBottom: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {email}
         </div>
+        {onToggleMenu && (
+          <button
+            onClick={onToggleMenu}
+            style={{
+              width: '100%', padding: '7px 12px', borderRadius: 6, marginBottom: 8,
+              border: 'none', background: 'transparent',
+              color: colors.textFaint, cursor: 'pointer', fontSize: 12, textAlign: 'center',
+              textDecoration: 'underline',
+            }}
+          >
+            {fieldWorker ? 'Show full menu' : 'Show simple menu'}
+          </button>
+        )}
         <button
           onClick={onLogout}
           style={{

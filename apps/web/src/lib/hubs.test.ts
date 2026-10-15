@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from 'vitest'
-import { HUBS, hubForView, visibleTabs, defaultViewForHub, isHubNavEnabled } from './hubs.js'
+import { HUBS, hubForView, visibleTabs, defaultViewForHub, isHubNavEnabled, hubsFor, FIELD_WORKER_VIEWS } from './hubs.js'
 import type { View } from '../types.js'
 
 describe('hubs model', () => {
@@ -64,3 +64,29 @@ describe('isHubNavEnabled', () => {
     expect(isHubNavEnabled()).toBe(false)
   })
 })
+
+describe('field-worker hubs', () => {
+  test('the normal menu is unchanged', () => {
+    expect(hubsFor(false)).toBe(HUBS)
+    expect(hubForView('ops-technician').id).toBe('crew')
+  })
+
+  test('a field worker gets one reduced hub with only their own functions', () => {
+    const hubs = hubsFor(true)
+    expect(hubs).toHaveLength(1)
+    expect(hubs[0].label).toBe('My work')
+    expect(hubs[0].tabs.map(t => t.view)).toEqual(['ops-technician', 'ops-shifts'])
+    expect(hubs[0].tabs.map(t => t.view).sort()).toEqual([...FIELD_WORKER_VIEWS].sort())
+    // Management pages are not advertised.
+    for (const hidden of ['ops-crew', 'ops-roster', 'ops-alerts', 'campaigns', 'billing', 'ops-delivery'] as const) {
+      expect(hubs[0].tabs.some(t => t.view === hidden)).toBe(false)
+    }
+    expect(defaultViewForHub(hubs[0], false)).toBe('ops-technician')
+  })
+
+  test('any other view resolves to the reduced hub rather than an empty nav', () => {
+    expect(hubForView('leads', true).label).toBe('My work')
+    expect(hubForView('ops-technician', true).label).toBe('My work')
+  })
+})
+

@@ -57,8 +57,22 @@ export const HUBS: Hub[] = [
 
 // The hub that owns a given view. Falls back to Today for any unmapped view so the
 // nav can never end up with no hub highlighted.
-export function hubForView(view: View): Hub {
-  return HUBS.find(h => h.tabs.some(t => t.view === view)) ?? HUBS[0]
+export function hubForView(view: View, fieldWorker = false): Hub {
+  const hubs = hubsFor(fieldWorker)
+  return hubs.find(h => h.tabs.some(t => t.view === view)) ?? hubs[0]
+}
+
+// ── Field-worker (technician) navigation ───────────────────────────────
+// A plain member who is linked to a crew record sees one reduced "My work" hub
+// instead of the full contractor menu: their assigned jobs, and their own shifts.
+// This is a UX simplification only — every route still enforces its own
+// permission server-side, and deep links to other pages keep working.
+export const FIELD_WORKER_VIEWS: readonly View[] = ['ops-technician', 'ops-shifts']
+
+export function hubsFor(fieldWorker: boolean): Hub[] {
+  if (!fieldWorker) return HUBS
+  const crew = HUBS.find(h => h.id === 'crew')!
+  return [{ ...crew, label: 'My work', tabs: FIELD_WORKER_VIEWS.flatMap(v => crew.tabs.filter(t => t.view === v)) }]
 }
 
 // Tabs visible to this user — drops admin-only tabs (e.g. Admin) for non-admins so

@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from './Sidebar.js'
 import type { Workspace } from '../types.js'
@@ -79,5 +79,25 @@ describe('Sidebar', () => {
       renderSidebar({ hubNav: true, view: 'ops-delivery' })
       expect(screen.getByText('Work').closest('button')).toHaveAttribute('aria-current', 'page')
     })
+  })
+
+  test('field-worker mode shows only My work, with a switch to the full menu', async () => {
+    const onToggleMenu = vi.fn()
+    renderSidebar({ hubNav: true, fieldWorker: true, onToggleMenu, view: 'ops-technician' })
+    expect(screen.getByText('My work')).toBeInTheDocument()
+    for (const label of ['Today', 'Work', 'Crew', 'Outreach', 'Settings']) {
+      expect(screen.queryByText(label)).toBeNull()
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Show full menu' }))
+    expect(onToggleMenu).toHaveBeenCalledTimes(1)
+  })
+
+  test('the full menu offers a way back to the simple one, and non-technicians get no switch', () => {
+    renderSidebar({ hubNav: true, fieldWorker: false, onToggleMenu: vi.fn() })
+    expect(screen.getByRole('button', { name: 'Show simple menu' })).toBeInTheDocument()
+    for (const label of ['Today', 'Work', 'Crew', 'Outreach', 'Settings']) expect(screen.getByText(label)).toBeInTheDocument()
+    cleanup()
+    renderSidebar({ hubNav: true })
+    expect(screen.queryByRole('button', { name: /simple menu|full menu/ })).toBeNull()
   })
 })
