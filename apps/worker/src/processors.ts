@@ -9,3 +9,5 @@ export type { SendFollowupStatus, SendFollowupResult } from './processors/follow
 export { discoverProspectsBatch } from './processors/discovery.js'
 export type { DiscoverProspectsResult } from './processors/discovery.js'
 export { applyReplyAnalysis } from './processors/replies.js'
+export { finalizeEvidenceFile, sweepAbandonedEvidenceUploads } from './processors/evidenceFinalize.js'
+export type { FinalizeResult, RejectReason } from './processors/evidenceFinalize.js'

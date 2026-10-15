@@ -30,6 +30,8 @@ import {
   DlqAutoRetryPayloadSchema,
   DomainHealthPayloadSchema,
   DiscoverOpportunitiesPayloadSchema,
+  FinalizeEvidenceFilePayloadSchema,
+  EvidenceSweepPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { observeEngagementOutcomes } from '@acaos/backend-core/lib/engagementObservation.js'
@@ -46,7 +48,7 @@ import {
 import { learnFromOutcomes } from '@acaos/backend-core/lib/outcomeLearning.js'
 import { learnSignalCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
 import { computeNetworkBenchmarks } from '@acaos/backend-core/lib/networkIntelligence.js'
-import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft } from './processors.js'
+import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft, finalizeEvidenceFile, sweepAbandonedEvidenceUploads } from './processors.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
@@ -493,6 +495,34 @@ const discoverOpportunitiesWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+// ── evidence-finalize / evidence-sweep ─────────────────────────────────
+// Technician evidence photos (C2). Both are inert unless EVIDENCE_UPLOADS_ENABLED is
+// "true" with valid storage configuration (fail closed; see evidenceStorageConfig.ts).
+// finalize: validate + sanitise one uploaded file and publish it, re-checking job,
+// assignment and technician under the Job row lock. sweep: remove abandoned uploads
+// and orphaned objects. concurrency 2: image decoding is CPU/memory heavy.
+const evidenceFinalizeWorker = new Worker(
+  'evidence-finalize',
+  async (job) => withConsumerSpan('evidence-finalize', job.name, job.data?.traceparent, { 'acaos.workspace_id': job.data?.workspaceId }, async () => {
+    const { workspaceId, fileId, requestId } = parseJobPayload(FinalizeEvidenceFilePayloadSchema, 'evidence-finalize', job.data)
+    const r = await finalizeEvidenceFile({ workspaceId, fileId, lastAttempt: isFinalAttempt(job) })
+    log('evidence-finalize', `file ${fileId}: ${r.outcome}${'reason' in r ? ` (${r.reason})` : ''}`, requestId)
+    return r
+  }),
+  { connection, concurrency: 2 }
+)
+
+const evidenceSweepWorker = new Worker(
+  'evidence-sweep',
+  async (job) => withConsumerSpan('evidence-sweep', job.name, job.data?.traceparent, {}, async () => {
+    parseJobPayload(EvidenceSweepPayloadSchema, 'evidence-sweep', job.data)
+    const r = await sweepAbandonedEvidenceUploads()
+    log('evidence-sweep', JSON.stringify(r))
+    return r
+  }),
+  { connection, concurrency: 1 }
+)
+
 // ── Error handlers + job metrics ───────────────────────────────────────────────
 const WORKER_QUEUES: [string, Worker][] = [
   ['research-lead',           researchWorker],
@@ -508,6 +538,8 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['retention-purge',         retentionWorker],
   ['dlq-auto-retry',          dlqAutoRetryWorker],
   ['domain-health',           domainHealthWorker],
+  ['evidence-finalize',       evidenceFinalizeWorker],
+  ['evidence-sweep',          evidenceSweepWorker],
   ['discover-opportunities',  discoverOpportunitiesWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
@@ -625,6 +657,19 @@ const domainMetricsCache = createCachedValue(
     { every },
     { name: 'daily-retention-purge', data: {}, opts: { attempts: 1, removeOnComplete: { count: 7 } } }
   ).catch(err => console.warn('[worker] Failed to schedule retention purge:', err.message))
+}
+
+// ── Repeatable evidence-upload sweep (every 15 min) ──────────────────────────
+// Always registered (idempotent); the processor does nothing while uploads are
+// disabled. Interval overridable via EVIDENCE_SWEEP_INTERVAL_MS.
+{
+  const sweepQueue = new Queue('evidence-sweep', { connection })
+  const every = Number(process.env.EVIDENCE_SWEEP_INTERVAL_MS || 15 * 60 * 1000)
+  sweepQueue.upsertJobScheduler(
+    'evidence-sweep-scheduler',
+    { every },
+    { name: 'evidence-sweep', data: {}, opts: { attempts: 1, removeOnComplete: { count: 5 } } }
+  ).catch(err => console.warn('[worker] Failed to schedule evidence sweep:', err.message))
 }
 
 // ── Repeatable DLQ auto-retry sweep (every 5 min by default) ─────────────────
@@ -789,6 +834,8 @@ async function shutdown(signal: string, exitCode = 0) {
     retentionWorker.close(),
     dlqAutoRetryWorker.close(),
     domainHealthWorker.close(),
+    evidenceFinalizeWorker.close(),
+    evidenceSweepWorker.close(),
     discoverOpportunitiesWorker.close(),
   ])
   closeMailTransports() // release pooled SMTP connections

@@ -128,6 +128,20 @@ export async function enqueueSyncMailbox(workspaceId: string, userId?: string, r
   )
 }
 
+// Finalise one uploaded evidence file (validate, sanitise, publish). Idempotent in
+// the worker, so the job id only collapses duplicate completes within a 5-minute
+// bucket; a stuck PENDING file can be re-completed once the bucket rolls over.
+export async function enqueueFinalizeEvidenceFile(opts: { workspaceId: string; fileId: string; requestId?: string }) {
+  const bucket = Math.floor(Date.now() / (5 * 60_000))
+  return addTraced('evidence-finalize', 'evidence-finalize', opts, {
+    jobId: `evidence-finalize-${opts.fileId}-${bucket}`,
+    attempts: 4,
+    backoff: { type: 'exponential', delay: 10_000 },
+    removeOnComplete: true,
+    removeOnFail: { age: 86_400 },
+  })
+}
+
 export async function getJobById(queueName: string, jobId: string) {
   const { Job } = await import('bullmq')
   return Job.fromId(getQueue(queueName), jobId)
@@ -249,7 +263,7 @@ const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
   'discover-prospects', 'retention-purge', 'send-followup', 'dlq-auto-retry', 'domain-health',
-  'discover-opportunities',
+  'discover-opportunities', 'evidence-finalize', 'evidence-sweep',
 ]
 
 export async function getQueueStats() {

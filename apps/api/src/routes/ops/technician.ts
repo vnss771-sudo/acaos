@@ -237,3 +237,6 @@ technicianRouter.post('/:jobId/evidence', asyncHandler(async (req, res) => {
   }
   res.status(result.created ? 201 : 200).json({ evidence: result.evidence })
 }))
+
+// Shared with the evidence-file routes: membership + active linked crew + job assignment.
+export { access as technicianAccess }
