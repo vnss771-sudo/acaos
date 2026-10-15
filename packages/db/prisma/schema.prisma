@@ -235,6 +235,10 @@ model Workspace {
   jobVariations           JobVariation[]
   technicianAssignments   JobTechnicianAssignment[]
   technicianEvidence      JobTechnicianEvidence[]
+  evidenceFiles           EvidenceFile[]
+  evidenceFileCopies      EvidenceFileCopy[]
+  retentionPolicy         RetentionPolicy?
+  legalHolds              LegalHold[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -1486,6 +1490,7 @@ model OpsCrewMember {
   rosterEntries    OpsRosterEntry[]
   jobAssignments   JobTechnicianAssignment[]
   technicianEvidence JobTechnicianEvidence[]
+  evidenceFiles    EvidenceFile[]
 
   @@unique([workspaceId, employeeCode])
   @@unique([workspaceId, userId])
@@ -2069,6 +2074,8 @@ model Job {
   variations           JobVariation[]
   technicianAssignments JobTechnicianAssignment[]
   technicianEvidence    JobTechnicianEvidence[]
+  evidenceFiles         EvidenceFile[]
+  legalHolds            LegalHold[]
 
   @@index([workspaceId, status])
   @@index([workspaceId, opsJobSiteId])
@@ -2103,9 +2110,145 @@ model JobTechnicianEvidence {
   job          Job      @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
   crewMember   OpsCrewMember @relation(fields: [workspaceId, crewMemberId], references: [workspaceId, id], onDelete: Restrict)
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  files        EvidenceFile[]
 
   @@unique([workspaceId, crewMemberId, submissionId])
+  @@unique([workspaceId, jobId, id])
   @@index([workspaceId, jobId, createdAt])
+}
+
+// ── Evidence files: metadata only (C1) ───────────────────────────────────────
+// File CONTENT never lives in PostgreSQL. A row here describes one file (photo,
+// later documents); where its bytes are stored is recorded in EvidenceFileCopy by
+// a provider-neutral logical `location` label, so no storage vendor is named in
+// the schema. These rows are the record of what exists, so they are never cascade-
+// deleted: removing a Job/Workspace/crew member that still has files is refused
+// (Restrict) until the files go through the controlled deletion process.
+// Status: PENDING → AVAILABLE | REJECTED; AVAILABLE → DELETING → DELETED (tombstone
+// row is kept; see EvidenceDeletionLog). Values are TEXT + CHECK, not a Postgres
+// enum, so the set can change with an ordinary migration.
+model EvidenceFile {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  jobId         String
+  evidenceId    String?
+  crewMemberId  String
+  submissionId  String
+  kind          String    @default("PHOTO")
+  status        String    @default("PENDING")
+  contentType   String?
+  sizeBytes     Int?
+  sha256        String?
+  width         Int?
+  height        Int?
+  capturedAt    DateTime?
+  retainUntil   DateTime?
+  retentionNote String?
+  finalizedAt   DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace  Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  job        Job                   @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Restrict)
+  crewMember OpsCrewMember         @relation(fields: [workspaceId, crewMemberId], references: [workspaceId, id], onDelete: Restrict)
+  evidence   JobTechnicianEvidence? @relation(fields: [workspaceId, jobId, evidenceId], references: [workspaceId, jobId, id], onDelete: Restrict)
+  copies     EvidenceFileCopy[]
+
+  @@unique([workspaceId, crewMemberId, submissionId])
+  @@unique([workspaceId, id])
+  @@index([workspaceId, jobId, createdAt])
+  @@index([workspaceId, status])
+  @@index([workspaceId, retainUntil])
+}
+
+// One stored copy of a file at a logical location ('primary', 'backup', ...).
+// Which provider/bucket a location maps to is configuration, not schema.
+// `objectKey` must start with ws/<workspaceId>/ (CHECK), a database-level guard
+// that a copy can never be filed under another workspace's prefix. The
+// (workspaceId, id) unique on EvidenceFile lets future tables (e.g. report
+// attachments) reference a file with the same composite-FK isolation.
+model EvidenceFileCopy {
+  id          String    @id @default(cuid())
+  workspaceId String
+  fileId      String
+  location    String
+  objectKey   String
+  status      String    @default("PENDING")
+  sizeBytes   Int?
+  sha256      String?
+  verifiedAt  DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  file      EvidenceFile @relation(fields: [workspaceId, fileId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([fileId, location])
+  @@unique([location, objectKey])
+  @@index([workspaceId, status])
+}
+
+// Per-workspace retention configuration. One row per workspace; absence means
+// "use the platform default" (seven years). autoDeletionEnabled is FALSE and
+// nothing reads it yet: automatic deletion stays off until legal requirements
+// have been reviewed.
+model RetentionPolicy {
+  id                  String   @id @default(cuid())
+  workspaceId         String   @unique
+  retentionDays       Int      @default(2555)
+  startRule           String   @default("LATER_OF_UPLOAD_AND_CLOSEOUT")
+  autoDeletionEnabled Boolean  @default(false)
+  updatedByUserId     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Configuration, not evidence: it goes with the workspace like other settings.
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// A legal hold blocks deletion of the files it covers (the whole workspace, or one
+// job) until released. Active = releasedAt IS NULL. Holds are never deleted, only
+// released, and are kept even if the job is later removed (Restrict). Placing and
+// releasing is limited to workspace owners; that is enforced by the endpoints (a
+// later PR), not by this schema.
+model LegalHold {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  scope            String
+  jobId            String?
+  reason           String
+  placedByUserId   String
+  placedAt         DateTime  @default(now())
+  releasedByUserId String?
+  releasedAt       DateTime?
+  releaseReason    String?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  job       Job?      @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@index([workspaceId, releasedAt])
+  @@index([workspaceId, jobId])
+}
+
+// Append-only audit trail of deletion decisions and actions. Deliberately has NO
+// foreign keys: the log has to outlive the file, job and workspace it describes.
+// A trigger rejects UPDATE and DELETE.
+model EvidenceDeletionLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  fileId      String
+  jobId       String?
+  event       String
+  actorUserId String?
+  sha256      String?
+  sizeBytes   Int?
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([fileId])
 }
 
 // A scope change on a Job (UQ-35). The accepted Quote is never rewritten: an

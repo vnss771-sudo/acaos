@@ -27,6 +27,20 @@ Prompts and raw model inputs/outputs are not persisted beyond the derived fields
 above (e.g. `aiSummary`, draft `subject`/`emailBody`). The OpenAI request itself
 is transient.
 
+## Evidence files, retention settings and legal holds (schema only — not active)
+
+Migration `20261015000000_evidence_file_metadata` adds the tables that a later
+phase will use for technician photo evidence: `EvidenceFile` / `EvidenceFileCopy`
+(metadata and storage locations only, never file contents), `RetentionPolicy`,
+`LegalHold` and `EvidenceDeletionLog`. **Nothing reads or writes them yet, and no
+automatic deletion exists.** Design intent, subject to legal review (see
+`docs/plans/PR_C_EVIDENCE_STORAGE_PLAN.md`):
+
+- Default retention for job evidence and reports is seven years (`RetentionPolicy.retentionDays`, 2555), configurable per workspace; `autoDeletionEnabled` is `false` and is not consulted by any job.
+- A legal hold (workspace-wide or per job) blocks deletion until released. Placing/releasing and approving any deletion is limited to workspace owners, enforced by the endpoints when they are built.
+- `EvidenceDeletionLog` is append-only (a trigger rejects UPDATE/DELETE) and FK-free so it outlives the rows it describes, like `AuditEvent`.
+- **Interaction with tenant deletion:** files, copies and holds use `ON DELETE RESTRICT`, so deleting a workspace/job/crew member that still has them is refused by the database rather than silently destroying the record. `RetentionPolicy` is configuration and cascades. The workspace-delete route and the operator erasure script must be extended to handle files and holds (and to reconcile erasure requests with retention) **before** uploads are enabled.
+
 ## Tenant export
 
 A workspace owner can obtain their data:
