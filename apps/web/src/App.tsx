@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import type { User, Workspace, View } from './types.js'
 import { canManageWorkspace } from './types.js'
 import { useApi, tryRefresh } from './hooks/useApi.js'
@@ -11,6 +11,7 @@ import { ReauthModal } from './components/ReauthModal.js'
 import { OnboardingWizard } from './components/OnboardingWizard.js'
 import { CommandPalette } from './components/CommandPalette.js'
 import { HubTabs } from './components/HubTabs.js'
+import { useFieldWorkerMode, shouldLandOnMyJobs } from './hooks/useFieldWorkerMode.js'
 import { SkipLink } from './components/SkipLink.js'
 import { ErrorBoundary } from './components/ErrorBoundary.js'
 import { isHubNavEnabled, hubForView } from './lib/hubs.js'
@@ -187,6 +188,19 @@ export function App() {
   }, [token])
 
   const activeWorkspace = workspaces.find(w => w.id === activeWsId) ?? null
+  // Plain members linked to a crew record get the reduced "My work" menu and land on
+  // My jobs when they arrive at the default route (deep links are left alone).
+  const fieldWorker = useFieldWorkerMode(api, activeWorkspace)
+  const landedRef = useRef(false)
+  useEffect(() => {
+    if (!fieldWorker.resolved || landedRef.current) return
+    landedRef.current = true
+    if (hubNav && shouldLandOnMyJobs({ fieldWorker: fieldWorker.fieldWorker, pathname: window.location.pathname })) {
+      replaceView('ops-technician')
+    }
+  }, [fieldWorker.resolved, fieldWorker.fieldWorker, hubNav, replaceView])
+  const simpleMenu = hubNav && fieldWorker.fieldWorker
+  const toggleMenu = hubNav && fieldWorker.eligible ? () => fieldWorker.setFullMenu(simpleMenu) : undefined
 
   // A deep link (or a stale bookmark) to /admin for a non-admin lands here once
   // /api/auth/me resolves — redirect rather than rendering the admin chrome
@@ -317,6 +331,8 @@ export function App() {
             onLogout={logout}
             isAdmin={isAdmin}
             hubNav={hubNav}
+            fieldWorker={simpleMenu}
+            onToggleMenu={toggleMenu}
           />
         </Drawer>
       ) : (
@@ -328,6 +344,8 @@ export function App() {
           onLogout={logout}
           isAdmin={isAdmin}
           hubNav={hubNav}
+          fieldWorker={simpleMenu}
+          onToggleMenu={toggleMenu}
         />
       )}
 
@@ -374,7 +392,7 @@ export function App() {
               </button>
             )}
             <h1 style={{ color: colors.textMuted, fontSize: 12, letterSpacing: '0.1em', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-              {hubNav ? hubForView(view).label : VIEW_TITLE[view]}
+              {hubNav ? hubForView(view, simpleMenu).label : VIEW_TITLE[view]}
             </h1>
           </div>
 
@@ -444,7 +462,7 @@ export function App() {
         <main id="main-content" tabIndex={-1} style={{ flex: 1, padding: '24px 28px', maxWidth: 1200, width: '100%', boxSizing: 'border-box' }}>
           {/* Hub sub-tabs: switch between the pages within the active hub. Renders
               nothing for single-page hubs or when the hub nav is off. */}
-          {hubNav && <HubTabs view={view} setView={setView} isAdmin={isAdmin} />}
+          {hubNav && <HubTabs view={view} setView={setView} isAdmin={isAdmin} fieldWorker={simpleMenu} />}
           <ErrorBoundary>
             <Suspense fallback={<ViewFallback />}>
             {view === 'dashboard' && <Dashboard {...commonProps} setView={setView} />}
