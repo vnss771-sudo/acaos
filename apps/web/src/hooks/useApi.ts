@@ -78,6 +78,20 @@ export class ReauthRequiredError extends Error {
   }
 }
 
+// Every non-OK API response is thrown as this Error subclass. The message is unchanged (so
+// existing callers keep working); `status` and `code` let code that must react to the kind of
+// failure (the evidence upload engine) classify it without parsing message text.
+export class ApiRequestError extends Error {
+  readonly status: number
+  readonly code?: string
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+    this.code = code
+  }
+}
+
 const REAUTH_CODE = 'REAUTH_REQUIRED'
 
 export function useApi(
@@ -119,12 +133,12 @@ export function useApi(
               onReauthRequired?.()
               throw new ReauthRequiredError(typeof retryData.error === 'string' ? retryData.error : undefined)
             }
-            throw new Error(typeof retryData.error === 'string' ? retryData.error : `Request failed (${retryRes.status})`)
+            throw new ApiRequestError(typeof retryData.error === 'string' ? retryData.error : `Request failed (${retryRes.status})`, retryRes.status, typeof retryData?.code === 'string' ? retryData.code : undefined)
           }
           return retryData as T
         }
         onUnauth()
-        throw new Error('Session expired. Please log in again.')
+        throw new ApiRequestError('Session expired. Please log in again.', 401)
       }
 
       const data = await res.json().catch(() => ({}))
@@ -135,7 +149,7 @@ export function useApi(
           onReauthRequired?.()
           throw new ReauthRequiredError(typeof data.error === 'string' ? data.error : undefined)
         }
-        throw new Error(typeof data.error === 'string' ? data.error : `Request failed (${res.status})`)
+        throw new ApiRequestError(typeof data.error === 'string' ? data.error : `Request failed (${res.status})`, res.status, typeof data?.code === 'string' ? data.code : undefined)
       }
       return data as T
     },

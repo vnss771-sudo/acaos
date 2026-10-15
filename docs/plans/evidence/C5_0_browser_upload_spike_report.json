@@ -1,0 +1,259 @@
+{
+  "when": "2026-10-15T18:05:50.350Z",
+  "server": "http://127.0.0.1:19000 (SeaweedFS 4.48, local, disposable)",
+  "local": true,
+  "chromium": "Chromium build 1194 (Playwright 1.5x bundle), headless, Linux",
+  "caveat": "Run against a local SeaweedFS S3 server. Behaviour of Railway Buckets and Cloudflare R2 must be re-measured with this same script on the approved staging buckets.",
+  "passed": 18,
+  "failed": 0,
+  "rows": [
+    {
+      "id": "T1",
+      "name": "browser XHR PUT with the exact signed headers succeeds cross-origin",
+      "expected": "200, ETag readable, content-length/type signed",
+      "observed": {
+        "status": 200,
+        "etag": "\"4e2ae0fda87b051324eae1e4c1150f7d\"",
+        "progressEvents": true,
+        "signedHeaders": "content-length;content-type;host",
+        "scriptContentLengthRefused": "setRequestHeader accepted (browser ignores/overrides it)",
+        "preflight": {
+          "status": 200,
+          "requestHeaders": "content-type",
+          "allowHeaders": "content-type",
+          "allowMethods": "PUT, GET, HEAD",
+          "maxAge": "600"
+        },
+        "putRequest": {
+          "contentType": "image/jpeg",
+          "contentLength": "1048922",
+          "origin": "http://127.0.0.1:5199"
+        },
+        "stored": 1048922,
+        "declaredSize": 1048922
+      },
+      "pass": true
+    },
+    {
+      "id": "T2",
+      "name": "Blob type alone (no explicit header) is sent as the signed Content-Type",
+      "expected": "200 and content-type exactly image/jpeg",
+      "observed": {
+        "status": 200,
+        "sentContentType": "image/jpeg"
+      },
+      "pass": true
+    },
+    {
+      "id": "T2b",
+      "name": "a Blob with NO type and no header is refused (the browser sends no usable Content-Type)",
+      "expected": "not 200",
+      "observed": {
+        "status": 403,
+        "stored": null
+      },
+      "pass": true
+    },
+    {
+      "id": "T3",
+      "name": "a different Content-Type than the one signed is refused",
+      "expected": "403, nothing stored",
+      "observed": {
+        "html": 403,
+        "png": 403,
+        "stored": null
+      },
+      "pass": true
+    },
+    {
+      "id": "T4",
+      "name": "a body one byte larger or smaller than the signed length is refused",
+      "expected": "403, nothing stored",
+      "observed": {
+        "larger": 403,
+        "smaller": 403,
+        "stored": null
+      },
+      "pass": true
+    },
+    {
+      "id": "T5",
+      "name": "an extra x-amz-acl: public-read header is blocked by the CORS allow-list, and the object is never public",
+      "expected": "browser blocks (status 0), nothing stored, anonymous GET 403/404",
+      "observed": {
+        "status": 0,
+        "errored": true,
+        "requestsSeen": [
+          "OPTIONS 200",
+          "GET 403"
+        ],
+        "stored": null,
+        "anonymousGet": 403
+      },
+      "pass": true
+    },
+    {
+      "id": "T6",
+      "name": "an expired signature is refused",
+      "expected": "403, nothing stored",
+      "observed": {
+        "status": 403,
+        "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Request ha",
+        "stored": null
+      },
+      "pass": true
+    },
+    {
+      "id": "T6b",
+      "name": "modified key, extended expiry and a stripped signature are refused",
+      "expected": "400/403 each, nothing stored",
+      "observed": {
+        "otherKey": 403,
+        "longerExpiry": 403,
+        "noSignature": 400,
+        "pathWas": "oad/t6b-66f87d5aa9cc"
+      },
+      "pass": true
+    },
+    {
+      "id": "T7",
+      "name": "cancelling (xhr.abort) a slow upload fires onabort and stores nothing",
+      "expected": "aborted, no object",
+      "observed": {
+        "aborted": true,
+        "progressEvents": 3,
+        "sentBytes": 147456,
+        "ofBytes": 10928350,
+        "stored": null
+      },
+      "pass": true
+    },
+    {
+      "id": "T7b",
+      "name": "the same signed URL can be retried after a cancel (within its lifetime) and completes",
+      "expected": "200, full size stored",
+      "observed": {
+        "status": 200,
+        "stored": 10928350,
+        "size": 10928350
+      },
+      "pass": true
+    },
+    {
+      "id": "T8a",
+      "name": "one dropped connection mid-upload: Chromium retries the PUT itself (the page may see success after two wire attempts)",
+      "expected": "either success after a transparent retry or a network error; never a partial object",
+      "observed": {
+        "status": 200,
+        "errored": false,
+        "putAttemptsOnTheWire": 2,
+        "firstAttemptKilled": true,
+        "stored": 1048922
+      },
+      "pass": true
+    },
+    {
+      "id": "T8",
+      "name": "repeated dropped connections surface as a network error (status 0) and store nothing",
+      "expected": "status 0 / onerror, no object",
+      "observed": {
+        "status": 0,
+        "errored": true,
+        "stored": null
+      },
+      "pass": true
+    },
+    {
+      "id": "T8c",
+      "name": "retrying the same URL after repeated drops succeeds",
+      "expected": "200, full size stored",
+      "observed": {
+        "status": 200,
+        "stored": 1048922
+      },
+      "pass": true
+    },
+    {
+      "id": "T9",
+      "name": "offline fails fast as a network error; back online the retry succeeds and re-writing the same key is idempotent",
+      "expected": "offline status 0; then 200; one object of the right size",
+      "observed": {
+        "offline": {
+          "status": 0,
+          "errored": true
+        },
+        "online": 200,
+        "stored": 1048922
+      },
+      "pass": true
+    },
+    {
+      "id": "T9b",
+      "name": "a re-issued signed URL for the same key (the re-init path) overwrites it with identical bytes",
+      "expected": "200, size unchanged",
+      "observed": {
+        "status": 200,
+        "stored": 1048922
+      },
+      "pass": true
+    },
+    {
+      "id": "T10",
+      "name": "no anonymous read, list or write; a signature cannot be reused for another method or another workspace prefix",
+      "expected": "403/404 everywhere",
+      "observed": {
+        "anonymousGet": 403,
+        "anonymousHead": 403,
+        "anonymousList": 403,
+        "anonymousPut": 403,
+        "putUrlUsedForGet": 403,
+        "putUrlRepointedToWorkspaceB": 403,
+        "getUrlRepointedToWorkspaceB": 403
+      },
+      "pass": true
+    },
+    {
+      "id": "T11",
+      "name": "signed GET: forced headers, readable cross-origin, usable in <img>, no Referer sent",
+      "expected": "type image/jpeg, inline, no-store; image loads; no referer",
+      "observed": {
+        "fetch": {
+          "status": 200,
+          "type": "image/jpeg",
+          "disp": null,
+          "cache": "private, no-store",
+          "len": 1048922
+        },
+        "img": {
+          "ok": true,
+          "w": 1600
+        },
+        "refererSent": false,
+        "getRequests": 2,
+        "dispositionOnTheWire": "inline",
+        "dispositionVisibleToScript": null,
+        "note": "Content-Disposition is not CORS-safelisted, so script cannot read it unless the bucket exposes it; <img> does not need it"
+      },
+      "pass": true
+    },
+    {
+      "id": "T12",
+      "name": "a page on a non-allow-listed origin is blocked by CORS and nothing is stored",
+      "expected": "status 0, nothing stored",
+      "observed": {
+        "status": 0,
+        "errored": true,
+        "stored": null
+      },
+      "pass": true
+    }
+  ],
+  "consoleErrorsSample": [
+    "Refused to set unsafe header \"Content-Length\"",
+    "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    "Refused to set unsafe header \"Content-Length\"",
+    "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ]
+}
