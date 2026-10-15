@@ -151,9 +151,10 @@ describe('errors', () => {
   it('rate limiting on a tile is recoverable with its own Retry', async () => {
     srv.contentErrors.set('thumb:f2', 429)
     mount(); await open()
-    const retry = await screen.findByRole('button', { name: /Retry photo from/ })
+    // The 429 starts a cooldown, so tiles that had not been signed yet also wait for a person's Retry.
+    const retries = await screen.findAllByRole('button', { name: /Retry photo from/ })
     srv.contentErrors.delete('thumb:f2')
-    await userEvent.click(retry)
+    for (const r of retries) await userEvent.click(r)
     await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(5))
   })
 })
@@ -333,5 +334,239 @@ describe('workspace and job isolation', () => {
 describe('classifyGalleryError', () => {
   it.each([[503, 'disabled'], [401, 'forbidden'], [403, 'forbidden'], [404, 'not_found'], [409, 'unavailable'], [410, 'unavailable'], [429, 'rate_limited'], [500, 'failed'], [undefined, 'failed']])('%s -> %s', (status, kind) => {
     expect(classifyGalleryError(status === undefined ? new Error('x') : httpErr(status))).toBe(kind)
+  })
+})
+
+// ── C5d hardening: request pressure, URL hygiene, late answers, one refresh, Job separation ──────────
+
+const flush = () => new Promise((r) => setTimeout(r, 30))
+
+describe('request pressure', () => {
+  it('SignedUrlCache never has more than the allowed thumbnail requests in flight, and drains the queue', async () => {
+    let inflight = 0, peak = 0
+    const gates: Array<() => void> = []
+    const fetchContent = vi.fn(async (id: string, v: 'thumb' | 'full') => {
+      inflight++; peak = Math.max(peak, inflight)
+      await new Promise<void>((r) => gates.push(r))
+      inflight--
+      return { url: `u-${id}`, expiresAt: new Date(Date.now() + 60_000).toISOString(), variant: v }
+    })
+    const cache = new SignedUrlCache(fetchContent, Date.now, 10_000, { maxConcurrentThumbs: 3 })
+    const all = Array.from({ length: 10 }, (_, i) => cache.get(`f${i}`, 'thumb'))
+    await flush()
+    expect(fetchContent).toHaveBeenCalledTimes(3)
+    while (gates.length) { gates.shift()!(); await flush() }
+    await Promise.all(all)
+    expect(fetchContent).toHaveBeenCalledTimes(10)
+    expect(peak).toBe(3)
+  })
+
+  it('full-size viewing is not queued behind thumbnails', async () => {
+    const gates: Array<() => void> = []
+    const fetchContent = vi.fn(async (id: string, v: 'thumb' | 'full') => { await new Promise<void>((r) => gates.push(r)); return { url: `u-${id}-${v}`, expiresAt: new Date(Date.now() + 60_000).toISOString(), variant: v } })
+    const cache = new SignedUrlCache(fetchContent, Date.now, 10_000, { maxConcurrentThumbs: 1 })
+    void cache.get('a', 'thumb'); void cache.get('b', 'thumb')
+    await flush()
+    const full = cache.get('c', 'full')
+    await flush()
+    expect(fetchContent.mock.calls.map((c) => `${c[1]}:${c[0]}`)).toEqual(['thumb:a', 'full:c'])
+    gates.forEach((g) => g()); await full
+  })
+
+  it('after a 429 no automatic request is sent during the cooldown (no loop); only a manual retry goes through; then it recovers', async () => {
+    let now = 5_000
+    let fail = true
+    const fetchContent = vi.fn(async (id: string, v: 'thumb' | 'full') => {
+      if (fail) throw httpErr(429)
+      return { url: `u-${id}`, expiresAt: new Date(now + 60_000).toISOString(), variant: v }
+    })
+    const cache = new SignedUrlCache(fetchContent, () => now, 10_000, { cooldownMs: 10_000 })
+    await expect(cache.get('a', 'thumb')).rejects.toMatchObject({ status: 429 })
+    expect(fetchContent).toHaveBeenCalledTimes(1)
+    for (const id of ['b', 'c', 'd']) await expect(cache.get(id, 'thumb')).rejects.toMatchObject({ status: 429 })
+    await expect(cache.get('a', 'thumb', { fresh: true })).rejects.toMatchObject({ status: 429 })   // an automatic refresh obeys the cooldown too
+    expect(fetchContent).toHaveBeenCalledTimes(1)                                                    // nothing reached the network
+    fail = false
+    await expect(cache.get('a', 'thumb', { fresh: true, manual: true })).resolves.toBe('u-a')        // a person pressing Retry is honoured
+    now += 11_000
+    await expect(cache.get('b', 'thumb')).resolves.toBe('u-b')                                       // cooldown over
+  })
+
+  it('clearing the cache drops queued requests without sending them', async () => {
+    const gates: Array<() => void> = []
+    const fetchContent = vi.fn(async (id: string, v: 'thumb' | 'full') => { await new Promise<void>((r) => gates.push(r)); return { url: id, expiresAt: new Date(Date.now() + 60_000).toISOString(), variant: v } })
+    const cache = new SignedUrlCache(fetchContent, Date.now, 10_000, { maxConcurrentThumbs: 1 })
+    const first = cache.get('a', 'thumb')
+    const queued = cache.get('b', 'thumb')
+    const queuedResult = queued.catch((e) => e)
+    await flush()
+    cache.clear()
+    gates.shift()!(); await first
+    expect(await queuedResult).toBeInstanceOf(Error)
+    expect(fetchContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('the gallery itself keeps at most 4 thumbnail requests in flight, even with every tile visible', async () => {
+    srv.files = Array.from({ length: 20 }, (_, i) => file(i)).reverse()
+    let inflight = 0, peak = 0
+    const gates: Array<() => void> = []
+    const gated = async (path: string) => {
+      if (!path.includes('/content')) return srv.api(path)
+      inflight++; peak = Math.max(peak, inflight)
+      await new Promise<void>((r) => gates.push(r))
+      inflight--
+      return srv.api(path)
+    }
+    render(<JobPhotoGallery api={gated as never} workspaceId="ws-1" jobId="job-1" jobLabel="J" />)
+    await open()
+    await waitFor(() => expect(gates.length).toBe(4))
+    await flush()
+    expect(peak).toBe(4)
+    while (document.querySelectorAll('img').length < 20) { gates.splice(0).forEach((g) => g()); await flush() }
+    expect(peak).toBe(4)
+  })
+
+  it('in the gallery, a 429 on thumbnails produces per-tile Retry buttons and no further automatic requests', async () => {
+    srv.files = Array.from({ length: 12 }, (_, i) => file(i)).reverse()
+    for (const f of srv.files) srv.contentErrors.set(`thumb:${f.id}`, 429)
+    mount(); await open()
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Retry photo from/ }).length).toBe(12))
+    const after = srv.contentCalls().length
+    expect(after).toBeLessThan(12)                // the cooldown stopped the rest locally
+    await flush(); await flush()
+    expect(srv.contentCalls().length).toBe(after) // and nothing retries by itself
+    srv.contentErrors.clear()
+    await userEvent.click(screen.getAllByRole('button', { name: /Retry photo from/ })[0])
+    await waitFor(() => expect(document.querySelectorAll('img').length).toBe(1))
+  })
+})
+
+describe('signed links never leave the page', () => {
+  it('reach no console, no web storage, and no unhandled rejection through success, 429, 403, 409 and image failures', async () => {
+    const logs: string[] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => vi.spyOn(console, m).mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')) }))
+    const stored: string[] = []
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k: string, v: string) => { stored.push(`${k}=${v}`) })
+    const rejections: unknown[] = []
+    const onRej = (e: PromiseRejectionEvent) => rejections.push(e.reason)
+    window.addEventListener('unhandledrejection', onRej)
+    try {
+      srv.contentErrors.set('thumb:f1', 429)
+      srv.contentErrors.set('thumb:f2', 409)
+      srv.contentErrors.set('full:f4', 403)
+      mount(); await open()
+      await waitFor(() => expect(document.querySelectorAll('img').length).toBeGreaterThan(0))
+      const img = document.querySelector('img') as HTMLImageElement
+      expect(img.getAttribute('src')).toMatch(/storage\.example\.test/)        // the link exists in the page...
+      fireEvent.error(img)                                                          // expired link: one refresh attempt (blocked by the 429 cooldown here)
+      await waitFor(() => expect(screen.getAllByRole('button', { name: /Open photo from/ }).length).toBeGreaterThan(0))
+      const opens = screen.getAllByRole('button', { name: /Open photo from/ })
+      await userEvent.click(opens[opens.length - 1])
+      await flush()
+      expect(document.body.textContent).not.toMatch(/storage\.example\.test|sig=/)
+      await flush()
+    } finally {
+      window.removeEventListener('unhandledrejection', onRej)
+      spies.forEach((s) => s.mockRestore()); setItem.mockRestore()
+    }
+    expect(logs.filter((l) => /storage\.example\.test|sig=/.test(l))).toEqual([])
+    expect(stored.filter((l) => /storage\.example\.test|sig=/.test(l))).toEqual([])
+    expect(rejections).toEqual([])
+    expect(Object.keys(sessionStorage).concat(Object.keys(localStorage)).filter((k) => /photo|url|sig/i.test(k))).toEqual([])
+  })
+
+  it('the component source has no logging, storage, analytics or error-reporting calls', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = ['JobPhotoGallery.tsx', '../../lib/evidence/galleryApi.ts'].map((f) => readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n')
+    expect(src).not.toMatch(/console\.|localStorage|sessionStorage|indexedDB|caches\.|reportError|errorReporting|Sentry|navigator\.sendBeacon|window\.gtag|document\.cookie/)
+  })
+})
+
+describe('late answers cannot restore links', () => {
+  it('a thumbnail link that arrives after switching workspace is not rendered and not cached for the new view', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const slow = { ...srv, api: srv.api }
+    const gated = async (path: string) => { if (path.includes('/content')) await gate; return slow.api(path) }
+    const { rerender } = render(<JobPhotoGallery api={gated as never} workspaceId="ws-1" jobId="job-1" jobLabel="J" />)
+    await open()
+    await screen.findByRole('list', { name: /Photo thumbnails/ })
+    rerender(<JobPhotoGallery api={gated as never} workspaceId="ws-2" jobId="job-1" jobLabel="J" />)
+    release(); await flush(); await flush()
+    expect(document.querySelectorAll('img')).toHaveLength(0)
+    expect(screen.queryByRole('list', { name: /Photo thumbnails/ })).not.toBeInTheDocument()
+  })
+
+  it('same for switching to another Job and for access being revoked while links are in flight', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const gated = async (path: string) => { if (path.includes('/content')) await gate; return srv.api(path) }
+    const { rerender } = render(<JobPhotoGallery api={gated as never} workspaceId="ws-1" jobId="job-1" jobLabel="J" />)
+    await open()
+    await screen.findByRole('list', { name: /Photo thumbnails/ })
+    rerender(<JobPhotoGallery api={gated as never} workspaceId="ws-1" jobId="job-2" jobLabel="J2" />)
+    release(); await flush()
+    expect(document.querySelectorAll('img')).toHaveLength(0)
+
+    // Revocation: one tile gets 403 while the others' links are still on their way.
+    let release2!: () => void
+    const gate2 = new Promise<void>((r) => { release2 = r })
+    srv.contentErrors.set('thumb:f4', 403)
+    const gated2 = async (path: string) => { if (path.includes('/content') && !path.includes('f4')) await gate2; return srv.api(path) }
+    rerender(<JobPhotoGallery api={gated2 as never} workspaceId="ws-1" jobId="job-3" jobLabel="J3" />)
+    await open()
+    await screen.findByRole('alert')
+    release2(); await flush()
+    expect(document.querySelectorAll('img')).toHaveLength(0)
+    expect(screen.getByRole('alert')).toHaveTextContent('You no longer have access')
+  })
+})
+
+describe('expired links: one automatic refresh, then manual', () => {
+  it('in the viewer too: one fresh link automatically, then "Try again" for the person to press', async () => {
+    srv.files = [file(1)]
+    mount(); await open()
+    await userEvent.click(await screen.findByRole('button', { name: /Open photo from/ }))
+    const dlg = await screen.findByRole('dialog')
+    const full = await waitFor(() => { const i = within(dlg).getByAltText(/Full size photo/); return i as HTMLImageElement })
+    const before = srv.contentCalls('full').length
+    fireEvent.error(full)
+    await waitFor(() => expect(srv.contentCalls('full').length).toBe(before + 1))                    // the one automatic refresh
+    fireEvent.error(await within(dlg).findByAltText(/Full size photo/))
+    expect(await within(dlg).findByRole('alert')).toBeInTheDocument()
+    await flush()
+    expect(srv.contentCalls('full').length).toBe(before + 1)                                          // and then it waits for a person
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(srv.contentCalls('full').length).toBe(before + 2))
+  })
+})
+
+describe('Jobs that share a site stay separate', () => {
+  it('two galleries open side by side show only their own Job\'s photos, even when file ids collide', async () => {
+    const perJob: Record<string, EvidenceFileSummary[]> = {
+      'job-a': [file(1, { uploadedBy: { crewMemberId: 'c1', name: 'Alice A' } })],
+      'job-b': [file(1, { uploadedBy: { crewMemberId: 'c2', name: 'Bob B' } }), file(2, { uploadedBy: { crewMemberId: 'c2', name: 'Bob B' } })],
+    }
+    const calls: string[] = []
+    const api = async (path: string): Promise<unknown> => {
+      calls.push(path)
+      const u = new URL(path, 'https://app.test')
+      const [, , , , job, , id] = u.pathname.split('/')
+      if (u.pathname.endsWith('/content')) return { url: `https://storage.example.test/${job}/${u.searchParams.get('variant')}/${id}`, expiresAt: new Date(Date.now() + 60_000).toISOString(), variant: u.searchParams.get('variant') }
+      return { files: perJob[job], nextCursor: null }
+    }
+    render(<>
+      <JobPhotoGallery api={api as never} workspaceId="ws-1" jobId="job-a" jobLabel="Site S-1 (Job A)" />
+      <JobPhotoGallery api={api as never} workspaceId="ws-1" jobId="job-b" jobLabel="Site S-1 (Job B)" />
+    </>)
+    for (const b of screen.getAllByRole('button', { name: 'Photos' })) await userEvent.click(b)
+    const a = await screen.findByRole('list', { name: 'Photo thumbnails for Site S-1 (Job A)' })
+    const b = await screen.findByRole('list', { name: 'Photo thumbnails for Site S-1 (Job B)' })
+    await waitFor(() => { expect(a.querySelectorAll('img')).toHaveLength(1); expect(b.querySelectorAll('img')).toHaveLength(2) })
+    a.querySelectorAll('img').forEach((i) => expect(i.getAttribute('src')).toContain('/job-a/'))
+    b.querySelectorAll('img').forEach((i) => expect(i.getAttribute('src')).toContain('/job-b/'))
+    expect(within(a).getAllByRole('button', { name: /Alice A/ })).toHaveLength(1)
+    expect(within(b).queryAllByRole('button', { name: /Alice A/ })).toHaveLength(0)
+    for (const c of calls) expect(c).toMatch(/\/job-[ab]\/files/)
   })
 })

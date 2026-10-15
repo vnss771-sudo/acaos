@@ -26,9 +26,9 @@ function useSignedUrl(cache: SignedUrlCache, fileId: string, variant: 'thumb' | 
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
-  const load = useCallback((fresh: boolean) => {
+  const load = useCallback((fresh: boolean, manual = false) => {
     setSt((p) => ({ status: 'loading', url: fresh ? undefined : p.url }))
-    cache.get(fileId, variant, { fresh }).then(
+    cache.get(fileId, variant, { fresh, manual }).then(
       (url) => { if (alive.current) setSt({ status: 'ok', url }) },
       (e) => {
         const kind = classifyGalleryError(e)
@@ -49,7 +49,8 @@ function useSignedUrl(cache: SignedUrlCache, fileId: string, variant: 'thumb' | 
     setSt({ status: 'error', error: 'unavailable' })
   }, [cache, fileId, variant, load])
 
-  const retry = useCallback(() => { retried.current = false; cache.forget(fileId, variant); load(true) }, [cache, fileId, variant, load])
+  // Only a person pressing Retry gets a fresh request through a rate-limit cooldown.
+  const retry = useCallback(() => { retried.current = false; cache.forget(fileId, variant); load(true, true) }, [cache, fileId, variant, load])
   return { ...st, imageFailed, retry }
 }
 

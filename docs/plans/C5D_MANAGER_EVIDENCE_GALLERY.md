@@ -24,8 +24,10 @@ Closed Jobs keep their gallery (managers retain historical access; technicians d
 
 ## Behaviour that matters
 
+* **Request pressure (bounded in `SignedUrlCache`, not left to the components)**: at most 4 thumbnail links are requested at once; the rest wait their turn. After any `429` no automatic request is sent for 10 s (they fail immediately, locally, and the tile shows its own Retry); only a person pressing Retry, or opening the full-size viewer, goes through. Nothing retries by itself, so there is no 429 loop. Clearing the cache (workspace/Job change, revoked access) drops queued requests without sending them. This keeps the existing 120/min limit practical, so no batch-signing endpoint is added.
+* **Signed links never leave the page**: the gallery code has no logging, storage, cookie, beacon, analytics or error-reporting calls (a test greps the source and another exercises success, 429, 403, 409 and image failures while asserting nothing reaches `console`, web storage or `unhandledrejection`). Browser error reporting sends only the page path and exception text, and the only errors thrown carry a status, never a URL. The links are only ever the `src` of an `<img>`.
 * **Thumbnails**: grid uses the 320 px thumbnail; if a file has none (`hasThumb: false`) the full image stands in. Full-size is requested only in the viewer.
-* **Signed links** are 60 s bearer credentials: kept in memory, never shown as text, never logged, `referrerPolicy="no-referrer"`. An `<img>` that fails to load (expired or revoked link) is retried **once** with a freshly signed link, then shows "Photo unavailable" with a Retry button (no retry loop).
+* **Expired links**: 60 s bearer credentials, kept in memory only, `referrerPolicy="no-referrer"`. An `<img>` that fails to load (expired or revoked link) is retried **once** automatically with a freshly signed link (thumbnail or viewer), then shows "Photo unavailable" / "Try again" for a person to press.
 * **Unavailable evidence** (`409` not AVAILABLE, `404` missing/unverified): that tile or the viewer says so; the rest of the gallery is unaffected.
 * **Revoked access** (`401/403` from the list, a link, or "load more"): the gallery immediately discards every photo and link it holds, shows "You no longer have access to this job's photos", and offers no retry. Roles are resolved per request on the server (cached ≤ 5 s; membership routes invalidate it explicitly), so a removed manager is refused on the next request.
 * **Workspace / Job isolation**: every request carries the gallery's own `workspaceId` and `jobId`; changing either resets the component and abandons in-flight answers; the server returns 404 for a foreign file, Job or workspace and 403 for non-members.
@@ -34,13 +36,14 @@ Closed Jobs keep their gallery (managers retain historical access; technicians d
 
 ## Tests
 
-* Component (Vitest): 34 gallery tests (loading, pagination, per-tile visibility loading, error/503/429, one-shot expired-link refresh, cache expiry and late-answer behaviour, viewer navigation/keyboard, read-only, revoked access on list/link/load-more, workspace switch incl. slow stale answers, two Jobs on one site) plus 2 `OpsDelivery` tests (gallery absent when the server flag is off/missing, present per Job and calls the Job id, not the site id).
+* Default-off (`tests/evidence-default-off.test.ts`): the resolver is off for unset/false/invalid/incomplete config, and a scan fails if any committed env, compose, Docker, infra/ops or workflow file sets `EVIDENCE_UPLOADS_ENABLED=true`.
+* Component (Vitest): 46 gallery tests (loading, pagination, per-tile visibility loading, error/503/429, one-shot expired-link refresh, cache expiry and late-answer behaviour, viewer navigation/keyboard, read-only, revoked access on list/link/load-more, workspace switch incl. slow stale answers, two Jobs on one site) plus 2 `OpsDelivery` tests (gallery absent when the server flag is off/missing, present per Job and calls the Job id, not the site id).
 * DB tier (`tests-db/evidence-manager-gallery.test.ts`, tenant guard enforcing, real routes and worker finalisation): capability flag on/off and manager-only; per-Job galleries; cross-workspace isolation by every id combination; demoted/removed manager loses list and content; links ≤ 60 s, dead after expiry and a fresh one works; rejected/deleting/deleted/unverified evidence never listed or signed, missing thumbnail falls back; pagination.
 * Browser (`e2e/manager-photo-gallery.spec.ts`, production build, strict CSP, phone and desktop): real JPEGs decode from signed https links, viewer, expired-link refresh, revoked access, gallery hidden when evidence is off, no horizontal scroll.
 
 ## Known limits / for review
 
-* Tiles for a Job with many photos still sign one link per visible thumbnail (bounded by the 120/min limit; a 429 shows a per-tile Retry). A batch "sign many thumbnails" endpoint would be a server change, deferred.
+* Tiles still sign one link per visible thumbnail, now bounded (4 at once, 10 s cooldown after a 429). A batch "sign many thumbnails" endpoint would be a server change and is deferred unless the 120/min limit proves impractical in real use.
 * Chromium only; no real-device pass (C5e). No bulk export, annotations or customer sharing (out of scope, PR D).
 * A membership change made by a path that does not invalidate the role cache is honoured within 5 s (existing behaviour, not changed here).
 * The gallery shows photos only; it does not link them to `JobTechnicianEvidence` notes (`evidenceId` is returned but not rendered).

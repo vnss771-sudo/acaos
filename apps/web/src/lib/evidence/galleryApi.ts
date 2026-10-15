@@ -44,20 +44,41 @@ export function makeGalleryApi(api: RawApi, workspaceId: string, jobId: string):
   }
 }
 
+const rateLimited = () => Object.assign(new Error('rate limited'), { status: 429 })
+const abandoned = () => new Error('abandoned')
+
 /**
- * In-memory cache of signed links. A link is reused only while it has comfortably more than
- * `marginMs` left, so an image is never started on a link that is about to lapse. One in-flight
- * request per (file, variant) is shared by everyone who asks.
+ * In-memory cache of signed links (never persisted, never logged). A link is reused only while it has
+ * comfortably more than `marginMs` left, so an image is never started on a link that is about to lapse.
+ * One in-flight request per (file, variant) is shared by everyone who asks.
+ *
+ * Request pressure is bounded here, not in the components: at most `maxConcurrentThumbs` thumbnail links
+ * are requested at once (the rest wait), and after any 429 no automatic request is sent for `cooldownMs`
+ * (those fail immediately, locally, as 429 so the tile shows its manual Retry). Only a person's explicit
+ * action (`manual`) and full-size viewing skip the cooldown. Nothing here retries by itself.
  */
 export class SignedUrlCache {
   private entries = new Map<string, { url: string; expiresAt: number }>()
   private pending = new Map<string, Promise<string>>()
+  private waiting: Array<() => void> = []
+  private active = 0
+  private coolUntil = 0
   private epoch = 0
-  constructor(private fetchContent: GalleryApi['content'], private now: () => number = Date.now, private marginMs = 10_000) {}
+  private maxThumbs: number
+  private cooldownMs: number
+  constructor(
+    private fetchContent: GalleryApi['content'],
+    private now: () => number = Date.now,
+    private marginMs = 10_000,
+    opts: { maxConcurrentThumbs?: number; cooldownMs?: number } = {},
+  ) {
+    this.maxThumbs = opts.maxConcurrentThumbs ?? 4
+    this.cooldownMs = opts.cooldownMs ?? 10_000
+  }
 
   private key = (fileId: string, variant: string) => `${variant}:${fileId}`
 
-  async get(fileId: string, variant: 'thumb' | 'full', opts: { fresh?: boolean } = {}): Promise<string> {
+  async get(fileId: string, variant: 'thumb' | 'full', opts: { fresh?: boolean; manual?: boolean } = {}): Promise<string> {
     const k = this.key(fileId, variant)
     if (!opts.fresh) {
       const hit = this.entries.get(k)
@@ -66,8 +87,9 @@ export class SignedUrlCache {
       if (inflight) return inflight
     }
     const epoch = this.epoch
-    const p = this.fetchContent(fileId, variant).then((r) => {
-      // A cache that was cleared (workspace change, revoked access) must not be repopulated by a late answer.
+    const run = () => this.fetchContent(fileId, variant)
+    const p = (variant === 'thumb' ? this.limited(run, !!opts.manual, epoch) : run()).then((r) => {
+      // A cache that was cleared (workspace/job change, revoked access) must not be repopulated by a late answer.
       if (epoch === this.epoch) this.entries.set(k, { url: r.url, expiresAt: Date.parse(r.expiresAt) || this.now() })
       return r.url
     }).finally(() => { if (this.pending.get(k) === p) this.pending.delete(k) })
@@ -75,7 +97,34 @@ export class SignedUrlCache {
     return p
   }
 
+  private async limited<T>(run: () => Promise<T>, manual: boolean, epoch: number): Promise<T> {
+    while (this.active >= this.maxThumbs) {
+      await new Promise<void>((r) => this.waiting.push(r))
+      if (epoch !== this.epoch) throw abandoned()          // the view went away while this was queued: send nothing
+    }
+    if (!manual && this.now() < this.coolUntil) {
+      this.waiting.shift()?.()                               // pass the slot on so the rest of the queue also fails fast
+      throw rateLimited()
+    }
+    this.active++
+    try {
+      return await run()
+    } catch (e) {
+      if ((e as { status?: number } | null)?.status === 429) this.coolUntil = this.now() + this.cooldownMs
+      throw e
+    } finally {
+      this.active--
+      this.waiting.shift()?.()
+    }
+  }
+
   forget(fileId: string, variant: 'thumb' | 'full') { this.entries.delete(this.key(fileId, variant)) }
 
-  clear() { this.epoch++; this.entries.clear(); this.pending.clear() }
+  clear() {
+    this.epoch++
+    this.entries.clear()
+    this.pending.clear()
+    this.coolUntil = 0
+    for (const w of this.waiting.splice(0)) w()            // queued requests wake, see the new epoch and drop
+  }
 }
