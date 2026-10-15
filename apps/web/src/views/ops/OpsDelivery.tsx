@@ -13,6 +13,7 @@ import { Skeleton } from '../../components/ui/Skeleton.js'
 import { OpsSubNav } from '../../components/ops/OpsSubNav.js'
 import { useIsMobile } from '../../hooks/useMediaQuery.js'
 import { JobVariations, type JobVariation } from '../../components/ops/JobVariations.js'
+import { JobPhotoGallery } from '../../components/photos/JobPhotoGallery.js'
 
 // "Jobs & margins" (phase 15B): what each job was quoted at vs what it delivered,
 // closeout at the moment the job is done, and — once enough jobs are closed —
@@ -123,6 +124,8 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
   const tap: React.CSSProperties = isMobile ? { minHeight: 44 } : {}
   const route = useMemo(() => makeRouteApi(api), [api])
   const [jobs, setJobs] = useState<DeliveryJob[] | null>(null)
+  // Server capability: photo evidence is configured. Without it the gallery is not offered at all.
+  const [evidencePhotos, setEvidencePhotos] = useState(false)
   const [report, setReport] = useState<Report | null>(null)
   const [regionalReport, setRegionalReport] = useState<Report | null>(null)
   const [loading, setLoading] = useState(false)
@@ -140,12 +143,13 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
     setLoading(true)
     setLoadError(false)
     Promise.all([
-      api<{ jobs: DeliveryJob[] }>(`/api/delivery/jobs?workspaceId=${workspace.id}`),
+      api<{ jobs: DeliveryJob[]; evidencePhotos?: boolean }>(`/api/delivery/jobs?workspaceId=${workspace.id}`),
       api<{ report: Report; regionalReport?: Report }>(`/api/delivery/report?workspaceId=${workspace.id}`),
     ])
       .then(([j, r]) => {
         if (reqId !== reqRef.current) return
         setJobs(j.jobs)
+        setEvidencePhotos(j.evidencePhotos === true)
         setReport(r.report)
         setRegionalReport(r.regionalReport ?? null)
       })
@@ -296,6 +300,11 @@ export function OpsDelivery({ api, workspace, toast, canManage = false, setView 
                     jobId={j.id} jobActive={j.status === 'ACTIVE'} variations={j.variations ?? []} workspaceId={workspace.id}
                     route={route} toast={toast} onChanged={load} isMobile={isMobile}
                   />
+                )}
+
+                {/* Technician photos for this delivery Job (one gallery per Job, not per site), reviewable before and after closeout. */}
+                {evidencePhotos && workspace && (
+                  <JobPhotoGallery api={api} workspaceId={workspace.id} jobId={j.id} jobLabel={`${j.site.jobCode} · ${j.site.siteName}`} />
                 )}
 
                 {j.status === 'ACTIVE' && closing !== j.id && (

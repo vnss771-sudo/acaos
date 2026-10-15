@@ -31,16 +31,43 @@ const REPORT = {
   groups: [{ key: 'OPPORTUNITY:DEVELOPMENT_APPLICATION', label: 'Development applications', jobs: 3, hoursVariancePct: STAT, revenueVsQuotePct: null, labourMarginPct: STAT, grossMarginPct: null }],
 }
 
-function mockApi() {
+function mockApi(evidencePhotos?: boolean) {
   return vi.fn().mockImplementation((path: string, init?: { method?: string }) => {
     if (init?.method && init.method !== 'GET') return Promise.resolve({ job: {} })
     if (path.startsWith('/api/delivery/report')) return Promise.resolve({ report: REPORT })
-    return Promise.resolve({ jobs: [ACTIVE, CLOSED] })
+    if (path.includes('/files')) return Promise.resolve({ files: [], nextCursor: null })
+    return Promise.resolve({ jobs: [ACTIVE, CLOSED], ...(evidencePhotos === undefined ? {} : { evidencePhotos }) })
   })
 }
 const writes = (api: ReturnType<typeof vi.fn>) => api.mock.calls.filter(([, init]) => (init as { method?: string } | undefined)?.method && (init as { method: string }).method !== 'GET')
 
 beforeEach(() => vi.clearAllMocks())
+
+describe('OpsDelivery photo gallery', () => {
+  test('is not offered when the server has photo evidence off (production default), and makes no photo request', async () => {
+    for (const flag of [undefined, false]) {
+      const api = mockApi(flag)
+      const { unmount } = render(<OpsDelivery api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+      await screen.findByText('WH-1 · Warehouse fit-out')
+      expect(screen.queryByRole('button', { name: 'Photos' })).not.toBeInTheDocument()
+      expect(api.mock.calls.some(([p]) => String(p).includes('/files'))).toBe(false)
+      unmount()
+    }
+  })
+
+  test('each Job card (running and closed) gets its own gallery, labelled by job and site, loaded only on demand', async () => {
+    const api = mockApi(true)
+    render(<OpsDelivery api={api as never} workspace={workspace} toast={toast as never} canManage setView={setView} />)
+    await screen.findByText('WH-1 · Warehouse fit-out')
+    const buttons = screen.getAllByRole('button', { name: 'Photos' })
+    expect(buttons).toHaveLength(2)
+    expect(api.mock.calls.some(([p]) => String(p).includes('/files'))).toBe(false)
+    await userEvent.click(buttons[1])
+    expect(await screen.findByRole('region', { name: 'Photos for WH-2 · Cool room' })).toBeInTheDocument()
+    const photoCalls = api.mock.calls.map(([p]) => String(p)).filter((p) => p.includes('/files'))
+    expect(photoCalls).toEqual(['/api/ops/technician/j2/files?workspaceId=ws1&limit=24'])   // the delivery Job id, not the site id
+  })
+})
 
 describe('OpsDelivery', () => {
   test('non-admins see no economics and no requests are made', () => {
