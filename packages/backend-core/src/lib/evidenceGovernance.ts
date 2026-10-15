@@ -23,14 +23,11 @@ export async function lockEvidenceGovernance(tx: Tx, workspaceId: string): Promi
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'evidence-governance:' + workspaceId}, 0))`
 }
 
-// Structural types, so these helpers accept both a PrismaClient and a transaction client
-// (and compile against the offline Prisma stub, which has no per-model delegate types).
-export type HoldDb = { legalHold: { count(args: { where: Record<string, unknown> }): Promise<number> } }
-type PolicyRow = {
-  retentionDays: number; startRule: string; deletionWaitDays: number; requireDistinctReviewer: boolean
-  pendingWaitDays: number | null; pendingWaitRequestedAt: Date | null; autoDeletionEnabled: boolean
-}
-export type PolicyDb = { retentionPolicy: { findUnique(args: { where: { workspaceId: string } }): Promise<PolicyRow | null> } }
+// The helpers accept either a PrismaClient or a transaction client. Typed loosely on purpose:
+// the offline Prisma stub (used by the deterministic offline build) models both as index-signature
+// types that are not assignable to a per-model structural type.
+export type HoldDb = Record<string, any>
+export type PolicyDb = Record<string, any>
 
 /** Active (unreleased) holds covering a job: workspace-wide ones and that job's own. */
 export async function countActiveHolds(db: HoldDb, workspaceId: string, jobId: string): Promise<number> {
@@ -44,7 +41,7 @@ export type PolicyView = {
   pendingWaitDays: number | null; pendingWaitRequestedAt: Date | null; autoDeletionEnabled: boolean
 }
 export async function loadPolicy(db: PolicyDb, workspaceId: string): Promise<PolicyView> {
-  const p = await db.retentionPolicy.findUnique({ where: { workspaceId } })
+  const p = (await db.retentionPolicy.findUnique({ where: { workspaceId } })) as Partial<PolicyView> | null
   return {
     retentionDays: p?.retentionDays ?? DEFAULT_RETENTION_DAYS,
     startRule: p?.startRule ?? 'LATER_OF_UPLOAD_AND_CLOSEOUT',

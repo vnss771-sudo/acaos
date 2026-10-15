@@ -12,12 +12,8 @@ import type { EvidenceLedger } from './evidenceLedger.js'
 import { lockEvidenceGovernance } from './evidenceGovernance.js'
 
 type Tx = Prisma.TransactionClient
-type Count = { count(args: { where: Record<string, unknown> }): Promise<number> }
-type Db = {
-  evidenceFile: Count & { findMany(args: { where: Record<string, unknown>; select: { id: true } }): Promise<Array<{ id: string }>> }
-  legalHold: Count
-  evidenceDeletionRequest: Count
-}
+// Loosely typed on purpose (PrismaClient, a transaction client, or a test fake; see evidenceGovernance.ts).
+type Db = Record<string, any>
 
 export type ErasureBlocker =
   | 'deletion_disabled' | 'active_legal_hold' | 'evidence_not_deleted' | 'open_deletion_requests'
@@ -54,7 +50,7 @@ export async function evaluateWorkspaceErasure(db: Db, workspaceId: string, opts
   const blockers = await localErasureBlockers(db, workspaceId)
   if (!opts.ledger) { blockers.push('ledger_unavailable'); return blockers }
   try {
-    const deleted = await db.evidenceFile.findMany({ where: { workspaceId, status: 'DELETED' }, select: { id: true } })
+    const deleted = (await db.evidenceFile.findMany({ where: { workspaceId, status: 'DELETED' }, select: { id: true } })) as Array<{ id: string }>
     const { states, invalid } = await opts.ledger.fileStates(workspaceId)
     if (invalid.length > 0 || deleted.some((f) => !states.get(f.id)?.completed)) blockers.push('ledger_unconfirmed')
   } catch { blockers.push('ledger_unavailable') }
