@@ -74,6 +74,10 @@ technicianRouter.get('/assigned', asyncHandler(async (req, res) => {
     where: { workspaceId, userId: user.id, isActive: true }, select: { id: true },
   })
   if (!crew) return res.json({ linked: false, jobs: [] })
+  type AssignedRow = {
+    createdAt: Date
+    job: { id: string; status: string; opsJobSite: { siteName: string; jobCode: string } | null }
+  }
   const rows = await prisma.jobTechnicianAssignment.findMany({
     where: { workspaceId, crewMemberId: crew.id, job: { status: 'ACTIVE' } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -82,7 +86,7 @@ technicianRouter.get('/assigned', asyncHandler(async (req, res) => {
       createdAt: true,
       job: { select: { id: true, status: true, opsJobSite: { select: { siteName: true, jobCode: true } } } },
     },
-  })
+  }) as AssignedRow[]
   res.json({
     linked: true,
     jobs: rows.map((r) => ({
