@@ -68,6 +68,11 @@ export function resolveEvidenceStorage(env: Env = process.env): EvidenceStorageS
   }
 
   const problems: string[] = []
+  // Deletion credentials belong to the dedicated deletion runner only (C4). A service that
+  // can also write or serve evidence must never hold them, so their presence disables it.
+  if (Object.keys(env).some((k) => k.startsWith('EVIDENCE_DELETE_') && env[k])) {
+    problems.push('EVIDENCE_DELETE_* credentials must not be set on this service')
+  }
   const need = (key: string): string => {
     const v = env[key]?.trim()
     if (!v) problems.push(`${key} is required`)

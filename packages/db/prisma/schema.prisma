@@ -239,6 +239,7 @@ model Workspace {
   evidenceFileCopies      EvidenceFileCopy[]
   retentionPolicy         RetentionPolicy?
   legalHolds              LegalHold[]
+  evidenceDeletionRequests EvidenceDeletionRequest[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -2154,6 +2155,7 @@ model EvidenceFile {
   crewMember OpsCrewMember         @relation(fields: [workspaceId, crewMemberId], references: [workspaceId, id], onDelete: Restrict)
   evidence   JobTechnicianEvidence? @relation(fields: [workspaceId, jobId, evidenceId], references: [workspaceId, jobId, id], onDelete: Restrict)
   copies     EvidenceFileCopy[]
+  deletionRequests EvidenceDeletionRequest[]
 
   @@unique([workspaceId, crewMemberId, submissionId])
   @@unique([workspaceId, id])
@@ -2205,6 +2207,13 @@ model RetentionPolicy {
   retentionDays       Int      @default(2555)
   startRule           String   @default("LATER_OF_UPLOAD_AND_CLOSEOUT")
   autoDeletionEnabled Boolean  @default(false)
+  // C4: days between an owner approving a deletion request and the earliest execution.
+  // Shortening it is two-step (pending* + a 24 h cooling-off confirmation).
+  deletionWaitDays       Int       @default(7)
+  pendingWaitDays        Int?
+  pendingWaitRequestedAt DateTime?
+  pendingWaitRequestedBy String?
+  requireDistinctReviewer Boolean  @default(false)
   updatedByUserId     String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -2229,12 +2238,54 @@ model LegalHold {
   releasedByUserId String?
   releasedAt       DateTime?
   releaseReason    String?
+  // C4: when the placement / release was appended to the external ledger (null = not yet).
+  ledgeredAt        DateTime?
+  releaseLedgeredAt DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   job       Job?      @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Restrict)
 
   @@index([workspaceId, releasedAt])
   @@index([workspaceId, jobId])
+}
+
+// A request to permanently delete one evidence file (C4). Two steps by design:
+// REQUESTED -> (owner review) APPROVED -> waiting period -> EXECUTING -> COMPLETED,
+// or REJECTED / CANCELLED. The database itself enforces that the wait is at least
+// waitDays after review and that only one request per file is active. `approvalSeal`
+// is an HMAC over the approval, verified by the deletion runner, so a row flipped to
+// APPROVED by anything other than the approval endpoint is refused.
+model EvidenceDeletionRequest {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  fileId             String
+  jobId              String
+  status             String    @default("REQUESTED")
+  reason             String
+  requestedByUserId  String
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  reviewNote         String?
+  waitDays           Int?
+  notBefore          DateTime?
+  approvalExpiresAt  DateTime?
+  approvalSeal       String?
+  executionStartedAt DateTime?
+  completedAt        DateTime?
+  attempts           Int       @default(0)
+  lastAttemptAt      DateTime?
+  lastError          String?
+  // Equals fileId while the request is active (REQUESTED/APPROVED/EXECUTING), else NULL.
+  // The unique index then allows one active request per file without a partial index.
+  activeFileId       String?   @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  file      EvidenceFile @relation(fields: [workspaceId, fileId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@index([workspaceId, status])
+  @@index([status, notBefore])
 }
 
 // Append-only audit trail of deletion decisions and actions. Deliberately has NO

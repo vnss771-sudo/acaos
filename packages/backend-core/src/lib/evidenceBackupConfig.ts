@@ -28,7 +28,7 @@ export type EvidenceBackupState =
 type Env = Record<string, string | undefined>
 
 // <32 hex account id>[.eu|.fedramp].r2.cloudflarestorage.com
-const R2_HOST = /^[0-9a-f]{32}(\.(eu|fedramp))?\.r2\.cloudflarestorage\.com$/
+export const R2_HOST = /^[0-9a-f]{32}(\.(eu|fedramp))?\.r2\.cloudflarestorage\.com$/
 
 function hostOf(url: string): string {
   try { return new URL(url).host.toLowerCase() } catch { return '' }
@@ -41,6 +41,11 @@ export function resolveEvidenceBackup(env: Env = process.env): EvidenceBackupSta
     return { enabled: false, reason: 'invalid_config', problems: ['EVIDENCE_BACKUP_ENABLED must be "true" or "false"'] }
   }
   const problems: string[] = []
+  // Deletion credentials belong to the dedicated deletion runner only (C4). A service that
+  // can also write or serve evidence must never hold them, so their presence disables it.
+  if (Object.keys(env).some((k) => k.startsWith('EVIDENCE_DELETE_') && env[k])) {
+    problems.push('EVIDENCE_DELETE_* credentials must not be set on this service')
+  }
   const need = (k: string) => {
     const v = env[k]?.trim()
     if (!v) problems.push(`${k} is required`)

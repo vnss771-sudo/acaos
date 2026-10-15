@@ -126,6 +126,10 @@ jobs:
       - name: Check package boundaries
         run: npm run check:boundaries
 
+      # Only the dedicated deletion runner may hold delete-capable evidence credentials.
+      - name: Check evidence deletion boundary
+        run: npm run check:evidence-delete-boundary
+
       # Ratchet: production frontend mutations must go through the typed route
       # client, not raw body: JSON.stringify(...). Cheap, no Prisma needed.
       - name: Check frontend mutations (typed route client)
@@ -428,6 +432,18 @@ jobs:
               echo "No runtime smoke configured for ${{ matrix.image }}"
               ;;
           esac
+
+      # Evidence photos are re-encoded with sharp inside THIS image (Alpine/musl). Prove
+      # the prebuilt musl binary loads and processes real images in the exact image we
+      # ship, as the unprivileged runtime user with no network, and that the system
+      # packages the Dockerfile installs are really present.
+      - name: Smoke-test worker image (system packages + sharp image processing)
+        if: ${{ matrix.image == 'worker' }}
+        run: |
+          docker run --rm --network none --entrypoint sh ${{ matrix.tag }} -c \
+            'apk info -e openssl libc6-compat >/dev/null && echo "worker: apk packages present (openssl, libc6-compat)"'
+          docker run --rm --network none -v "$PWD/scripts/smoke-worker-image-sharp.mjs:/smoke/smoke.mjs:ro" \
+            --entrypoint node ${{ matrix.tag }} /smoke/smoke.mjs
 
       # Scan the real images we ship (catches OS/package CVEs in the actual
       # deployed dependency set, which `npm audit --omit=dev` does not).
