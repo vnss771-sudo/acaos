@@ -32,7 +32,7 @@ export const BACKUP_MAX_BYTES = 25 * 1024 * 1024
 export const BACKUP_RETRY_AFTER_MS = 15 * 60_000
 export const UNVERIFIED_ALERT_AFTER_MS = 24 * 3600_000
 /** Failure codes that mean the bytes disagree somewhere. These alert immediately. */
-export const INTEGRITY_CODES = ['primary_mismatch', 'backup_conflict', 'readback_mismatch', 'verify_mismatch', 'verify_missing'] as const
+export const INTEGRITY_CODES = ['primary_mismatch', 'primary_missing', 'backup_conflict', 'readback_mismatch', 'verify_mismatch', 'verify_missing'] as const
 
 export const sha256Hex = (b: Buffer): string => createHash('sha256').update(b).digest('hex')
 

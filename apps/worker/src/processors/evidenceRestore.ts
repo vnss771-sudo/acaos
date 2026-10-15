@@ -87,7 +87,8 @@ export async function restoreEvidenceFile(opts: {
   })
 
   // 2. Never overwrite a valid object.
-  const state = await primaryState(primary, key, want)
+  const seen = await primaryState(primary, key, want)
+  const state = seen.state
   if (state === 'valid') return { outcome: 'primary_valid', primary: state, activeHolds, dryRun: !execute }
 
   // 3. The backup must itself still be good before we rely on it.
@@ -122,19 +123,38 @@ export async function restoreEvidenceFile(opts: {
     }),
   }) // awaited, not best-effort: if this throws, nothing has been changed
 
-  // 5. Stage, verify, re-check the primary, promote, verify.
+  // 5. Stage, verify, then promote with a CONDITIONAL write: "only if the key is still
+  //    absent" (primary was missing) or "only if it still has the ETag I inspected"
+  //    (primary was corrupted). An object that appears or changes between inspection and
+  //    promotion therefore makes the write fail instead of being overwritten, however
+  //    many restores run at once.
+  if (state === 'corrupted' && !seen.etag) throw refuse('primary object is damaged in a way that cannot be replaced safely; remove it manually, then re-run')
   const staging = `ws/${file.workspaceId}/job/${file.jobId}/restore/${randomBytes(24).toString('base64url')}`
   assertKeyForJob(staging, file.workspaceId, file.jobId)
   await primary.putBytes(staging, bytes, 'image/jpeg')
   try {
     const staged = await primary.getBytes(staging, BACKUP_MAX_BYTES)
     if (!staged || staged.length !== want.size || sha256Hex(staged) !== want.sha256) throw refuse('staged copy failed verification')
-    if ((await primaryState(primary, key, want)) === 'valid') {
-      // Someone (or a retry) repaired it while we were working: do not overwrite.
-      return { outcome: 'primary_valid', primary: 'valid', activeHolds, dryRun: false }
+    // The record we are restoring must still be current (not deleted, replaced or un-backed-up).
+    const still = await prisma.evidenceFile.findFirst({
+      where: {
+        id: file.id, workspaceId: file.workspaceId, jobId: file.jobId, status: 'AVAILABLE', sha256: want.sha256,
+        copies: { some: { location: 'backup', status: 'VERIFIED', sha256: want.sha256 } },
+      },
+      select: { id: true },
+    })
+    if (!still) throw refuse('file record changed during restore')
+    const cond = state === 'missing' ? { ifNoneMatch: true as const } : { ifMatch: seen.etag as string }
+    const written = await primary.putBytesIf(key, staged, 'image/jpeg', cond)
+    if (written === 'precondition_failed') {
+      // Something else wrote the key after we looked. If it is now correct we are done;
+      // otherwise stop and let the operator re-run against the new state.
+      if ((await primaryState(primary, key, want)).state === 'valid') {
+        return { outcome: 'primary_valid', primary: 'valid', activeHolds, dryRun: false }
+      }
+      throw refuse('primary object changed during restore; re-run')
     }
-    await primary.putBytes(key, staged, 'image/jpeg')
-    if ((await primaryState(primary, key, want)) !== 'valid') throw refuse('restored object failed verification')
+    if ((await primaryState(primary, key, want)).state !== 'valid') throw refuse('restored object failed verification')
   } finally {
     await primary.delete(staging).catch(() => {})
   }
@@ -150,13 +170,13 @@ export async function restoreEvidenceFile(opts: {
 
 async function primaryState(
   store: EvidenceObjectStore, key: string, want: { sha256: string; size: number },
-): Promise<'valid' | 'missing' | 'corrupted'> {
-  let b: Buffer | null
-  try { b = await store.getBytes(key, BACKUP_MAX_BYTES) } catch (e) {
+): Promise<{ state: 'valid' | 'missing' | 'corrupted'; etag?: string }> {
+  let r: { bytes: Buffer; etag: string } | null
+  try { r = await store.getBytesWithEtag(key, BACKUP_MAX_BYTES) } catch (e) {
     // Only "grown past the cap" proves corruption; a network error must not look like damage.
-    if (e instanceof EvidenceObjectTooLargeError) return 'corrupted'
+    if (e instanceof EvidenceObjectTooLargeError) return { state: 'corrupted' }
     throw e
   }
-  if (!b) return 'missing'
-  return b.length === want.size && sha256Hex(b) === want.sha256 ? 'valid' : 'corrupted'
+  if (!r) return { state: 'missing' }
+  return { state: r.bytes.length === want.size && sha256Hex(r.bytes) === want.sha256 ? 'valid' : 'corrupted', etag: r.etag }
 }

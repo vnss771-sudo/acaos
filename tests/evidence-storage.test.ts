@@ -316,3 +316,63 @@ test('the memory store reads, writes, deletes, caps size, and can inject failure
   assert.equal(await m.head('ws/w1/a'), null)
   assert.deepEqual(m.calls.filter(c => c === 'delete'), ['delete', 'delete'])
 })
+
+// ── conditional writes and ETag reads (restore overwrite protection) ─────────
+
+import { Readable } from 'node:stream'
+
+test('putBytesIf sends the right precondition and maps refusals, rethrowing real errors', async () => {
+  const create = s3WithFake(() => ({}))
+  assert.equal(await create.store.putBytesIf('ws/w1/k', Buffer.from('x'), 'image/jpeg', { ifNoneMatch: true }), 'written')
+  assert.equal(create.sent[0].type, 'PutObjectCommand')
+  assert.equal(create.sent[0].input.IfNoneMatch, '*'); assert.equal(create.sent[0].input.IfMatch, undefined)
+  const swap = s3WithFake(() => ({}))
+  await swap.store.putBytesIf('ws/w1/k', Buffer.from('x'), 'image/jpeg', { ifMatch: '"abc"' })
+  assert.equal(swap.sent[0].input.IfMatch, '"abc"'); assert.equal(swap.sent[0].input.IfNoneMatch, undefined)
+  for (const [name, status] of [['PreconditionFailed', 412], ['Other', 412], ['ConditionalRequestConflict', 409]] as const) {
+    const refused = s3WithFake(() => { throw awsError(name, status) })
+    assert.equal(await refused.store.putBytesIf('ws/w1/k', Buffer.from('x'), 'image/jpeg', { ifNoneMatch: true }), 'precondition_failed')
+  }
+  const broken = s3WithFake(() => { throw awsError('InternalError', 500) })
+  await assert.rejects(() => broken.store.putBytesIf('ws/w1/k', Buffer.from('x'), 'image/jpeg', { ifNoneMatch: true }), /InternalError/)
+})
+
+test('getBytesWithEtag returns bytes and ETag, null when missing, and enforces the cap', async () => {
+  const ok = s3WithFake(() => ({ ContentLength: 3, ETag: '"e1"', Body: Readable.from([Buffer.from('abc')]) }))
+  const r = await ok.store.getBytesWithEtag('ws/w1/k', 10)
+  assert.deepEqual(r && { b: r.bytes.toString(), etag: r.etag }, { b: 'abc', etag: '"e1"' })
+  const noTag = s3WithFake(() => ({ Body: Readable.from([Buffer.from('abc')]) }))
+  assert.equal((await noTag.store.getBytesWithEtag('ws/w1/k', 10))?.etag, '')
+  const missing = s3WithFake(() => { throw awsError('NoSuchKey', 404) })
+  assert.equal(await missing.store.getBytesWithEtag('ws/w1/k', 10), null)
+  assert.equal(await missing.store.getBytes('ws/w1/k', 10), null)
+  const big = s3WithFake(() => ({ ContentLength: 11, Body: Readable.from([Buffer.alloc(11)]) }))
+  await assert.rejects(() => big.store.getBytesWithEtag('ws/w1/k', 10), EvidenceObjectTooLargeError)
+  const streamed = s3WithFake(() => ({ Body: Readable.from([Buffer.alloc(6), Buffer.alloc(6)]) }))
+  await assert.rejects(() => streamed.store.getBytesWithEtag('ws/w1/k', 10), EvidenceObjectTooLargeError)
+  assert.equal((await ok.store.getBytes('ws/w1/k', 10))?.toString(), 'abc')
+})
+
+test('the memory store mirrors conditional-write semantics', async () => {
+  const m = new MemoryEvidenceStore()
+  assert.equal(await m.putBytesIf('k', Buffer.from('1'), 'image/jpeg', { ifNoneMatch: true }), 'written')
+  assert.equal(await m.putBytesIf('k', Buffer.from('2'), 'image/jpeg', { ifNoneMatch: true }), 'precondition_failed')
+  const a = (await m.getBytesWithEtag('k', 10))!
+  assert.equal((await m.getBytesWithEtag('k', 10))!.etag, a.etag, 'unchanged object, same ETag')
+  assert.equal(await m.putBytesIf('k', Buffer.from('3'), 'image/jpeg', { ifMatch: 'stale' }), 'precondition_failed')
+  assert.equal(await m.putBytesIf('k', Buffer.from('3'), 'image/jpeg', { ifMatch: a.etag }), 'written')
+  assert.notEqual((await m.getBytesWithEtag('k', 10))!.etag, a.etag)
+  assert.equal(await m.putBytesIf('gone', Buffer.from('x'), 'image/jpeg', { ifMatch: a.etag }), 'precondition_failed')
+  await assert.rejects(() => m.getBytesWithEtag('k', 0), EvidenceObjectTooLargeError)
+  assert.equal(await m.getBytesWithEtag('nope', 10), null)
+  m.beforeConditionalWrite = (key) => { m.objects.set(key, { bytes: Buffer.from('racer'), contentType: 'x' }) }
+  assert.equal(await m.putBytesIf('race', Buffer.from('mine'), 'image/jpeg', { ifNoneMatch: true }), 'precondition_failed')
+  assert.equal(m.objects.get('race')?.bytes.toString(), 'racer')
+  m.beforeConditionalWrite = null
+  let hooked = ''
+  m.onPut = (key) => { hooked = key }
+  await m.putBytesIf('fresh', Buffer.from('y'), 'image/jpeg', { ifNoneMatch: true })
+  assert.equal(hooked, 'fresh')
+  m.failNext = { op: 'putBytes', times: 1 }
+  await assert.rejects(() => m.putBytesIf('z', Buffer.from('y'), 'image/jpeg', { ifNoneMatch: true }), /injected/)
+})
