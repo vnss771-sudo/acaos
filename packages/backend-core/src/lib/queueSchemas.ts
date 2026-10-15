@@ -132,6 +132,21 @@ export type DlqAutoRetryPayload = z.infer<typeof DlqAutoRetryPayloadSchema>
 export const DomainHealthPayloadSchema = z.object({}).passthrough()
 export type DomainHealthPayload = z.infer<typeof DomainHealthPayloadSchema>
 
+// Evidence file finalisation (worker/processors/evidenceFinalize.ts). Carries only
+// ids: everything else (declared type/size, object keys, authorisation) is re-read
+// from the database by the worker, never trusted from the payload.
+export const FinalizeEvidenceFilePayloadSchema = z.object({
+  workspaceId: id,
+  fileId: id,
+  ...meta,
+})
+export type FinalizeEvidenceFilePayload = z.infer<typeof FinalizeEvidenceFilePayloadSchema>
+
+// The abandoned-upload sweep is platform-wide and carries no parameters, same
+// rationale as RetentionPurgePayloadSchema above.
+export const EvidenceSweepPayloadSchema = z.object({}).passthrough()
+export type EvidenceSweepPayload = z.infer<typeof EvidenceSweepPayloadSchema>
+
 // Work-discovery sweep (lib/opportunitySweep.ts). The scheduled sweep carries no
 // workspace and covers every enabled profile; an on-demand "run now" names one.
 export const DiscoverOpportunitiesPayloadSchema = z.object({

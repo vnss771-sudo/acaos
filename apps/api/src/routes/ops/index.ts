@@ -8,6 +8,7 @@ import { alertsRouter } from './alerts.js'
 import { fatigueRouter } from './fatigue.js'
 import { adminRouter } from './admin.js'
 import { technicianRouter } from './technician.js'
+import { technicianFilesRouter } from './evidenceFiles.js'
 
 // The Ops module: workspace-scoped field crew / job-site / shift / roster
 // management. Each concern is its own router (each already carries its own
@@ -28,3 +29,4 @@ opsRouter.use('/fatigue', fatigueRouter)
 opsRouter.use('/admin', adminRouter)
 
 opsRouter.use('/technician', technicianRouter)
+opsRouter.use('/technician', technicianFilesRouter)

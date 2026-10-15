@@ -135,3 +135,64 @@ test('erasure is tenant-scoped: another workspace is untouched', async () => {
   assert.ok(otherCounts.workspace && otherCounts.leads === 1 && otherCounts.audits === 1 && otherCounts.outcomes === 1,
     'the other workspace and its data are intact')
 })
+
+// ── Retained evidence blocks erasure (C2) ─────────────────────────────────────
+// Evidence files, their copies and legal holds are retained records. Erasure must
+// refuse cleanly (409 with an explanation) rather than hit a foreign-key error, and
+// must leave EVERYTHING in place.
+
+async function seedEvidenceFile(workspaceId: string, userId: string, status: 'PENDING' | 'DELETED' = 'PENDING') {
+  const site = await prisma.opsJobSite.create({ data: { workspaceId, jobCode: 'S1', siteName: 'Site' } })
+  const job = await prisma.job.create({ data: { workspaceId, opsJobSiteId: site.id } })
+  const crew = await prisma.opsCrewMember.create({ data: { workspaceId, employeeCode: 'C1', fullName: 'Crew', role: 'TECH', userId } })
+  const file = await prisma.evidenceFile.create({ data: {
+    workspaceId, jobId: job.id, crewMemberId: crew.id, submissionId: crypto.randomUUID(), status,
+    ...(status === 'DELETED' ? { deletedAt: new Date() } : {}),
+  } })
+  return { job, crew, file }
+}
+
+test('retained evidence files block erasure with a clear 409 and nothing is removed', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('owner-ev1@x.test')
+  await freshAuth(user.id)
+  const { job, file } = await seedEvidenceFile(workspace.id, user.id)
+  const res = await del(workspace.id, { confirmName: workspace.name }, bearer(user.id))
+  assert.equal(res.status, 409)
+  assert.match(String(res.body?.error ?? res.body?.message ?? JSON.stringify(res.body)), /retained evidence|legal holds/i)
+  assert.ok(await prisma.workspace.findUnique({ where: { id: workspace.id } }), 'workspace NOT deleted')
+  assert.ok(await prisma.evidenceFile.findUnique({ where: { id: file.id } }), 'file NOT deleted')
+  assert.ok(await prisma.job.findUnique({ where: { id: job.id } }), 'job NOT deleted')
+  assert.ok(await prisma.membership.findFirst({ where: { workspaceId: workspace.id } }), 'members NOT deleted')
+})
+
+test('a DELETED tombstone still blocks erasure (the audit record of a deletion is retained)', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('owner-ev2@x.test')
+  await freshAuth(user.id)
+  await seedEvidenceFile(workspace.id, user.id, 'DELETED')
+  const res = await del(workspace.id, { confirmName: workspace.name }, bearer(user.id))
+  assert.equal(res.status, 409)
+  assert.ok(await prisma.workspace.findUnique({ where: { id: workspace.id } }))
+})
+
+test('a legal hold alone blocks erasure, active or released', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('owner-ev3@x.test')
+  await freshAuth(user.id)
+  const hold = await prisma.legalHold.create({ data: { workspaceId: workspace.id, scope: 'WORKSPACE', reason: 'Dispute', placedByUserId: user.id } })
+  assert.equal((await del(workspace.id, { confirmName: workspace.name }, bearer(user.id))).status, 409)
+  await prisma.legalHold.update({ where: { id: hold.id }, data: { releasedAt: new Date(Date.now() + 1000), releasedByUserId: user.id } })
+  assert.equal((await del(workspace.id, { confirmName: workspace.name }, bearer(user.id))).status, 409, 'released holds are still records')
+  assert.ok(await prisma.workspace.findUnique({ where: { id: workspace.id } }))
+})
+
+test('retention settings alone do not block erasure, and other tenants\' evidence is irrelevant', async () => {
+  const { user, workspace } = await seedUserWithWorkspace('owner-ev4@x.test')
+  const other = await seedUserWithWorkspace('other-ev4@x.test')
+  await freshAuth(user.id)
+  await prisma.retentionPolicy.create({ data: { workspaceId: workspace.id } })
+  await seedEvidenceFile(other.workspace.id, other.user.id) // someone else's retained file
+  const res = await del(workspace.id, { confirmName: workspace.name }, bearer(user.id))
+  assert.equal(res.status, 200)
+  assert.equal(await prisma.workspace.findUnique({ where: { id: workspace.id } }), null)
+  assert.ok(await prisma.workspace.findUnique({ where: { id: other.workspace.id } }), 'other tenant untouched')
+  assert.equal(await prisma.evidenceFile.count({ where: { workspaceId: other.workspace.id } }), 1)
+})

@@ -36,7 +36,7 @@ const KNOWN_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
   'discover-prospects', 'retention-purge', 'send-followup', 'dlq-auto-retry', 'domain-health',
-  'discover-opportunities',
+  'discover-opportunities', 'evidence-finalize', 'evidence-sweep',
 ]
 
 function arg(name) {

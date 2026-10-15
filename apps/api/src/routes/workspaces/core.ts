@@ -187,6 +187,20 @@ export function registerCoreRoutes(workspaceRouter: Router) {
         throw new ApiError(400, 'confirmName does not match the workspace name')
       }
 
+      // Retained evidence blocks erasure. Evidence files, their stored copies and legal
+      // holds are records the business may be required to keep; the database refuses to
+      // cascade-delete them (ON DELETE RESTRICT), so say so up front rather than failing
+      // on a constraint error. Counts include DELETED tombstones: the audit record of a
+      // deletion must outlive the workspace's own row until a controlled, legally
+      // reviewed erasure process exists (see docs/DATA_RETENTION.md).
+      const [retainedFiles, legalHolds] = await Promise.all([
+        prisma.evidenceFile.count({ where: { workspaceId } }),
+        prisma.legalHold.count({ where: { workspaceId } }),
+      ])
+      if (retainedFiles > 0 || legalHolds > 0) {
+        throw new ApiError(409, 'This workspace holds retained evidence files or legal holds and cannot be deleted until they are resolved through the controlled evidence-deletion process. Contact support.')
+      }
+
       // Refuse while a live subscription exists — deleting now would orphan billing
       // (the customer keeps being charged). They must cancel via the portal first.
       const LIVE = new Set(['active', 'trialing', 'past_due', 'unpaid'])
@@ -207,6 +221,13 @@ export function registerCoreRoutes(workspaceRouter: Router) {
         await tx.scoringOutcome.deleteMany({ where: { workspaceId } })
         // Everything else cascades from the Workspace row.
         await tx.workspace.delete({ where: { id: workspaceId } })
+      }).catch((e: unknown) => {
+        // Backstop for the check above: evidence or a hold appeared between the count and
+        // the delete. The database refused (nothing was removed): report it the same way.
+        if ((e as { code?: string })?.code === 'P2003') {
+          throw new ApiError(409, 'This workspace holds retained evidence files or legal holds and cannot be deleted until they are resolved through the controlled evidence-deletion process. Contact support.')
+        }
+        throw e
       })
 
       // Now-removed members must re-check membership cleanly on their next request.

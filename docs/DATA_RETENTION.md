@@ -39,7 +39,7 @@ automatic deletion exists.** Design intent, subject to legal review (see
 - Default retention for job evidence and reports is seven years (`RetentionPolicy.retentionDays`, 2555), configurable per workspace; `autoDeletionEnabled` is `false` and is not consulted by any job.
 - A legal hold (workspace-wide or per job) blocks deletion until released. Placing/releasing and approving any deletion is limited to workspace owners, enforced by the endpoints when they are built.
 - `EvidenceDeletionLog` is append-only (a trigger rejects UPDATE/DELETE) and FK-free so it outlives the rows it describes, like `AuditEvent`.
-- **Interaction with tenant deletion:** files, copies and holds use `ON DELETE RESTRICT`, so deleting a workspace/job/crew member that still has them is refused by the database rather than silently destroying the record. `RetentionPolicy` is configuration and cascades. The workspace-delete route and the operator erasure script must be extended to handle files and holds (and to reconcile erasure requests with retention) **before** uploads are enabled.
+- **Interaction with tenant deletion:** files, copies and holds use `ON DELETE RESTRICT`, so deleting a workspace/job/crew member that still has them is refused by the database rather than silently destroying the record. `RetentionPolicy` is configuration and cascades. **`DELETE /api/workspaces/:id` now explicitly refuses (409, with an explanation) while the workspace has any evidence file row (including `DELETED` tombstones) or any legal hold (active or released), and nothing is removed.** Erasure of such a workspace needs the controlled evidence-deletion process and a legally reviewed reconciliation of erasure requests with retention; neither exists yet, so those workspaces cannot currently be erased through the product.
 
 ## Tenant export
 
@@ -51,7 +51,7 @@ A workspace owner can obtain their data:
 
 ## Tenant deletion
 
-On workspace deletion, all workspace-scoped rows are removed. Records that are
+On workspace deletion, all workspace-scoped rows are removed, **except that a workspace with retained evidence files or legal holds cannot be deleted at all until they are resolved** (see "Evidence files, retention settings and legal holds" above). Records that are
 intentionally FK-free for integrity (`AuditEvent`) are deleted by `workspaceId`
 filter rather than cascade. Deletion must:
 1. Revoke ingest API keys and refresh tokens for the workspace.
