@@ -6,7 +6,7 @@ import type { View } from '../types.js'
 //
 //   Today    → Today (what needs a decision) · Overview (the old Home dashboard)
 //   Work     → Find work · Clients · Jobs & margins · Scorecard
-//   Crew     → Overview · Crew · Shifts · Roster · Sites · Fatigue · Alerts
+//   Crew     → Overview · Crew · Shifts · Roster · Sites · Fatigue · Alerts · My jobs
 //   Outreach → Campaigns · To review · Inbox · Leads · Missions · Analytics · AI tools
 //   Settings → Settings · Billing · Admin
 //
@@ -37,6 +37,7 @@ export const HUBS: Hub[] = [
     { view: 'ops-jobs', label: 'Sites' },
     { view: 'ops-fatigue', label: 'Fatigue' },
     { view: 'ops-alerts', label: 'Alerts' },
+    { view: 'ops-technician', label: 'My jobs' },
   ] },
   { id: 'outreach', label: 'Outreach', icon: '▣', tabs: [
     { view: 'campaigns', label: 'Campaigns' },

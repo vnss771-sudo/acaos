@@ -765,6 +765,12 @@ export interface OpsPublishRosterRequest {
 }
 export interface OpsReviewAlertRequest { workspaceId: string }
 
+export interface TechnicianChecklistItem { label: string; checked: boolean }
+/** Body of POST /api/ops/technician/:jobId/evidence. submissionId makes retries idempotent. */
+export type TechnicianEvidenceRequest =
+  | { workspaceId: string; submissionId: string; kind: 'NOTE'; note: string }
+  | { workspaceId: string; submissionId: string; kind: 'CHECKLIST'; checklist: TechnicianChecklistItem[] }
+
 export interface RouteContracts {
   // Campaigns
   'POST /api/campaigns': { body: CreateCampaignRequest; response: { campaign: CampaignDTO } }
@@ -889,6 +895,7 @@ export interface RouteContracts {
   'PUT /api/ops/shifts/:id': { params: { id: string }; body: OpsUpdateShiftRequest; response: unknown }
   'POST /api/ops/clock/in': { body: OpsClockInRequest; response: unknown }
   'POST /api/ops/clock/out': { body: OpsClockOutRequest; response: unknown }
+  'POST /api/ops/technician/:jobId/evidence': { params: { jobId: string }; body: TechnicianEvidenceRequest; response: { evidence: { id: string; kind: string; createdAt: string } } }
   'POST /api/ops/roster': { body: OpsCreateRosterEntryRequest; response: unknown }
   'POST /api/ops/roster/bulk': { body: OpsBulkCreateRosterRequest; response: { created: number; requested: number } }
   'PUT /api/ops/roster/:id': { params: { id: string }; body: OpsUpdateRosterEntryRequest; response: unknown }
