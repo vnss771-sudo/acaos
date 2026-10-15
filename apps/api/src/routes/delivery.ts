@@ -8,6 +8,7 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
 import { FIND_WORK_KIND_LABEL, loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
+import { resolveEvidenceStorage } from '@acaos/backend-core/lib/evidenceStorageConfig.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type {
@@ -389,7 +390,9 @@ deliveryRouter.get(
       include: jobInclude,
     }) as JobRow[]
     const [live, late] = await Promise.all([liveEconomics(q.workspaceId, jobs), lateShiftCounts(q.workspaceId, jobs)])
-    res.json({ jobs: jobs.map(j => present(j, live, late)) })
+    // `evidencePhotos` is only the server capability (uploads configured), so the UI can hide the photo
+    // gallery instead of discovering a 503. It reveals nothing about any workspace's evidence.
+    res.json({ jobs: jobs.map(j => present(j, live, late)), evidencePhotos: resolveEvidenceStorage().enabled })
   })
 )
 
