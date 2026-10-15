@@ -233,6 +233,8 @@ model Workspace {
   quotes                  Quote[]
   jobs                    Job[]
   jobVariations           JobVariation[]
+  technicianAssignments   JobTechnicianAssignment[]
+  technicianEvidence      JobTechnicianEvidence[]
 }
 
 // Customer-registered outbound webhook endpoint. ACAOS POSTs signed event payloads
@@ -1482,10 +1484,13 @@ model OpsCrewMember {
   updatedAt        DateTime         @updatedAt
   shifts           OpsShiftRecord[]
   rosterEntries    OpsRosterEntry[]
+  jobAssignments   JobTechnicianAssignment[]
+  technicianEvidence JobTechnicianEvidence[]
 
   @@unique([workspaceId, employeeCode])
   @@unique([workspaceId, userId])
   @@index([workspaceId, isActive])
+  @@unique([workspaceId, id])
 }
 
 model OpsJobSite {
@@ -2062,9 +2067,45 @@ model Job {
   quote                Quote?     @relation(fields: [quoteId], references: [id], onDelete: SetNull)
   shifts               OpsShiftRecord[]
   variations           JobVariation[]
+  technicianAssignments JobTechnicianAssignment[]
+  technicianEvidence    JobTechnicianEvidence[]
 
   @@index([workspaceId, status])
   @@index([workspaceId, opsJobSiteId])
+  @@unique([workspaceId, id])
+}
+
+// Job-specific technician authorisation. Site roster membership is not enough.
+model JobTechnicianAssignment {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  jobId        String
+  crewMemberId String
+  createdAt    DateTime      @default(now())
+  job          Job           @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
+  crewMember   OpsCrewMember @relation(fields: [workspaceId, crewMemberId], references: [workspaceId, id], onDelete: Cascade)
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, jobId, crewMemberId])
+  @@index([workspaceId, crewMemberId])
+}
+
+// Text-only evidence in phase one. Photos require a separate private-storage design.
+model JobTechnicianEvidence {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  jobId        String
+  crewMemberId String
+  submissionId String
+  kind         String
+  content      Json
+  createdAt    DateTime @default(now())
+  job          Job      @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
+  crewMember   OpsCrewMember @relation(fields: [workspaceId, crewMemberId], references: [workspaceId, id], onDelete: Restrict)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, crewMemberId, submissionId])
+  @@index([workspaceId, jobId, createdAt])
 }
 
 // A scope change on a Job (UQ-35). The accepted Quote is never rewritten: an
