@@ -1,7 +1,7 @@
-# Verified false positive: a prose sentence in a planning doc, no credential present.
-# The generic-api-key rule matched the words "API ... layers, closeout/revocation"
-# (keyword, short filler, comma, then a slash-joined word that looks like a value).
-# The sentence was reworded in the next commit; this exact commit/file/rule/line
-# fingerprint stays in history, so it is ignored here. Scoped to this one finding;
-# every other rule, file and commit is still scanned.
+# Two verified false positives, each an exact commit:file:rule:line fingerprint.
+# Both are plain prose (a planning-doc sentence, and the explanation of the first
+# entry quoting it). No credential is present in either. The doc sentence has since
+# been reworded; the old commits remain in history, so they are listed here.
+# Every other rule, file and commit is still scanned.
 9a29743119345ef90520ee3c12d1f7842f8c18a8:docs/plans/PR_C_EVIDENCE_STORAGE_PLAN.md:generic-api-key:97
+47fa2786090e6678749f33b4d88be66650d55386:.gitleaksignore:generic-api-key:2
