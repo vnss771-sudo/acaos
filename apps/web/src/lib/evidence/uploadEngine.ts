@@ -203,6 +203,7 @@ export function createUploadEngine(deps: EngineDeps) {
   async function uploadStage(item: QueueItem, signal: AbortSignal): Promise<'next' | 'stop'> {
     if (!item.blob) { await fail(item, 'invalid', null); return 'stop' }
     let current = item
+    let refreshedForExpiry = false
     for (;;) {
       if (signal.aborted || cancelled.has(item.id)) return 'stop'
       let init: Awaited<ReturnType<EvidenceApi['init']>>
@@ -226,9 +227,11 @@ export function createUploadEngine(deps: EngineDeps) {
       }
 
       const expiresAt = Date.parse(init.upload.expiresAt)
-      if (Number.isFinite(expiresAt) && expiresAt - now() < limits.presignSafetyMs) {
-        // The link would expire during the upload: ask for a fresh one (counts against the single re-init).
-        if (current.reinits < 1) { current = { ...current, reinits: current.reinits + 1 }; await patch(item.id, { reinits: current.reinits }); continue }
+      if (!refreshedForExpiry && Number.isFinite(expiresAt) && expiresAt - now() < limits.presignSafetyMs) {
+        // The link would expire during the upload (or this phone's clock is badly off): ask for a fresh one, once.
+        // Separate from the 403 re-init so a wrong clock cannot use up the real one.
+        refreshedForExpiry = true
+        continue
       }
 
       progress.set(item.id, { loaded: 0, total: current.sizeBytes })
@@ -317,8 +320,15 @@ export function createUploadEngine(deps: EngineDeps) {
     emitSoon()
   }
 
-  async function run(item: QueueItem, ctl: AbortController) {
+  async function run(listed: QueueItem, ctl: AbortController) {
     try {
+      // The item came from a listing that may be a moment old: the person may have cancelled it since.
+      // Work from the stored record, and do nothing if it is gone.
+      const item = await store.get(scope, listed.id)
+      if (!item || cancelled.has(item.id) && !item.fileId) {
+        if (item) { await store.remove(scope, item.id); cancelled.delete(item.id); emitSoon() }
+        return
+      }
       if (cancelled.has(item.id) && !item.fileId) { await store.remove(scope, item.id); cancelled.delete(item.id); emitSoon(); return }
       if (item.state === 'cancelling') { await remoteCancel(item); return }
       let cur = item
@@ -330,9 +340,9 @@ export function createUploadEngine(deps: EngineDeps) {
       }
       if (cur.state === 'processing') await processingStage(cur, ctl.signal)
     } catch (e) {
-      log('engine_error', { id: short(item.id), name: (e as Error)?.name ?? 'Error' })
+      log('engine_error', { id: short(listed.id), name: (e as Error)?.name ?? 'Error' })
       // A storage failure (e.g. the database being closed) must not wedge the item: try again later.
-      await store.update(scope, item.id, { nextAttemptAt: now() + POLL_WAKE_MS, updatedAt: now() }).catch(() => {})
+      await store.update(scope, listed.id, { nextAttemptAt: now() + POLL_WAKE_MS, updatedAt: now() }).catch(() => {})
     }
   }
 

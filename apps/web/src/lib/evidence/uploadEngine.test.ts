@@ -327,6 +327,15 @@ describe('storage rejections', () => {
     expect(h.api.count('init')).toBe(2)
   })
 
+  it('a wrong phone clock cannot use up the one re-sign meant for a real 403', async () => {
+    const h = harness({ putOutcomes: [status(403), OK] })
+    h.api.expiresInMs = 5_000                      // looks about to expire (as it would with a skewed clock)
+    await h.engine.start()
+    const r = await h.engine.enqueue({ jobId: 'job-1', file: photo() }) as { id: string }
+    await until(async () => (await stateOf(h, r.id)) === 'done')
+    expect(h.api.count('init')).toBe(3)            // one for the apparent expiry, one for the real 403
+  })
+
   it('"upload not found" from complete sends the photo back to upload, then gives up', async () => {
     const h = harness()
     h.api.nextComplete = [apiErr(409, 'Upload not found; it may not have finished or its link has expired')]
@@ -605,6 +614,29 @@ describe('cancellation', () => {
     await until(async () => (await h.store.get(SCOPE, r.id))?.state === 'done')
     expect(h.api.count('cancel')).toBe(1)                     // it was not silently marked done by the late status result
     expect((await h.store.get(SCOPE, r.id))!.blob).toBeNull()
+  })
+
+  it('a cancel that lands between the queue listing and the upload starting cannot upload the photo anyway', async () => {
+    const store = new MemoryQueueStore()
+    const h = harness({ store })
+    h.state.online = false
+    await h.engine.start()
+    const r = await h.engine.enqueue({ jobId: 'job-1', file: photo() }) as { id: string }
+    // The pump reads its listing, then the person cancels before the upload begins: the listing is stale.
+    const realList = store.list.bind(store)
+    let listings = 0
+    store.list = async (s) => {
+      const snapshot = await realList(s)
+      // 1st listing = snapshot refresh, 2nd = the pump choosing what to start
+      if (++listings === 2 && snapshot.length) await h.engine.cancel(r.id)
+      return snapshot
+    }
+    h.state.online = true
+    h.engine.kick()
+    await wait(80)
+    expect(h.api.calls).toHaveLength(0)
+    expect(h.puts).toHaveLength(0)
+    expect(await items(h)).toHaveLength(0)
   })
 
   it('removing a finished or rejected record never calls the server', async () => {
