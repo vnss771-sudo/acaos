@@ -53,7 +53,7 @@ Never trusted: client filename, MIME type, key, EXIF, dimensions. SVG and anythi
 ## 4. Access control and isolation
 
 - **No direct bucket access for users.** Reads are API-issued presigned GETs (60–300 s) after authorization: assigned worker (own job) or `ops:manage` in the same workspace. No listing endpoint exposes keys.
-- Authorization always re-derives workspace from the caller's membership and requires `file.workspaceId == job.workspaceId == caller workspace`; the key prefix is a second, independent check. A mismatch is a hard failure and an audit event.
+- Authorization always re-derives workspace from the caller's membership and requires `file.workspaceId == job.workspaceId == caller workspace`; the object-key prefix is an independent second check. A mismatch is a hard failure and an audit event.
 - One bucket per environment, **prefix per workspace** (bucket-per-tenant is unmanageable on Railway). Credentials exist only in the API and worker services; the backup writer uses separate R2 credentials.
 - Workers cannot see other workers' files unless they could already see that evidence (existing assigned-job rule); managers see all in their workspace.
 - Reports (PR D) will read files only through this same authorized path, scoped by `workspaceId` and `jobId`.
@@ -94,9 +94,9 @@ Audit events for init, complete, rejected, downloaded (manager reads), backup ve
 ## 10. Test plan
 
 - **Unit:** magic-byte and type validation (mismatched content type, polyglots, SVG, truncated and zero-byte files), pixel-bomb rejection, key construction, retention date calculation.
-- **DB tier (with the tenant guard enforcing):** authorization matrix (assigned worker, other worker, revoked worker, unlinked member, manager, other-workspace manager), cross-workspace attempts at API and DB layers, closeout/revocation races on init/complete, quota and rate limits, hold/retention rules, append-only deletion log.
+- **DB tier (with the tenant guard enforcing):** authorization matrix (assigned worker, other worker, revoked worker, unlinked member, manager, other-workspace manager), cross-workspace attempts at both the route and the database level; races between closeout, revocation and the init or complete steps; quota and rate limits, hold/retention rules, append-only deletion log.
 - **Integration:** a MinIO (S3-compatible) service container in CI exercising presign → upload → finalize → backup → restore; failure injection (bucket down, backup failure, worker crash mid-finalize).
-- **Abuse:** oversized uploads, expired/replayed presigned URLs, key tampering, concurrent duplicate completes.
+- **Abuse:** oversized uploads, expired/replayed presigned URLs, tampered object keys and concurrent duplicate completes.
 - **Restore drill** as in §5, recorded as a runbook, not just a test.
 - Offline-stub build and `check:tenant-resources` must pass.
 
