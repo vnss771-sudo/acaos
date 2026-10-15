@@ -44,6 +44,8 @@ export type Permission =
   | 'members:grant_admin'
   | 'members:remove'
   | 'model:reset'
+  // Evidence governance (C4): retention policy, legal holds, deletion review. Owners only.
+  | 'evidence:govern'
 
 // Built additively so higher roles inherit everything below them:
 // member ⊂ admin ⊂ owner. Today members hold no named capability (their data
@@ -82,6 +84,7 @@ const OWNER_PERMISSIONS: Permission[] = [
   'members:grant_admin',
   'members:remove',
   'model:reset',
+  'evidence:govern',
 ]
 
 export const ROLE_PERMISSIONS: Record<WorkspaceRole, ReadonlySet<Permission>> = {

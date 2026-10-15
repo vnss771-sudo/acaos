@@ -16,7 +16,11 @@ import { technicianFilesRouter, setFinalizeEnqueuerForTests } from '../apps/api/
 import { finalizeEvidenceFile } from '../apps/worker/src/processors/evidenceFinalize.ts'
 import { replicateEvidenceFile, sweepEvidenceBackups, verifyEvidenceBackups, sha256Hex } from '../apps/worker/src/processors/evidenceBackup.ts'
 import { restoreEvidenceFile, RestoreRefusedError } from '../apps/worker/src/processors/evidenceRestore.ts'
-import { getEvidenceStore, getEvidenceBackupStore, setEvidenceStoreForTests, setEvidenceBackupStoreForTests } from '../packages/backend-core/src/lib/evidenceStorage.ts'
+import { evidenceGovernanceRouter, setApiLedgerForTests } from '../apps/api/src/routes/ops/evidenceGovernance.ts'
+import { runDeletionCycle, reconcileEvidenceLedger, buildDeletionStores } from '../apps/worker/src/processors/evidenceDeletion.ts'
+import { resolveEvidenceDeletion, resolveEvidenceLedger } from '../packages/backend-core/src/lib/evidenceDeletionConfig.ts'
+import { EvidenceLedger, probeLedgerImmutability } from '../packages/backend-core/src/lib/evidenceLedger.ts'
+import { getEvidenceStore, getEvidenceBackupStore, createS3EvidenceStore, setEvidenceStoreForTests, setEvidenceBackupStoreForTests } from '../packages/backend-core/src/lib/evidenceStorage.ts'
 import { resolveEvidenceStorage } from '../packages/backend-core/src/lib/evidenceStorageConfig.ts'
 import { resolveEvidenceBackup } from '../packages/backend-core/src/lib/evidenceBackupConfig.ts'
 import { prisma, resetDb, disconnect, seedUser, seedUserWithWorkspace, startTestServer, bearer, type TestServer } from './helpers/db.ts'
@@ -25,6 +29,7 @@ const ENABLED = process.env.ACAOS_S3_IT === '1'
 const it = (name: string, fn: () => Promise<void>) => test(name, { skip: !ENABLED && 'set ACAOS_S3_IT=1 with disposable S3 servers' }, fn)
 
 let tech: TestServer
+let gov: TestServer
 let queued: Array<{ workspaceId: string; fileId: string }>
 const ps = ENABLED ? resolveEvidenceStorage() : null
 const bs = ENABLED ? resolveEvidenceBackup() : null
@@ -38,10 +43,14 @@ before(async () => {
   assert.ok(bs?.enabled, `backup config: ${JSON.stringify(bs && !bs.enabled ? bs.problems : '')}`)
   const combined = express.Router(); combined.use(technicianRouter); combined.use(technicianFilesRouter)
   tech = await startTestServer('/api/ops/technician', combined)
+  gov = await startTestServer('/api/ops/evidence-governance', evidenceGovernanceRouter)
+  const l = resolveEvidenceLedger()
+  if (l.enabled) setApiLedgerForTests(new EvidenceLedger(createS3EvidenceStore(l.config), l.config.macKey))
 })
 after(async () => {
   setFinalizeEnqueuerForTests(null)
-  if (ENABLED) await tech.close()
+  setApiLedgerForTests(undefined)
+  if (ENABLED) { await tech.close(); await gov.close() }
   await disconnect()
 })
 beforeEach(async () => {
@@ -256,4 +265,104 @@ it('worker killed (SIGKILL) after publishing the final object: finalisation comp
   assert.equal(f.status, 'AVAILABLE')
   const prim = f.copies.find((c: { location: string }) => c.location === 'primary')!
   assert.equal(sha256Hex((await primary().getBytes(prim.objectKey, 25 * 1024 * 1024))!), f.sha256)
+})
+
+
+// ── C4: governed deletion against real servers ──────────────────────────────
+// The deletion runner's dedicated credentials are supplied as ACAOS_IT_DELETE_* and mapped
+// onto EVIDENCE_DELETE_* only for the runner (the upload and backup resolvers disable
+// themselves when those variables are present in their own process).
+
+const deleteEnv = (over: Record<string, string | undefined> = {}) => ({
+  ...process.env,
+  EVIDENCE_DELETE_PRIMARY_ACCESS_KEY_ID: process.env.ACAOS_IT_DELETE_PRIMARY_ACCESS_KEY_ID,
+  EVIDENCE_DELETE_PRIMARY_SECRET_ACCESS_KEY: process.env.ACAOS_IT_DELETE_PRIMARY_SECRET_ACCESS_KEY,
+  EVIDENCE_DELETE_BACKUP_ACCESS_KEY_ID: process.env.ACAOS_IT_DELETE_BACKUP_ACCESS_KEY_ID,
+  EVIDENCE_DELETE_BACKUP_SECRET_ACCESS_KEY: process.env.ACAOS_IT_DELETE_BACKUP_SECRET_ACCESS_KEY,
+  ...over,
+})
+const DAYS = (n: number) => n * 86_400_000
+const GV = (uid: string, method: string, path: string, body?: unknown) =>
+  gov.request(`/api/ops/evidence-governance${path}`, { method, headers: { Authorization: bearer(uid), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+
+/** A finalised, backed-up file that is old enough to delete, with an approved request. */
+async function approvedDeletion(w: World) {
+  const f = await finalized(w)
+  assert.equal((await replicateEvidenceFile({ workspaceId: w.ws.id, fileId: f.fileId })).outcome, 'verified')
+  const old = new Date(Date.now() - DAYS(8 * 365))
+  await prisma.job.update({ where: { id: w.job.id }, data: { status: 'COMPLETE', completedAt: old } })
+  await prisma.evidenceFile.update({ where: { id: f.fileId }, data: { finalizedAt: old } })
+  const owner2 = await seedUser(`o2-${Math.random().toString(36).slice(2, 7)}@example.test`)
+  await prisma.membership.create({ data: { workspaceId: w.ws.id, userId: owner2.id, role: 'owner' } })
+  const r = await GV(w.owner.id, 'POST', '/deletion-requests', { workspaceId: w.ws.id, fileId: f.fileId, reason: 'Customer contract ended; retention elapsed' })
+  assert.equal(r.status, 201, JSON.stringify(r.body))
+  const a = await GV(owner2.id, 'POST', `/deletion-requests/${r.body.request.id}/approve`, { workspaceId: w.ws.id })
+  assert.equal(a.status, 200, JSON.stringify(a.body))
+  return { ...f, requestId: r.body.request.id as string, due: new Date(new Date(a.body.request.notBefore).getTime() + 1000) }
+}
+const realLedger = () => { const l = resolveEvidenceLedger(); if (!l.enabled) throw new Error('ledger config invalid'); return new EvidenceLedger(createS3EvidenceStore(l.config), l.config.macKey) }
+
+it('the real ledger credential is probed honestly, and the runner gate follows the measurement', async () => {
+  const l = resolveEvidenceLedger(); assert.ok(l.enabled)
+  const probe = await probeLedgerImmutability(createS3EvidenceStore(l.config))
+  console.log(`# ledger probe on the local S3 server: ${JSON.stringify(probe)}`)
+  assert.equal(probe.createOnly, true, 'conditional create-only works on this server')
+  // Without the dev override the runner runs only if the measurement says "enforced".
+  const strict = await runDeletionCycle({ env: deleteEnv({ EVIDENCE_LEDGER_ALLOW_UNENFORCED: undefined }) })
+  if (probe.level === 'enforced') assert.ok('reconcile' in strict, 'enforced ledger: the cycle runs')
+  else assert.ok('skipped' in strict && strict.skipped === 'ledger_not_trusted', `a ${probe.level} ledger is refused: ${JSON.stringify(strict)}`)
+})
+
+it('request -> review -> wait -> deletion removes both real copies, records them in the real ledger, and is idempotent', async () => {
+  const w = await world('a@example.test')
+  const d = await approvedDeletion(w)
+  assert.ok(await primary().head(d.key) && await backup().head(d.key))
+  const early = await runDeletionCycle({ env: deleteEnv(), now: new Date() })
+  assert.ok('executed' in early && early.executed.length === 0, 'inside the waiting period nothing happens')
+  const run1 = await runDeletionCycle({ env: deleteEnv(), now: d.due })
+  assert.ok('executed' in run1, JSON.stringify(run1)); assert.equal(run1.executed[0].result.outcome, 'completed')
+  assert.equal(await primary().head(d.key), null); assert.equal(await backup().head(d.key), null)
+  assert.equal((await prisma.evidenceFile.findUniqueOrThrow({ where: { id: d.fileId } })).status, 'DELETED')
+  const st = (await realLedger().fileStates(w.ws.id)).states.get(d.fileId)!
+  assert.equal(st.completed, true); assert.equal(st.started?.sha256, d.sha)
+  assert.ok((await realLedger().verifyChain(w.ws.id)).ok)
+  const run2 = await runDeletionCycle({ env: deleteEnv(), now: d.due })
+  assert.ok('executed' in run2 && run2.executed.length === 0)
+})
+
+it('a database rolled back after a deletion is reconciled against the real ledger (stale objects removed too)', async () => {
+  const w = await world('a@example.test')
+  const d = await approvedDeletion(w)
+  await runDeletionCycle({ env: deleteEnv(), now: d.due })
+  // "restore an older database": the file is AVAILABLE again, and stale object copies are back
+  await prisma.evidenceFile.update({ where: { id: d.fileId }, data: { status: 'AVAILABLE', deletedAt: null } })
+  await prisma.evidenceFileCopy.updateMany({ where: { fileId: d.fileId, location: { in: ['primary', 'backup'] } }, data: { status: 'VERIFIED', deletedAt: null } })
+  await primary().putBytes(d.key, d.bytes, 'image/jpeg'); await backup().putBytes(d.key, d.bytes, 'image/jpeg')
+  const cfg = resolveEvidenceDeletion(deleteEnv()); assert.ok(cfg.enabled)
+  const rep = await reconcileEvidenceLedger({ stores: buildDeletionStores(cfg.config), workspaceId: w.ws.id })
+  assert.equal(rep.retombstoned, 1); assert.deepEqual(rep.conflicts, []); assert.equal(rep.objectsRemoved, 2)
+  assert.equal(await primary().head(d.key), null); assert.equal(await backup().head(d.key), null)
+  assert.equal((await prisma.evidenceFile.findUniqueOrThrow({ where: { id: d.fileId } })).status, 'DELETED')
+})
+
+it('worker killed (SIGKILL) right after the primary object is deleted: the deletion is visible, partial, and resumes', async () => {
+  const w = await world('a@example.test')
+  const d = await approvedDeletion(w)
+  const r = spawnSync(process.execPath, ['--import', 'tsx', 'tests-db/helpers/crash-child.ts', 'delete', d.requestId, String(d.due.getTime())], {
+    env: { ...deleteEnv(), NODE_OPTIONS: '--conditions=acaos-src' } as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 120_000,
+  })
+  assert.equal(r.signal, 'SIGKILL', `child output: ${r.stdout}${r.stderr}`.slice(0, 600))
+  assert.equal(await primary().head(d.key), null, 'the primary was deleted before the crash')
+  assert.ok(await backup().head(d.key), 'the backup is still there: recoverable')
+  assert.equal((await prisma.evidenceFile.findUniqueOrThrow({ where: { id: d.fileId } })).status, 'DELETING', 'visibly partial, not DELETED')
+  assert.equal((await prisma.evidenceDeletionRequest.findUniqueOrThrow({ where: { id: d.requestId } })).status, 'EXECUTING')
+  const st = (await realLedger().fileStates(w.ws.id)).states.get(d.fileId)!
+  assert.ok(st.started && !st.completed, 'the ledger shows it started, not finished')
+  const resumed = await runDeletionCycle({ env: deleteEnv(), now: d.due })
+  // The cycle reconciles against the ledger first, which may finish the interrupted deletion itself;
+  // either path must end in the same place.
+  assert.ok('reconcile' in resumed && (resumed.reconcile.resumed === 1 || resumed.executed.some((e) => e.requestId === d.requestId && e.result.outcome === 'completed')), JSON.stringify(resumed))
+  assert.equal(await backup().head(d.key), null)
+  assert.equal((await prisma.evidenceFile.findUniqueOrThrow({ where: { id: d.fileId } })).status, 'DELETED')
+  assert.equal((await realLedger().fileStates(w.ws.id)).states.get(d.fileId)?.completed, true)
 })

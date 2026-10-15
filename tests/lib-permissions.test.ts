@@ -27,7 +27,7 @@ const ADMIN_CAPS: Permission[] = [
   'prospects:delete',
   'ops:manage',
 ]
-const OWNER_ONLY_CAPS: Permission[] = ['members:grant_admin', 'members:remove', 'model:reset']
+const OWNER_ONLY_CAPS: Permission[] = ['members:grant_admin', 'members:remove', 'model:reset', 'evidence:govern']
 const ALL_CAPS: Permission[] = [...ADMIN_CAPS, ...OWNER_ONLY_CAPS]
 
 test('owner holds every capability', () => {

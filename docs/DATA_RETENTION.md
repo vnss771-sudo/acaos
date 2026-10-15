@@ -27,19 +27,18 @@ Prompts and raw model inputs/outputs are not persisted beyond the derived fields
 above (e.g. `aiSummary`, draft `subject`/`emailBody`). The OpenAI request itself
 is transient.
 
-## Evidence files, retention settings and legal holds (schema only — not active)
+## Evidence files, retention settings and legal holds (C4: controlled, flag-gated; no automatic deletion)
 
 Migration `20261015000000_evidence_file_metadata` adds the tables that a later
 phase will use for technician photo evidence: `EvidenceFile` / `EvidenceFileCopy`
 (metadata and storage locations only, never file contents), `RetentionPolicy`,
-`LegalHold` and `EvidenceDeletionLog`. **Nothing reads or writes them yet, and no
-automatic deletion exists.** Design intent, subject to legal review (see
+`LegalHold` and `EvidenceDeletionLog`. **Automatic deletion does not exist and cannot be switched on through the API.** C4 adds owner-only retention, legal-hold and two-step deletion endpoints, a dedicated deletion runner and an external ledger, all disabled by default (`docs/plans/C4_EVIDENCE_GOVERNANCE.md`, `docs/runbooks/EVIDENCE_DELETION.md`). Design intent, subject to legal review (see
 `docs/plans/PR_C_EVIDENCE_STORAGE_PLAN.md`):
 
 - Default retention for job evidence and reports is seven years (`RetentionPolicy.retentionDays`, 2555), configurable per workspace; `autoDeletionEnabled` is `false` and is not consulted by any job.
 - A legal hold (workspace-wide or per job) blocks deletion until released. Placing/releasing and approving any deletion is limited to workspace owners, enforced by the endpoints when they are built.
 - `EvidenceDeletionLog` is append-only (a trigger rejects UPDATE/DELETE) and FK-free so it outlives the rows it describes, like `AuditEvent`.
-- **Interaction with tenant deletion:** files, copies and holds use `ON DELETE RESTRICT`, so deleting a workspace/job/crew member that still has them is refused by the database rather than silently destroying the record. `RetentionPolicy` is configuration and cascades. **`DELETE /api/workspaces/:id` now explicitly refuses (409, with an explanation) while the workspace has any evidence file row (including `DELETED` tombstones) or any legal hold (active or released), and nothing is removed.** Erasure of such a workspace needs the controlled evidence-deletion process and a legally reviewed reconciliation of erasure requests with retention; neither exists yet, so those workspaces cannot currently be erased through the product.
+- **Interaction with tenant deletion:** files, copies and holds use `ON DELETE RESTRICT`, so deleting a workspace/job/crew member that still has them is refused by the database rather than silently destroying the record. `RetentionPolicy` is configuration and cascades. **`DELETE /api/workspaces/:id` refuses (409, listing the blockers) while the workspace has evidence that has not been through the controlled deletion process:** an active legal hold, any file not DELETED or not confirmed in the external ledger, an open deletion request, or a hold change not yet in the ledger. With the destructive flag off, any evidence row or hold keeps the previous refusal. When clear, the erasure is recorded in the ledger first and the evidence rows go with the workspace. A legally reviewed process for erasure that conflicts with retention does not exist: such files simply cannot be deleted before their retention ends.
 
 ## Tenant export
 

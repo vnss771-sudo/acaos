@@ -40,7 +40,7 @@ Restore the database from the independent dump, then the objects from the backup
 
 ### D. Restored database resurrects data that was lawfully deleted
 
-The deletion log is itself in PostgreSQL, so an older restore can bring back rows (and the right to believe objects exist) for files that were deleted after the restore point. Before re-enabling anything, replay deletions from the independent record kept per C4 (each controlled deletion must also be appended to a write-once location outside this database). **This is a prerequisite for enabling any deletion in C4.**
+The database deletion log is itself in PostgreSQL, so an older restore can bring back rows (and the belief that objects exist) for files deleted after the restore point. C4 appends every controlled deletion, legal-hold change and workspace erasure to an external ledger; after any restore run `npm run evidence:deletion -- reconcile` (`docs/runbooks/EVIDENCE_DELETION.md`) **before** re-enabling uploads or deletion. It re-applies recorded deletions, removes stale objects, and recreates or ends legal holds from the ledger. Holds not yet in the ledger at the time of the backup's loss window cannot be recovered, so keep the runner cycle frequent.
 
 ## Reconciliation queries (read-only)
 

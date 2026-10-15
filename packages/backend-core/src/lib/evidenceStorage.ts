@@ -3,7 +3,7 @@
 // service, and which vendor sits behind the endpoint is configuration.
 import { randomBytes, createHash } from 'node:crypto'
 import {
-  S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand,
+  S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import type { Readable } from 'node:stream'
@@ -38,6 +38,8 @@ export interface EvidenceObjectStore {
   putBytesIf(key: string, body: Buffer, contentType: string, cond: { ifNoneMatch: true } | { ifMatch: string }): Promise<'written' | 'precondition_failed'>
   /** Idempotent: deleting a missing object succeeds. */
   delete(key: string): Promise<void>
+  /** Keys under a prefix in ascending order, at most `limit` (default 1000), after `startAfter`. */
+  list(prefix: string, opts?: { limit?: number; startAfter?: string }): Promise<string[]>
 }
 
 // ── keys ────────────────────────────────────────────────────────────────────
@@ -151,6 +153,22 @@ export function createS3EvidenceStore(
     async delete(key) {
       await send(new DeleteObjectCommand({ Bucket, Key: key }))
     },
+    async list(prefix, opts = {}) {
+      const out: string[] = []
+      const limit = Math.min(Math.max(1, opts.limit ?? 1000), 100_000)
+      let token: string | undefined
+      let startAfter = opts.startAfter
+      while (out.length < limit) {
+        const r = (await send(new ListObjectsV2Command({
+          Bucket, Prefix: prefix, MaxKeys: Math.min(1000, limit - out.length),
+          ...(token ? { ContinuationToken: token } : startAfter ? { StartAfter: startAfter } : {}),
+        }))) as { Contents?: Array<{ Key?: string }>; IsTruncated?: boolean; NextContinuationToken?: string }
+        for (const o of r.Contents ?? []) if (o.Key) out.push(o.Key)
+        if (!r.IsTruncated || !r.NextContinuationToken) break
+        token = r.NextContinuationToken; startAfter = undefined
+      }
+      return out.slice(0, limit)
+    },
   }
 }
 
@@ -161,6 +179,8 @@ export function createS3EvidenceStore(
 type Signed = { key: string; contentType: string; contentLength: number; expiresAt: number }
 
 export class MemoryEvidenceStore implements EvidenceObjectStore {
+  /** `immutable` mimics a write-once credential: overwriting or deleting an existing object is denied. */
+  constructor(private readonly opts: { immutable?: boolean } = {}) {}
   readonly objects = new Map<string, { bytes: Buffer; contentType: string }>()
   private readonly signed = new Map<string, Signed>()
   failNext: { op: 'head' | 'getBytes' | 'putBytes' | 'delete'; times: number } | null = null
@@ -233,6 +253,7 @@ export class MemoryEvidenceStore implements EvidenceObjectStore {
     const exists = this.objects.has(key)
     const ok = 'ifNoneMatch' in cond ? !exists : exists && this.etagOf(key) === cond.ifMatch
     if (!ok) return 'precondition_failed' as const
+    if (this.opts.immutable && exists) throw Object.assign(new Error('AccessDenied: object is immutable'), { name: 'AccessDenied' })
     this.objects.set(key, { bytes: Buffer.from(body), contentType })
     if (this.onPut) await this.onPut(key)
     return 'written' as const
@@ -240,11 +261,16 @@ export class MemoryEvidenceStore implements EvidenceObjectStore {
   conditionalAttempts = 0
   async putBytes(key: string, body: Buffer, contentType: string) {
     this.maybeFail('putBytes')
+    if (this.opts.immutable && this.objects.has(key)) throw Object.assign(new Error('AccessDenied: object is immutable'), { name: 'AccessDenied' })
     this.objects.set(key, { bytes: Buffer.from(body), contentType })
     if (this.onPut) await this.onPut(key)
   }
+  async list(prefix: string, opts: { limit?: number; startAfter?: string } = {}) {
+    return [...this.objects.keys()].filter((k) => k.startsWith(prefix) && (!opts.startAfter || k > opts.startAfter)).sort().slice(0, opts.limit ?? 1000)
+  }
   async delete(key: string) {
     this.maybeFail('delete')
+    if (this.opts.immutable && this.objects.has(key)) throw Object.assign(new Error('AccessDenied: object is immutable'), { name: 'AccessDenied' })
     this.objects.delete(key)
   }
 }

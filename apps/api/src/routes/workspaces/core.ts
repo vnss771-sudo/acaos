@@ -8,6 +8,9 @@ import { recordAudit, recordCriticalAudit } from '@acaos/backend-core/lib/audit.
 import { validate, nonEmptyString } from '../../lib/validate.js'
 import { requireFreshAuth } from '../../middleware/auth.js'
 import { z } from 'zod'
+import { evaluateWorkspaceErasure, hasEvidenceRecords, eraseEvidenceRowsLocked } from '@acaos/backend-core/lib/evidenceErasure.js'
+import { resolveDeletionWorkflow } from '@acaos/backend-core/lib/evidenceDeletionConfig.js'
+import { getApiLedger } from '../../lib/evidenceLedgerClient.js'
 import type { Assert, Extends, DeleteWorkspaceRequest } from '@acaos/shared'
 import { createBillingPortalSession } from '../../services/stripe.js'
 import { seededScore, SEED_COMPANIES, EXAMPLE_SIGNALS, seedExampleReplies } from './helpers.js'
@@ -187,19 +190,16 @@ export function registerCoreRoutes(workspaceRouter: Router) {
         throw new ApiError(400, 'confirmName does not match the workspace name')
       }
 
-      // Retained evidence blocks erasure. Evidence files, their stored copies and legal
-      // holds are records the business may be required to keep; the database refuses to
-      // cascade-delete them (ON DELETE RESTRICT), so say so up front rather than failing
-      // on a constraint error. Counts include DELETED tombstones: the audit record of a
-      // deletion must outlive the workspace's own row until a controlled, legally
-      // reviewed erasure process exists (see docs/DATA_RETENTION.md).
-      const [retainedFiles, legalHolds] = await Promise.all([
-        prisma.evidenceFile.count({ where: { workspaceId } }),
-        prisma.legalHold.count({ where: { workspaceId } }),
-      ])
-      if (retainedFiles > 0 || legalHolds > 0) {
-        throw new ApiError(409, 'This workspace holds retained evidence files or legal holds and cannot be deleted until they are resolved through the controlled evidence-deletion process. Contact support.')
+      // Retained evidence blocks erasure unless it has been through the controlled
+      // deletion process (C4): no active legal hold, every file DELETED and confirmed in
+      // the external deletion ledger, no open deletion request. See evidenceErasure.ts.
+      const ledger = getApiLedger()
+      const workflowEnabled = resolveDeletionWorkflow().enabled
+      const erasureBlockers = await evaluateWorkspaceErasure(prisma, workspaceId, { workflowEnabled, ledger })
+      if (erasureBlockers.length > 0) {
+        throw new ApiError(409, `This workspace holds retained evidence files or legal holds and cannot be deleted until they are resolved through the controlled evidence-deletion process. Contact support. (blockers: ${erasureBlockers.join(', ')})`)
       }
+      const hadEvidence = await hasEvidenceRecords(prisma, workspaceId)
 
       // Refuse while a live subscription exists — deleting now would orphan billing
       // (the customer keeps being charged). They must cancel via the portal first.
@@ -215,7 +215,13 @@ export function registerCoreRoutes(workspaceRouter: Router) {
       // Just three statements: the workspace delete triggers the DB-side ON DELETE
       // CASCADE for the ~27 FK-linked tables in one operation, so this stays well
       // within the default transaction timeout regardless of tenant size.
+      // The ledger records the erasure BEFORE any row is removed (it is the permanent record).
+      if (hadEvidence && ledger) {
+        const fileCount = await prisma.evidenceFile.count({ where: { workspaceId } })
+        await ledger.append({ type: 'WORKSPACE_ERASED', workspaceId, erasedBy: user.id, fileCount, at: new Date().toISOString() })
+      }
       await prisma.$transaction(async (tx) => {
+        if (hadEvidence) await eraseEvidenceRowsLocked(tx, workspaceId)
         // Decoupled (no FK cascade) — erase explicitly.
         await tx.auditEvent.deleteMany({ where: { workspaceId } })
         await tx.scoringOutcome.deleteMany({ where: { workspaceId } })
@@ -224,6 +230,9 @@ export function registerCoreRoutes(workspaceRouter: Router) {
       }).catch((e: unknown) => {
         // Backstop for the check above: evidence or a hold appeared between the count and
         // the delete. The database refused (nothing was removed): report it the same way.
+        if ((e as { erasureBlockers?: string[] })?.erasureBlockers) {
+          throw new ApiError(409, `This workspace holds retained evidence files or legal holds and cannot be deleted until they are resolved through the controlled evidence-deletion process. Contact support. (blockers: ${(e as { erasureBlockers: string[] }).erasureBlockers.join(', ')})`)
+        }
         if ((e as { code?: string })?.code === 'P2003') {
           throw new ApiError(409, 'This workspace holds retained evidence files or legal holds and cannot be deleted until they are resolved through the controlled evidence-deletion process. Contact support.')
         }
