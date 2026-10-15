@@ -142,6 +142,14 @@ export const FinalizeEvidenceFilePayloadSchema = z.object({
 })
 export type FinalizeEvidenceFilePayload = z.infer<typeof FinalizeEvidenceFilePayloadSchema>
 
+// Backup replication (worker/processors/evidenceBackup.ts): ids only, same rationale.
+export const EvidenceBackupPayloadSchema = z.object({
+  workspaceId: id,
+  fileId: id,
+  ...meta,
+})
+export type EvidenceBackupPayload = z.infer<typeof EvidenceBackupPayloadSchema>
+
 // The abandoned-upload sweep is platform-wide and carries no parameters, same
 // rationale as RetentionPurgePayloadSchema above.
 export const EvidenceSweepPayloadSchema = z.object({}).passthrough()
