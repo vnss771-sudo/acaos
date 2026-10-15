@@ -18,11 +18,11 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^4.1.8",
     "jsdom": "^25.0.1",
     "typescript": "6.0.3",
-    "vite": "^8.0.7",
+    "vite": "^8.3.4",
     "vitest": "^4.1.8"
   }
 }
