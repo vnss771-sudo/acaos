@@ -17,10 +17,16 @@ export class EvidenceObjectTooLargeError extends Error {
 }
 
 export type SignedUpload = { url: string; headers: Record<string, string> }
+export type SignedDownload = { url: string }
 
 export interface EvidenceObjectStore {
   /** A short-lived PUT URL bound to this exact key, content type and byte length. */
   presignPut(o: { key: string; contentType: string; contentLength: number; expiresInSeconds: number }): Promise<SignedUpload>
+  /**
+   * A short-lived GET URL for one object. The response headers are forced by the signature
+   * (type, inline disposition, no-store), never taken from whatever metadata the object carries.
+   */
+  presignGet(o: { key: string; expiresInSeconds: number; contentType: string }): Promise<SignedDownload>
   /** Object metadata, or null if it does not exist. */
   head(key: string): Promise<{ size: number } | null>
   /** The object's bytes (null if missing). Throws EvidenceObjectTooLargeError past maxBytes. */
@@ -47,12 +53,15 @@ export interface EvidenceObjectStore {
 // makes them unguessable; the prefix is also enforced by a CHECK constraint on
 // EvidenceFileCopy, and by assertKeyInWorkspace before any storage call.
 
-export function newEvidenceKeys(workspaceId: string, jobId: string): { uploadKey: string; primaryKey: string } {
+export function newEvidenceKeys(workspaceId: string, jobId: string): { uploadKey: string; primaryKey: string; thumbKey: string } {
   const base = `ws/${workspaceId}/job/${jobId}`
-  return {
-    uploadKey: `${base}/upload/${randomBytes(24).toString('base64url')}`,
-    primaryKey: `${base}/final/${randomBytes(24).toString('base64url')}`,
-  }
+  const primaryKey = `${base}/final/${randomBytes(24).toString('base64url')}`
+  return { uploadKey: `${base}/upload/${randomBytes(24).toString('base64url')}`, primaryKey, thumbKey: thumbKeyFor(primaryKey) }
+}
+
+/** The thumbnail key is derived from the final key, so a finalisation retry rewrites the same object. */
+export function thumbKeyFor(primaryKey: string): string {
+  return primaryKey.replace(/\/final\/([^/]+)$/, '/thumb/$1')
 }
 
 /** Stricter than assertKeyInWorkspace: the key must sit under this exact workspace AND job. */
@@ -101,6 +110,15 @@ export function createS3EvidenceStore(
         signableHeaders: new Set(['content-type', 'content-length']),
       })
       return { url, headers: { 'Content-Type': contentType, 'Content-Length': String(contentLength) } }
+    },
+    async presignGet({ key, expiresInSeconds, contentType }) {
+      const cmd = new GetObjectCommand({
+        Bucket, Key: key,
+        ResponseContentType: contentType,
+        ResponseContentDisposition: 'inline',
+        ResponseCacheControl: 'private, no-store',
+      })
+      return { url: await getSignedUrl(client, cmd, { expiresIn: expiresInSeconds }) }
     },
     async head(key) {
       try {
@@ -200,6 +218,22 @@ export class MemoryEvidenceStore implements EvidenceObjectStore {
     const url = `memory://put/${randomBytes(12).toString('hex')}`
     this.signed.set(url, { key: o.key, contentType: o.contentType, contentLength: o.contentLength, expiresAt: this.now() + o.expiresInSeconds * 1000 })
     return { url, headers: { 'Content-Type': o.contentType, 'Content-Length': String(o.contentLength) } }
+  }
+  private readonly signedGets = new Map<string, { key: string; contentType: string; expiresAt: number }>()
+  async presignGet(o: { key: string; expiresInSeconds: number; contentType: string }): Promise<SignedDownload> {
+    const url = `memory://get/${randomBytes(12).toString('hex')}`
+    this.signedGets.set(url, { key: o.key, contentType: o.contentType, expiresAt: this.now() + o.expiresInSeconds * 1000 })
+    return { url }
+  }
+  /** What the client's HTTP GET would do: the forced headers come from the signature, not the object. */
+  clientGet(url: string): { status: number; bytes?: Buffer; headers?: Record<string, string> } {
+    const s = this.signedGets.get(url)
+    if (!s || this.now() > s.expiresAt) return { status: 403 }
+    const o = this.objects.get(s.key)
+    if (!o) return { status: 404 }
+    return { status: 200, bytes: Buffer.from(o.bytes), headers: {
+      'Content-Type': s.contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-store',
+    } }
   }
   /** What the client's HTTP PUT would do against the real service. */
   clientPut(url: string, bytes: Buffer, headers: Record<string, string>): { status: number } {

@@ -243,8 +243,8 @@ test('keys are unguessable, never returned, stay in the workspace, and URLs only
   const b = await uploaded(w, t, bytes)
   const ca = await copies(a.fileId)
   const cb = await copies(b.fileId)
-  for (const c of [...ca, ...cb]) assert.match(c.objectKey, new RegExp(`^ws/${w.ws.id}/job/${w.job.id}/(upload|final)/[A-Za-z0-9_-]{32}$`))
-  assert.equal(new Set([...ca, ...cb].map(c => c.objectKey)).size, 4, 'all keys distinct')
+  for (const c of [...ca, ...cb]) assert.match(c.objectKey, new RegExp(`^ws/${w.ws.id}/job/${w.job.id}/(upload|final|thumb)/[A-Za-z0-9_-]{32}$`))
+  assert.equal(new Set([...ca, ...cb].map(c => c.objectKey)).size, 6, 'all keys distinct (the thumb key shares its random part with the final key but is a different key)')
   const text = JSON.stringify(a.init.body)
   for (const c of ca) assert.ok(!text.includes(c.objectKey), 'object key not returned to the client')
   assert.deepEqual(a.init.body.upload.headers, { 'Content-Type': 'image/jpeg', 'Content-Length': String(bytes.length) })
@@ -305,7 +305,7 @@ test('repeating an init is idempotent; changing it is a conflict', async () => {
   assert.equal((await T(t.user.id, 'POST', initUrl(w.job.id), { ...body, sizeBytes: 5001 })).status, 409)
   assert.equal((await T(t.user.id, 'POST', initUrl(w.job.id), { ...body, contentType: 'image/png' })).status, 409)
   assert.equal(await prisma.evidenceFile.count(), 1)
-  assert.equal(await prisma.evidenceFileCopy.count(), 2)
+  assert.equal(await prisma.evidenceFileCopy.count(), 3)
   // The same submission id from another technician is unrelated.
   const t2 = await w.worker()
   assert.equal((await T(t2.user.id, 'POST', initUrl(w.job.id), body)).status, 201)
@@ -358,7 +358,9 @@ test('finalise: sanitised, EXIF/GPS stripped, raw upload removed, checksum recor
   const raw = await jpegWithExif()
   assert.ok(raw.includes('secret-owner-name'))
   const { fileId } = await uploaded(w, t, raw)
-  const [primary, upload] = [...(await copies(fileId))].sort((a, b) => (a.location < b.location ? -1 : 1))
+  const all = await copies(fileId)
+  const primary = all.find((c) => c.location === 'primary')!
+  const upload = all.find((c) => c.location === 'upload')!
   assert.equal(upload.location, 'upload')
   assert.deepEqual(await fin(w, fileId, { store }), { outcome: 'finalized' })
   const f = await fileRow(fileId)
@@ -376,7 +378,7 @@ test('finalise: sanitised, EXIF/GPS stripped, raw upload removed, checksum recor
   assert.equal(after.find(c => c.location === 'upload')!.status, 'DELETED')
   // Retries and duplicates are no-ops.
   assert.deepEqual(await fin(w, fileId, { store }), { outcome: 'already_final' })
-  assert.equal(store.objects.size, 1)
+  assert.equal(store.objects.size, 2, 'final object + thumbnail')
   const status = await T(t.user.id, 'GET', statusUrl(w, w.job.id, fileId))
   assert.equal(status.status, 200)
   assert.equal(status.body.file.status, 'AVAILABLE')
@@ -392,8 +394,8 @@ test('concurrent finalisers produce exactly one AVAILABLE file and leave no stra
   assert.ok(results.every(r => ['finalized', 'already_final', 'skipped'].includes(r.outcome)), JSON.stringify(results))
   assert.equal((await fileRow(fileId)).status, 'AVAILABLE')
   const keys = [...store.objects.keys()]
-  assert.equal(keys.length, 1, `only the final object remains: ${keys}`)
-  assert.ok(keys[0].includes('/final/'))
+  assert.equal(keys.length, 2, `only the final object and its thumbnail remain: ${keys}`)
+  assert.deepEqual(keys.map((k) => k.split('/').slice(-2, -1)[0]).sort(), ['final', 'thumb'])
 })
 
 test('forged or hostile content is rejected by the worker and every object is removed', async () => {
@@ -494,8 +496,8 @@ test('the real closeout route racing finalisation never leaves an AVAILABLE file
     const f = await fileRow(fileId)
     const keys = [...store.objects.keys()].filter(k => k.includes(`/job/${job.id}/`))
     if (f.status === 'AVAILABLE') {
-      assert.equal(keys.length, 1, 'finalised before the closeout: exactly the final object')
-      assert.ok(keys[0].includes('/final/'))
+      assert.equal(keys.length, 2, 'finalised before the closeout: exactly the final object and its thumbnail')
+      assert.deepEqual(keys.map((k) => k.split('/').slice(-2, -1)[0]).sort(), ['final', 'thumb'])
     } else {
       assert.equal(f.status, 'REJECTED')
       assert.equal(keys.length, 0, 'rejected: no object left behind')
@@ -519,7 +521,7 @@ test('revocation racing finalisation is consistent', async () => {
     const f = await fileRow(fileId)
     const keys = [...store.objects.keys()].filter(k => k.includes(`/job/${job.id}/`))
     assert.ok(['AVAILABLE', 'REJECTED'].includes(f.status))
-    assert.equal(keys.length, f.status === 'AVAILABLE' ? 1 : 0)
+    assert.equal(keys.length, f.status === 'AVAILABLE' ? 2 : 0)
     assert.deepEqual(await fin(w, fileId, { store }).then(r => r.outcome), f.status === 'AVAILABLE' ? 'already_final' : 'skipped')
   }
 })

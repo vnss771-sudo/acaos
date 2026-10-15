@@ -379,3 +379,44 @@ it('a hold is written to the real ledger before it is acknowledged, and a databa
   assert.ok(rep.holdsRecreated >= 1)
   assert.equal((await prisma.legalHold.findUniqueOrThrow({ where: { id: placed.body.hold.id } })).releasedAt, null)
 })
+
+// ── C5a: signed GET and thumbnails on a real S3-compatible server ───────────
+
+/** A real HTTP GET of a presigned URL (a browser would send the same request). */
+function httpGet(url: string): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    http.get({ hostname: u.hostname, port: u.port, path: u.pathname + u.search }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c) => chunks.push(c)); res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }))
+    }).on('error', reject)
+  })
+}
+
+it('content: the signed GET serves the re-encoded JPEG with forced headers, the thumbnail is real, and bad URLs fail', async () => {
+  const w = await world('a@example.test')
+  const f = await finalized(w)
+  const q = `workspaceId=${w.ws.id}`
+  const full = await call(w.user.id, 'GET', `/api/ops/technician/${w.job.id}/files/${f.fileId}/content?${q}`)
+  assert.equal(full.status, 200, JSON.stringify(full.body))
+  const got = await httpGet(full.body.url)
+  assert.equal(got.status, 200)
+  assert.equal(got.headers['content-type'], 'image/jpeg', 'content type forced by the signature')
+  assert.match(String(got.headers['content-disposition']), /^inline/)
+  assert.match(String(got.headers['cache-control']), /no-store/)
+  assert.equal(sha256Hex(got.body), f.sha, 'served bytes are the stored, sanitised bytes')
+
+  const th = await call(w.user.id, 'GET', `/api/ops/technician/${w.job.id}/files/${f.fileId}/content?${q}&variant=thumb`)
+  assert.equal(th.status, 200)
+  const tb = await httpGet(th.body.url)
+  assert.equal(tb.status, 200)
+  const tm = await sharp(tb.body).metadata()
+  assert.equal(tm.format, 'jpeg'); assert.ok(!tm.exif)
+
+  // Tampering with the signed object key must fail signature verification.
+  const tampered = new URL(full.body.url); tampered.pathname = tampered.pathname.replace(/\/[^/]+$/, '/AAAA')
+  assert.ok([403, 404].includes((await httpGet(tampered.toString())).status), 'a different key is not served')
+  // Removing the signature must not be served either.
+  const bare = new URL(full.body.url); bare.search = ''
+  assert.ok([401, 403].includes((await httpGet(bare.toString())).status), 'unsigned access refused')
+})

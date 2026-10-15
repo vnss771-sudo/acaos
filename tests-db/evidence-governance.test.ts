@@ -86,10 +86,13 @@ async function file(w: World, j?: { id: string }, over: { finalizedAt?: Date; ba
   } })
   await prisma.evidenceFileCopy.create({ data: { workspaceId: w.ws.id, fileId: f.id, location: 'primary', objectKey: keys.primaryKey, status: 'VERIFIED', sizeBytes: bytes.length, sha256: sha, verifiedAt: new Date() } })
   primary.objects.set(keys.primaryKey, { bytes, contentType: 'image/jpeg' })
+  // The C5a gallery thumbnail: lives in the primary bucket only and must go with the file.
+  await prisma.evidenceFileCopy.create({ data: { workspaceId: w.ws.id, fileId: f.id, location: 'thumb', objectKey: keys.thumbKey, status: 'VERIFIED', sizeBytes: 5, sha256: sha256Hex(Buffer.from('thumb')), verifiedAt: new Date() } })
+  primary.objects.set(keys.thumbKey, { bytes: Buffer.from('thumb'), contentType: 'image/jpeg' })
   if (over.backedUp !== false) {
     assert.equal((await replicateEvidenceFile({ workspaceId: w.ws.id, fileId: f.id, primary, backup })).outcome, 'verified')
   }
-  return { file: f, job: jb, key: keys.primaryKey, bytes, sha }
+  return { file: f, job: jb, key: keys.primaryKey, thumbKey: keys.thumbKey, bytes, sha }
 }
 
 const call = (s: TestServer) => (uid: string | null, method: string, path: string, body?: unknown) =>
@@ -366,6 +369,7 @@ test('the waiting period is honoured; after it, deletion removes both copies, is
   const r = await run(id)
   assert.deepEqual(r, { outcome: 'completed' })
   assert.ok(!primary.objects.has(f.key) && !backup.objects.has(f.key), 'both copies removed')
+  assert.ok(!primary.objects.has(f.thumbKey), 'the gallery thumbnail goes with the file')
   const row = await prisma.evidenceFile.findUniqueOrThrow({ where: { id: f.file.id }, include: { copies: true } })
   assert.equal(row.status, 'DELETED'); assert.ok(row.deletedAt); assert.equal(row.sha256, f.sha, 'tombstone keeps the hash')
   assert.ok(row.copies.every((c: { status: string }) => c.status === 'DELETED'))

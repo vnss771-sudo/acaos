@@ -20,9 +20,9 @@ import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { logger } from '@acaos/backend-core/lib/logger.js'
 import { resolveEvidenceStorage, type EvidenceStorageConfig } from '@acaos/backend-core/lib/evidenceStorageConfig.js'
 import {
-  getEvidenceStore, assertKeyInWorkspace, EvidenceObjectTooLargeError, type EvidenceObjectStore,
+  getEvidenceStore, assertKeyInWorkspace, assertKeyForJob, EvidenceObjectTooLargeError, type EvidenceObjectStore,
 } from '@acaos/backend-core/lib/evidenceStorage.js'
-import { sanitizeEvidenceImage, OUTPUT_CONTENT_TYPE } from '@acaos/backend-core/lib/evidenceImage.js'
+import { sanitizeEvidenceImage, makeEvidenceThumbnail, OUTPUT_CONTENT_TYPE } from '@acaos/backend-core/lib/evidenceImage.js'
 
 type Tx = Prisma.TransactionClient
 type CopyRow = { id: string; location: string; objectKey: string; status: string; sizeBytes: number | null }
@@ -185,6 +185,22 @@ async function run(file: FileRow, cfg: EvidenceStorageConfig, store: EvidenceObj
   const published = await store.head(primary.objectKey)
   if (!published || published.size !== clean.bytes.length) throw new Error('published object failed verification')
 
+  // 4b. Best-effort gallery thumbnail at its pre-allocated key. A failure here never blocks the
+  //     evidence: the file simply has no thumbnail and the gallery falls back to the full image.
+  const thumbCopy = file.copies.find((c: CopyRow) => c.location === 'thumb')
+  let thumb: { bytes: Buffer; sha256: string } | null = null
+  if (thumbCopy) {
+    try {
+      assertKeyForJob(thumbCopy.objectKey, file.workspaceId, file.jobId)
+      const t = await makeEvidenceThumbnail(clean.bytes, { maxPixels: cfg.maxPixels })
+      await store.putBytes(thumbCopy.objectKey, t.bytes, OUTPUT_CONTENT_TYPE)
+      const th = await store.head(thumbCopy.objectKey)
+      if (th && th.size === t.bytes.length) thumb = { bytes: t.bytes, sha256: t.sha256 }
+    } catch (e) {
+      logger.warn(`thumbnail for evidence file ${file.id} not produced: ${(e as Error).message}`, { service: SERVICE })
+    }
+  }
+
   // 5. Commit. Eligibility is re-checked under the lock; a closeout or revocation that
   //    arrived while we were processing wins and nothing becomes AVAILABLE.
   const committed = await prisma.$transaction(async (tx: Tx) => {
@@ -203,18 +219,28 @@ async function run(file: FileRow, cfg: EvidenceStorageConfig, store: EvidenceObj
       where: { id: primary.id, workspaceId: file.workspaceId },
       data: { status: 'VERIFIED', sizeBytes: clean.bytes.length, sha256: clean.sha256, verifiedAt: now },
     })
+    if (thumb && thumbCopy) {
+      await tx.evidenceFileCopy.updateMany({
+        where: { id: thumbCopy.id, workspaceId: file.workspaceId },
+        data: { status: 'VERIFIED', sizeBytes: thumb.bytes.length, sha256: thumb.sha256, verifiedAt: now },
+      })
+    }
     return { ok: true }
   }) as { late?: RejectReason; lost?: boolean; ok?: boolean }
 
   if (committed.late) {
     await store.delete(primary.objectKey).catch(() => {})
+    if (thumbCopy) await store.delete(thumbCopy.objectKey).catch(() => {})
     return reject(committed.late)
   }
   if (committed.lost) {
     // Someone else finished or rejected this file while we worked. If it is not
     // AVAILABLE, the object we just published has no owner: remove it.
     const now = await loadFile(file.workspaceId, file.id)
-    if (!now || now.status !== 'AVAILABLE') await store.delete(primary.objectKey).catch(() => {})
+    if (!now || now.status !== 'AVAILABLE') {
+      await store.delete(primary.objectKey).catch(() => {})
+      if (thumbCopy) await store.delete(thumbCopy.objectKey).catch(() => {})
+    }
     return { outcome: 'skipped', reason: 'lost_race' }
   }
 

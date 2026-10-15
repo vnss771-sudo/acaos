@@ -44,7 +44,8 @@ for (const dir of ['apps/api/src', 'apps/worker/src', 'packages/backend-core/src
   }
 }
 for (const f of ['apps/worker/src/processors/evidenceBackup.ts', 'apps/api/src/routes/ops/evidenceFiles.ts', 'apps/api/src/routes/ops/evidenceGovernance.ts']) {
-  if (/\.delete\(/.test(code(path.join(root, f)))) failures.push(`${f}: must not call delete() on an object store`)
+  // Express route registrations (`somethingRouter.delete('/path', ...)`) are HTTP verbs, not store calls.
+  if (/(?<!Router)\.delete\(/.test(code(path.join(root, f)))) failures.push(`${f}: must not call delete() on an object store`)
 }
 if (failures.length) {
   console.error('Evidence deletion boundary check FAILED')

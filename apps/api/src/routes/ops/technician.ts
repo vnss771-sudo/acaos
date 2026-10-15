@@ -6,6 +6,7 @@ import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
 import { getWorkspaceRole, userBelongsToWorkspace } from '../../lib/workspaces.js'
 import { assertWorkspacePermission, roleCan } from '../../lib/permissions.js'
 import { parseBody, parseParams, parseQuery, workspaceIdField, idField } from '../../lib/validate.js'
+import { resolveEvidenceStorage } from '@acaos/backend-core/lib/evidenceStorageConfig.js'
 import { auditOps } from './utils.js'
 
 export const technicianRouter = Router()
@@ -73,7 +74,7 @@ technicianRouter.get('/assigned', asyncHandler(async (req, res) => {
   const crew = await prisma.opsCrewMember.findFirst({
     where: { workspaceId, userId: user.id, isActive: true }, select: { id: true },
   })
-  if (!crew) return res.json({ linked: false, jobs: [] })
+  if (!crew) return res.json({ linked: false, photos: false, jobs: [] })
   type AssignedRow = {
     createdAt: Date
     job: { id: string; status: string; opsJobSite: { siteName: string; jobCode: string } | null }
@@ -89,6 +90,9 @@ technicianRouter.get('/assigned', asyncHandler(async (req, res) => {
   }) as AssignedRow[]
   res.json({
     linked: true,
+    // Whether photo uploads are enabled on the server, so the app can hide the Photos tab
+    // instead of discovering a 503. Capability only: no configuration details.
+    photos: resolveEvidenceStorage().enabled,
     jobs: rows.map((r) => ({
       id: r.job.id,
       status: r.job.status,
