@@ -48,7 +48,12 @@ export function assertKeyInWorkspace(key: string, workspaceId: string): void {
 
 // ── S3-compatible implementation ────────────────────────────────────────────
 
-export function createS3EvidenceStore(cfg: EvidenceStorageConfig): EvidenceObjectStore {
+// `send` lets tests drive head/get/put/delete with a fake instead of the network;
+// presigning is a local computation and always uses the real client.
+export function createS3EvidenceStore(
+  cfg: EvidenceStorageConfig,
+  deps: { send?: (cmd: unknown) => Promise<unknown> } = {},
+): EvidenceObjectStore {
   const client = new S3Client({
     endpoint: cfg.endpoint,
     region: cfg.region,
@@ -60,6 +65,7 @@ export function createS3EvidenceStore(cfg: EvidenceStorageConfig): EvidenceObjec
     responseChecksumValidation: 'WHEN_REQUIRED',
   })
   const Bucket = cfg.bucket
+  const send = (cmd: unknown) => (deps.send ? deps.send(cmd) : client.send(cmd as never))
   const isMissing = (e: unknown) => {
     const x = e as { name?: string; $metadata?: { httpStatusCode?: number } }
     return x?.name === 'NotFound' || x?.name === 'NoSuchKey' || x?.$metadata?.httpStatusCode === 404
@@ -77,7 +83,7 @@ export function createS3EvidenceStore(cfg: EvidenceStorageConfig): EvidenceObjec
     },
     async head(key) {
       try {
-        const r = await client.send(new HeadObjectCommand({ Bucket, Key: key }))
+        const r = (await send(new HeadObjectCommand({ Bucket, Key: key }))) as { ContentLength?: number }
         return { size: Number(r.ContentLength ?? 0) }
       } catch (e) {
         if (isMissing(e)) return null
@@ -85,9 +91,9 @@ export function createS3EvidenceStore(cfg: EvidenceStorageConfig): EvidenceObjec
       }
     },
     async getBytes(key, maxBytes) {
-      let r
+      let r: { ContentLength?: number; Body?: unknown }
       try {
-        r = await client.send(new GetObjectCommand({ Bucket, Key: key }))
+        r = (await send(new GetObjectCommand({ Bucket, Key: key }))) as { ContentLength?: number; Body?: unknown }
       } catch (e) {
         if (isMissing(e)) return null
         throw e
@@ -104,10 +110,10 @@ export function createS3EvidenceStore(cfg: EvidenceStorageConfig): EvidenceObjec
       return Buffer.concat(chunks)
     },
     async putBytes(key, body, contentType) {
-      await client.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType, ContentLength: body.length }))
+      await send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType, ContentLength: body.length }))
     },
     async delete(key) {
-      await client.send(new DeleteObjectCommand({ Bucket, Key: key }))
+      await send(new DeleteObjectCommand({ Bucket, Key: key }))
     },
   }
 }

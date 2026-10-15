@@ -245,3 +245,74 @@ test('re-encoding is deterministic for identical input (safe worker retries)', a
   const b = await sanitizeEvidenceImage(input, { ...OPTS, declaredType: 'image/jpeg' })
   assert.ok(a.ok && b.ok && a.sha256 === b.sha256)
 })
+
+// ── S3 store operations, driven by a fake client (no network) ────────────────
+
+import { Readable } from 'node:stream'
+import { EvidenceObjectTooLargeError } from '../packages/backend-core/src/lib/evidenceStorage.ts'
+
+function s3WithFake(handler: (cmd: { constructor: { name: string }; input: Record<string, unknown> }) => unknown) {
+  const sent: Array<{ type: string; input: Record<string, unknown> }> = []
+  const cfg = (resolveEvidenceStorage(GOOD) as { enabled: true; config: never }).config
+  const store = createS3EvidenceStore(cfg, {
+    send: async (cmd) => {
+      const c = cmd as { constructor: { name: string }; input: Record<string, unknown> }
+      sent.push({ type: c.constructor.name, input: c.input })
+      return handler(c)
+    },
+  })
+  return { store, sent }
+}
+const awsError = (name: string, status?: number) => Object.assign(new Error(name), { name, $metadata: { httpStatusCode: status } })
+
+test('head reports size, maps "not found" to null, and does not swallow other errors', async () => {
+  const ok = s3WithFake(() => ({ ContentLength: 321 }))
+  assert.deepEqual(await ok.store.head('ws/w1/k'), { size: 321 })
+  assert.deepEqual(ok.sent[0], { type: 'HeadObjectCommand', input: { Bucket: 'acaos-evidence-test', Key: 'ws/w1/k' } })
+  for (const e of [awsError('NotFound'), awsError('NoSuchKey'), awsError('Whatever', 404)]) {
+    assert.equal(await s3WithFake(() => { throw e }).store.head('ws/w1/k'), null)
+  }
+  await assert.rejects(s3WithFake(() => { throw awsError('AccessDenied', 403) }).store.head('ws/w1/k'), /AccessDenied/)
+})
+
+test('getBytes returns the body, null when missing, and enforces the byte cap even if the length header lies', async () => {
+  const body = Buffer.from('hello evidence')
+  assert.deepEqual(await s3WithFake(() => ({ ContentLength: body.length, Body: Readable.from([body.subarray(0, 5), new Uint8Array(body.subarray(5))]) })).store.getBytes('ws/w1/k', 100), body)
+  assert.equal(await s3WithFake(() => { throw awsError('NoSuchKey', 404) }).store.getBytes('ws/w1/k', 100), null)
+  // Declared length already too big: refused before any bytes are read.
+  let read = false
+  const big = s3WithFake(() => ({ ContentLength: 5000, Body: new Readable({ read() { read = true; this.push(null) } }) }))
+  await assert.rejects(big.store.getBytes('ws/w1/k', 100), EvidenceObjectTooLargeError)
+  assert.equal(read, false)
+  // Length header says small but the stream is larger: still stopped.
+  const liar = s3WithFake(() => ({ ContentLength: 10, Body: Readable.from([Buffer.alloc(80, 1), Buffer.alloc(80, 2)]) }))
+  await assert.rejects(liar.store.getBytes('ws/w1/k', 100), EvidenceObjectTooLargeError)
+  await assert.rejects(s3WithFake(() => { throw awsError('InternalError', 500) }).store.getBytes('ws/w1/k', 100), /InternalError/)
+})
+
+test('putBytes and delete address the configured bucket with the exact key, type and length', async () => {
+  const f = s3WithFake(() => ({}))
+  await f.store.putBytes('ws/w1/job/j1/final/abc', Buffer.from('12345'), 'image/jpeg')
+  await f.store.delete('ws/w1/job/j1/upload/def')
+  assert.equal(f.sent[0].type, 'PutObjectCommand')
+  assert.deepEqual({ ...f.sent[0].input, Body: undefined }, {
+    Bucket: 'acaos-evidence-test', Key: 'ws/w1/job/j1/final/abc', Body: undefined, ContentType: 'image/jpeg', ContentLength: 5,
+  })
+  assert.deepEqual(f.sent[1], { type: 'DeleteObjectCommand', input: { Bucket: 'acaos-evidence-test', Key: 'ws/w1/job/j1/upload/def' } })
+})
+
+test('the memory store reads, writes, deletes, caps size, and can inject failures and concurrent events', async () => {
+  const m = new MemoryEvidenceStore()
+  const seen: string[] = []
+  m.onPut = (k) => { seen.push(k) }
+  await m.putBytes('ws/w1/a', Buffer.from('abcdef'), 'image/jpeg')
+  assert.deepEqual(seen, ['ws/w1/a'])
+  assert.deepEqual(await m.getBytes('ws/w1/a', 100), Buffer.from('abcdef'))
+  await assert.rejects(m.getBytes('ws/w1/a', 3), EvidenceObjectTooLargeError)
+  assert.equal(await m.getBytes('ws/w1/missing', 100), null)
+  m.failNext = { op: 'delete', times: 1 }
+  await assert.rejects(m.delete('ws/w1/a'), /injected delete failure/)
+  await m.delete('ws/w1/a')
+  assert.equal(await m.head('ws/w1/a'), null)
+  assert.deepEqual(m.calls.filter(c => c === 'delete'), ['delete', 'delete'])
+})
