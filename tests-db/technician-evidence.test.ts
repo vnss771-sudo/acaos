@@ -34,7 +34,14 @@ test('technician needs explicit job assignment to create or read evidence', asyn
   const url = `/api/ops/technician/${a.job.id}/evidence`
   const note = { workspaceId: a.workspace.id, kind: 'NOTE', submissionId: '00000000-0000-4000-8000-000000000001', note: 'Installed isolator' }
   assert.equal((await request(a.user.id, 'POST', url, note)).status, 403)
-  assert.equal((await request(a.user.id, 'GET', `${url}?workspaceId=${a.workspace.id}`)).status, 403)
+  // The owner is a manager and may read without assignment (see
+  // technician-evidence-manager-read.test.ts); an ordinary member may not.
+  const member = await seedUser('member-noassign@example.test')
+  await prisma.membership.create({ data: { workspaceId: a.workspace.id, userId: member.id, role: 'member' } })
+  await prisma.opsCrewMember.create({ data: {
+    workspaceId: a.workspace.id, employeeCode: 'TECH-M', fullName: 'Unassigned member', role: 'TECH', userId: member.id,
+  } })
+  assert.equal((await request(member.id, 'GET', `${url}?workspaceId=${a.workspace.id}`)).status, 403)
   const assigned = await request(a.user.id, 'POST', `/api/ops/technician/${a.job.id}/assignments`, {
     workspaceId: a.workspace.id, crewMemberId: a.crew.id,
   })
@@ -100,7 +107,10 @@ test('revoked assignment immediately prevents technician evidence access', async
     workspaceId: a.workspace.id, crewMemberId: a.crew.id,
   })).status, 201)
   assert.equal((await request(a.user.id, 'DELETE', `${assignPath}/${a.crew.id}?workspaceId=${a.workspace.id}`)).status, 200)
-  assert.equal((await request(a.user.id, 'GET', `/api/ops/technician/${a.job.id}/evidence?workspaceId=${a.workspace.id}`)).status, 403)
+  // Revocation removes the technician's write access (managers keep read access).
+  assert.equal((await request(a.user.id, 'POST', `/api/ops/technician/${a.job.id}/evidence`, {
+    workspaceId: a.workspace.id, kind: 'NOTE', submissionId: '00000000-0000-4000-8000-0000000000aa', note: 'after revoke',
+  })).status, 403)
 })
 
 
