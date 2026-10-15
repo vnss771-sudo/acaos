@@ -10,9 +10,9 @@ CREATE UNIQUE INDEX "JobTechnicianAssignment_workspaceId_jobId_crewMemberId_key"
   ON "JobTechnicianAssignment"("workspaceId", "jobId", "crewMemberId");
 CREATE INDEX "JobTechnicianAssignment_workspaceId_crewMemberId_idx"
   ON "JobTechnicianAssignment"("workspaceId", "crewMemberId");
-ALTER TABLE "JobTechnicianAssignment" ADD CONSTRAINT "JobTechnicianAssignment_jobId_fkey"
+ALTER TABLE "JobTechnicianAssignment" ADD CONSTRAINT "JobTechnicianAssignment_workspaceId_jobId_fkey"
   FOREIGN KEY ("workspaceId", "jobId") REFERENCES "Job"("workspaceId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "JobTechnicianAssignment" ADD CONSTRAINT "JobTechnicianAssignment_crewMemberId_fkey"
+ALTER TABLE "JobTechnicianAssignment" ADD CONSTRAINT "JobTechnicianAssignment_workspaceId_crewMemberId_fkey"
   FOREIGN KEY ("workspaceId", "crewMemberId") REFERENCES "OpsCrewMember"("workspaceId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 CREATE TABLE "JobTechnicianEvidence" (
@@ -23,11 +23,11 @@ CREATE TABLE "JobTechnicianEvidence" (
 );
 CREATE INDEX "JobTechnicianEvidence_workspaceId_jobId_createdAt_idx"
   ON "JobTechnicianEvidence"("workspaceId", "jobId", "createdAt");
-ALTER TABLE "JobTechnicianEvidence" ADD CONSTRAINT "JobTechnicianEvidence_jobId_fkey"
+ALTER TABLE "JobTechnicianEvidence" ADD CONSTRAINT "JobTechnicianEvidence_workspaceId_jobId_fkey"
   FOREIGN KEY ("workspaceId", "jobId") REFERENCES "Job"("workspaceId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- Evidence author is a real crew member; do not orphan evidence on crew deletion.
-ALTER TABLE "JobTechnicianEvidence" ADD CONSTRAINT "JobTechnicianEvidence_crewMemberId_fkey"
+ALTER TABLE "JobTechnicianEvidence" ADD CONSTRAINT "JobTechnicianEvidence_workspaceId_crewMemberId_fkey"
   FOREIGN KEY ("workspaceId", "crewMemberId") REFERENCES "OpsCrewMember"("workspaceId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "JobTechnicianAssignment" ADD CONSTRAINT "JobTechnicianAssignment_workspaceId_fkey"
   FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
