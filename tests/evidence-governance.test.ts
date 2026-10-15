@@ -52,6 +52,17 @@ test('destructive operations need their own flag and a seal key', () => {
   assert.equal(resolveDeletionWorkflow({ EVIDENCE_UPLOADS_ENABLED: 'true', EVIDENCE_BACKUP_ENABLED: 'true', EVIDENCE_DELETION_SEAL_KEY: SEAL }).enabled, false)
 })
 
+test('production destructive operations need the provider-isolation attestation', () => {
+  const prod = { ...DELETE, NODE_ENV: 'production' }
+  assert.equal(resolveDeletionWorkflow(prod).enabled, false)
+  assert.match(problems(resolveDeletionWorkflow(prod)).join(';'), /EVIDENCE_PROVIDER_ISOLATION/)
+  assert.equal(resolveDeletionWorkflow({ ...prod, EVIDENCE_PROVIDER_ISOLATION: 'yes' }).enabled, false, 'only the exact attestation counts')
+  assert.equal(resolveDeletionWorkflow({ ...prod, EVIDENCE_PROVIDER_ISOLATION: 'staging-split-and-locked-evidence-bucket' }).enabled, true)
+  assert.equal(resolveDeletionWorkflow(DELETE).enabled, true, 'not required outside production (tests, staging drills)')
+  const full = { ...FULL, NODE_ENV: 'production', EVIDENCE_LEDGER_ENDPOINT: LEDGER.EVIDENCE_LEDGER_ENDPOINT }
+  assert.equal(resolveEvidenceDeletion(full).enabled, false, 'the runner inherits the requirement')
+})
+
 test('the deletion runner needs dedicated, distinct delete credentials and a valid ledger', () => {
   assert.equal(resolveEvidenceDeletion(FULL).enabled, true)
   assert.equal(resolveEvidenceDeletion({ ...FULL, EVIDENCE_DESTRUCTIVE_ENABLED: undefined }).enabled, false)
@@ -67,7 +78,7 @@ test('the deletion runner needs dedicated, distinct delete credentials and a val
   // the unenforced-ledger override is a development aid only
   const dev = resolveEvidenceDeletion({ ...FULL, EVIDENCE_LEDGER_ALLOW_UNENFORCED: 'true' })
   assert.equal(dev.enabled && dev.config.allowUnenforcedLedger, true)
-  assert.match(problems(resolveEvidenceDeletion({ ...FULL, EVIDENCE_LEDGER_ALLOW_UNENFORCED: 'true', NODE_ENV: 'production' })).join(';'), /not permitted in production/)
+  assert.match(problems(resolveEvidenceDeletion({ ...FULL, EVIDENCE_LEDGER_ALLOW_UNENFORCED: 'true', NODE_ENV: 'production', EVIDENCE_PROVIDER_ISOLATION: 'staging-split-and-locked-evidence-bucket' })).join(';'), /not permitted in production/)
   assert.ok(!JSON.stringify(resolveEvidenceDeletion({ ...FULL, EVIDENCE_S3_BUCKET: '' })).includes('delete-primary-secret'))
 })
 
@@ -238,6 +249,16 @@ test('the probe reports what the credential can actually do, and the gate trusts
   noCond.putBytesIf = async () => 'written'
   assert.equal((await probeLedgerImmutability(noCond)).level, 'none')
   await assert.rejects(() => assertLedgerTrusted(noCond, { allowUnenforced: true }), LedgerNotTrustedError)
+})
+
+test('the ledger lists the workspaces it holds entries for, skipping ahead per workspace', async () => {
+  const l = new EvidenceLedger(new MemoryEvidenceStore(), MAC)
+  assert.deepEqual(await l.workspaces(), [])
+  for (const ws of ['wsB', 'wsA', 'wsC']) {
+    await l.append({ type: 'HOLD_PLACED', workspaceId: ws, holdId: 'h1', scope: 'WORKSPACE', jobId: null, placedBy: 'u', at: '2026-01-01T00:00:00.000Z' })
+    await l.append({ type: 'HOLD_PLACED', workspaceId: ws, holdId: 'h2', scope: 'WORKSPACE', jobId: null, placedBy: 'u', at: '2026-01-02T00:00:00.000Z' })
+  }
+  assert.deepEqual(await l.workspaces(), ['wsA', 'wsB', 'wsC'])
 })
 
 test('memory store list() is ordered, bounded and prefix-scoped', async () => {

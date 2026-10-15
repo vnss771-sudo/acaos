@@ -12,6 +12,10 @@ Status: **procedure only; nothing is provisioned or enabled.** Read `docs/plans/
 
 The delete tokens, the ledger token and the two normal tokens must all be different tokens (the configuration refuses otherwise). Never paste credentials, keys or the seal key into tickets or logs. The MAC key (`EVIDENCE_LEDGER_MAC_KEY`) and seal key (`EVIDENCE_DELETION_SEAL_KEY`) are separate secrets, each at least 32 characters; rotating either invalidates what it signed, so plan rotations around an empty queue and a recorded ledger state.
 
+## Production prerequisite: provider-level isolation (blocking)
+
+In production (`NODE_ENV=production`) the deletion workflow and the runner will not start unless `EVIDENCE_PROVIDER_ISOLATION=staging-split-and-locked-evidence-bucket` is set. That value is an **attestation** that (a) upload and restore staging live in a different bucket from final evidence, (b) the evidence and backup buckets carry a provider-side lock (for example an R2 bucket lock for the retention period), and (c) the normal upload/backup tokens therefore cannot delete evidence even if the application is compromised. The staging split is not implemented yet (follow-up C4b, see `docs/plans/C4_EVIDENCE_GOVERNANCE.md`), so **do not set the attestation and do not enable destructive operations in production until C4b has shipped and the drill below has passed**. In staging and local runs the variable is not needed.
+
 ## One-time setup (owner-approved, staging first)
 
 1. Create a **separate ledger bucket** on Cloudflare R2 (own token; never the evidence or backup buckets). Add a **bucket lock rule** on prefix `v1/` with **indefinite** retention (`wrangler r2 bucket lock add <bucket> --name ledger --prefix v1/ --retention-indefinite`). Record who can remove lock rules (account administrators): that is your residual trust.
@@ -21,7 +25,7 @@ The delete tokens, the ledger token and the two normal tokens must all be differ
 
 ## Day to day
 
-- **Place / release a hold:** owners call `POST /api/ops/evidence-governance/holds` (scope `WORKSPACE` or `JOB`, reason of at least 10 characters) and `POST …/holds/:id/release`. Holds work even when destructive operations are disabled.
+- **Place / release a hold:** owners call `POST /api/ops/evidence-governance/holds` (scope `WORKSPACE` or `JOB`, reason of at least 10 characters) and `POST …/holds/:id/release`. Holds work even when destructive operations are disabled. With the ledger configured, a placement is written to the ledger first and the call answers 503 (creating nothing) if the ledger is unreachable: retry. Releases are recorded in the ledger after the database change.
 - **Policy:** `GET/PUT …/policy`. Retention can be lengthened, not shortened. Shortening the wait before deletion is requested with `PUT` and confirmed 24 h later with `POST …/policy/confirm-wait` (or cancelled).
 - **Delete a file:** an owner `POST …/deletion-requests` (the file must be AVAILABLE, out of retention, and not under a hold), an owner reviews with `POST …/deletion-requests/:id/approve` (this seals the approval and starts the wait; default 7 days), then the runner executes it after the wait. Owners can `reject` before review or `cancel` before execution. An approval not executed within 30 days after the wait ends is cancelled.
 - **Run the runner:** `npm run evidence:deletion -- run` on a schedule (for example hourly). Each cycle: ledger trust gate → sync holds to the ledger → reconcile the database against the ledger → execute due approved requests. Exit code 2 means it refused to run (flag off, invalid config, ledger not enforced or unreachable).
@@ -54,7 +58,9 @@ Run the integration suite with the staging settings (`ACAOS_S3_IT=1`, plus the l
 | Commit SHA, environment, bucket aliases, operator, UTC | |
 | Ledger probe against the locked R2 bucket: `enforced` | PASS / FAIL |
 | Conditional create-only write honoured by R2 (probe `createOnly: true`) | PASS / FAIL |
-| Delete-capable tokens differ from all others; normal tokens cannot delete evidence in the provider's permission model | PASS / FAIL |
+| Delete-capable tokens differ from all others | PASS / FAIL |
+| **Provider-level:** with the NORMAL upload/backup/ledger tokens, deleting or overwriting a final evidence object and a backup object is refused by the provider (lock) | PASS / FAIL |
+| A hold acknowledged just before a PostgreSQL restore is recreated by `reconcile` | PASS / FAIL |
 | Request → review → 7-day wait honoured (use a shortened wait only in staging via the two-step policy) → deletion removes both copies | PASS / FAIL |
 | Ledger shows started and completed; `verify-ledger` ok | PASS / FAIL |
 | Hold placed before execution blocks it; hold released → proceeds | PASS / FAIL |

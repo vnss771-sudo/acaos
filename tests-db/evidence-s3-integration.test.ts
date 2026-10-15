@@ -326,6 +326,7 @@ it('request -> review -> wait -> deletion removes both real copies, records them
   const st = (await realLedger().fileStates(w.ws.id)).states.get(d.fileId)!
   assert.equal(st.completed, true); assert.equal(st.started?.sha256, d.sha)
   assert.ok((await realLedger().verifyChain(w.ws.id)).ok)
+  assert.ok((await realLedger().workspaces()).includes(w.ws.id), 'the real ledger lists the workspace')
   const run2 = await runDeletionCycle({ env: deleteEnv(), now: d.due })
   assert.ok('executed' in run2 && run2.executed.length === 0)
 })
@@ -365,4 +366,16 @@ it('worker killed (SIGKILL) right after the primary object is deleted: the delet
   assert.equal(await backup().head(d.key), null)
   assert.equal((await prisma.evidenceFile.findUniqueOrThrow({ where: { id: d.fileId } })).status, 'DELETED')
   assert.equal((await realLedger().fileStates(w.ws.id)).states.get(d.fileId)?.completed, true)
+})
+
+it('a hold is written to the real ledger before it is acknowledged, and a database restore cannot lose it', async () => {
+  const w = await world('a@example.test')
+  const placed = await GV(w.owner.id, 'POST', '/holds', { workspaceId: w.ws.id, scope: 'JOB', jobId: w.job.id, reason: 'regulator enquiry 2026-14' })
+  assert.equal(placed.status, 201); assert.equal(placed.body.ledgered, true)
+  assert.equal((await realLedger().holdStates(w.ws.id)).holds.get(placed.body.hold.id)?.placed?.jobId, w.job.id)
+  await prisma.legalHold.delete({ where: { id: placed.body.hold.id } })           // "restore": the row is gone
+  const cfg = resolveEvidenceDeletion(deleteEnv()); assert.ok(cfg.enabled)
+  const rep = await reconcileEvidenceLedger({ stores: buildDeletionStores(cfg.config) })   // all workspaces, discovered via the ledger
+  assert.ok(rep.holdsRecreated >= 1)
+  assert.equal((await prisma.legalHold.findUniqueOrThrow({ where: { id: placed.body.hold.id } })).releasedAt, null)
 })

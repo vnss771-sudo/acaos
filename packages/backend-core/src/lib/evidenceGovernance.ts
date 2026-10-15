@@ -23,11 +23,11 @@ export async function lockEvidenceGovernance(tx: Tx, workspaceId: string): Promi
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'evidence-governance:' + workspaceId}, 0))`
 }
 
-// The helpers accept either a PrismaClient or a transaction client. Typed loosely on purpose:
-// the offline Prisma stub (used by the deterministic offline build) models both as index-signature
-// types that are not assignable to a per-model structural type.
-export type HoldDb = Record<string, any>
-export type PolicyDb = Record<string, any>
+// The helpers accept a PrismaClient or a transaction client. Both satisfy Prisma.TransactionClient
+// (real model delegate types with the real client; an index-signature type with the offline stub),
+// so the queries below are fully type-checked in the real build and still compile offline.
+export type HoldDb = Tx
+export type PolicyDb = Tx
 
 /** Active (unreleased) holds covering a job: workspace-wide ones and that job's own. */
 export async function countActiveHolds(db: HoldDb, workspaceId: string, jobId: string): Promise<number> {
@@ -41,7 +41,7 @@ export type PolicyView = {
   pendingWaitDays: number | null; pendingWaitRequestedAt: Date | null; autoDeletionEnabled: boolean
 }
 export async function loadPolicy(db: PolicyDb, workspaceId: string): Promise<PolicyView> {
-  const p = (await db.retentionPolicy.findUnique({ where: { workspaceId } })) as Partial<PolicyView> | null
+  const p = await db.retentionPolicy.findUnique({ where: { workspaceId } })
   return {
     retentionDays: p?.retentionDays ?? DEFAULT_RETENTION_DAYS,
     startRule: p?.startRule ?? 'LATER_OF_UPLOAD_AND_CLOSEOUT',

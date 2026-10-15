@@ -90,6 +90,18 @@ export type DeletionWorkflowState =
   | { enabled: true; sealKey: string }
   | { enabled: false; reason: 'flag_off' | 'invalid_config'; problems: string[] }
 
+/**
+ * Production additionally requires an explicit owner attestation that PROVIDER-LEVEL isolation is in
+ * place: upload staging objects live in a different bucket from final evidence, and the final
+ * evidence bucket is protected by a provider-side lock (for example an R2 bucket lock for the
+ * retention period), so the normal upload/backup tokens cannot delete evidence even if the
+ * application is compromised. This is an attestation, not a verification (the application cannot
+ * prove what a provider enforces), and the staging split itself is NOT implemented yet (follow-up
+ * "C4b"); until it ships, destructive operations cannot legitimately be enabled in production.
+ * See docs/runbooks/EVIDENCE_DELETION.md.
+ */
+export const PROVIDER_ISOLATION_ATTESTATION = 'staging-split-and-locked-evidence-bucket'
+
 /** May deletion requests be created and approved? Needs the destructive flag and the seal key. */
 export function resolveDeletionWorkflow(env: Env = process.env): DeletionWorkflowState {
   const flag = env.EVIDENCE_DESTRUCTIVE_ENABLED?.trim().toLowerCase()
@@ -97,6 +109,9 @@ export function resolveDeletionWorkflow(env: Env = process.env): DeletionWorkflo
   if (flag !== 'true') return { enabled: false, reason: 'invalid_config', problems: ['EVIDENCE_DESTRUCTIVE_ENABLED must be "true" or "false"'] }
   const key = env.EVIDENCE_DELETION_SEAL_KEY?.trim() ?? ''
   if (key.length < 32) return { enabled: false, reason: 'invalid_config', problems: ['EVIDENCE_DELETION_SEAL_KEY must be at least 32 characters'] }
+  if (env.NODE_ENV === 'production' && env.EVIDENCE_PROVIDER_ISOLATION?.trim() !== PROVIDER_ISOLATION_ATTESTATION) {
+    return { enabled: false, reason: 'invalid_config', problems: [`production requires EVIDENCE_PROVIDER_ISOLATION=${PROVIDER_ISOLATION_ATTESTATION} (provider-level credential isolation; see docs/runbooks/EVIDENCE_DELETION.md)`] }
+  }
   return { enabled: true, sealKey: key }
 }
 

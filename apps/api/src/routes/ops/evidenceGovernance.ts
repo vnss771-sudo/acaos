@@ -10,6 +10,7 @@
 // endpoints are protective and always available to owners.
 import { Router } from 'express'
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import type { Prisma } from '@prisma/client'
 import { logger } from '@acaos/backend-core/lib/logger.js'
@@ -43,18 +44,16 @@ const reasonField = z.string().trim().min(10, 'a reason of at least 10 character
 // ── ledger (append-only; best effort for protective actions) ────────────────
 export { setApiLedgerForTests, getApiLedger }
 
-/** Protective actions must not fail because the ledger is down: the runner syncs `ledgeredAt = null` rows later. */
-async function ledgerHold(kind: 'placed' | 'released', h: { id: string; workspaceId: string; scope: string; jobId: string | null }, actor: string, at: Date): Promise<boolean> {
+/** Release is recorded after the database change; a lost entry is back-filled by the runner (see the route). */
+async function ledgerRelease(h: { id: string; workspaceId: string }, actor: string, at: Date): Promise<boolean> {
   const ledger = getApiLedger()
   if (!ledger) return false
   try {
-    await ledger.append(kind === 'placed'
-      ? { type: 'HOLD_PLACED', workspaceId: h.workspaceId, holdId: h.id, scope: h.scope, jobId: h.jobId, placedBy: actor, at: at.toISOString() }
-      : { type: 'HOLD_RELEASED', workspaceId: h.workspaceId, holdId: h.id, releasedBy: actor, at: at.toISOString() })
-    await prisma.legalHold.updateMany({ where: { id: h.id, workspaceId: h.workspaceId }, data: kind === 'placed' ? { ledgeredAt: new Date() } : { releaseLedgeredAt: new Date() } })
+    await ledger.append({ type: 'HOLD_RELEASED', workspaceId: h.workspaceId, holdId: h.id, releasedBy: actor, at: at.toISOString() })
+    await prisma.legalHold.updateMany({ where: { id: h.id, workspaceId: h.workspaceId }, data: { releaseLedgeredAt: new Date() } })
     return true
   } catch (e) {
-    logger.warn(`hold ${kind} not yet in the external ledger: ${(e as Error).message}`, { service: 'evidence-governance' })
+    logger.warn(`hold release not yet in the external ledger: ${(e as Error).message}`, { service: 'evidence-governance' })
     return false
   }
 }
@@ -177,22 +176,38 @@ evidenceGovernanceRouter.post('/holds', asyncHandler(async (req, res) => {
   const user = requireUser(req)
   const body = parseBody(holdBody, req)
   await owner(user.id, body.workspaceId)
+  if (body.jobId) {
+    const job = await prisma.job.findFirst({ where: { id: body.jobId, workspaceId: body.workspaceId }, select: { id: true } })
+    if (!job) throw new ApiError(404, 'Job not found')
+  }
+  // Write-ahead: when the external ledger is configured, the placement is recorded there FIRST and
+  // the hold is acknowledged only once that succeeded. A restore of PostgreSQL can therefore never
+  // lose an acknowledged hold (reconciliation recreates it from the ledger). If the ledger is
+  // configured but unreachable the request fails and nothing is created: retry. When no ledger is
+  // configured nothing can be deleted at all (the deletion runner requires one), and the runner
+  // back-fills such holds into the ledger before it first runs.
+  const id = randomUUID()
+  const placedAt = new Date()
+  const ledger = getApiLedger()
+  if (ledger) {
+    try {
+      await ledger.append({ type: 'HOLD_PLACED', workspaceId: body.workspaceId, holdId: id, scope: body.scope, jobId: body.jobId ?? null, placedBy: user.id, at: placedAt.toISOString() })
+    } catch (e) {
+      logger.error(`legal hold not placed: the external ledger rejected the write: ${(e as Error).message}`, { service: 'evidence-governance' })
+      throw new ApiError(503, 'The legal hold could not be recorded durably in the external ledger, so nothing was changed. Please retry shortly.')
+    }
+  }
   const hold = await prisma.$transaction(async (tx: Tx) => {
     await lockEvidenceGovernance(tx, body.workspaceId)
-    if (body.jobId) {
-      const job = await tx.job.findFirst({ where: { id: body.jobId, workspaceId: body.workspaceId }, select: { id: true } })
-      if (!job) throw new ApiError(404, 'Job not found')
-    }
-    return tx.legalHold.create({ data: { workspaceId: body.workspaceId, scope: body.scope, jobId: body.jobId ?? null, reason: body.reason, placedByUserId: user.id } })
+    return tx.legalHold.create({ data: { id, workspaceId: body.workspaceId, scope: body.scope, jobId: body.jobId ?? null, reason: body.reason, placedByUserId: user.id, placedAt, ledgeredAt: ledger ? new Date() : null } })
   })
   // Files whose deletion has already begun cannot be protected; say so plainly.
   const alreadyDeleting = await prisma.evidenceFile.count({
     where: { workspaceId: body.workspaceId, status: { in: ['DELETING', 'DELETED'] }, ...(body.jobId ? { jobId: body.jobId } : {}) },
   })
   await auditOps({ workspaceId: body.workspaceId, actorUserId: user.id, type: 'evidence.hold.placed', entityType: 'LegalHold', entityId: hold.id, critical: true,
-    metadata: { scope: body.scope, jobId: body.jobId ?? null, reason: body.reason } })
-  const ledgered = await ledgerHold('placed', hold, user.id, hold.placedAt)
-  res.status(201).json({ hold, ledgered, filesAlreadyDeletingOrDeleted: alreadyDeleting })
+    metadata: { scope: body.scope, jobId: body.jobId ?? null, reason: body.reason, ledgered: Boolean(ledger) } })
+  res.status(201).json({ hold, ledgered: Boolean(ledger), filesAlreadyDeletingOrDeleted: alreadyDeleting })
 }))
 
 evidenceGovernanceRouter.post('/holds/:id/release', asyncHandler(async (req, res) => {
@@ -211,7 +226,9 @@ evidenceGovernanceRouter.post('/holds/:id/release', asyncHandler(async (req, res
     return tx.legalHold.findFirstOrThrow({ where: { id, workspaceId: body.workspaceId } })
   })
   await auditOps({ workspaceId: body.workspaceId, actorUserId: user.id, type: 'evidence.hold.released', entityType: 'LegalHold', entityId: id, critical: true, metadata: { reason: body.releaseReason } })
-  const ledgered = await ledgerHold('released', hold, user.id, now)
+  // Release is recorded after the database change: if the ledger write is lost, a restore only makes
+  // the hold active again (the protective direction), and the runner back-fills the entry.
+  const ledgered = await ledgerRelease(hold, user.id, now)
   res.json({ hold, ledgered })
 }))
 

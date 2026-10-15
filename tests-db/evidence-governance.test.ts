@@ -233,15 +233,58 @@ test('holds: workspace and job scope, validation, release, audit, and the extern
   assert.ok(row.ledgeredAt && row.releaseLedgeredAt)
 })
 
-test('a ledger outage never stops a hold being placed; the runner syncs it later', async () => {
-  const w = await world()
-  setApiLedgerForTests(null)                                              // ledger unavailable
+test('holds are written to the ledger first: an unreachable ledger means no acknowledged hold, never a silently lost one', async () => {
+  const w = await world(); const j = await job(w)
+  const place = () => G(w.owner.id, 'POST', `${P}/holds`, { workspaceId: w.ws.id, scope: 'JOB', jobId: j.id, reason: 'litigation hold notice' })
+  ledgerStore.failNext = { op: 'putBytes', times: 100 }                 // ledger configured but unreachable
+  const down = await place()
+  assert.equal(down.status, 503); assert.match(down.body.error, /durably/)
+  assert.equal(await prisma.legalHold.count({ where: { workspaceId: w.ws.id } }), 0, 'nothing was created')
+  assert.equal(await prisma.auditEvent.count({ where: { workspaceId: w.ws.id, type: 'evidence.hold.placed' } }), 0)
+  ledgerStore.failNext = null
+  const ok = await place()
+  assert.equal(ok.status, 201); assert.equal(ok.body.ledgered, true)
+  const row = await prisma.legalHold.findUniqueOrThrow({ where: { id: ok.body.hold.id } })
+  assert.ok(row.ledgeredAt, 'ledgered before it was acknowledged')
+  assert.equal((await ledger.holdStates(w.ws.id)).holds.get(row.id)?.placed?.jobId, j.id)
+})
+
+test('a database restore right after a hold was acknowledged cannot lose it', async () => {
+  const w = await world(); const j = await job(w)
+  const before = await snapshot(w.ws.id)                                // the "older backup", before the hold
+  const h = await G(w.owner.id, 'POST', `${P}/holds`, { workspaceId: w.ws.id, scope: 'JOB', jobId: j.id, reason: 'regulator enquiry 2026-14' })
+  assert.equal(h.status, 201)
+  await restoreSnapshot(w.ws.id, before)                                // restore: the hold row is gone
+  assert.equal(await prisma.legalHold.count({ where: { workspaceId: w.ws.id } }), 0)
+  const rep = await reconcileEvidenceLedger({ stores })
+  assert.equal(rep.holdsRecreated, 1)
+  const back = await prisma.legalHold.findUniqueOrThrow({ where: { id: h.body.hold.id } })
+  assert.deepEqual({ scope: back.scope, job: back.jobId, active: back.releasedAt === null }, { scope: 'JOB', job: j.id, active: true })
+})
+
+test('with no ledger configured a hold is database-only; the runner back-fills it, and pauses until every hold is durable', async () => {
+  const w = await world(); const f = await file(w); const id = await approved(w, f)
+  setApiLedgerForTests(null)                                            // ledger not configured for the API
   const h = await G(w.owner.id, 'POST', `${P}/holds`, { workspaceId: w.ws.id, scope: 'WORKSPACE', reason: 'litigation hold notice' })
   assert.equal(h.status, 201); assert.equal(h.body.ledgered, false)
   assert.equal((await prisma.legalHold.findUniqueOrThrow({ where: { id: h.body.hold.id } })).ledgeredAt, null)
-  assert.equal(await syncHoldLedger(ledger), 1)
+  // ledger down: the runner does nothing at all
+  ledgerStore.failNext = { op: 'putBytes', times: 100 }
+  const down = await runDeletionCycle({ stores, sealKey: SEAL, now: await due(id) })
+  assert.ok('skipped' in down, JSON.stringify(down))
+  assert.ok(primary.objects.has(f.key) && backup.objects.has(f.key)); assert.equal(await fileStatus(f.file.id), 'AVAILABLE')
+  // ledger back: the hold is back-filled, and being active it blocks the deletion itself
+  ledgerStore.failNext = null
+  const next = await runDeletionCycle({ stores, sealKey: SEAL, now: await due(id) })
+  assert.ok('executed' in next && next.holdsSynced >= 1 && next.executed[0].result.outcome === 'blocked', JSON.stringify(next))
   assert.equal((await ledger.holdStates(w.ws.id)).holds.get(h.body.hold.id)?.placed?.scope, 'WORKSPACE')
-  assert.equal(await syncHoldLedger(ledger), 0, 'idempotent')
+  // a hold the ledger cannot accept (its slot already holds a DIFFERENT entry) keeps the runner paused
+  const w2 = await world(); const f2 = await file(w2); const id2 = await approved(w2, f2)
+  const stuck = await holdInDb(w2, null)
+  await ledger.append({ type: 'HOLD_PLACED', workspaceId: w2.ws.id, holdId: stuck.id, scope: 'JOB', jobId: 'other', placedBy: 'x', at: new Date().toISOString() })
+  const paused = await runDeletionCycle({ stores, sealKey: SEAL, now: await due(id2) })
+  assert.ok('skipped' in paused && paused.skipped === 'holds_not_durable', JSON.stringify(paused))
+  assert.ok(primary.objects.has(f2.key)); assert.equal(await fileStatus(f2.file.id), 'AVAILABLE')
 })
 
 // ── request / review / wait ─────────────────────────────────────────────────

@@ -182,6 +182,22 @@ export class EvidenceLedger {
     return { holds, invalid }
   }
 
+  /** Workspace ids that have any ledger entries (one list call per workspace, skipping ahead). */
+  async workspaces(): Promise<string[]> {
+    const prefix = 'v1/ws/'
+    const ids: string[] = []
+    let startAfter: string | undefined
+    for (;;) {
+      const page = await this.store.list(prefix, { limit: 1, startAfter })
+      if (!page.length) break
+      const id = page[0].slice(prefix.length).split('/')[0]
+      if (!id) break
+      ids.push(id)
+      startAfter = `${prefix}${id}0`          // '0' sorts after '/', so every key under <id>/ is skipped
+    }
+    return ids
+  }
+
   async isErased(ws: string): Promise<boolean> {
     return (await this.get(`${base(ws)}/erased`).catch(() => null))?.type === 'WORKSPACE_ERASED'
   }

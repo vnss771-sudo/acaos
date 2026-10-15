@@ -266,9 +266,17 @@ async function removeObjects(stores: DeletionStores, workspaceId: string, jobId:
 export async function reconcileEvidenceLedger(opts: { stores: DeletionStores; workspaceId?: string }): Promise<ReconcileReport> {
   const { stores } = opts
   const report: ReconcileReport = { workspaces: 0, retombstoned: 0, resumed: 0, objectsRemoved: 0, conflicts: [], holdsRecreated: 0, holdsEnded: 0, holdsUnrecoverable: 0, invalidLedgerEntries: 0 }
-  const wsIds: string[] = opts.workspaceId ? [opts.workspaceId] : (
-    (await prisma.workspace.findMany({ where: { OR: [{ evidenceFiles: { some: {} } }, { legalHolds: { some: {} } }] }, select: { id: true } })) as Array<{ id: string }>
-  ).map((w) => w.id)
+  // Workspaces with evidence or holds in the database, PLUS every workspace the ledger knows about that
+  // still exists: after a restore the database may have lost all of a workspace's evidence rows and
+  // holds, which is exactly when the ledger has to repair it.
+  let wsIds: string[]
+  if (opts.workspaceId) wsIds = [opts.workspaceId]
+  else {
+    const fromDb = ((await prisma.workspace.findMany({ where: { OR: [{ evidenceFiles: { some: {} } }, { legalHolds: { some: {} } }] }, select: { id: true } })) as Array<{ id: string }>).map((w) => w.id)
+    const fromLedger = await stores.ledger.workspaces()
+    const existing = fromLedger.length ? ((await prisma.workspace.findMany({ where: { id: { in: fromLedger } }, select: { id: true } })) as Array<{ id: string }>).map((w) => w.id) : []
+    wsIds = [...new Set([...fromDb, ...existing])]
+  }
 
   for (const ws of wsIds) {
     report.workspaces++
@@ -338,6 +346,7 @@ export type CycleResult =
   | { skipped: 'flag_off' | 'invalid_config'; problems: string[] }
   | { skipped: 'ledger_not_trusted'; probe: LedgerProbe }
   | { skipped: 'ledger_unavailable'; error: string }
+  | { skipped: 'holds_not_durable'; holds: number }
   | { reconcile: ReconcileReport; holdsSynced: number; executed: Array<{ requestId: string; result: ExecuteResult }>; stuck: number }
 
 /**
@@ -358,6 +367,13 @@ export async function runDeletionCycle(opts: { env?: Record<string, string | und
     return { skipped: 'ledger_unavailable', error: (e as Error).message.slice(0, 200) }
   }
   const holdsSynced = await syncHoldLedger(stores.ledger)
+  // A hold that is not yet in the ledger could still be lost by a database restore, so nothing is
+  // deleted until every placement is durable.
+  const notDurable = await prisma.legalHold.count({ where: { ledgeredAt: null } })
+  if (notDurable > 0) {
+    logger.error(`evidence deletion paused: ${notDurable} legal hold(s) are not yet recorded in the external ledger`, { service: SERVICE })
+    return { skipped: 'holds_not_durable', holds: notDurable }
+  }
   const reconcile = await reconcileEvidenceLedger({ stores })
   const now = opts.now ?? new Date()
   const due = (await prisma.evidenceDeletionRequest.findMany({
