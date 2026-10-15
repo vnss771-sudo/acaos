@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import { useApi } from './useApi.js'
+import { useApi, ApiRequestError } from './useApi.js'
 
 function mockFetch(status: number, body: unknown) {
   return vi.fn(async () => ({
@@ -126,5 +126,34 @@ describe('tryRefresh — one refresh at a time', () => {
     const { tryRefresh } = await import('./useApi.js')
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 401, ok: false, json: async () => ({}) })) as unknown as typeof fetch)
     expect(await tryRefresh()).toBeNull()
+  })
+
+  test('failures are thrown as ApiRequestError with the HTTP status and code, and the same message as before', async () => {
+    vi.stubGlobal('fetch', mockFetch(409, { error: 'Job is not active', code: 'JOB_CLOSED' }))
+    const { result } = renderHook(() => useApi('tok', () => {}))
+    const e = (await result.current('/api/x').catch((x: unknown) => x)) as ApiRequestError
+    expect(e).toBeInstanceOf(ApiRequestError)
+    expect(e).toBeInstanceOf(Error)
+    expect(e.message).toBe('Job is not active')
+    expect(e.status).toBe(409)
+    expect(e.code).toBe('JOB_CLOSED')
+
+    vi.stubGlobal('fetch', mockFetch(500, {}))
+    const e2 = (await renderHook(() => useApi('tok', () => {})).result.current('/api/x').catch((x: unknown) => x)) as ApiRequestError
+    expect(e2.status).toBe(500)
+    expect(e2.message).toBe('Request failed (500)')
+  })
+
+  test('an expired session that cannot be refreshed is an ApiRequestError with status 401', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 401, ok: false, json: async () => ({}) })
+      .mockResolvedValueOnce({ status: 401, ok: false, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    const onUnauth = vi.fn()
+    const { result } = renderHook(() => useApi('stale', onUnauth))
+    const e = (await result.current('/api/x').catch((x: unknown) => x)) as ApiRequestError
+    expect(e).toBeInstanceOf(ApiRequestError)
+    expect(e.status).toBe(401)
+    expect(onUnauth).toHaveBeenCalled()
   })
 })

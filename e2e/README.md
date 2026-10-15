@@ -16,6 +16,7 @@ launch omitted `approved`) — these specs would have failed on both.
 | `campaign-launch.spec.ts` | Launch → Approve & Send (approvalMode on) | request must include `approved: true` (was `403 Approval required`) |
 | `security-send-failures.spec.ts` | UQ-06 negative safety journeys | workspace/recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation |
 | `billing-delivery-recovery.spec.ts` | Stripe webhook replay, quote → job → closeout, stale-send recovery | duplicate entitlement changes, duplicate jobs, mutated closeout snapshots, auto-resend of possibly-dispatched mail |
+| `evidence-queue-browser.spec.ts` | Technician photo queue and image pipeline in real Chromium under the strict CSP | IndexedDB queue isolation/caps/persistence, EXIF/GPS removal, orientation, downsizing, unsupported formats (HEIC message) |
 | `csp-strict.spec.ts` | Production build under `nginx.conf`'s exact CSP, every hub and tab | any CSP violation (raw style attributes, inline `<style>`/script), the policy not being enforced |
 
 The AI and campaign specs assert on the actual outgoing request via
