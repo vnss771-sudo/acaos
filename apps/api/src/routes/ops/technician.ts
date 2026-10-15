@@ -3,8 +3,8 @@ import { z } from 'zod'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { requireAuth, requireVerifiedForMutation } from '../../middleware/auth.js'
 import { asyncHandler, ApiError, requireUser } from '../../lib/http.js'
-import { userBelongsToWorkspace } from '../../lib/workspaces.js'
-import { assertWorkspacePermission } from '../../lib/permissions.js'
+import { getWorkspaceRole, userBelongsToWorkspace } from '../../lib/workspaces.js'
+import { assertWorkspacePermission, roleCan } from '../../lib/permissions.js'
 import { parseBody, parseParams, parseQuery, workspaceIdField, idField } from '../../lib/validate.js'
 import { auditOps } from './utils.js'
 
@@ -109,16 +109,53 @@ technicianRouter.delete('/:jobId/assignments/:crewMemberId', asyncHandler(async 
   res.json({ revoked: true })
 }))
 
+// Keyset cursor over (createdAt desc, id desc). Opaque to clients; validated here
+// and only ever applied inside the caller's workspace + job scope.
+const listQuery = scope.extend({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(200).optional(),
+})
+const cursorShape = z.object({ t: z.string().datetime(), i: idField })
+
+function decodeCursor(raw: string) {
+  try {
+    const parsed = cursorShape.parse(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')))
+    return { createdAt: new Date(parsed.t), id: parsed.i }
+  } catch {
+    throw new ApiError(400, 'Invalid cursor')
+  }
+}
+
+// Managers (ops:manage) review every technician's evidence on a job in their
+// workspace without needing a linked crew account. Everyone else must pass the
+// per-job assignment check in access(), exactly as before.
 technicianRouter.get('/:jobId/evidence', asyncHandler(async (req, res) => {
   const user = requireUser(req)
   const { jobId } = parseParams(params, req)
-  const { workspaceId } = parseQuery(scope, req)
-  await access(user.id, workspaceId, jobId)
-  const evidence = await prisma.jobTechnicianEvidence.findMany({
-    where: { workspaceId, jobId }, orderBy: { createdAt: 'desc' }, take: 100,
-    select: { id: true, kind: true, content: true, createdAt: true },
+  const { workspaceId, limit, cursor } = parseQuery(listQuery, req)
+  const role = await getWorkspaceRole(user.id, workspaceId)
+  const manager = roleCan(role, 'ops:manage')
+  if (manager) await getJob(workspaceId, jobId)
+  else await access(user.id, workspaceId, jobId)
+  const after = cursor ? decodeCursor(cursor) : null
+  const rows = await prisma.jobTechnicianEvidence.findMany({
+    where: {
+      workspaceId, jobId,
+      ...(after ? { OR: [
+        { createdAt: { lt: after.createdAt } },
+        { createdAt: after.createdAt, id: { lt: after.id } },
+      ] } : {}),
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    select: { id: true, kind: true, content: true, createdAt: true, ...(manager ? { crewMemberId: true } : {}) },
   })
-  res.json({ evidence })
+  const page = rows.slice(0, limit)
+  const last = page[page.length - 1]
+  const nextCursor = rows.length > limit && last
+    ? Buffer.from(JSON.stringify({ t: last.createdAt.toISOString(), i: last.id })).toString('base64url')
+    : null
+  res.json({ evidence: page, nextCursor })
 }))
 
 technicianRouter.post('/:jobId/evidence', asyncHandler(async (req, res) => {
