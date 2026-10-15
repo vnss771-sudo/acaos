@@ -3,7 +3,7 @@ import { Modal } from '../ui/Modal.js'
 import { colors } from '../../styles.js'
 import { formatBytes } from '../../lib/evidence/persistence.js'
 
-export type DialogKind = 'logout' | 'switch' | 'foreign'
+export type DialogKind = 'logout' | 'switch' | 'cleanup_failed'
 export type DialogView = { kind: DialogKind; count: number; bytes: number; workspaceName?: string }
 
 const btn: React.CSSProperties = { minHeight: 48, minWidth: 48, padding: '0 16px', fontSize: 16, borderRadius: 10, cursor: 'pointer', boxSizing: 'border-box' }
@@ -30,10 +30,12 @@ export function UnsentPhotosDialog({ state, onCancel, onConfirm }: { state: Dial
       body: `${photos(count)} (${size}) in ${workspaceName ?? 'this workspace'} ${count === 1 ? 'has' : 'have'} not finished uploading. ${count === 1 ? 'It stays' : 'They stay'} on this phone and ${count === 1 ? 'uploads' : 'upload'} when you switch back, but nothing is sent while you are in another workspace, and the browser can delete stored photos if the phone runs low on space.`,
       cancel: 'Stay here', confirm: 'Switch workspace', style: proceed,
     },
-    foreign: {
-      title: 'Delete photos from another account?',
-      body: `This phone holds ${photos(count)} (${size}) saved by a different account. They cannot be opened or uploaded from this account. Deleting ${count === 1 ? 'it' : 'them'} cannot be undone.`,
-      cancel: 'Keep them', confirm: 'Delete photos', style: danger,
+    cleanup_failed: {
+      title: 'Photos may still be on this phone',
+      body: count > 0
+        ? `We could not delete ${photos(count)} (${size}) from this phone. If you sign out now, ${count === 1 ? 'it' : 'they'} may stay on this phone, and anyone who uses this browser profile could still be holding ${count === 1 ? 'it' : 'them'}. You can still sign out. Staying signed in lets ${count === 1 ? 'it' : 'them'} finish uploading.`
+        : 'We could not check which photos are stored on this phone, so we cannot tell you that none are left. If you sign out now, any unsent photos may stay on this phone. You can still sign out.',
+      cancel: 'Stay signed in', confirm: 'Sign out anyway', style: proceed,
     },
   }[kind]
   return (

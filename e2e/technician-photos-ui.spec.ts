@@ -252,6 +252,8 @@ test.describe('technician photos (Android phone, production CSP)', () => {
     await install(page, { user: 'tech-b' })
     await openPhotos(page)
     await expect(page.getByText(/from a different account/)).toBeVisible()
+    await expect(page.getByText(/can't be opened, uploaded or deleted from this account/)).toBeVisible()
+    await expect(page.getByRole('button', { name: /delete/i })).toHaveCount(0)
     await expect(page.getByRole('list', { name: 'Photos for this job' })).toHaveCount(0)
     await expect(page.getByText('No photos waiting.')).toBeVisible()
     await ctx.close()

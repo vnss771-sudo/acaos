@@ -166,7 +166,7 @@ describe('sign-out', () => {
     expect(await store.list(A1)).toHaveLength(1)
   })
 
-  it('a storage error while deleting cannot trap the person in the app', async () => {
+  it('a storage error while deleting still allows sign-out, but only after an accurate warning (never "deleted")', async () => {
     const backend = new Backend(), store = new MemoryQueueStore()
     backend.online = false
     await seed(store, A1, 'a1')
@@ -174,7 +174,53 @@ describe('sign-out', () => {
     render(<Guarded backend={backend} store={store} />)
     await userEvent.click(screen.getByRole('button', { name: 'sign out' }))
     await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Sign out and delete photos' }))
+    const warn = await screen.findByRole('dialog', { name: 'Photos may still be on this phone' })
+    expect(onLogout).not.toHaveBeenCalled()                                     // not signed out silently
+    expect(warn).toHaveTextContent('could not delete 1 photo (3.0 MB)')
+    expect(warn).toHaveTextContent(/may stay on this phone/)
+    expect(warn).toHaveTextContent(/You can still sign out/)
+    expect(warn).not.toHaveTextContent(/will be deleted|were deleted|has been deleted/)
+    await userEvent.click(within(warn).getByRole('button', { name: 'Sign out anyway' }))
     await waitFor(() => expect(onLogout).toHaveBeenCalledTimes(1))
+    expect(await store.list(A1)).toHaveLength(1)                                // the data really is still there
+  })
+
+  it('staying signed in after a failed cleanup keeps the photos and resumes uploading them', async () => {
+    const backend = new Backend(), store = new MemoryQueueStore()
+    await seed(store, A1, 'a1')
+    store.clearUser = async () => { throw new Error('db closed') }
+    backend.online = false
+    render(<Guarded backend={backend} store={store}><PhotosTab jobId="job-1" /></Guarded>)
+    await userEvent.click(screen.getByRole('button', { name: 'sign out' }))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Sign out and delete photos' }))
+    const warn = await screen.findByRole('dialog', { name: 'Photos may still be on this phone' })
+    backend.online = true
+    await userEvent.click(within(warn).getByRole('button', { name: 'Stay signed in' }))
+    expect(onLogout).not.toHaveBeenCalled()
+    await waitFor(async () => expect((await store.get(A1, 'a1'))?.state).toBe('done'))
+  })
+
+  it('if local storage cannot even be read at sign-out, it says it cannot confirm nothing is left', async () => {
+    const backend = new Backend(), store = new MemoryQueueStore()
+    store.summary = async () => { throw new Error('db closed') }
+    render(<Guarded backend={backend} store={store} />)
+    await userEvent.click(screen.getByRole('button', { name: 'sign out' }))
+    const warn = await screen.findByRole('dialog', { name: 'Photos may still be on this phone' })
+    expect(warn).toHaveTextContent(/cannot tell you that none are left/)
+    expect(onLogout).not.toHaveBeenCalled()
+    await userEvent.click(within(warn).getByRole('button', { name: 'Sign out anyway' }))
+    await waitFor(() => expect(onLogout).toHaveBeenCalledTimes(1))
+  })
+
+  it('a successful cleanup signs out straight away with no failure warning', async () => {
+    const backend = new Backend(), store = new MemoryQueueStore()
+    backend.online = false
+    await seed(store, A1, 'a1')
+    render(<Guarded backend={backend} store={store} />)
+    await userEvent.click(screen.getByRole('button', { name: 'sign out' }))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Sign out and delete photos' }))
+    await waitFor(() => expect(onLogout).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('finished photos do not count as unsent', async () => {
@@ -244,20 +290,40 @@ describe('account changes and cross-account access', () => {
     expect(await store.list(B1)).toHaveLength(1)
   })
 
-  it('deleting them needs a confirmation, and removes only the other account\'s photos', async () => {
+  it('another account has no way to delete the first account\'s photos through the interface', async () => {
     const backend = new Backend(), store = new MemoryQueueStore()
     backend.online = false
     await seed(store, B1, 'b1'); await seed(store, A1, 'mine')
-    render(<Guarded backend={backend} store={store} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Delete them…' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Delete photos from another account?' })
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Keep them' }))
+    const clear = vi.spyOn(store, 'clearUser')
+    render(<Guarded backend={backend} store={store}><PhotosTab jobId="job-1" /></Guarded>)
+    const note = await screen.findByText(/from a different account/)
+    expect(note).toHaveTextContent(/can't be opened, uploaded or deleted from this account/)
+    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Delete photos from another account/)).not.toBeInTheDocument()
+    // the notice itself offers no control, and the context no longer exposes a delete action
+    expect(within(note.parentElement as HTMLElement).queryAllByRole('button')).toHaveLength(0)
+    const seen: string[] = []
+    function Probe() { seen.push(...Object.keys(usePhotoUploads() ?? {})); return null }
+    render(<Guarded backend={backend} store={store}><Probe /></Guarded>)
+    await wait(30)
+    expect(seen.some((k) => /foreign/i.test(k) && /delete|confirm|clear/i.test(k))).toBe(false)
+    expect(seen).not.toContain('confirmDeleteForeign')
+    expect(clear).not.toHaveBeenCalled()
     expect(await store.list(B1)).toHaveLength(1)
-    await userEvent.click(screen.getByRole('button', { name: 'Delete them…' }))
-    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete photos' }))
-    await waitFor(async () => expect(await store.list(B1)).toHaveLength(0))
     expect(await store.list(A1)).toHaveLength(1)
-    await waitFor(() => expect(screen.queryByText(/from a different account/)).not.toBeInTheDocument())
+  })
+
+  it('signing out as one account never deletes another account\'s photos, even when cleanup fails', async () => {
+    const backend = new Backend(), store = new MemoryQueueStore()
+    backend.online = false
+    await seed(store, A1, 'a1'); await seed(store, B1, 'b1')
+    const clear = vi.spyOn(store, 'clearUser')
+    render(<Guarded backend={backend} store={store} />)
+    await userEvent.click(screen.getByRole('button', { name: 'sign out' }))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Sign out and delete photos' }))
+    await waitFor(() => expect(onLogout).toHaveBeenCalled())
+    expect(clear.mock.calls.map((c) => c[0])).toEqual(['user-a'])
+    expect(await store.list(B1)).toHaveLength(1)
   })
 
   it('when the other account signs back in, its photos are still there and are uploaded under that account only', async () => {

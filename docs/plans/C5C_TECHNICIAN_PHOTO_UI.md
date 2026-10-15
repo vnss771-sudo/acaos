@@ -21,7 +21,13 @@ and destructive operations stay disabled (`/assigned` returns `photos: false` un
 - **Workspace switch** with photos waiting in the current workspace warns but never deletes; photos resume
   when the user returns to that workspace.
 - **Another account on the same phone**: the engine refuses to act unless the session user equals the queue
-  owner. The new account sees only a count ("from a different account") and may delete them after confirmation; it cannot open or upload them.
+  owner. The new account sees only a count and a note that the photos can't be opened, uploaded or deleted
+  from this account. There is deliberately **no delete action** for another account's photos in v1: they are
+  finished or removed when their owner signs in again (or deleted at that owner's sign-out). A future
+  authorised cleanup process (for example a managed-device wipe) would be a separate, reviewed change.
+- **If local cleanup fails at sign-out**, sign-out is still possible but is never reported as having deleted
+  photos. A second dialog ("Photos may still be on this phone") says the photos may remain, and offers
+  "Stay signed in" (uploads resume) or "Sign out anyway". The same dialog appears when local storage can't be read at all.
 - **Persistent storage** is requested (`navigator.storage.persist`) where supported. Wording never promises
   safety: even when granted, the UI says photos can be lost (cleared browsing data, low space).
 - Previews are tiny `data:` JPEGs (the CSP has no `blob:`), generated best effort and dropped if oversized.

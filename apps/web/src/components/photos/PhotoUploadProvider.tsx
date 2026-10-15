@@ -14,7 +14,8 @@ import { UnsentPhotosDialog, type DialogKind } from './UnsentPhotosDialog.js'
 //     wanted: the Photos tab opened, or photos already waiting on this phone),
 //   * what happens to unsent photos on sign-out, workspace switch and account change.
 // Photos are never deleted silently: sign-out asks first, a workspace switch keeps them (they upload
-// when the person returns), and photos left by a different account are only ever deleted on request.
+// when the person returns), and photos left by a different account can be neither opened nor deleted
+// from another account (v1 has no cleanup action for them; they go when their owner signs out or removes them).
 
 export type PhotoFileResult = { name: string; result: EnqueueResult }
 
@@ -28,9 +29,8 @@ export type PhotoUploads = {
   cancel: (id: string) => Promise<void>
   dismiss: (id: string) => Promise<void>
   persistence: PersistenceState | 'unknown'
-  /** Photos on this phone that belong to a different account (counts only). */
+  /** Photos on this phone that belong to a different account (counts only; this account can neither open nor delete them). */
   foreign: { count: number; bytes: number } | null
-  confirmDeleteForeign: () => void
 }
 
 /** Wired into App's sign-out and workspace switcher (App itself renders the provider, so it uses a ref). */
@@ -58,7 +58,7 @@ type Props = {
   children: React.ReactNode
 }
 
-type DialogState = { kind: DialogKind; count: number; bytes: number; confirm: () => void | Promise<void> } | null
+type DialogState = { kind: DialogKind; count: number; bytes: number; confirm: () => void | Promise<void>; onCancel?: () => void } | null
 
 export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, enabled = true, guardsRef, store: storeProp, makeEngine, children }: Props) {
   const store = useMemo<QueueStore | null>(() => {
@@ -77,6 +77,8 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
   const [persistence, setPersistence] = useState<PersistenceState | 'unknown'>('unknown')
   const [foreign, setForeign] = useState<{ count: number; bytes: number } | null>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
+  // Bumped to rebuild the engine after a sign-out was abandoned following a failed local cleanup.
+  const [engineGen, setEngineGen] = useState(0)
   const engineRef = useRef<UploadEngine | null>(null)
   const waiters = useRef<Array<(e: UploadEngine | null) => void>>([])
 
@@ -110,7 +112,7 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
       if (engineRef.current === engine) engineRef.current = null
       for (const w of waiters.current.splice(0)) w(null)
     }
-  }, [active, scopeId, store, userId, workspaceId, makeEngine])
+  }, [active, scopeId, store, userId, workspaceId, makeEngine, engineGen])
 
   // Photos left on this phone by a different account: counts only, never contents.
   const refreshForeign = useCallback(async () => {
@@ -149,23 +151,31 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
   const dismiss = useCallback(async (id: string) => withEngine((e) => e.dismiss(id))(), [withEngine])
 
   // ── guards ───────────────────────────────────────────────────────────────
+  /** `unknown` means local storage could not be read, so nothing can be said about what is on the phone. */
   const unsentFor = useCallback(async (pick: (r: ScopeSummary) => boolean) => {
-    if (!store) return { count: 0, bytes: 0 }
+    if (!store) return { count: 0, bytes: 0, unknown: false }
     try {
       const rows = (await store.summary()).filter(pick)
-      return { count: rows.reduce((n, r) => n + r.count, 0), bytes: rows.reduce((n, r) => n + r.bytes, 0) }
-    } catch { return { count: 0, bytes: 0 } }
+      return { count: rows.reduce((n, r) => n + r.count, 0), bytes: rows.reduce((n, r) => n + r.bytes, 0), unknown: false }
+    } catch { return { count: 0, bytes: 0, unknown: true } }
   }, [store])
 
   const guardLogout = useCallback((proceed: () => void) => {
     if (!userId || !store) { proceed(); return }
+    // Sign-out is always possible, but never claims photos were deleted when they might not have been.
+    const cleanupFailed = (u: { count: number; bytes: number }) => setDialog({
+      kind: 'cleanup_failed', count: u.count, bytes: u.bytes,
+      confirm: () => proceed(),
+      onCancel: () => setEngineGen((g) => g + 1), // staying signed in: uploads resume
+    })
     void unsentFor((r) => r.userId === userId).then((u) => {
+      if (u.unknown) { cleanupFailed(u); return }
       if (u.count === 0) { proceed(); return }
       setDialog({
-        kind: 'logout', ...u,
+        kind: 'logout', count: u.count, bytes: u.bytes,
         confirm: async () => {
           engineRef.current?.dispose()
-          try { await store.clearUser(userId) } catch { /* sign-out must not be blocked by a storage error */ }
+          try { await store.clearUser(userId) } catch { cleanupFailed(u); return }
           proceed()
         },
       })
@@ -176,7 +186,7 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
     if (!userId || !workspaceId || !store) { proceed(); return }
     void unsentFor((r) => r.userId === userId && r.workspaceId === workspaceId).then((u) => {
       if (u.count === 0) { proceed(); return }
-      setDialog({ kind: 'switch', ...u, confirm: () => proceed() })
+      setDialog({ kind: 'switch', count: u.count, bytes: u.bytes, confirm: () => proceed() })
     })
   }, [userId, workspaceId, store, unsentFor])
 
@@ -186,28 +196,16 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
     return () => { guardsRef.current = null }
   }, [guardsRef, guardLogout, guardWorkspaceSwitch])
 
-  const confirmDeleteForeign = useCallback(() => {
-    if (!store || !foreign || !userId) return
-    setDialog({
-      kind: 'foreign', ...foreign,
-      confirm: async () => {
-        const others = [...new Set((await store.summary()).filter((r) => r.userId !== userId).map((r) => r.userId))]
-        for (const u of others) await store.clearUser(u)
-        await refreshForeign()
-      },
-    })
-  }, [store, foreign, userId, refreshForeign])
-
   const value = useMemo<PhotoUploads | null>(() => (scopeId
-    ? { snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign, confirmDeleteForeign }
-    : null), [scopeId, snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign, confirmDeleteForeign])
+    ? { snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign }
+    : null), [scopeId, snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign])
 
   return (
     <Ctx.Provider value={value}>
       {children}
       <UnsentPhotosDialog
         state={dialog && { kind: dialog.kind, count: dialog.count, bytes: dialog.bytes, workspaceName }}
-        onCancel={() => setDialog(null)}
+        onCancel={() => { const d = dialog; setDialog(null); d?.onCancel?.() }}
         onConfirm={() => { const d = dialog; setDialog(null); if (d) void d.confirm() }}
       />
     </Ctx.Provider>
