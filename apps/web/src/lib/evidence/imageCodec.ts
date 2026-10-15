@@ -60,6 +60,14 @@ export const browserImageCodec: ImageCodec = {
     return {
       width, height,
       toJpeg: (q) => canvasToBlob(canvas, q),
+      async toPreview(maxEdge, quality) {
+        const small = scaledSize(width, height, maxEdge)
+        const c = makeCanvas(small.width, small.height)
+        const cx = c.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+        if (!cx) throw new Error('no 2d context')
+        cx.drawImage(canvas as CanvasImageSource, 0, 0, small.width, small.height)
+        return canvasToBlob(c, quality)
+      },
       release() { canvas.width = 0; canvas.height = 0 },
     }
   },

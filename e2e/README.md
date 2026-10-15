@@ -17,6 +17,7 @@ launch omitted `approved`) — these specs would have failed on both.
 | `security-send-failures.spec.ts` | UQ-06 negative safety journeys | workspace/recipient suppression, reputation enforcement, safe-launch approval, tenant non-disclosure, refresh-session revocation |
 | `billing-delivery-recovery.spec.ts` | Stripe webhook replay, quote → job → closeout, stale-send recovery | duplicate entitlement changes, duplicate jobs, mutated closeout snapshots, auto-resend of possibly-dispatched mail |
 | `evidence-queue-browser.spec.ts` | Technician photo queue and image pipeline in real Chromium under the strict CSP | IndexedDB queue isolation/caps/persistence, EXIF/GPS removal, orientation, downsizing, unsupported formats (HEIC message) |
+| `technician-photos-ui.spec.ts` | Technician Photos tab on an Android phone profile (412px and 320px) under the strict CSP, with faked API and storage | camera/gallery capture, EXIF/GPS removed before PUT, offline queue surviving reload without duplicates, cancel race, sign-out/workspace-switch warnings, second account on the same phone, tab hidden when uploads are off |
 | `csp-strict.spec.ts` | Production build under `nginx.conf`'s exact CSP, every hub and tab | any CSP violation (raw style attributes, inline `<style>`/script), the policy not being enforced |
 
 The AI and campaign specs assert on the actual outgoing request via

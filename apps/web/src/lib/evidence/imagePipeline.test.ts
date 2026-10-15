@@ -157,6 +157,26 @@ describe('prepareImage', () => {
     const broken: ImageCodec = { async decode() { return { width: 1, height: 1, toJpeg: async () => new Blob([new Uint8Array([1, 2, 3])]), release() {} } } }
     await expect(prepareImage(asBlob(buildJpeg()), { codec: broken, digest })).rejects.toMatchObject({ code: 'encode_failed' })
   })
+  it('makes a tiny data: preview when the codec can, and a missing or failing preview never fails the photo', async () => {
+    const withPreview: ImageCodec = {
+      async decode() {
+        return { width: 10, height: 10, toJpeg: async () => asBlob(buildJpeg()), toPreview: async () => new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], { type: 'image/jpeg' }), release() {} }
+      },
+    }
+    const r = await prepareImage(asBlob(buildJpeg()), { codec: withPreview, digest })
+    expect(r.preview).toMatch(/^data:image\/jpeg;base64,/)
+    expect(r.preview!.length).toBeLessThan(60_000)
+    const none = await prepareImage(asBlob(buildJpeg()), { codec: fakeCodec().codec, digest })
+    expect(none.preview).toBeNull()
+    const broken: ImageCodec = { async decode() { return { width: 1, height: 1, toJpeg: async () => asBlob(buildJpeg()), toPreview: async () => { throw new Error('canvas gone') }, release() {} } } }
+    const ok = await prepareImage(asBlob(buildJpeg()), { codec: broken, digest })
+    expect(ok.preview).toBeNull()
+    expect(ok.sizeBytes).toBeGreaterThan(0)
+    // an oversized preview is dropped rather than stored
+    const huge: ImageCodec = { async decode() { return { width: 1, height: 1, toJpeg: async () => asBlob(buildJpeg()), toPreview: async () => new Blob([new Uint8Array(80_000)], { type: 'image/jpeg' }), release() {} } } }
+    expect((await prepareImage(asBlob(buildJpeg()), { codec: huge, digest })).preview).toBeNull()
+  })
+
   it('exposes a readable orientation helper for the fixture', () => {
     expect(exifPayload(6).length).toBeGreaterThan(20)
   })

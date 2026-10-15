@@ -8,6 +8,8 @@ import { makeRouteApi } from '../../lib/routeApi.js'
 import { EmptyState } from '../../components/ui/EmptyState.js'
 import { Skeleton } from '../../components/ui/Skeleton.js'
 import { Badge } from '../../components/ui/Badge.js'
+import { PhotosTab } from '../../components/photos/PhotosTab.js'
+import { usePhotoUploads } from '../../components/photos/PhotoUploadProvider.js'
 
 // Mobile-first technician view: the caller's own assigned jobs, and per job a
 // notes / checklist submission form plus the evidence already on the job. It sits
@@ -23,7 +25,7 @@ type EvidenceRow = {
   id: string; kind: 'NOTE' | 'CHECKLIST'; createdAt: string
   content: { note?: string; checklist?: ChecklistItem[] }
 }
-type Tab = 'notes' | 'checklist' | 'history'
+type Tab = 'notes' | 'checklist' | 'photos' | 'history'
 type SendState = { phase: 'idle' | 'sending' | 'failed' | 'saved'; message?: string }
 
 const NOTE_MAX = 4000
@@ -58,13 +60,16 @@ export function OpsTechnician({ api, workspace, toast }: Props) {
   const [linked, setLinked] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selected, setSelected] = useState<AssignedJob | null>(null)
+  // The server says whether photo uploads are enabled; the Photos tab exists only then (and only inside the app shell that owns the upload engine).
+  const [photosEnabled, setPhotosEnabled] = useState(false)
 
   const loadJobs = useCallback(async () => {
     if (!wsId) return
     setLoadError(null)
     try {
-      const r = await api<{ linked: boolean; jobs: AssignedJob[] }>(`/api/ops/technician/assigned?workspaceId=${encodeURIComponent(wsId)}`)
+      const r = await api<{ linked: boolean; photos?: boolean; jobs: AssignedJob[] }>(`/api/ops/technician/assigned?workspaceId=${encodeURIComponent(wsId)}`)
       setLinked(r.linked)
+      setPhotosEnabled(r.photos === true)
       setJobs(r.jobs)
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Could not load your jobs')
@@ -78,7 +83,7 @@ export function OpsTechnician({ api, workspace, toast }: Props) {
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '4px 0 32px' }}>
       {selected
-        ? <JobDetail api={api} workspaceId={wsId} job={selected} toast={toast}
+        ? <JobDetail api={api} workspaceId={wsId} job={selected} toast={toast} photosEnabled={photosEnabled}
             onBack={() => { setSelected(null); void loadJobs() }} />
         : (
           <>
@@ -112,10 +117,13 @@ export function OpsTechnician({ api, workspace, toast }: Props) {
   )
 }
 
-function JobDetail({ api, workspaceId, job, toast, onBack }: {
-  api: ApiHook; workspaceId: string; job: AssignedJob; toast: ToastHook; onBack: () => void
+function JobDetail({ api, workspaceId, job, toast, photosEnabled, onBack }: {
+  api: ApiHook; workspaceId: string; job: AssignedJob; toast: ToastHook; photosEnabled: boolean; onBack: () => void
 }) {
   const [tab, setTab] = useState<Tab>('notes')
+  const uploads = usePhotoUploads()
+  const showPhotos = photosEnabled && uploads !== null
+  const waiting = (uploads?.snapshot.items ?? []).filter(i => i.jobId === job.id && ['queued', 'uploading', 'processing', 'failed'].includes(i.state)).length
   const [history, setHistory] = useState<EvidenceRow[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -164,7 +172,7 @@ function JobDetail({ api, workspaceId, job, toast, onBack }: {
       </div>
 
       <div role="tablist" aria-label="Job sections" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        {([['notes', 'Note'], ['checklist', 'Checklist'], ['history', 'History']] as [Tab, string][]).map(([id, label]) => (
+        {([['notes', 'Note'], ['checklist', 'Checklist'], ...(showPhotos ? [['photos', waiting ? `Photos (${waiting})` : 'Photos']] : []), ['history', 'History']] as [Tab, string][]).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             style={{ ...secondaryBtn, flex: 1, background: tab === id ? colors.blue : 'transparent', color: tab === id ? '#fff' : colors.text }}>
             {label}
@@ -174,6 +182,7 @@ function JobDetail({ api, workspaceId, job, toast, onBack }: {
 
       {tab === 'notes' && <NoteForm onSubmit={(note, id) => submit({ kind: 'NOTE', note }, id)} onJobGone={onBack} />}
       {tab === 'checklist' && <ChecklistForm onSubmit={(items, id) => submit({ kind: 'CHECKLIST', checklist: items }, id)} onJobGone={onBack} />}
+      {tab === 'photos' && showPhotos && <PhotosTab jobId={job.id} />}
       {tab === 'history' && (
         <History rows={history} loaded={historyLoaded} error={historyError} hasMore={cursor !== null}
           onMore={() => void loadHistory(cursor)} onRetry={() => void loadHistory(null)} />

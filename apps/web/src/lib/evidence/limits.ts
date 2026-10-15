@@ -11,6 +11,8 @@ export const EVIDENCE_LIMITS = {
   edgeLadder: [2560, 2048, 1600, 1280] as readonly number[],
   /** JPEG quality ladder tried (per edge) in order. */
   qualityLadder: [0.85, 0.75, 0.65, 0.5] as readonly number[],
+  /** Long edge of the tiny list preview kept with each queued photo. */
+  previewEdge: 192,
   /** Local queue caps, per (user, workspace). */
   maxQueueItems: 30,
   maxQueueBytes: 120 * 1024 * 1024,
