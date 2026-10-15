@@ -32,6 +32,7 @@ import {
   DiscoverOpportunitiesPayloadSchema,
   FinalizeEvidenceFilePayloadSchema,
   EvidenceSweepPayloadSchema,
+  EvidenceBackupPayloadSchema,
 } from '@acaos/backend-core/lib/queueSchemas.js'
 import { purgeExpiredData } from '@acaos/backend-core/lib/retention.js'
 import { observeEngagementOutcomes } from '@acaos/backend-core/lib/engagementObservation.js'
@@ -49,6 +50,8 @@ import { learnFromOutcomes } from '@acaos/backend-core/lib/outcomeLearning.js'
 import { learnSignalCalibration } from '@acaos/backend-core/lib/calibrationLearning.js'
 import { computeNetworkBenchmarks } from '@acaos/backend-core/lib/networkIntelligence.js'
 import { scoreProspects, calibrateScoring, sendCampaignBatch, applyReplyAnalysis, discoverProspectsBatch, sendFollowupTask, researchLead, generateOutreachDraft, finalizeEvidenceFile, sweepAbandonedEvidenceUploads } from './processors.js'
+// Imported directly (not via the barrel): database-bound, covered by tests-db/evidence-backup.test.ts.
+import { replicateEvidenceFile, sweepEvidenceBackups } from './processors/evidenceBackup.js'
 import { runInWorkspaceContext } from '@acaos/backend-core/lib/tenantContext.js'
 import { enqueueGenerateRecommendations, enqueueDueFollowups } from '@acaos/backend-core/lib/queues.js'
 import { evidenceGatedPriority } from '@acaos/backend-core/lib/recommendationPolicy.js'
@@ -517,10 +520,27 @@ const evidenceSweepWorker = new Worker(
   async (job) => withConsumerSpan('evidence-sweep', job.name, job.data?.traceparent, {}, async () => {
     parseJobPayload(EvidenceSweepPayloadSchema, 'evidence-sweep', job.data)
     const r = await sweepAbandonedEvidenceUploads()
-    log('evidence-sweep', JSON.stringify(r))
-    return r
+    // Same schedule: queue any finalised file whose independent backup is missing or
+    // stale and report backup lag (inert unless EVIDENCE_BACKUP_ENABLED is valid).
+    const b = await sweepEvidenceBackups()
+    log('evidence-sweep', JSON.stringify({ ...r, backup: b }))
+    return { ...r, backup: b }
   }),
   { connection, concurrency: 1 }
+)
+
+// evidence-backup: copy one finalised file to the independent store and verify it by
+// read-back hash. Inert unless EVIDENCE_BACKUP_ENABLED is "true" with valid config.
+// Only this worker holds backup credentials; the API never does.
+const evidenceBackupWorker = new Worker(
+  'evidence-backup',
+  async (job) => withConsumerSpan('evidence-backup', job.name, job.data?.traceparent, { 'acaos.workspace_id': job.data?.workspaceId }, async () => {
+    const { workspaceId, fileId, requestId } = parseJobPayload(EvidenceBackupPayloadSchema, 'evidence-backup', job.data)
+    const r = await replicateEvidenceFile({ workspaceId, fileId, lastAttempt: isFinalAttempt(job) })
+    log('evidence-backup', `file ${fileId}: ${r.outcome}${'reason' in r ? ` (${r.reason})` : ''}`, requestId)
+    return r
+  }),
+  { connection, concurrency: 2 }
 )
 
 // ── Error handlers + job metrics ───────────────────────────────────────────────
@@ -540,6 +560,7 @@ const WORKER_QUEUES: [string, Worker][] = [
   ['domain-health',           domainHealthWorker],
   ['evidence-finalize',       evidenceFinalizeWorker],
   ['evidence-sweep',          evidenceSweepWorker],
+  ['evidence-backup',         evidenceBackupWorker],
   ['discover-opportunities',  discoverOpportunitiesWorker],
 ]
 for (const [name, worker] of WORKER_QUEUES) {
@@ -836,6 +857,7 @@ async function shutdown(signal: string, exitCode = 0) {
     domainHealthWorker.close(),
     evidenceFinalizeWorker.close(),
     evidenceSweepWorker.close(),
+    evidenceBackupWorker.close(),
     discoverOpportunitiesWorker.close(),
   ])
   closeMailTransports() // release pooled SMTP connections

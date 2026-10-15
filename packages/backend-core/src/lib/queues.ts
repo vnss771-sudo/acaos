@@ -142,6 +142,20 @@ export async function enqueueFinalizeEvidenceFile(opts: { workspaceId: string; f
   })
 }
 
+// Replicate one finalised evidence file to the independent backup store. Queued by
+// the recovery sweep (never relied on from the finalise path); the worker is
+// idempotent, so the job id only collapses duplicates within a 15-minute bucket.
+export async function enqueueEvidenceBackup(opts: { workspaceId: string; fileId: string; requestId?: string }) {
+  const bucket = Math.floor(Date.now() / (15 * 60_000))
+  return addTraced('evidence-backup', 'evidence-backup', opts, {
+    jobId: `evidence-backup-${opts.fileId}-${bucket}`,
+    attempts: 5,
+    backoff: { type: 'exponential', delay: 30_000 },
+    removeOnComplete: true,
+    removeOnFail: { age: 7 * 86_400 },
+  })
+}
+
 export async function getJobById(queueName: string, jobId: string) {
   const { Job } = await import('bullmq')
   return Job.fromId(getQueue(queueName), jobId)
@@ -263,7 +277,7 @@ const ALL_QUEUES = [
   'research-lead', 'generate-outreach', 'analyze-reply', 'sync-mailbox',
   'send-campaign', 'score-prospects', 'calibrate-scoring', 'generate-recommendations',
   'discover-prospects', 'retention-purge', 'send-followup', 'dlq-auto-retry', 'domain-health',
-  'discover-opportunities', 'evidence-finalize', 'evidence-sweep',
+  'discover-opportunities', 'evidence-finalize', 'evidence-sweep', 'evidence-backup',
 ]
 
 export async function getQueueStats() {

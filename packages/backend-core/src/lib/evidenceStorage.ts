@@ -9,6 +9,9 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import type { Readable } from 'node:stream'
 import type { EvidenceStorageConfig } from './evidenceStorageConfig.js'
 
+/** What the S3 adapter needs; the backup store reuses it with its own credentials. */
+export type S3ConnectionConfig = Pick<EvidenceStorageConfig, 'endpoint' | 'bucket' | 'region' | 'accessKeyId' | 'secretAccessKey' | 'forcePathStyle'>
+
 export class EvidenceObjectTooLargeError extends Error {
   constructor(public readonly maxBytes: number) { super(`object exceeds ${maxBytes} bytes`); this.name = 'EvidenceObjectTooLargeError' }
 }
@@ -40,6 +43,12 @@ export function newEvidenceKeys(workspaceId: string, jobId: string): { uploadKey
   }
 }
 
+/** Stricter than assertKeyInWorkspace: the key must sit under this exact workspace AND job. */
+export function assertKeyForJob(key: string, workspaceId: string, jobId: string): void {
+  assertKeyInWorkspace(key, workspaceId)
+  if (!key.startsWith(`ws/${workspaceId}/job/${jobId}/`)) throw new Error('object key does not belong to this job')
+}
+
 export function assertKeyInWorkspace(key: string, workspaceId: string): void {
   if (!key.startsWith(`ws/${workspaceId}/`) || key.includes('..') || key.includes('//')) {
     throw new Error('object key does not belong to this workspace')
@@ -51,7 +60,7 @@ export function assertKeyInWorkspace(key: string, workspaceId: string): void {
 // `send` lets tests drive head/get/put/delete with a fake instead of the network;
 // presigning is a local computation and always uses the real client.
 export function createS3EvidenceStore(
-  cfg: EvidenceStorageConfig,
+  cfg: S3ConnectionConfig,
   deps: { send?: (cmd: unknown) => Promise<unknown> } = {},
 ): EvidenceObjectStore {
   const client = new S3Client({
@@ -187,6 +196,22 @@ let cached: { id: string; store: EvidenceObjectStore } | null = null
 export function setEvidenceStoreForTests(store: EvidenceObjectStore | null): void {
   if (process.env.NODE_ENV === 'production') throw new Error('setEvidenceStoreForTests is not available in production')
   override = store
+}
+
+let backupOverride: EvidenceObjectStore | null = null
+let backupCached: { id: string; store: EvidenceObjectStore } | null = null
+
+/** Tests inject the backup store here. Refused in production. */
+export function setEvidenceBackupStoreForTests(store: EvidenceObjectStore | null): void {
+  if (process.env.NODE_ENV === 'production') throw new Error('setEvidenceBackupStoreForTests is not available in production')
+  backupOverride = store
+}
+
+export function getEvidenceBackupStore(cfg: S3ConnectionConfig): EvidenceObjectStore {
+  if (backupOverride) return backupOverride
+  const id = `${cfg.endpoint}|${cfg.bucket}|${cfg.accessKeyId}|${cfg.region}`
+  if (!backupCached || backupCached.id !== id) backupCached = { id, store: createS3EvidenceStore(cfg) }
+  return backupCached.store
 }
 
 export function getEvidenceStore(cfg: EvidenceStorageConfig): EvidenceObjectStore {

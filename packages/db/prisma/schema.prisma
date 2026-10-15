@@ -2179,6 +2179,11 @@ model EvidenceFileCopy {
   sha256      String?
   verifiedAt  DateTime?
   deletedAt   DateTime?
+  // Backup replication bookkeeping (C3). lastError is a short code, never a message
+  // that could contain an endpoint, key or URL.
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime?
+  lastError     String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
