@@ -95,7 +95,7 @@ export function stripJpegMetadata(b: Uint8Array): Uint8Array | null {
     if (b[o] !== 0xff) return null
     const m = b[o + 1]
     if (m === 0xff) { o++; continue }
-    if (m === 0xd9) { out.push(Uint8Array.of(0xff, 0xd9)); o += 2; break }
+    if (m === 0xd9) { out.push(Uint8Array.of(0xff, 0xd9)); break }
     if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { out.push(Uint8Array.of(0xff, m)); o += 2; continue }
     if (o + 3 >= b.length) return null
     const len = u16be(b, o + 2)
@@ -109,7 +109,6 @@ export function stripJpegMetadata(b: Uint8Array): Uint8Array | null {
     if (m === 0xda) {
       // entropy-coded image data up to the end of the file is copied untouched
       out.push(b.subarray(o))
-      o = b.length
       break
     }
   }
