@@ -32,6 +32,8 @@ export type QueueItem = {
   width: number
   height: number
   sha256: string
+  /** A tiny `data:` preview for lists (about 5 to 15 KB), or null. Never the full photo. */
+  preview?: string | null
   createdAt: number
   updatedAt: number
   /** Automatic attempts used since the last manual retry. */
@@ -61,8 +63,31 @@ export interface QueueStore {
   update(scope: Scope, id: string, patch: Partial<QueueItem>): Promise<boolean>
   remove(scope: Scope, id: string): Promise<void>
   totals(scope: Scope): Promise<{ count: number; bytes: number }>
+  /**
+   * What photos exist per (user, workspace) across the whole browser: counts and sizes only, never photos.
+   * Used for the sign-out / workspace-switch warnings and the "photos from another account" notice.
+   */
+  summary(): Promise<ScopeSummary[]>
   clearScope(scope: Scope): Promise<void>
+  /** Delete every photo and record that belongs to one user (all workspaces). */
+  clearUser(userId: string): Promise<void>
   clearAll(): Promise<void>
+}
+
+export type ScopeSummary = { userId: string; workspaceId: string; count: number; bytes: number }
+
+/** Unsent = still holding a photo that has not reached the server as evidence. */
+const UNSENT_STATES: ReadonlySet<QueueState> = new Set(['queued', 'uploading', 'processing', 'failed'])
+export function summarize(items: QueueItem[]): ScopeSummary[] {
+  const m = new Map<string, ScopeSummary>()
+  for (const i of items) {
+    if (!UNSENT_STATES.has(i.state) || !i.blob) continue
+    const k = scopeKey(i)
+    const cur = m.get(k) ?? { userId: i.userId, workspaceId: i.workspaceId, count: 0, bytes: 0 }
+    cur.count++; cur.bytes += i.sizeBytes
+    m.set(k, cur)
+  }
+  return [...m.values()]
 }
 
 const OPEN_STATES: ReadonlySet<QueueState> = new Set(['queued', 'uploading', 'processing', 'failed'])
@@ -114,7 +139,9 @@ export class MemoryQueueStore implements QueueStore {
     const held = [...this.bucket(scope).values()].filter(holdsPhoto)
     return { count: held.length, bytes: held.reduce((n, i) => n + i.sizeBytes, 0) }
   }
+  async summary() { return summarize([...this.data.values()].flatMap((m) => [...m.values()])) }
   async clearScope(scope: Scope) { this.data.delete(scopeKey(scope)) }
+  async clearUser(userId: string) { for (const k of [...this.data.keys()]) if (k.startsWith(`${userId}\u0000`)) this.data.delete(k) }
   async clearAll() { this.data.clear() }
 }
 
@@ -205,6 +232,17 @@ export class IndexedDbQueueStore implements QueueStore {
   async totals(scope: Scope) {
     const held = (await this.rows(scope)).filter(holdsPhoto)
     return { count: held.length, bytes: held.reduce((n, i) => n + i.sizeBytes, 0) }
+  }
+  async summary() {
+    const tx = (await this.db()).transaction(STORE, 'readonly')
+    return summarize((await reqP<Row[]>(tx.objectStore(STORE).getAll())).map(strip))
+  }
+  async clearUser(userId: string) {
+    const tx = (await this.db()).transaction(STORE, 'readwrite')
+    const store = tx.objectStore(STORE)
+    const rows = await reqP<Row[]>(store.getAll())
+    for (const r of rows) if (r.userId === userId) store.delete(r.key)
+    await txDone(tx)
   }
   async clearScope(scope: Scope) {
     const tx = (await this.db()).transaction(STORE, 'readwrite')

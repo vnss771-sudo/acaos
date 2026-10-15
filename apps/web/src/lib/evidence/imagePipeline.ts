@@ -41,6 +41,8 @@ export type PreparedImage = {
   width: number
   height: number
   sha256: string
+  /** A tiny `data:` image for lists (CSP allows data:, not blob:), or null if it could not be made. */
+  preview?: string | null
 }
 
 /** What the browser has to provide. The real implementation is in imageCodec.ts; tests use a fake. */
@@ -57,6 +59,8 @@ export interface DecodedImage {
   height: number
   /** Encode as JPEG (white background, no metadata). */
   toJpeg(quality: number): Promise<Blob>
+  /** A small JPEG (long edge `maxEdge`) for list previews. Optional: without it there is no preview. */
+  toPreview?(maxEdge: number, quality: number): Promise<Blob>
   release(): void
 }
 
@@ -86,6 +90,26 @@ function predictUpright(head: Uint8Array, format: ImageFormat): { width: number;
   if (!d || d.width <= 0 || d.height <= 0) return null
   const swap = format === 'jpeg' && readJpegOrientation(head) >= 5
   return swap ? { width: d.height, height: d.width } : d
+}
+
+function blobToDataUrl(b: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(b)
+  })
+}
+
+/** Best effort: a missing preview must never fail a photo. */
+async function makePreview(d: DecodedImage, edge: number): Promise<string | null> {
+  if (!d.toPreview) return null
+  try {
+    const url = await blobToDataUrl(await d.toPreview(edge, 0.6))
+    return url.startsWith('data:image/jpeg') && url.length < 60_000 ? url : null
+  } catch {
+    return null
+  }
 }
 
 export async function prepareImage(file: Blob, opts: PrepareOptions): Promise<PreparedImage> {
@@ -130,10 +154,12 @@ export async function prepareImage(file: Blob, opts: PrepareOptions): Promise<Pr
         const blob = new Blob([bytes as BlobPart], { type: 'image/jpeg' })
         if (blob.size > limits.maxUploadBytes) { lastTooBig = true; continue }
         const digest = opts.digest ?? defaultDigest
+        const preview = await makePreview(decoded, limits.previewEdge)
         return {
           blob, contentType: 'image/jpeg', sizeBytes: blob.size,
           width: decoded.width, height: decoded.height,
           sha256: await digest(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer),
+          preview,
         }
       }
     } finally {

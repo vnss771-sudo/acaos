@@ -80,6 +80,8 @@ export type ItemView = {
   height: number
   createdAt: number
   hasPhoto: boolean
+  /** Tiny `data:` preview, if one was made. */
+  preview: string | null
 }
 export type Snapshot = { items: ItemView[]; online: boolean; paused: 'session' | null }
 
@@ -134,7 +136,7 @@ export function createUploadEngine(deps: EngineDeps) {
           errorCode: (i.errorCode as UploadErrorCode | null) ?? null,
           errorText: i.errorCode ? ERROR_TEXT[i.errorCode as UploadErrorCode] ?? ERROR_TEXT.unknown : null,
           attempts: i.attempts, nextAttemptAt: i.nextAttemptAt, sizeBytes: i.sizeBytes, width: i.width, height: i.height,
-          createdAt: i.createdAt, hasPhoto: i.blob !== null,
+          createdAt: i.createdAt, hasPhoto: i.blob !== null, preview: i.preview ?? null,
         }
       }),
     }
@@ -447,7 +449,7 @@ export function createUploadEngine(deps: EngineDeps) {
         const t = now()
         const item: QueueItem = {
           id: newId(), userId: scope.userId, workspaceId: scope.workspaceId, jobId: o.jobId, state: 'queued',
-          blob: prepared.blob, sizeBytes: prepared.sizeBytes, contentType: 'image/jpeg', width: prepared.width, height: prepared.height, sha256: prepared.sha256,
+          blob: prepared.blob, sizeBytes: prepared.sizeBytes, contentType: 'image/jpeg', width: prepared.width, height: prepared.height, sha256: prepared.sha256, preview: prepared.preview ?? null,
           createdAt: t, updatedAt: t, attempts: 0, reinits: 0, nextAttemptAt: null, fileId: null, errorCode: null, errorStatus: null, doneAt: null,
         }
         let r: Awaited<ReturnType<QueueStore['add']>>

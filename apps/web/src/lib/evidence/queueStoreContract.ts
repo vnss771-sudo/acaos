@@ -12,7 +12,7 @@ export function item(scope: Scope, id: string, over: Partial<QueueItem> = {}): Q
   return {
     id, userId: scope.userId, workspaceId: scope.workspaceId, jobId: 'job-1', state: 'queued',
     blob: new Blob([new Uint8Array(100)], { type: 'image/jpeg' }), sizeBytes: 100, contentType: 'image/jpeg', width: 10, height: 10,
-    sha256: id.padEnd(64, '0'), createdAt: 1, updatedAt: 1, attempts: 0, reinits: 0, nextAttemptAt: null, fileId: null, errorCode: null, errorStatus: null, doneAt: null,
+    sha256: id.padEnd(64, '0'), preview: null, createdAt: 1, updatedAt: 1, attempts: 0, reinits: 0, nextAttemptAt: null, fileId: null, errorCode: null, errorStatus: null, doneAt: null,
     ...over,
   }
 }
@@ -75,6 +75,20 @@ export async function runQueueStoreContract(make: () => Promise<QueueStore>): Pr
   await s.update(A1, 'd1', { state: 'done', blob: null })
   check((await s.totals(A1)).bytes === 0 && (await s.totals(A1)).count === 0, 'a finished item holds no photo')
   check((await s.add(A1, item(A1, 'd2', { sizeBytes: 900, sha256: 'd2'.padEnd(64, '0') }), { limits: LIMITS })).ok, 'and frees its space')
+
+  // summary and per-user wipe: counts only, scoped, and only unsent photos
+  await s.clearAll()
+  await s.add(A1, item(A1, 's1', { sizeBytes: 100, sha256: 's1'.padEnd(64, '0') }), { limits: LIMITS })
+  await s.add(A1, item(A1, 's2', { sizeBytes: 150, state: 'failed', sha256: 's2'.padEnd(64, '0') }), { limits: LIMITS })
+  await s.add(A2, item(A2, 's3', { sizeBytes: 50, sha256: 's3'.padEnd(64, '0') }), { limits: LIMITS })
+  await s.add(B1, item(B1, 's4', { sizeBytes: 70, sha256: 's4'.padEnd(64, '0') }), { limits: LIMITS })
+  await s.add(B1, item(B1, 's5', { state: 'done', blob: null, sha256: 's5'.padEnd(64, '0') }), { limits: LIMITS })
+  const sum = await s.summary()
+  const byKey = (x: Scope) => sum.find((r) => r.userId === x.userId && r.workspaceId === x.workspaceId)
+  check(sum.length === 3 && byKey(A1)?.count === 2 && byKey(A1)?.bytes === 250 && byKey(A2)?.count === 1 && byKey(B1)?.count === 1 && byKey(B1)?.bytes === 70, 'summary counts unsent photos per scope (finished items and photo-less records are not counted)')
+  check(!JSON.stringify(sum).includes('blob'), 'summary carries no photo data')
+  await s.clearUser('user-a')
+  check((await s.list(A1)).length === 0 && (await s.list(A2)).length === 0 && (await s.list(B1)).length === 2, 'clearUser removes that user in every workspace and nobody else')
 
   // clearing
   await s.clearAll()

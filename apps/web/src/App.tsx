@@ -21,6 +21,8 @@ import { isInvestorDemoRequested, enableInvestorDemo, clearInvestorDemo, removeD
 import { makeDemoApi, DEMO_USER, DEMO_WORKSPACES } from './lib/demoApi.js'
 import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
+import { PhotoUploadProvider, type PhotoGuards } from './components/photos/PhotoUploadProvider.js'
+import { ForeignPhotosNotice } from './components/photos/ForeignPhotosNotice.js'
 import { colors } from './styles.js'
 
 // Code-split the route views: each becomes its own chunk fetched on first
@@ -90,6 +92,7 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWsId, setActiveWsId] = useState<string | null>(null)
   const [view, setView, replaceView] = useViewRouter('today')
+  const photoGuards = useRef<PhotoGuards | null>(null)
   // Resolved once per session — the hub-nav flag is static (env / localStorage).
   const [hubNav] = useState(isHubNavEnabled)
   const [booting, setBooting] = useState(true)
@@ -310,11 +313,15 @@ export function App() {
   }
 
   const commonProps = { api, workspace: activeWorkspace, toast }
+  // Sign-out and workspace switches ask first when photos have not finished uploading (see PhotoUploadProvider).
+  const requestLogout = () => (photoGuards.current ? photoGuards.current.guardLogout(logout) : logout())
+  const requestWorkspaceSwitch = (id: string) => (photoGuards.current ? photoGuards.current.guardWorkspaceSwitch(() => handleSetActiveWs(id)) : handleSetActiveWs(id))
   // Role-aware UI: members get a read-mostly view; admin-only controls are hidden
   // (the backend enforces the same gate, so this is UX, not the security boundary).
   const canManage = canManageWorkspace(activeWorkspace)
 
   return (
+    <PhotoUploadProvider user={user} workspaceId={activeWsId} workspaceName={activeWorkspace?.name} api={api} enabled={!demo} guardsRef={photoGuards}>
     <div style={{
       display: 'flex', minHeight: '100vh',
       background: colors.bg, color: colors.text,
@@ -328,7 +335,7 @@ export function App() {
             setView={v => { setView(v); setNavOpen(false) }}
             email={user.email}
             workspace={activeWorkspace}
-            onLogout={logout}
+            onLogout={requestLogout}
             isAdmin={isAdmin}
             hubNav={hubNav}
             fieldWorker={simpleMenu}
@@ -341,7 +348,7 @@ export function App() {
           setView={setView}
           email={user.email}
           workspace={activeWorkspace}
-          onLogout={logout}
+          onLogout={requestLogout}
           isAdmin={isAdmin}
           hubNav={hubNav}
           fieldWorker={simpleMenu}
@@ -371,6 +378,8 @@ export function App() {
             </button>
           </div>
         )}
+
+        <ForeignPhotosNotice />
 
         {/* Top bar */}
         <header style={{
@@ -417,7 +426,7 @@ export function App() {
           {workspaces.length > 1 && (
             <select
               value={activeWsId ?? ''}
-              onChange={e => handleSetActiveWs(e.target.value)}
+              onChange={e => requestWorkspaceSwitch(e.target.value)}
               style={{
                 padding: '6px 12px', borderRadius: 6, border: `1px solid ${colors.border}`,
                 background: '#0b1220', color: colors.text, fontSize: 13, cursor: 'pointer'
@@ -537,5 +546,6 @@ export function App() {
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
+    </PhotoUploadProvider>
   )
 }
