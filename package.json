@@ -75,7 +75,8 @@
     "check:send-authorization": "node scripts/check-send-authorization.mjs",
     "check:csp": "node scripts/check-csp.mjs",
     "check:passkey-foundation": "node scripts/check-passkey-foundation.mjs",
-    "check:worker-processors": "node scripts/check-worker-processors.mjs"
+    "check:worker-processors": "node scripts/check-worker-processors.mjs",
+    "e2e:evidence-local": "bash scripts/e2e-evidence-local.sh"
   },
   "overrides": {
     "nodemailer": "^10.0.13",

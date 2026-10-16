@@ -199,7 +199,8 @@ export function JobPhotoGallery({ api, workspaceId, jobId, jobLabel }: Props) {
   const toggle = () => {
     const next = !open
     setOpen(next)
-    if (next && state === 'idle') loadFirst()
+    // Every opening asks again: photos uploaded since the gallery was last open must appear without a page reload.
+    if (next) loadFirst()
     if (!next) setViewing(null)
   }
 
@@ -220,6 +221,9 @@ export function JobPhotoGallery({ api, workspaceId, jobId, jobLabel }: Props) {
           )}
           {state === 'ready' && files.length === 0 && (
             <div style={{ fontSize: 14, color: colors.textMuted }}>No photos have been uploaded for this job yet.</div>
+          )}
+          {state === 'ready' && (
+            <button type="button" style={{ ...s.btnGhost, ...TOUCH, marginBottom: 8 }} onClick={loadFirst}>Refresh photos</button>
           )}
           {state === 'ready' && files.length > 0 && (
             <>
