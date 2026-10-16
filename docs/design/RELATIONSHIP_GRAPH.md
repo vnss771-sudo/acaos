@@ -602,7 +602,7 @@ Quality floors (numbers to be fixed after the baseline is measured; proposed sta
 - Entity resolution: `ABN_EXACT` ≥ 99%; name-only matches never promoted to `CONFIRMED`.
 - ECE ≤ **0.05**; every band used outward has ≥ 30 labelled edges or is capped one band lower.
 
-**Gold set:** target at least **100** labelled projects (PR 1 starts with 42; see §11.5) (stratified: awarded/unawarded, single/multiple
+**Gold set:** target at least **100** labelled projects (PR 1 starts with 42; see §11.5–11.6) (stratified: awarded/unawarded, single/multiple
 candidate builders, ABN present/absent, seeded conflicts, evidence-absent, prohibited-source). Labelling
 is a human task and is Decision D5.
 
@@ -616,16 +616,16 @@ only after this is reviewed. Modelling choices for the baseline are listed at th
 
 | Metric | Baseline |
 |---|---|
-| Builder: correct / assertions / known cases | 25 / 33 / 25 (precision 0.758, recall 1.00) |
-| False confirmation rate (every assertion is implicitly "confirmed") | 0.242 |
+| Builder: correct / assertions / known cases | 24 / 33 / 24 (precision 0.727, recall 1.00) |
+| False confirmation rate (every assertion is implicitly "confirmed") | 0.273 |
 | Name-only builder assertions (design: never confirmable) | 0.152 of assertions |
-| Unknown correctness (notice does not appoint a builder) | 9 / 14 = 0.643; builder fabricated for C1–C4 (design, PM, supply, QS suppliers) and H3 (council as its own supplier) |
+| Unknown correctness (notice does not appoint a builder) | 9 / 15 = 0.600; builder fabricated for C1–C4 (design, PM, supply, QS suppliers), H3 (council as its own supplier) and I7 (standing panel) |
 | Conflict detection | 0 / 3; all 3 silently resolved to one builder |
 | Supersession (same notice corrected) | 2 / 2 (latest wins) |
 | Developer/client accuracy | 42 / 42; 1 builder↔developer swap (H3) |
-| Trade required, stated | recall 29 / 29 |
-| Trade required, absent | false positives 0 / 23 |
-| Trade implied surfaced as if required | 30 / 38 = 0.789 (baseline cannot distinguish stated from implied) |
+| Trade required, stated | recall 28 / 28 |
+| Trade required, absent | false positives 0 / 13 |
+| Trade implied surfaced as if required | 31 / 39 = 0.795 (baseline cannot distinguish stated from implied) |
 | Entity resolution accuracy | 10 / 20 = 0.50; 3 false merges, 7 false splits; 0 / 3 on `&`/`and` and abbreviations, 0 / 3 on bracket tokens, 0 / 3 on same name with different ABN |
 | Grounding: unsupported drafts flagged | 3 / 6 = 0.50; **0 / 2** wrong-party claims and **0 / 1** unstated-requirement claims caught; 0 / 4 grounded drafts wrongly blocked |
 | Licence: builder assertions resting only on non-`confirmed` sources | 33 / 33 (both registered sources are `unverified`) |
@@ -640,6 +640,46 @@ Reading it honestly:
   definitions in `eval/datasets/v2/relationship-graph/types.ts`, not from code output; the baseline is
   given the project grouping for free, which flatters it; builder precision here is on synthetic
   notices and says nothing about real-world prevalence of each stratum.
+
+### 11.6 Label verification and ownership (PR 1 follow-up)
+
+**What was done.** The first set of labels was re-read against the record text and the role
+definitions, and a lasting audit was added to `tests/eval-relationship-graph.test.ts` that checks labels
+with its own term table, deliberately **not** `matchOpportunity` or the trade taxonomy, so a label cannot
+be right only because the code under measurement agrees with it. Defects found and fixed:
+
+| Case | Problem | Fix |
+|---|---|---|
+| A2, A4, B4, D2, D4 (electrical), D6, E2, I1, I5 (electrical), I8 | `ABSENT` trade labels the record did not affirm (e.g. chillers need pipework; illuminated signs need power) | removed; `ABSENT` now means affirmed out of scope or a single narrowly named scope that excludes it |
+| A1 | `demolition ABSENT` rested on nothing | record now says "cleared greenfield site" |
+| H3 | footpath/kerb works labelled `concreting STATED` (taxonomy-driven) | `IMPLIED` |
+| H5 | "joint venture" in the title blurred client vs builder | wording removed |
+| I7 | a standing maintenance panel labelled as a builder appointment | builder `UNKNOWN` |
+| Pairs P01–P20 | truth had no stated basis; "Limited" vs "Pty Ltd" and bracket variants are not necessarily one entity | every pair now carries a `labelBasis` (synthetic ABR registration); P04 no longer mixes legal forms |
+
+The audit also pins: `STATED` ⇒ the text names the trade, `IMPLIED`/`ABSENT` ⇒ it does not; `KNOWN`
+builder ⇒ the latest award's counterparty with no non-builder service wording and not a self-award;
+`UNKNOWN` ⇒ no award, a non-builder service, a panel, or a self-award; `CONFLICT` ⇒ ≥ 2 distinct notices
+and suppliers; developer ⇒ an award buyer, else null; pair truth consistent with any ABNs given.
+
+**What this is not.** It is a consistency audit by the same author, not independent verification.
+Roles, implied trades and unknown cases still need a second person. Open policy calls for that person:
+1. Does a specialist contractor appointed directly for a narrow scope (A5, A6, I1, I2, I4, I6, B3, B4)
+   count as the `APPOINTED_BUILDER`, or only a head/principal contractor?
+2. Is a same-notice supplier change (F4, F5) a correction (supersede, as labelled) or a novation (conflict)?
+3. Are the `IMPLIED` lists reasonable to a working estimator (e.g. security on a court-house extension,
+   roofing on a school hall)?
+
+**Labelling owner (Decision D5): not yet assigned.** The only human committer in this repository is
+`vnss771-sudo` (51 of 157 commits; the rest are Claude sessions) and there is no `CODEOWNERS` file, so
+the code gives no basis to name anyone. Requirements for the owner: has construction-procurement
+knowledge (a head contractor estimator or procurement lead), is not the author of the baseline, and signs
+off the three policy calls above and each batch of new labels. Until a name is recorded here, the
+baseline is provisional and §11.4 floors must not be fixed.
+
+**CI.** Node 26 is the CI toolchain (`NODE_VERSION` in `.github/workflows/ci.yml`; the "Forward-compat
+(Node 26)" job runs install, prisma generate, typecheck, unit tests and build). See the PR for the run
+that covers the final head commit.
 
 ## 12. Implementation sequence (revised: evaluation before schema)
 
@@ -743,7 +783,7 @@ design changes any production setting.
 | D2 | v1 workspace-scoped only, with no shared public tier | **Yes**; revisit after licences are confirmed |
 | D3 | Index build strategy for the five existing tables | Decide in PR 3 from measured row counts |
 | D4 | Which role may promote/resolve edges | **Verified in §7.1:** new `graph:review` capability at the admin tier (admin and owner), mirroring `campaign:approve_draft`; added in PR 6 with matrix and test rows |
-| D5 | Gold-set labelling: who labels, and the ≥ 100 project size | Needs an owner before PR 1 can finish |
+| D5 | Gold-set labelling: who labels, and the ≥ 100 project size | **Unassigned.** Needs a named construction-procurement owner who is not the baseline author (§11.6); blocks fixing §11.4 floors |
 | D6 | Integer 0–100 confidence (replacing the first draft's decimal) | **Yes**, consistent with `CommercialEvent.confidence` |
 
 ## 16. Known limitations

@@ -7,29 +7,30 @@
     "sourceRecords": 51
   },
   "builderIdentity": {
-    "knownCases": 25,
+    "knownCases": 24,
     "assertions": 33,
-    "correct": 25,
+    "correct": 24,
     "wrong": 0,
     "missed": 0,
-    "precision": 0.758,
+    "precision": 0.727,
     "recall": 1,
-    "falseConfirmationRate": 0.242,
+    "falseConfirmationRate": 0.273,
     "nameOnlyAssertionRate": 0.152,
     "wrongBuilderCases": [],
     "missedCases": []
   },
   "unknownStates": {
-    "unknownCases": 14,
+    "unknownCases": 15,
     "correctlyUnknown": 9,
-    "fabricatedBuilder": 5,
-    "unknownCorrectness": 0.643,
+    "fabricatedBuilder": 6,
+    "unknownCorrectness": 0.6,
     "fabricatedCases": [
       "C1",
       "C2",
       "C3",
       "C4",
-      "H3"
+      "H3",
+      "I7"
     ]
   },
   "conflicts": {
@@ -59,21 +60,21 @@
   },
   "tradeRequirements": {
     "stated": {
-      "pairs": 29,
-      "predictedRequired": 29,
+      "pairs": 28,
+      "predictedRequired": 28,
       "recall": 1,
       "missed": []
     },
     "absent": {
-      "pairs": 23,
+      "pairs": 13,
       "predictedRequired": 0,
       "falsePositiveRate": 0,
       "falsePositives": []
     },
     "implied": {
-      "pairs": 38,
-      "surfacedAsRequired": 30,
-      "conflationRate": 0.789
+      "pairs": 39,
+      "surfacedAsRequired": 31,
+      "conflationRate": 0.795
     }
   },
   "entityResolution": {

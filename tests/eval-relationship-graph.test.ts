@@ -81,3 +81,82 @@ test('baseline findings the graph must improve on (recorded, not thresholds)', (
   assert.equal(m.licence.assertionShare, 1, 'every baseline builder assertion rests on a non-confirmed source today')
   assert.ok(m.grounding.byKind.misattributed_party && m.grounding.byKind.misattributed_party.flagged === 0, 'wrong-party claims pass the current grounding check')
 })
+
+// ── Label audit ──────────────────────────────────────────────────────────────
+// Checks the labels against the record TEXT using its own term table, deliberately NOT
+// matchOpportunity or the trade taxonomy, so a label cannot be "right" only because the
+// code under measurement agrees with it. It catches inconsistency, not every wrong label:
+// a second human reviewer is still required (design D5).
+const AUDIT_TERMS: Record<string, string[]> = {
+  electrical: ['electrical', 'switchboard', 'switchgear', 'cabling', 'solar', 'lighting', 'substation'],
+  plumbing: ['plumbing', 'hydraulic', 'sanitary'],
+  hvac: ['hvac', 'air conditioning', 'ventilation', 'chiller'],
+  fire_protection: ['fire ', 'sprinkler'],
+  carpentry: ['carpentry', 'joinery'],
+  painting: ['painting', 'repaint', 'coating'],
+  roofing: ['roof', 'guttering'],
+  concreting: ['concrete', 'slab'],
+  landscaping: ['landscap', 'irrigation', 'turf'],
+  demolition: ['demolition'],
+  flooring: ['carpet', 'flooring', 'tiling'],
+  security: ['security', 'cctv'],
+  cleaning: ['cleaning'],
+}
+const NON_BUILDER_TERMS = ['architectural', 'design services', 'project management', 'quantity surveying', 'cost planning', 'supply only', 'supply of', 'panel']
+const textOf = (c: (typeof CASES)[number]): string =>
+  c.records.map(r => `${r.title} ${r.description ?? ''} ${(r.classifications ?? []).map(k => k.description ?? '').join(' ')} `).join(' ').toLowerCase()
+
+test('label audit: trade labels agree with the record text', () => {
+  for (const c of CASES) {
+    const text = textOf(c)
+    for (const [trade, label] of Object.entries(c.truth.trades)) {
+      const terms = AUDIT_TERMS[trade]
+      assert.ok(terms, `${c.id}: audit has no terms for trade ${trade}`)
+      const named = terms.some(t => text.includes(t))
+      if (label === 'STATED') assert.ok(named, `${c.id}: ${trade} is STATED but the text never names it`)
+      else assert.ok(!named, `${c.id}: ${trade} is ${label} but the text names it, so it should be STATED`)
+    }
+  }
+})
+
+test('label audit: builder labels agree with the records and the role definitions', () => {
+  for (const c of CASES) {
+    const awards = c.records.filter(r => r.kind === 'CONTRACT_AWARD' && r.counterparty)
+    const t = c.truth.builder
+    const text = textOf(c)
+    if (t.status === 'KNOWN') {
+      const latest = [...awards].sort((a, b) => a.publishedAt.localeCompare(b.publishedAt)).at(-1)
+      assert.ok(latest, `${c.id}: KNOWN builder needs an award record`)
+      assert.equal(latest.counterparty!.name, t.name, `${c.id}: truth builder must be the latest award's counterparty (supersession policy)`)
+      assert.equal(latest.counterparty!.abn, t.abn, `${c.id}: ABN agrees`)
+      for (const term of NON_BUILDER_TERMS) assert.ok(!text.includes(term), `${c.id}: text says "${term}", so the supplier is not a builder`)
+      assert.notEqual(latest.counterparty!.name, latest.buyer?.name, `${c.id}: a self-award names no external builder`)
+    } else if (t.status === 'UNKNOWN') {
+      const reason = awards.length === 0 ||
+        NON_BUILDER_TERMS.some(term => text.includes(term)) ||
+        awards.every(a => a.counterparty!.name === a.buyer?.name)
+      assert.ok(reason, `${c.id}: UNKNOWN builder needs no award, a non-builder service, a panel, or a self-award`)
+    } else {
+      const distinct = new Set(awards.map(a => a.externalId))
+      assert.ok(distinct.size >= 2, `${c.id}: a conflict needs >= 2 distinct notices`)
+      assert.ok(new Set(awards.map(a => a.counterparty!.name)).size >= 2, `${c.id}: a conflict needs >= 2 different suppliers`)
+    }
+    if (c.stratum === 'supersession') assert.equal(new Set(c.records.map(r => r.externalId)).size, 1, `${c.id}: supersession is one notice re-delivered`)
+    if (c.stratum === 'conflict') assert.equal(t.status, 'CONFLICT')
+  }
+})
+
+test('label audit: developer label is the award buyer, or null when no award names one', () => {
+  for (const c of CASES) {
+    const buyers = new Set(c.records.filter(r => r.kind === 'CONTRACT_AWARD').flatMap(r => (r.buyer ? [r.buyer.name] : [])))
+    if (c.truth.developer === null) assert.equal(buyers.size, 0, `${c.id}: null developer but a record names a buyer`)
+    else assert.ok(buyers.has(c.truth.developer), `${c.id}: developer ${c.truth.developer} is not an award buyer`)
+  }
+})
+
+test('label audit: every entity pair states its basis and is consistent with its ABNs', () => {
+  for (const p of PAIRS) {
+    assert.ok(p.labelBasis.trim().length > 10, `${p.id}: needs a labelBasis`)
+    if (p.a.abn && p.b.abn) assert.equal(p.same, p.a.abn === p.b.abn, `${p.id}: truth disagrees with the ABNs given`)
+  }
+})

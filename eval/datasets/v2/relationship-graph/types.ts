@@ -28,7 +28,11 @@ export type SourceRecord = {
 
 /**
  * builder = the contractor appointed to deliver the project/scope as principal.
- * A design, project-management, QS or supply-only supplier is NOT a builder.
+ * A design, project-management, QS or supply-only supplier is NOT a builder, and a standing
+ * panel arrangement appoints no builder to any project. A specialist contractor appointed
+ * directly for a narrowly named scope (e.g. a switchboard upgrade) IS the principal contractor
+ * for that scope; whether such scopes should count as "builder" is a policy call for the labelling
+ * owner (design D5) and is flagged in docs/design/RELATIONSHIP_GRAPH.md §11.6.
  * CONFLICT = the records name different builders and nothing in them resolves it.
  */
 export type BuilderTruth =
@@ -37,9 +41,11 @@ export type BuilderTruth =
   | { status: 'CONFLICT'; candidates: Party[] }
 
 /**
- * STATED  = a record's own text says the trade is in scope.
- * IMPLIED = nothing states it, but this kind of project will need it.
- * ABSENT  = the records make clear the trade is not in scope.
+ * STATED  = the record's own text names the trade, or names work that is by definition that
+ *           trade's licensed scope (switchboard, sprinkler, solar PV, hydraulic services).
+ * IMPLIED = nothing states it, but this kind of project will normally need it.
+ * ABSENT  = the record affirms it is out of scope, or the scope is a single narrowly named
+ *           work type that excludes it. Anything merely unmentioned is NOT labelled ABSENT.
  * Trades not listed are not evaluated for that case.
  */
 export type TradeLabel = 'STATED' | 'IMPLIED' | 'ABSENT'
@@ -68,6 +74,8 @@ export type EntityPair = {
   b: Party
   /** Truth: are these the same legal entity? */
   same: boolean
+  /** Why the truth is what it is (e.g. the synthetic ABR registration), so a reviewer can check it. */
+  labelBasis: string
 }
 
 export type UnsupportedKind =
