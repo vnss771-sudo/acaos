@@ -164,8 +164,9 @@ jobs:
         run: |
           set -o pipefail
           npm run test:coverage 2>&1 | tee /tmp/unit.log || {
-            grep -nE "not ok|# fail|threshold|does not meet|AssertionError|Error \[|error:|✖" /tmp/unit.log | head -40 | sed 's/^/::error::/'
-            grep -nE "not ok" -A25 /tmp/unit.log | head -120 | tr '\n' ' ' | cut -c1-6000 | sed 's/^/::error::DETAIL /'
+            echo "::error::SUMMARY $(grep -E 'does not meet threshold|^ℹ (fail|pass|tests) ' /tmp/unit.log | tr '\n' ' ' | cut -c1-1500)"
+            echo "::error::FAILED $(grep -E '^\s*✖' /tmp/unit.log | sort -u | tr '\n' ' ' | cut -c1-3000)"
+            echo "::error::DETAIL $(grep -E -A14 '^\s*✖' /tmp/unit.log | grep -vE '^\s*$' | tail -60 | tr '\n' ' ' | cut -c1-6000)"
             exit 1
           }
 
