@@ -94,6 +94,35 @@ describe('loading and thumbnails', () => {
   })
 })
 
+describe('refreshing', () => {
+  it('opening the gallery again fetches the list again, so new uploads appear without a page reload', async () => {
+    mount(); await open()
+    await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(5))
+    await userEvent.click(screen.getByRole('button', { name: 'Hide photos' }))
+    srv.files = [file(9), ...srv.files]
+    await open()
+    await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(6))
+    expect(srv.calls.filter((c) => c.endsWith('limit=24')).length).toBe(2)
+  })
+
+  it('"Refresh photos" re-reads the list in place', async () => {
+    mount(); await open()
+    await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(5))
+    srv.files = [file(9), ...srv.files]
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh photos' }))
+    await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(6))
+  })
+
+  it('a refresh that finds access revoked clears the photos', async () => {
+    mount(); await open()
+    await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(5))
+    srv.listError = 403
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh photos' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('You no longer have access')
+    expect(document.querySelectorAll('img')).toHaveLength(0)
+  })
+})
+
 describe('pagination', () => {
   it('loads more on request, appends without duplicates, and hides the button at the end', async () => {
     srv.files = Array.from({ length: 30 }, (_, i) => file(i)).reverse()

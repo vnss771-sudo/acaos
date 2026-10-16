@@ -37,6 +37,21 @@ if (!securityHeaders['Content-Security-Policy']) {
   process.exit(1)
 }
 
+// LOCAL TESTING ONLY: let the page talk to a loopback, plain-http S3-compatible server (production storage is
+// always https, which the policy already allows). Only a loopback http origin is accepted; the production
+// nginx.conf is not touched and every other directive stays exactly as shipped.
+const localStorageOrigin = arg('local-storage-origin', '')
+if (localStorageOrigin) {
+  const u = new URL(localStorageOrigin)
+  if (u.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) {
+    console.error('[serve-web-csp] --local-storage-origin must be a loopback http origin')
+    process.exit(1)
+  }
+  const extend = (csp, directive) => csp.replace(new RegExp(`(${directive}\\s[^;]*)`), `$1 ${u.origin}`)
+  securityHeaders['Content-Security-Policy'] = extend(extend(securityHeaders['Content-Security-Policy'], 'connect-src'), 'img-src')
+  console.warn(`[serve-web-csp] LOCAL TEST ONLY: connect-src and img-src also allow ${u.origin}`)
+}
+
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
