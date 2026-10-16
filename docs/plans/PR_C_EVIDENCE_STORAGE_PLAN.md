@@ -60,7 +60,7 @@ Never trusted: client filename, MIME type, key, EXIF, dimensions. SVG and anythi
 
 ## 5. Backup and restore (must be tested before the flag can be enabled)
 
-- **Replication:** after finalize, a BullMQ job copies the object to R2 under the same key, verifies size and SHA-256 by reading back, and sets `backupStatus=VERIFIED`. The replicator uses a **write-only R2 token (no delete)**.
+- **Replication:** after finalize, a BullMQ job copies the object to R2 under the same key, verifies size and SHA-256 by reading back, and sets `backupStatus=VERIFIED`. The replicator uses a **write-only R2 token (no delete)**. *(Correction 2026-10-16: R2's documented token levels have no write-without-delete, so this is not provider-enforceable; see `EVIDENCE_OPEN_SECURITY_RISKS.md` R-1.)*
 - **Immutability:** use R2 bucket-level retention/lock rules if available at implementation time (**to verify in R2 docs before building**; if not, restrict credentials so the application cannot delete backups and delete only through the controlled process in §6).
 - **Metadata:** the database holds the file→object mapping, so a nightly JSONL manifest per workspace (ids, keys, sizes, hashes, retention, holds) is also written to R2. Postgres backups remain the source of record and are tested separately.
 - **Restore tooling:** a script that, for a given workspace/job, finds `AVAILABLE` rows whose primary object is missing or hash-mismatched and restores them from R2, verifying hashes. Supports dry-run.
