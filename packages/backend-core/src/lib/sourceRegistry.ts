@@ -33,6 +33,8 @@ export type SourceLicence = {
   /** ISO date (YYYY-MM-DD) of the last review. */
   reviewedAt: string
   commercialUse: CommercialUse
+  /** Env var whose presence configures the source on a server; null = needs no key (always configured). */
+  configuredBy: string | null
   /** Attribution owed wherever the data is shown. */
   attribution: string
   /** What is and isn't established, in plain words. */
@@ -52,6 +54,7 @@ export const SOURCE_LICENCES: readonly SourceLicence[] = Object.freeze<SourceLic
     ]),
     reviewedAt: '2026-10-17',
     commercialUse: 'unverified',
+    configuredBy: null,
     attribution: 'Contains AusTender data, Department of Finance, licensed under CC BY 3.0 AU.',
     notes:
       'The Department of Finance publishes the AusTender contract-notice export on data.gov.au under CC BY 3.0 AU, ' +
@@ -70,6 +73,7 @@ export const SOURCE_LICENCES: readonly SourceLicence[] = Object.freeze<SourceLic
     ]),
     reviewedAt: '2026-10-17',
     commercialUse: 'unverified',
+    configuredBy: 'PLANNINGALERTS_API_KEY',
     attribution: 'Data provided by Planning Alerts (https://www.planningalerts.org.au).',
     notes:
       'The free Community plan is for non-commercial use only; commercial use needs the Standard plan ' +
@@ -126,6 +130,20 @@ export function sourceGateConfigProblems(
   return wouldBlock.length > 0
     ? [`SOURCE_LICENCE_GATE=enforce would stop configured discovery source(s) without confirmed commercial use: ${wouldBlock.join(', ')}`]
     : []
+}
+
+/**
+ * Boot-time check for validateConfig(). Uses the registry's `configuredBy` instead of
+ * importing the sources, so config.ts stays dependency-light; a unit test keeps
+ * `configuredBy` in step with each source's real `isConfigured`.
+ */
+export function sourceGateBootProblems(
+  raw: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+  registry: readonly SourceLicence[] = SOURCE_LICENCES,
+): string[] {
+  const sources = registry.map(l => ({ name: l.source, isConfigured: l.configuredBy === null || Boolean(env[l.configuredBy]) }))
+  return sourceGateConfigProblems(raw, sources, registry)
 }
 
 export type SourceGateDecision =

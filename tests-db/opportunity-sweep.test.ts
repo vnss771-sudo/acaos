@@ -255,7 +255,7 @@ test('workspaceId limits the sweep to one workspace', async () => {
 function licence(source: string, commercialUse: SourceLicence['commercialUse']): SourceLicence {
   return {
     source, licence: 'Test', licenceUrl: null, termsUrl: 'https://example.test/terms',
-    evidenceUrls: ['https://example.test/evidence'], reviewedAt: '2026-10-17', commercialUse,
+    evidenceUrls: ['https://example.test/evidence'], reviewedAt: '2026-10-17', commercialUse, configuredBy: null,
     attribution: 'Test attribution', notes: 'Test notes',
   }
 }

@@ -8,8 +8,7 @@
 //     rather than surfacing it as a deep runtime 503 on the first request.
 
 import { getJwtSecret, allowsInsecureJwtFallback } from './jwt.js'
-import { OPPORTUNITY_SOURCES } from './opportunitySources.js'
-import { sourceGateConfigProblems } from './sourceRegistry.js'
+import { sourceGateBootProblems } from './sourceRegistry.js'
 
 export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production'
@@ -141,7 +140,7 @@ export function validateConfig(): void {
   // Source licence gate (sourceRegistry.ts): an unrecognised value, or `enforce`
   // while it would stop a configured discovery source, fails the boot in every
   // environment rather than silently running as `off` or blocking live discovery.
-  problems.push(...sourceGateConfigProblems(process.env.SOURCE_LICENCE_GATE, OPPORTUNITY_SOURCES))
+  problems.push(...sourceGateBootProblems(process.env.SOURCE_LICENCE_GATE))
 
   // Eagerly resolve the JWT secret so a weak/placeholder/missing value fails at
   // boot rather than on the first authenticated request. Checked whenever a

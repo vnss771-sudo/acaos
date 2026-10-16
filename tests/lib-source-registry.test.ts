@@ -5,7 +5,7 @@ import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SOURCE_LICENCES, getSourceLicence, parseSourceGateMode, sourceGateConfigProblems, sourceGateDecision,
-  SourceGateConfigError, type SourceLicence,
+  SourceGateConfigError, sourceGateBootProblems, type SourceLicence,
 } from '../packages/backend-core/src/lib/sourceRegistry.ts'
 import { OPPORTUNITY_SOURCES } from '../packages/backend-core/src/lib/opportunitySources.ts'
 import { validateConfig } from '../packages/backend-core/src/lib/config.ts'
@@ -19,7 +19,7 @@ afterEach(() => {
 function licence(source: string, commercialUse: SourceLicence['commercialUse']): SourceLicence {
   return {
     source, licence: 'Test', licenceUrl: null, termsUrl: 'https://example.test/terms',
-    evidenceUrls: ['https://example.test/evidence'], reviewedAt: '2026-10-17', commercialUse,
+    evidenceUrls: ['https://example.test/evidence'], reviewedAt: '2026-10-17', commercialUse, configuredBy: null,
     attribution: 'Test attribution', notes: 'Test notes',
   }
 }
@@ -161,6 +161,39 @@ test('enforce allows confirmed sources and blocks unverified, prohibited and unr
 })
 
 // ── Boot validation ───────────────────────────────────────────────────────────
+
+test('each registry entry\'s configuredBy matches its source\'s real isConfigured, with and without the key', () => {
+  for (const source of OPPORTUNITY_SOURCES) {
+    const e = getSourceLicence(source.name)!
+    if (e.configuredBy === null) {
+      assert.equal(source.isConfigured, true, `${source.name} needs no key, so it must always be configured`)
+      continue
+    }
+    const saved = process.env[e.configuredBy]
+    try {
+      process.env[e.configuredBy] = 'test-key'
+      assert.equal(source.isConfigured, true, `${source.name} is configured when ${e.configuredBy} is set`)
+      delete process.env[e.configuredBy]
+      assert.equal(source.isConfigured, false, `${source.name} is unconfigured when ${e.configuredBy} is unset`)
+    } finally {
+      if (saved === undefined) delete process.env[e.configuredBy]
+      else process.env[e.configuredBy] = saved
+    }
+  }
+})
+
+test('boot check: unset, off and observe are fine; invalid values and enforce-over-AusTender are not', () => {
+  for (const raw of [undefined, '', 'off', 'observe']) assert.deepEqual(sourceGateBootProblems(raw, {}), [])
+  assert.match(sourceGateBootProblems('Enforce', {})[0] ?? '', /SOURCE_LICENCE_GATE must be/)
+  assert.match(sourceGateBootProblems('enforce', {})[0] ?? '', /: austender$/)
+  assert.match(sourceGateBootProblems('enforce', { PLANNINGALERTS_API_KEY: 'k' })[0] ?? '', /: austender, planningalerts$/)
+})
+
+test('boot check passes enforce when every configured registry source is confirmed', () => {
+  const reg = [licence('cleared', 'confirmed'), { ...licence('keyed', 'unverified'), configuredBy: 'KEYED_API_KEY' }]
+  assert.deepEqual(sourceGateBootProblems('enforce', {}, reg), [])
+  assert.equal(sourceGateBootProblems('enforce', { KEYED_API_KEY: 'k' }, reg).length, 1)
+})
 
 test('validateConfig is unaffected when SOURCE_LICENCE_GATE is unset', () => {
   process.env.NODE_ENV = 'development'
