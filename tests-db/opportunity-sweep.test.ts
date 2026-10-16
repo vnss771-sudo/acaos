@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { runOpportunitySweep } from '../packages/backend-core/src/lib/opportunitySweep.ts'
 import { austenderSource, type OpportunitySource, type SourceFetchContext, type SourceFetchResult } from '../packages/backend-core/src/lib/opportunitySources.ts'
 import type { OpportunityCandidate } from '../packages/backend-core/src/lib/opportunityTypes.ts'
+import type { SourceLicence } from '../packages/backend-core/src/lib/sourceRegistry.ts'
 import { prisma, resetDb, disconnect, seedUserWithWorkspace } from './helpers/db.ts'
 
 after(async () => { await disconnect() })
@@ -247,4 +248,101 @@ test('workspaceId limits the sweep to one workspace', async () => {
   const r = await runOpportunitySweep({ workspaceId: b.workspace.id, sources: [src], now: NOW })
   assert.deepEqual(r.runs.map(x => x.workspaceId), [b.workspace.id])
   assert.equal(await prisma.opportunity.count({ where: { workspaceId: a.workspace.id } }), 0)
+})
+
+// ── Source licence gate (SOURCE_LICENCE_GATE, sourceRegistry.ts) ─────────────
+
+function licence(source: string, commercialUse: SourceLicence['commercialUse']): SourceLicence {
+  return {
+    source, licence: 'Test', licenceUrl: null, termsUrl: 'https://example.test/terms',
+    evidenceUrls: ['https://example.test/evidence'], reviewedAt: '2026-10-17', commercialUse,
+    attribution: 'Test attribution', notes: 'Test notes',
+  }
+}
+
+async function withGate<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.SOURCE_LICENCE_GATE
+  if (value === undefined) delete process.env.SOURCE_LICENCE_GATE
+  else process.env.SOURCE_LICENCE_GATE = value
+  try { return await fn() } finally {
+    if (saved === undefined) delete process.env.SOURCE_LICENCE_GATE
+    else process.env.SOURCE_LICENCE_GATE = saved
+  }
+}
+
+test('licence gate unset: an AusTender-named source runs and persists exactly as before', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await profileFor(workspace.id, { sources: ['austender'] })
+  const calls: SourceFetchContext[] = []
+  const src = fakeSource('austender', [{ items: [contract('CN1')], nextCursor: 'c1' }], calls)
+  const r = await withGate(undefined, () => runOpportunitySweep({ sources: [src], now: NOW }))
+  assert.equal(calls.length, 1)
+  assert.deepEqual(r.runs.map(x => [x.source, x.status, x.created]), [['austender', 'ok', 1]])
+  const state = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id, source: 'austender' } })
+  assert.deepEqual([state.cursor, state.successCount, state.failureCount, state.skippedCount, state.lastError], ['c1', 1, 0, 0, null])
+})
+
+test('licence gate observe: unverified and unregistered sources still run and persist', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await profileFor(workspace.id, { sources: ['austender', 'unregistered'] })
+  const a = fakeSource('austender', [{ items: [contract('CN1')], nextCursor: 'a1' }])
+  const u = fakeSource('unregistered', [{ items: [contract('CN2')], nextCursor: 'u1' }])
+  const r = await withGate('observe', () => runOpportunitySweep({ sources: [a, u], now: NOW }))
+  assert.deepEqual(r.runs.map(x => [x.source, x.status, x.created]), [['austender', 'ok', 1], ['unregistered', 'ok', 1]])
+  assert.equal(await prisma.opportunity.count({ where: { workspaceId: workspace.id } }), 2)
+})
+
+test('licence gate enforce: a configured unverified source pauses discovery instead of being silently blocked', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await profileFor(workspace.id, { sources: ['austender'] })
+  const calls: SourceFetchContext[] = []
+  const src = fakeSource('austender', [{ items: [contract('CN1')], nextCursor: 'c1' }], calls)
+  const r = await withGate('enforce', () => runOpportunitySweep({ sources: [src], now: NOW }))
+  assert.equal(calls.length, 0, 'nothing is fetched')
+  assert.equal(r.runs.length, 1)
+  assert.equal(r.runs[0]!.status, 'failed')
+  assert.match(r.runs[0]!.reason ?? '', /Discovery paused: invalid configuration.*austender/)
+  const state = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id, source: 'austender' } })
+  assert.match(state.lastError ?? '', /SOURCE_LICENCE_GATE=enforce/)
+  assert.deepEqual([state.cursor, state.failureCount, state.successCount], [null, 1, 0])
+  assert.equal(await prisma.opportunity.count({ where: { workspaceId: workspace.id } }), 0)
+})
+
+test('licence gate enforce: confirmed sources run; an unconfirmed one reached by the sweep is skipped with a reason', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await profileFor(workspace.id, { sources: ['cleared', 'pending'] })
+  const cleared = fakeSource('cleared', [{ items: [contract('CN1')], nextCursor: 'c1' }])
+  const pendingCalls: SourceFetchContext[] = []
+  // Defence in depth: boot validation sees it unconfigured and allows enforce; runSource still gates it.
+  const pending = fakeSource('pending', [{ items: [contract('CN2')], nextCursor: 'p1' }], pendingCalls)
+  const licences = [licence('cleared', 'confirmed'), licence('pending', 'unverified')]
+  // Reports unconfigured to the boot-time check (first read), configured to runSource (later reads).
+  let configuredCheck = 0
+  const configuredLater = { ...pending, get isConfigured() { return configuredCheck++ > 0 } }
+  const r = await withGate('enforce', () => runOpportunitySweep({ sources: [cleared, configuredLater], now: NOW, licences }))
+  const by = Object.fromEntries(r.runs.map(x => [x.source, x]))
+  assert.equal(by.cleared!.status, 'ok')
+  assert.equal(by.pending!.status, 'skipped')
+  assert.match(by.pending!.reason ?? '', /Skipped by the source licence gate: pending commercial use is unverified/)
+  assert.equal(pendingCalls.length, 0)
+  const state = await prisma.discoverySourceState.findFirstOrThrow({ where: { workspaceId: workspace.id, source: 'pending' } })
+  assert.deepEqual([state.skippedCount, state.successCount], [1, 0])
+  assert.match(state.lastWarning ?? '', /source licence gate/)
+})
+
+test('licence gate with an invalid value: every source records the configuration error and nothing is fetched', async () => {
+  const { workspace } = await seedUserWithWorkspace()
+  await profileFor(workspace.id, { sources: ['austender', 'other'] })
+  const calls: SourceFetchContext[] = []
+  const a = fakeSource('austender', [{ items: [contract('CN1')], nextCursor: 'c1' }], calls)
+  const o = fakeSource('other', [{ items: [contract('CN2')], nextCursor: 'o1' }], calls)
+  const r = await withGate('Enforce', () => runOpportunitySweep({ sources: [a, o], now: NOW }))
+  assert.equal(calls.length, 0)
+  assert.deepEqual(r.runs.map(x => [x.source, x.status]), [['austender', 'failed'], ['other', 'failed']])
+  const states = await prisma.discoverySourceState.findMany({ where: { workspaceId: workspace.id }, orderBy: { source: 'asc' } })
+  assert.equal(states.length, 2)
+  for (const s of states) {
+    assert.match(s.lastError ?? '', /SOURCE_LICENCE_GATE must be/)
+    assert.deepEqual([s.runCount, s.failureCount, s.cursor], [1, 1, null])
+  }
 })
