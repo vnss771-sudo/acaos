@@ -341,8 +341,32 @@ exist, name-only duplicates are tolerated and visible.
   `AuditEvent`. `UPDATE` on review rows is blocked by trigger. The reviewer UI renders the underlying
   evidence (excerpt, source link, attribution), not an AI summary.
 - **Review triggers.** Edge with confidence 40–69, any `NAME_FUZZY` candidate, any `CONFLICTED` group,
-  any proposed `PROMOTE`. Reviewer role follows the existing approval capability model (`docs/RBAC.md`);
-  exact role is Decision D4.
+  any proposed `PROMOTE`. Who may review is verified against the code in §7.1.
+
+### 7.1 Reviewer RBAC (verified against the code, 2026-10-17)
+
+What exists today:
+- Roles are `member ⊂ admin ⊂ owner` on `Membership.role`. Members hold **no** named capability
+  (`MEMBER_PERMISSIONS = []` in `apps/api/src/lib/permissions.ts`); platform admin (`User.isPlatformAdmin`)
+  is a separate cross-tenant axis and is **not** a workspace reviewer.
+- Approving an outreach draft is **admin or owner**: the routes in `apps/api/src/routes/leads.ts`
+  (approve, and the two sibling draft actions) call `assertMinimumWorkspaceRole(..., 'admin')`, and the
+  matching named capability `campaign:approve_draft` is in `ADMIN_PERMISSIONS`.
+- Destructive evidence governance is **owner-only** (`evidence:govern`).
+- Every boundary in the matrix is pinned by `tests/lib-permissions.test.ts` and documented in `docs/RBAC.md`.
+
+Resolution of Decision D4 (proposed, for approval):
+- Add one named capability, `graph:review`, to `ADMIN_PERMISSIONS` (so admin and owner, never member).
+  It covers promote, demote, reject, adjust confidence and conflict resolution, the same tier as
+  approving a draft. It is a capability, not a bare role check, so it appears in the matrix and the test.
+- Reading graph edges and evidence while in `shadow` mode: admin or owner via the same capability.
+  Members see nothing from the graph until `on` mode, and then only through existing recommendation
+  surfaces.
+- Retracting or deleting graph rows that reference field-ops `EvidenceFile` data is **not** a graph
+  action; it stays under the existing owner-only `evidence:govern` path. Graph evidence is public-record
+  and workspace-private text, not technician photos (§3).
+- Delivered in PR 6 together with `docs/RBAC.md` matrix rows and the `tests/lib-permissions.test.ts`
+  assertions (admin and owner allowed, member and non-member denied). No RBAC change is made in PR 1.
 
 ## 8. Source licensing and provenance (PR #413)
 
@@ -578,9 +602,44 @@ Quality floors (numbers to be fixed after the baseline is measured; proposed sta
 - Entity resolution: `ABN_EXACT` ≥ 99%; name-only matches never promoted to `CONFIRMED`.
 - ECE ≤ **0.05**; every band used outward has ≥ 30 labelled edges or is capped one band lower.
 
-**Gold set:** at least **100** labelled projects (stratified: awarded/unawarded, single/multiple
+**Gold set:** target at least **100** labelled projects (PR 1 starts with 42; see §11.5) (stratified: awarded/unawarded, single/multiple
 candidate builders, ABN present/absent, seeded conflicts, evidence-absent, prohibited-source). Labelling
 is a human task and is Decision D5.
+
+### 11.5 Recorded baseline (PR 1)
+
+Gold set v0: **42 projects, 20 entity pairs, 10 grounding drafts** (51 source records), all synthetic.
+Numbers are what today's code does, measured by `npm run eval:graph-baseline` and pinned in
+`eval/datasets/v2/relationship-graph/baseline.json`. They are **not thresholds**; §11.4 floors are fixed
+only after this is reviewed. Modelling choices for the baseline are listed at the top of
+`scripts/eval-relationship-graph.ts`.
+
+| Metric | Baseline |
+|---|---|
+| Builder: correct / assertions / known cases | 25 / 33 / 25 (precision 0.758, recall 1.00) |
+| False confirmation rate (every assertion is implicitly "confirmed") | 0.242 |
+| Name-only builder assertions (design: never confirmable) | 0.152 of assertions |
+| Unknown correctness (notice does not appoint a builder) | 9 / 14 = 0.643; builder fabricated for C1–C4 (design, PM, supply, QS suppliers) and H3 (council as its own supplier) |
+| Conflict detection | 0 / 3; all 3 silently resolved to one builder |
+| Supersession (same notice corrected) | 2 / 2 (latest wins) |
+| Developer/client accuracy | 42 / 42; 1 builder↔developer swap (H3) |
+| Trade required, stated | recall 29 / 29 |
+| Trade required, absent | false positives 0 / 23 |
+| Trade implied surfaced as if required | 30 / 38 = 0.789 (baseline cannot distinguish stated from implied) |
+| Entity resolution accuracy | 10 / 20 = 0.50; 3 false merges, 7 false splits; 0 / 3 on `&`/`and` and abbreviations, 0 / 3 on bracket tokens, 0 / 3 on same name with different ABN |
+| Grounding: unsupported drafts flagged | 3 / 6 = 0.50; **0 / 2** wrong-party claims and **0 / 1** unstated-requirement claims caught; 0 / 4 grounded drafts wrongly blocked |
+| Licence: builder assertions resting only on non-`confirmed` sources | 33 / 33 (both registered sources are `unverified`) |
+
+Reading it honestly:
+- Trade detection is already strong on this set (keyword rules were designed for it), so the graph's
+  value is **not** better trade recall; it is the stated/implied split and per-project evidence.
+- The biggest gaps are the ones the design targets: fabricated builders on non-appointing notices,
+  silent conflict resolution, name-only entity matching (false merges and splits), and grounding that
+  cannot catch a wrong party or an unstated requirement.
+- Limits: 42 projects is a starting set (target ≥ 100); labels were written from record text and the
+  definitions in `eval/datasets/v2/relationship-graph/types.ts`, not from code output; the baseline is
+  given the project grouping for free, which flatters it; builder precision here is on synthetic
+  notices and says nothing about real-world prevalence of each stratum.
 
 ## 12. Implementation sequence (revised: evaluation before schema)
 
@@ -589,7 +648,7 @@ production; `RELATIONSHIP_GRAPH_MODE` stays `off` until step 7 is separately app
 
 | PR | Scope | Touches DB/prod? | Gate to proceed |
 |---|---|---|---|
-| **1. Eval baseline** | `eval/datasets/v2` manifest, fixtures, offline "no-graph" baseline suite, recorded baseline numbers | No | Baseline numbers reviewed; thresholds in §11.4 fixed |
+| **1. Eval baseline** (in review) | `eval/datasets/v2` manifest, 42 labelled projects + 20 entity pairs + 10 grounding drafts, offline "no-graph" baseline, recorded `baseline.json` (§11.5) | No | Baseline numbers reviewed; thresholds in §11.4 fixed |
 | **2. Pure rule library** | Evidence-requirement, entity-match, confidence and conflict functions as pure TypeScript with unit tests, run through the PR 1 eval | No | Meets §11.4 invariants offline |
 | **3. Schema, flag, rollback** | Migration for §5 (+ prerequisite unique indexes), rollback SQL, `RELATIONSHIP_GRAPH_MODE` parsing with `validateConfig`, `tests-db` isolation/constraint tests. **No writers** | Additive only, empty tables | Integration tests green; rollback rehearsed on a clean DB |
 | **4. Shadow ingestion** | Worker job reading `Opportunity` by cursor; licence-gated; writes edges/evidence in `shadow` only; idempotent | Writes only if mode ≠ `off` | Eval vs gold set on ingested output meets §11.4 |
@@ -683,7 +742,7 @@ design changes any production setting.
 | D1 | Outward use requires `confirmed` licence even when `SOURCE_LICENCE_GATE` is `off` | **Yes.** The graph is new and default-off, so it can be stricter; effect today is shadow-only until AusTender is confirmed |
 | D2 | v1 workspace-scoped only, with no shared public tier | **Yes**; revisit after licences are confirmed |
 | D3 | Index build strategy for the five existing tables | Decide in PR 3 from measured row counts |
-| D4 | Which role may promote/resolve edges | Same capability as approving drafts today; confirm against `docs/RBAC.md` |
+| D4 | Which role may promote/resolve edges | **Verified in §7.1:** new `graph:review` capability at the admin tier (admin and owner), mirroring `campaign:approve_draft`; added in PR 6 with matrix and test rows |
 | D5 | Gold-set labelling: who labels, and the ≥ 100 project size | Needs an owner before PR 1 can finish |
 | D6 | Integer 0–100 confidence (replacing the first draft's decimal) | **Yes**, consistent with `CommercialEvent.confidence` |
 
