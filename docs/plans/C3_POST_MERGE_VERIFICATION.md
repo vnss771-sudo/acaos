@@ -93,7 +93,7 @@ Read-only checks through the Railway connector (nothing changed):
 ## 8. Unresolved security issues and prerequisites
 
 **Security / design (not blocking these tests, but decide before enabling):**
-1. **Credential separation is deployment-level, not code-level.** The spec says the backup worker has read-only primary access; today one worker process runs finalisation (primary write) and backup replication (primary read + backup write). Run backup replication as a separate service with a read-only primary credential and a no-delete R2 token, or accept the wider blast radius.
+1. **Credential separation is deployment-level, not code-level.** The spec says the backup worker has read-only primary access; today one worker process runs finalisation (primary write) and backup replication (primary read + backup write). Run backup replication as a separate service with a read-only primary credential and a no-delete R2 token, or accept the wider blast radius. *(Correction 2026-10-16: a no-delete R2 token is not available with R2's documented token levels; this is open risk R-1 in `EVIDENCE_OPEN_SECURITY_RISKS.md`.)*
 2. **Restore trust boundary.** The owner-approval check is application-level; whoever holds database and bucket credentials can bypass the CLI entirely. Restore credentials must be short-lived and issued per drill.
 3. **Conditional-write dependence** (section 2) must be proven on Railway and R2.
 4. **Incident visibility** relies on log lines and a best-effort audit write (`recordAudit` swallows failures); no alert routing exists yet.

@@ -47,7 +47,10 @@ Real phones and carriers (checklist: [ANDROID_PHOTO_DEVICE_TEST.md](../runbooks/
 * **Memory on low-end phones**: 48 MP photos are decoded and downscaled in the page; the pipeline caps source pixels (120 MP) and file size (60 MB) and fails with a clear message, but out-of-memory behaviour on a low-end phone is exactly what the device checklist measures.
 * **Installed PWA/WebView** contexts may have different storage and camera behaviour; test them separately.
 
-## Release gates (unchanged)
+## Release gates (unchanged) and open security risks
+
+Open production-blocking security risks are tracked in [EVIDENCE_OPEN_SECURITY_RISKS.md](EVIDENCE_OPEN_SECURITY_RISKS.md); in particular **R-1: the R2 backup writer's token can delete backups, so the backup is not provider-enforced deletion-proof.**
+
 
 Real Railway/R2 restore drill, independent PostgreSQL recovery, implemented and tested malware-scan fail-closed policy, legal review of retention and the ledger, the C4b provider-isolation decision, the real-device pass (this plan's checklist), and your explicit approval. Until then `EVIDENCE_UPLOADS_ENABLED`, `EVIDENCE_BACKUP_ENABLED`, `EVIDENCE_DESTRUCTIVE_ENABLED` and `EVIDENCE_LEDGER_ENABLED` stay unset in production.
 

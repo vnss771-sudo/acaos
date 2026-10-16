@@ -19,7 +19,7 @@ A small banner in the app shell (same place and pattern as `ForeignPhotosNotice`
 | **Not signed in** (for example the app reopened fully offline, so the session could not be refreshed) | Generic text on the sign-in screen, **no count and no account hint**: "Photos saved on this phone are waiting to upload. Sign in with the account that took them." Shown only when the local queue is non-empty. | We cannot know whose they are, and must not reveal more. Whether to show even this generic line is a privacy call for you. |
 | Nothing waiting | nothing | |
 
-Interaction: one button, "Try uploading now", which asks the engine to resume (it already does so on online/focus/visibility). No navigation to a job is promised while the job list is unavailable; when it is available the banner text can link to My jobs.
+Interaction: **none** in v1 (no button). No navigation to a job is promised while the job list is unavailable; when it is available the banner text can link to My jobs.
 
 Accessibility: `role="status"` with polite announcements, at least 44 px touch target, wraps at 320 px, no new colours outside the existing tokens.
 
@@ -32,15 +32,18 @@ Accessibility: `role="status"` with polite announcements, at least 44 px touch t
 
 ## Tests (planned)
 
-* Unit/component: counts only the signed-in user's unsent photos across their workspaces; excludes other accounts, `done`/`rejected` items, and items without a blob; correct text per state (offline, uploading, needs attention, other workspace); the generic signed-out text has no count and renders only for a non-empty queue; "Try uploading now" resumes the engine once; no banner when empty.
+* Unit/component: counts only the signed-in user's unsent photos across their workspaces; excludes other accounts, `done`/`rejected` items, and items without a blob; correct text per state (offline, uploading, needs attention, other workspace); the generic signed-out text has no count and renders only for a non-empty queue; no banner when empty.
 * Privacy regression: with account B signed in, A's queued photos produce no B-banner text and no count in the banner (only the existing foreign notice); no photo data in the DOM.
 * Local full-stack (`npm run e2e:evidence-local`): (a) weak-signal reopen, job list failing: the banner shows N and the state, photos still upload exactly once when restored; (b) airplane-mode reopen: the signed-out generic line (if approved) and, after sign-in, the count; (c) shared phone: B never sees A's count in the banner.
 
-## Open decisions for you
+## Decisions (from the owner, 2026-10-16)
 
-1. Show the generic signed-out line on the sign-in screen (reveals only that the phone holds unsent photos), or show nothing until sign-in?
-2. Count across all of the user's workspaces (proposed) or only the active one?
-3. Include the "Try uploading now" button, or banner text only?
+1. **Signed-out state**: show the generic sign-in message, with **no count and no account hint**.
+2. **Counting**: unsent photos across **all workspaces of the currently authenticated user**.
+3. **No manual upload button in v1** (uploads continue to resume automatically on online/focus/visibility).
+4. **Other accounts' photos stay completely separate**: never counted, named or offered an action in this banner (the existing count-only notice remains the only trace).
+
+The "Try uploading now" row and button described above are therefore **out of scope for v1**.
 
 ## Branch note
 
