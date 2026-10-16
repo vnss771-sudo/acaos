@@ -48,3 +48,13 @@ The "Try uploading now" row and button described above are therefore **out of sc
 ## Branch note
 
 Both this and the staging plan live on the single designated working branch. This is built as its own PR once the docs PR containing this proposal is merged (or sooner if you allow a second branch).
+
+## Implementation status (F1 PR)
+
+Implemented as designed and as decided:
+
+- `PhotosWaitingBanner` (signed in): counts only the signed-in user's unsent photos across all their workspaces (`PhotoUploadProvider.own`, from `QueueStore.summary()`, which now also reports `attention` (failed) and `active` (uploading/processing) counts). States: waiting to upload / waiting for a connection / uploading / N need attention; photos in other workspaces are called out ("upload when you switch back"). `role="status"`, no button, no delete action, no job-list cache, no new network call, route or schema.
+- `SignedOutPhotosNotice` (sign-in screen): one generic sentence, no count, size, account or workspace hint; reads only whether the local queue is non-empty; shows nothing if local storage is unreadable.
+- Another account's photos are never counted in the banner (only the existing count-only foreign notice mentions them).
+- Tests: component/privacy tests in `PhotosWaitingBanner.test.tsx`, store contract additions, and full-stack scenarios in `e2e/evidence-workflow.spec.ts` (weak-signal reopen, sign-out generic line, shared phone, return after sign-in, airplane-mode reopen).
+- Observation: on a weak signal where the browser reports online but photo routes fail, the banner says "Waiting to upload" (not "Waiting for a connection"); that is accurate. No real-device validation is claimed.

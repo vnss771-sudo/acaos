@@ -23,6 +23,8 @@ import { Spinner } from './components/Spinner.js'
 import { useIsTablet } from './hooks/useMediaQuery.js'
 import { PhotoUploadProvider, type PhotoGuards } from './components/photos/PhotoUploadProvider.js'
 import { ForeignPhotosNotice } from './components/photos/ForeignPhotosNotice.js'
+import { PhotosWaitingBanner } from './components/photos/PhotosWaitingBanner.js'
+import { SignedOutPhotosNotice } from './components/photos/SignedOutPhotosNotice.js'
 import { colors } from './styles.js'
 
 // Code-split the route views: each becomes its own chunk fetched on first
@@ -265,6 +267,7 @@ export function App() {
   if (!demo && (!token || !user)) {
     return (
       <>
+        <SignedOutPhotosNotice />
         <AuthScreen
           onToken={(t) => setToken(t)}
           resetToken={resetToken}
@@ -379,6 +382,7 @@ export function App() {
           </div>
         )}
 
+        <PhotosWaitingBanner />
         <ForeignPhotosNotice />
 
         {/* Top bar */}

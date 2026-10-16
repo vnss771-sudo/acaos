@@ -227,6 +227,9 @@ test('airplane mode: the app is closed and reopened with no connection at all; n
   await expect(tp.getByText(/saved on this phone and not yet uploaded/)).toBeVisible()
   await tp.reload()                                   // reopened offline: the session cannot even be refreshed
   await tp.waitForTimeout(1000)
+  // F1: the phone still says photos are waiting: the count when the session survived the reopen, otherwise only the generic sign-in line.
+  await expect(tp.getByTestId('photos-waiting-banner').or(tp.getByTestId('photos-signed-out-notice'))).toBeVisible()
+  expect(await tp.getByTestId('photos-signed-out-notice').textContent().catch(() => '')).not.toMatch(/\d/)
   expect(await files(w)).toHaveLength(0)
   await back()
   // Back online the app starts, sees the saved photo and uploads it without anyone opening the Photos tab.
@@ -234,6 +237,46 @@ test('airplane mode: the app is closed and reopened with no connection at all; n
   await expect.poll(async () => (await files(w, 'AVAILABLE')).length, { timeout: 60_000 }).toBe(1)
   expect(await files(w)).toHaveLength(1)
   expect((await files(w))[0].crewMemberId).toBe(tech.crewId)
+  await phone.close()
+})
+
+test('F1: weak signal reopen shows the count; signed out shows only the generic line; the count returns after sign-in; another account sees neither count', async ({ browser, request }) => {
+  const w = await makeWorld(request)
+  const a = await w.newTech(); const b = await w.newTech()
+  const phone = await browser.newContext(mobile); await signIn(phone, a.email)
+  const page = await phone.newPage(); watch(page)
+  await openTechPhotos(page)
+  const back = await goOffline(phone)
+  await addPhoto(page, await photoBytes(21))
+  await expect(techList(page).locator('li')).toHaveCount(1)
+  await addPhoto(page, await photoBytes(22))
+  await expect(techList(page).locator('li')).toHaveCount(2)
+  await page.reload()                                  // reopened on a weak signal: the job list loads but photos cannot be sent
+  const banner = page.getByTestId('photos-waiting-banner')
+  await expect(banner).toContainText('2 photos saved on this phone are waiting to upload.')
+  await expect(banner).toContainText(/Waiting (for a connection|to upload)/)
+  expect(await banner.locator('button, a').count()).toBe(0)
+
+  // The session ends: the sign-in screen gives a generic line, with no count and no account hint.
+  await phone.clearCookies()
+  await page.goto('/')
+  const generic = page.getByTestId('photos-signed-out-notice')
+  await expect(generic).toHaveText('Photos saved on this phone are waiting to upload. Sign in with the account that took them.')
+  expect(await page.content()).not.toContain(a.email)
+
+  // Another account on the shared phone sees the foreign notice (existing) but not A's count.
+  await signIn(phone, b.email)
+  await page.goto('/ops/technician')
+  await expect(page.getByTestId('photos-waiting-banner')).toHaveCount(0)
+  await expect(page.getByTestId('photos-signed-out-notice')).toHaveCount(0)
+
+  // A signs back in: the count is back and, once online, everything uploads and the banner clears.
+  await signIn(phone, a.email)
+  await page.goto('/ops/technician')
+  await expect(page.getByTestId('photos-waiting-banner')).toContainText('2 photos')
+  await back()
+  await expect.poll(async () => (await files(w, 'AVAILABLE')).length, { timeout: 60_000 }).toBe(2)
+  await expect(page.getByTestId('photos-waiting-banner')).toHaveCount(0, { timeout: 30_000 })
   await phone.close()
 })
 
@@ -283,6 +326,7 @@ test('shared phone: another account never sees, uploads or deletes the first acc
   await page.goto('/ops/technician')
   await expect(page.getByText(/from a different account/)).toBeVisible()
   await expect(page.getByText(/can't be opened, uploaded or deleted from this account/)).toBeVisible()
+  await expect(page.getByTestId('photos-waiting-banner')).toHaveCount(0)   // F1: B's banner never counts A's photo
   await back()
   await page.getByRole('button', { name: /Smith St/ }).click()
   await page.getByRole('tab', { name: /^Photos/ }).click()
