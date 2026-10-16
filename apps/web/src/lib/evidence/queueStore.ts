@@ -74,7 +74,8 @@ export interface QueueStore {
   clearAll(): Promise<void>
 }
 
-export type ScopeSummary = { userId: string; workspaceId: string; count: number; bytes: number }
+/** `attention` = photos in the failed state (they need a person); `active` = being sent right now. Both are subsets of `count`. */
+export type ScopeSummary = { userId: string; workspaceId: string; count: number; bytes: number; attention: number; active: number }
 
 /** Unsent = still holding a photo that has not reached the server as evidence. */
 const UNSENT_STATES: ReadonlySet<QueueState> = new Set(['queued', 'uploading', 'processing', 'failed'])
@@ -83,8 +84,10 @@ export function summarize(items: QueueItem[]): ScopeSummary[] {
   for (const i of items) {
     if (!UNSENT_STATES.has(i.state) || !i.blob) continue
     const k = scopeKey(i)
-    const cur = m.get(k) ?? { userId: i.userId, workspaceId: i.workspaceId, count: 0, bytes: 0 }
+    const cur = m.get(k) ?? { userId: i.userId, workspaceId: i.workspaceId, count: 0, bytes: 0, attention: 0, active: 0 }
     cur.count++; cur.bytes += i.sizeBytes
+    if (i.state === 'failed') cur.attention++
+    else if (i.state === 'uploading' || i.state === 'processing') cur.active++
     m.set(k, cur)
   }
   return [...m.values()]

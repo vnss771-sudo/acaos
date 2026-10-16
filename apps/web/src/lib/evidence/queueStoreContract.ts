@@ -86,6 +86,7 @@ export async function runQueueStoreContract(make: () => Promise<QueueStore>): Pr
   const sum = await s.summary()
   const byKey = (x: Scope) => sum.find((r) => r.userId === x.userId && r.workspaceId === x.workspaceId)
   check(sum.length === 3 && byKey(A1)?.count === 2 && byKey(A1)?.bytes === 250 && byKey(A2)?.count === 1 && byKey(B1)?.count === 1 && byKey(B1)?.bytes === 70, 'summary counts unsent photos per scope (finished items and photo-less records are not counted)')
+  check(byKey(A1)?.attention === 1 && byKey(A1)?.active === 0 && byKey(A2)?.attention === 0 && byKey(B1)?.attention === 0, 'summary separates photos that need attention (failed) from the rest')
   check(!JSON.stringify(sum).includes('blob'), 'summary carries no photo data')
   await s.clearUser('user-a')
   check((await s.list(A1)).length === 0 && (await s.list(A2)).length === 0 && (await s.list(B1)).length === 2, 'clearUser removes that user in every workspace and nobody else')

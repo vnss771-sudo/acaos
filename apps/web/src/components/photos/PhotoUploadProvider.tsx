@@ -31,7 +31,14 @@ export type PhotoUploads = {
   persistence: PersistenceState | 'unknown'
   /** Photos on this phone that belong to a different account (counts only; this account can neither open nor delete them). */
   foreign: { count: number; bytes: number } | null
+  /**
+   * Unsent photos belonging to the signed-in user across ALL their workspaces (counts only). `elsewhere` is the part in
+   * workspaces other than the current one. Never includes another account's photos.
+   */
+  own: OwnPhotos | null
 }
+
+export type OwnPhotos = { count: number; bytes: number; attention: number; active: number; elsewhere: number }
 
 /** Wired into App's sign-out and workspace switcher (App itself renders the provider, so it uses a ref). */
 export type PhotoGuards = {
@@ -76,6 +83,7 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY)
   const [persistence, setPersistence] = useState<PersistenceState | 'unknown'>('unknown')
   const [foreign, setForeign] = useState<{ count: number; bytes: number } | null>(null)
+  const [own, setOwn] = useState<OwnPhotos | null>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
   // Bumped to rebuild the engine after a sign-out was abandoned following a failed local cleanup.
   const [engineGen, setEngineGen] = useState(0)
@@ -118,11 +126,19 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
   const refreshForeign = useCallback(async () => {
     if (!store || !userId) { setForeign(null); return }
     try {
-      const rows = (await store.summary()).filter((r) => r.userId !== userId)
+      const all = await store.summary()
+      const rows = all.filter((r) => r.userId !== userId)
       setForeign(rows.length ? { count: rows.reduce((n, r) => n + r.count, 0), bytes: rows.reduce((n, r) => n + r.bytes, 0) } : null)
-    } catch { setForeign(null) }
-  }, [store, userId])
-  useEffect(() => { void refreshForeign() }, [refreshForeign])
+      const mine = all.filter((r) => r.userId === userId && r.count > 0)
+      const sum = (f: (r: ScopeSummary) => number, list = mine) => list.reduce((n, r) => n + f(r), 0)
+      setOwn(mine.length ? {
+        count: sum((r) => r.count), bytes: sum((r) => r.bytes), attention: sum((r) => r.attention), active: sum((r) => r.active),
+        elsewhere: sum((r) => r.count, mine.filter((r) => r.workspaceId !== workspaceId)),
+      } : null)
+    } catch { setForeign(null); setOwn(null) }
+  }, [store, userId, workspaceId])
+  // Re-read whenever the engine reports a change (a photo added, sent, failed or removed) and on scope changes.
+  useEffect(() => { void refreshForeign() }, [refreshForeign, snapshot])
 
   useEffect(() => { void readPersistence().then(setPersistence) }, [])
 
@@ -197,8 +213,8 @@ export function PhotoUploadProvider({ user, workspaceId, workspaceName, api, ena
   }, [guardsRef, guardLogout, guardWorkspaceSwitch])
 
   const value = useMemo<PhotoUploads | null>(() => (scopeId
-    ? { snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign }
-    : null), [scopeId, snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign])
+    ? { snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign, own }
+    : null), [scopeId, snapshot, activate, addPhotos, retry, cancel, dismiss, persistence, foreign, own])
 
   return (
     <Ctx.Provider value={value}>
