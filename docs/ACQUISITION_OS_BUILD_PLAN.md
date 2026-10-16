@@ -180,7 +180,9 @@ through `docs/GO_LIVE_CHECKLIST.md` top to bottom. In short:
 
 - Any new link built from data must go through `safeExternalUrl` (`apps/web/src/lib/safeUrl.ts`).
 
-- No ingest path sets `Signal.publishedAt` yet.
+- `Signal.publishedAt` is set by the manual signal route, CSV discovery import and inbound mail; Apollo enrichment and payload-seeded discovery signals (HIRING/FUNDING) still don't set it (reviewed 17 Oct 2026; separate fix).
+- PlanningAlerts is implemented but not configured in production (`PLANNINGALERTS_API_KEY` unset); AusTender is the only live discovery source.
+- Every discovery source needs a licence registry entry (`sourceRegistry.ts`, `docs/SOURCE_LICENSING.md`).
 - Competition is inferred from the event kind, not real bidder counts.
 - There are no company-to-company relationships in the graph yet.
 - `syncEvents` rewrites evidence links on every rescore. It's correct but write-heavy;

@@ -16,6 +16,7 @@ import { runInWorkspaceContext } from './tenantContext.js'
 import { matchOpportunity, isRejection, candidateContentHash } from './opportunityMatch.js'
 import { OPPORTUNITY_SOURCES, type OpportunitySource, type SourceFetchContext, type SourceFetchResult } from './opportunitySources.js'
 import { scrubSecrets } from './fetchWithTimeout.js'
+import { SOURCE_LICENCES, parseSourceGateMode, sourceGateConfigProblems, sourceGateDecision, type SourceGateMode, type SourceLicence } from './sourceRegistry.js'
 import type { DiscoveryProfileInput, OpportunityCandidate } from './opportunityTypes.js'
 
 /** Opt-in (default OFF): the sweep calls third-party APIs on a schedule. */
@@ -51,6 +52,8 @@ type SweepDeps = {
   sources?: readonly OpportunitySource[]
   now?: Date
   fetchImpl?: SourceFetchContext['fetchImpl']
+  /** Test seam: the licence registry the gate reads (default SOURCE_LICENCES). */
+  licences?: readonly SourceLicence[]
 }
 
 function profileInput(p: ProfileRow): DiscoveryProfileInput {
@@ -140,6 +143,9 @@ async function runSource(
   now: Date,
   cache: Map<string, Promise<TimedFetch>>,
   fetchImpl: SourceFetchContext['fetchImpl'],
+  gateMode: SourceGateMode = 'off',
+  gateWarned: Set<string> = new Set(),
+  licences: readonly SourceLicence[] = SOURCE_LICENCES,
 ): Promise<SourceRunResult> {
   const { workspaceId } = profile
   const base: SourceRunResult = { workspaceId, source: source.name, status: 'skipped', fetched: 0, matched: 0, created: 0, updated: 0 }
@@ -152,7 +158,17 @@ async function runSource(
     select: { cursor: true },
   })
 
-  const skipReason = !source.isConfigured ? `${source.label} is not configured on this server` : source.unavailableReason(input)
+  let skipReason = !source.isConfigured ? `${source.label} is not configured on this server` : source.unavailableReason(input)
+  // Licence gate: never consulted when off, so an unset SOURCE_LICENCE_GATE keeps today's path exactly.
+  if (!skipReason && gateMode !== 'off') {
+    const decision = sourceGateDecision(source.name, gateMode, licences)
+    if (!decision.allow) {
+      skipReason = decision.reason
+    } else if (decision.warning && !gateWarned.has(source.name)) {
+      gateWarned.add(source.name)
+      console.warn(`[source-licence] ${decision.warning}`)
+    }
+  }
   if (skipReason) {
     await prisma.discoverySourceState.updateMany({
       where: { workspaceId, source: source.name },
@@ -218,6 +234,31 @@ export async function runOpportunitySweep(opts: { workspaceId?: string } & Sweep
     orderBy: { workspaceId: 'asc' },
   })
 
+  // Source licence gate (sourceRegistry.ts). An invalid SOURCE_LICENCE_GATE is a
+  // configuration error: nothing is fetched, and it is recorded on every source so
+  // it shows in Find work, instead of silently running as `off` or `enforce`.
+  const gateRaw = process.env.SOURCE_LICENCE_GATE
+  const licences = opts.licences ?? SOURCE_LICENCES
+  const gateProblems = sourceGateConfigProblems(gateRaw, sources, licences)
+  if (gateProblems.length > 0) {
+    const reason = `Discovery paused: invalid configuration — ${gateProblems.join('; ')}`
+    console.error(`[source-licence] ${reason}`)
+    const runs: SourceRunResult[] = []
+    for (const profile of profiles as ProfileRow[]) {
+      for (const name of [...new Set(profile.sources)]) {
+        await runInWorkspaceContext(profile.workspaceId, () => prisma.discoverySourceState.upsert({
+          where: { workspaceId_source: { workspaceId: profile.workspaceId, source: name } },
+          create: { workspaceId: profile.workspaceId, source: name, lastRunAt: now, lastError: reason, runCount: 1, failureCount: 1 },
+          update: { lastRunAt: now, lastError: reason, runCount: { increment: 1 }, failureCount: { increment: 1 } },
+        })).catch(() => {})
+        runs.push({ workspaceId: profile.workspaceId, source: name, status: 'failed', fetched: 0, matched: 0, created: 0, updated: 0, reason })
+      }
+    }
+    return { workspaces: profiles.length, runs }
+  }
+  const gateMode = parseSourceGateMode(gateRaw)
+  const gateWarned = new Set<string>()
+
   // Shared across workspaces for this sweep: a national feed is fetched once.
   const cache = new Map<string, Promise<TimedFetch>>()
   const runs: SourceRunResult[] = []
@@ -228,7 +269,7 @@ export async function runOpportunitySweep(opts: { workspaceId?: string } & Sweep
         runs.push({ workspaceId: profile.workspaceId, source: name, status: 'skipped', fetched: 0, matched: 0, created: 0, updated: 0, reason: 'Unknown source' })
         continue
       }
-      runs.push(await runInWorkspaceContext(profile.workspaceId, () => runSource(profile, source, now, cache, opts.fetchImpl)))
+      runs.push(await runInWorkspaceContext(profile.workspaceId, () => runSource(profile, source, now, cache, opts.fetchImpl, gateMode, gateWarned, licences)))
     }
   }
   return { workspaces: profiles.length, runs }

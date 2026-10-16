@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+### Source licence registry and gate (17 Oct 2026)
+- Added `sourceRegistry.ts`: one licence entry per work-discovery source (licence, terms, evidence links, review date, commercial-use status, attribution). A unit test fails if a source has no entry, or an entry has no source.
+- AusTender is recorded as **unverified**: Finance publishes the same contract-notice data on data.gov.au under CC BY 3.0 AU, but the OCDS API states no data licence. PlanningAlerts is unverified (commercial plan not held).
+- Added `SOURCE_LICENCE_GATE` (`off` / `observe` / `enforce`), unset by default. When unset or `off` the sweep never consults it, so discovery is unchanged. Invalid values fail `validateConfig` and pause the sweep with the error recorded on every source. `enforce` is refused while it would stop a configured source.
+- Corrected the build plan's `Signal.publishedAt` and PlanningAlerts notes. No schema change, no migration.
+
 ### Frontend error reporting
 - The web app reports uncaught errors, unhandled promise rejections and React render errors to Sentry when `VITE_SENTRY_DSN` is set at build time. It uses no SDK, which matches the API and worker. It reports each distinct error once per page load, and at most 20 per page. Page URLs are sent without query strings or fragments.
 
