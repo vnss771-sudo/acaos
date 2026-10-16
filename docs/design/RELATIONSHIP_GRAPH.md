@@ -677,6 +677,14 @@ knowledge (a head contractor estimator or procurement lead), is not the author o
 off the three policy calls above and each batch of new labels. Until a name is recorded here, the
 baseline is provisional and §11.4 floors must not be fixed.
 
+**Requirement before PR 2 is approved: independent construction-domain validation.** The baseline
+and every threshold stay **provisional and unfixed** until a named person with construction-procurement
+knowledge, who did not write the labels or the baseline, has reviewed the gold set and recorded in this
+document: their name and role, the date, the three policy calls above, and any labels changed. PR 2
+(pure rule library) must not be approved, and the §11.4 floors must not be set, before that entry
+exists. The self-audit test in `tests/eval-relationship-graph.test.ts` is a regression guard, not a
+substitute.
+
 **CI.** Node 26 is the CI toolchain (`NODE_VERSION` in `.github/workflows/ci.yml`; the "Forward-compat
 (Node 26)" job runs install, prisma generate, typecheck, unit tests and build). See the PR for the run
 that covers the final head commit.
@@ -689,7 +697,7 @@ production; `RELATIONSHIP_GRAPH_MODE` stays `off` until step 7 is separately app
 | PR | Scope | Touches DB/prod? | Gate to proceed |
 |---|---|---|---|
 | **1. Eval baseline** (in review) | `eval/datasets/v2` manifest, 42 labelled projects + 20 entity pairs + 10 grounding drafts, offline "no-graph" baseline, recorded `baseline.json` (§11.5) | No | Baseline numbers reviewed; thresholds in §11.4 fixed |
-| **2. Pure rule library** | Evidence-requirement, entity-match, confidence and conflict functions as pure TypeScript with unit tests, run through the PR 1 eval | No | Meets §11.4 invariants offline |
+| **2. Pure rule library** | Evidence-requirement, entity-match, confidence and conflict functions as pure TypeScript with unit tests, run through the PR 1 eval | No | Meets §11.4 invariants offline **and** the independent construction-domain validation in §11.6 is recorded |
 | **3. Schema, flag, rollback** | Migration for §5 (+ prerequisite unique indexes), rollback SQL, `RELATIONSHIP_GRAPH_MODE` parsing with `validateConfig`, `tests-db` isolation/constraint tests. **No writers** | Additive only, empty tables | Integration tests green; rollback rehearsed on a clean DB |
 | **4. Shadow ingestion** | Worker job reading `Opportunity` by cursor; licence-gated; writes edges/evidence in `shadow` only; idempotent | Writes only if mode ≠ `off` | Eval vs gold set on ingested output meets §11.4 |
 | **5. Read service + read-only API** | §10 query as a repository function, route returning §10 statuses; admin/owner only; shadow-only data | No writes | Query integration tests green |
