@@ -87,8 +87,19 @@ test('callback connects the mailbox: provider servers, encrypted token, cursor r
   assert.equal(cfg.lastSyncedUid, 0, 'a different mailbox restarts the cursor')
   assert.equal(cfg.lastUidValidity, null)
   assert.ok((await prisma.workspaceICP.findUnique({ where: { workspaceId: workspace.id } }))?.warmupStartedAt)
-  assert.ok(await prisma.auditEvent.findFirst({ where: { type: 'workspace.email_config.oauth_connect' } }))
+  // The route records the audit row fire-and-forget after responding, so poll (bounded) instead of reading once.
+  assert.ok(await waitForAudit('workspace.email_config.oauth_connect'), 'the connect is audited')
 })
+
+/** Poll for an audit row written after the response; returns it, or null after `timeoutMs`. */
+async function waitForAudit(type: string, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const row = await prisma.auditEvent.findFirst({ where: { type } })
+    if (row || Date.now() >= deadline) return row
+    await new Promise((r) => setTimeout(r, 50))
+  }
+}
 
 test('callback rejects a tampered state, a non-admin, a cancelled sign-in and a failed exchange', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
