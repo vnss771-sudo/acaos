@@ -1,6 +1,6 @@
 # Labelling brief: independent construction-domain review
 
-**Status:** DRAFT for the repository owner. Not committed. **Audience:** the independent reviewer.
+**Status:** Ready to send once an independent reviewer accepts the engagement (none is assigned yet). **Audience:** the independent reviewer.
 **Context:** ACAOS relationship-graph design, `docs/design/RELATIONSHIP_GRAPH.md` §11.6 (merged in PR #414).
 
 ---
@@ -112,7 +112,7 @@ These are open decisions; please give a ruling and one-line reasoning for each.
 
 1. **Specialist principal contractor.** Should a contractor appointed directly for a narrow scope (e.g.
    switchboard upgrade, roof replacement, HVAC chillers) count as the **builder** for that project?
-   (Decision D7; default today is "no, inferred only".)
+   (Decision D7.)
 2. **Same-notice supplier change** (cases `F4`, `F5`). When one notice is re-published with a different
    supplier, is that a correction (latest wins) or a novation/variation (conflict)?
 3. **Implied trades.** Are the `IMPLIED` lists realistic for the project types? Examples: security on a
@@ -176,5 +176,5 @@ thresholds are not fixed by this review**; they follow once a re-recorded baseli
   definitions, so they are not a score you are being asked to improve.
 - Records are synthetic and short. If a real notice would carry information a record lacks, say so; that is
   useful feedback, not a failure.
-- Decisions about who is the label owner (D5), and the final say on disagreements between reviewers,
-  rest with the repository owner.
+- The label owner is the project owner. Label changes are accepted or rejected by the label owner, by
+  argument from your reasons; the final say on disagreements between reviewers rests with them.

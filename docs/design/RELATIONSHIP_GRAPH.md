@@ -78,9 +78,12 @@ P to the electrical node, so that **requirement carries its own evidence**.
 - `CONFIRMED`: the relationship is stated by a **primary record that asserts that exact relationship on
   that exact project** (§6.1), with an entity match strong enough to trust (§6.2). Categorical, not
   "score ≥ N". It stays confirmed only while that evidence stays eligible (§7.3).
-- `INFERRED`: everything else (an award that names a supplier without stating its role, name-only matches,
-  keyword matches, heuristics, website claims, historical patterns). Never presented as an appointment,
-  a requirement or an opportunity.
+- `INFERRED`: everything else that still asserts something (name-only matches, keyword matches,
+  heuristics, website claims, historical patterns). Never presented as an appointment, a requirement or
+  an opportunity.
+- **Uncertain is not inferred.** An award that names a supplier without establishing its role does **not**
+  become an inferred builder: the role stays `ROLE_UNCERTAIN` (§6.1, provisional rules D7). The graph
+  records the supplier as named on the award and says no more.
 
 ## 3. Mapping to existing Prisma models (reuse, don't duplicate)
 
@@ -297,6 +300,10 @@ model GraphEdgeEvidence {
   licenceReviewedAt     String?                  // registry reviewedAt (YYYY-MM-DD)
   attribution           String?                  // text owed wherever shown
   retractedAt           DateTime?                // evidence withdrawn/expired; kept for audit
+  // Re-published notices (§7): each version is its own row, never overwritten. The newer row points at
+  // the one it replaces and records what materially changed.
+  versionOfEvidenceId   String?                  // composite self-FK (workspaceId, versionOfEvidenceId)
+  changeSummary         Json?                    // { supplier?, abn?, value?, scope?, dates?: {from, to} } NULL when identical
   expiresAt             DateTime?                // retention/freshness limit; past it the evidence is ineligible
   edge                  GraphEdge                @relation(fields: [workspaceId, edgeId], references: [workspaceId, id], onDelete: Cascade)
   workspace             Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -357,7 +364,7 @@ relationship".
 
 | Edge | CONFIRMED requires | Anything weaker is |
 |---|---|---|
-| `APPOINTED_BUILDER` | A `PRIMARY_RECORD` whose own text or structured fields **explicitly establish the builder / head-contractor (or, per D7, principal-for-scope) role on this specific project**, recorded as `assertion` ∈ {`HEAD_CONTRACTOR`, `PRINCIPAL_FOR_SCOPE`, `REVIEWER_VERIFIED_ROLE`} with the quoted excerpt; the evidence's `opportunityId` is the same `Opportunity` as the PROJECT node (or a reviewer-verified project link); **and** entity match `ABN_EXACT` or `REVIEWER_VERIFIED` | `INFERRED` |
+| `APPOINTED_BUILDER` | A `PRIMARY_RECORD` whose own text or structured fields **explicitly establish the builder / head-contractor (or an explicitly stated principal-contractor role for a named scope; provisional D7 rules below) on this specific project**, recorded as `assertion` ∈ {`HEAD_CONTRACTOR`, `PRINCIPAL_FOR_SCOPE`, `REVIEWER_VERIFIED_ROLE`} with the quoted excerpt; the evidence's `opportunityId` is the same `Opportunity` as the PROJECT node (or a reviewer-verified project link); **and** entity match `ABN_EXACT` or `REVIEWER_VERIFIED` | `INFERRED` |
 | `DEVELOPED_BY` | A `PRIMARY_RECORD` stating the client/applicant/owner (`STATED_CLIENT`; today: `buyerName` on a contract award; a DA applicant only if the source exposes it) | `INFERRED` |
 | `TRADE_RELEVANCE` | never confirmable. Created from keyword/taxonomy matches (`assertion = KEYWORD_ONLY`) | n/a: always `INFERRED` |
 | `REQUIRES_TRADE` | A `PRIMARY_RECORD` that **explicitly requires** the trade: a structured classification naming it (`STRUCTURED_CLASSIFICATION`, e.g. an electrical UNSPSC class), an explicit scope statement quoted from the record (`EXPLICIT_SCOPE_STATEMENT`), or a reviewer who quotes the scope (`REVIEWER_VERIFIED_SCOPE`). **A keyword hit in a title or description is not enough** | `INFERRED` (and, when only keyword-visible, expressed as `TRADE_RELEVANCE`) |
@@ -374,15 +381,35 @@ rule removes. Role is therefore its own assertion:
 | Evidence asserts | `assertion` | Effect on `APPOINTED_BUILDER` |
 |---|---|---|
 | States the head/principal contractor role for the project (e.g. "head contractor", "construction contract for X", "principal contractor") | `HEAD_CONTRACTOR` | may confirm |
-| States a narrow scope the supplier delivers directly (e.g. switchboard upgrade) | `PRINCIPAL_FOR_SCOPE` | may confirm **only if D7 is approved**; otherwise `INFERRED` |
+| **Explicitly states** a principal-contractor role for a named scope (e.g. "principal contractor for the switchboard works") | `PRINCIPAL_FOR_SCOPE` | may confirm (provisional D7 rule 1) |
 | A reviewer read the record and verified the role, quoting it | `REVIEWER_VERIFIED_ROLE` | may confirm |
-| Names a supplier, role unstated | `UNSPECIFIED_SUPPLIER` | `INFERRED`, capped (§9.2), labelled "named on award, role not stated" |
+| Names a supplier, role unstated or ambiguous, including a specialist trade supplier whose scope is narrow but whose role is not stated | `UNSPECIFIED_SUPPLIER` | **uncertain, not inferred:** reported as `ROLE_UNCERTAIN` ("named on award, role not established"); confidence capped (§9.2), review queue, never outward, never counted as a builder |
 | Design, project management, QS, supply-only | `NON_BUILDER_SERVICE` | **no `APPOINTED_BUILDER` edge at all** |
 | Standing panel / period arrangement | `PANEL_ARRANGEMENT` | **no `APPOINTED_BUILDER` edge at all** |
 
-Expected consequence, stated plainly: most AusTender-derived builder links will be `INFERRED` until a
-reviewer verifies the role or a source states it, so confirmed-builder **recall will be lower** than the
+Expected consequence, stated plainly: most AusTender-derived supplier links will be `ROLE_UNCERTAIN` until
+a reviewer verifies the role or a source states it, so confirmed-builder **recall will be lower** than the
 baseline's 1.00. That is the intended trade: precision and honesty over coverage.
+
+#### Provisional classification rules (Decision D7)
+
+Adopted by the project owner as defaults on 2026-10-17. **They are provisional and not yet validated by an
+independent construction-domain reviewer (§11.6)**; the labelling brief and blind sheet deliberately do not
+show them, so the reviewer's rulings are not anchored. They are used for design and for the eval harness
+only until reviewed.
+
+1. **Specialist subcontractors are not principal builders without explicit supporting evidence.** A narrow
+   scope alone (switchboard, roofing, chillers) does not make a supplier the builder; the record must
+   explicitly state the principal-contractor role (`PRINCIPAL_FOR_SCOPE`), or a reviewer must verify it.
+2. **Documented same-notice supplier corrections are supersessions.** A re-published notice that carries a
+   documented correction or amendment (or a same-ABN name correction) supersedes the earlier version (§7).
+3. **Unresolved contradictory supplier evidence is a conflict.** Different suppliers for the same project
+   that nothing documented resolves (including an undocumented supplier change on one notice) are
+   `CONFLICTING_EVIDENCE` and need a reviewer (§9.4).
+4. **Ambiguous roles remain uncertain rather than being inferred.** `UNSPECIFIED_SUPPLIER` yields
+   `ROLE_UNCERTAIN`, never an inferred builder.
+5. **Re-published notices preserve provenance and material changes.** Every version is retained as its own
+   evidence row; the change between versions is recorded, never overwritten (§7).
 
 Hard rules:
 1. **An award or a development application never, by itself, confirms a builder.** A DA identifies an
@@ -416,8 +443,14 @@ exist, name-only duplicates are tolerated and visible.
   becomes `EXPIRED` / `UNSUPPORTED` and stops appearing as a current answer. History is kept.
 - **Supersession.** Never overwrite. A correction creates a new edge and sets the old edge `SUPERSEDED`
   with `supersededById`. Automatic supersession happens only when the *same* source/`externalId`
-  re-delivers changed content (`Opportunity.contentHash` differs). Anything cross-source is a conflict
-  and needs a reviewer (§9.4).
+  re-delivers changed content (`Opportunity.contentHash` differs) **and** the change is documented: the
+  new version states a correction or amendment, or the supplier is the same entity (same ABN) with a name
+  fix. A changed supplier **without** documentation is *unresolved contradictory evidence*, so it is a
+  conflict (§9.4), not a supersession. Anything cross-source is a conflict and needs a reviewer.
+- **Re-published notices keep provenance (D7 rule 5).** Each version is retained as its own evidence row
+  (new `contentHash`, `versionOfEvidenceId` pointing at the one it replaces, `changeSummary` listing what
+  materially changed: supplier, ABN, value, scope, dates). The earlier excerpt and snapshot are never
+  edited or deleted by a re-publication, and the superseded edge keeps its evidence for audit.
 - **Deduplication.** `dedupeKey` unique per workspace for edges; `(edgeId, contentHash)` unique for
   evidence; partial unique indexes for entities (§5.3). Re-ingesting the same Opportunity is a no-op.
 - **Reviewer audit history.** Every reviewer action appends a `GraphEdgeReview` (who, action, before →
@@ -570,7 +603,7 @@ band the verification state allows.
 | Term | Initial value |
 |---|---|
 | base | PRIMARY_RECORD 85, SECONDARY_REPORT 55, MANUAL_ENTRY 75, WEBSITE_CLAIM 40, HISTORICAL_PATTERN 35 |
-| assertion cap | `UNSPECIFIED_SUPPLIER` capped at 69 (review queue, never outward); `KEYWORD_ONLY` capped at 59 |
+| assertion cap | `UNSPECIFIED_SUPPLIER` capped at 69 (reported as `ROLE_UNCERTAIN`; review queue, never outward); `KEYWORD_ONLY` capped at 59 |
 | entityMatch | ABN_EXACT +10, REVIEWER_VERIFIED +10, NAME_EXACT 0, NAME_FUZZY −20 |
 | corroboration | +5 per additional independent source, max +10 |
 | ageDecay | −1 per 30 days beyond 90 days since `observedAt`, max −20 |
@@ -689,6 +722,13 @@ builder AS (
               AND b."retractedAt" IS NULL
               AND (b."expiresAt" IS NULL OR b."expiresAt" > now())
               AND b."sourceKey" = ANY ($6)))                         AS any_confirmed,
+         bool_or(EXISTS (                                            -- explicit role asserted (not merely named)
+            SELECT 1 FROM "GraphEdgeEvidence" ex
+            WHERE ex."workspaceId" = a."workspaceId" AND ex."edgeId" = a."id"
+              AND ex."assertion" IN ('HEAD_CONTRACTOR', 'PRINCIPAL_FOR_SCOPE', 'REVIEWER_VERIFIED_ROLE')
+              AND ex."retractedAt" IS NULL
+              AND (ex."expiresAt" IS NULL OR ex."expiresAt" > now())
+              AND ex."sourceKey" = ANY ($6)))                        AS any_explicit_role,
          jsonb_agg(jsonb_build_object(
            'builderEntityId', b."id",
            'builderName',     b."displayName",
@@ -731,7 +771,8 @@ SELECT q.project_name,
          WHEN b.project_id IS NULL                              THEN 'UNKNOWN_BUILDER'
          WHEN b.distinct_builders > 1 OR b.flagged_conflict     THEN 'CONFLICTING_EVIDENCE'
          WHEN b.any_confirmed                                   THEN 'CONFIRMED_BUILDER'
-         ELSE                                                        'INFERRED_BUILDER'
+         WHEN b.any_explicit_role                               THEN 'INFERRED_BUILDER'   -- role explicit, another requirement unmet (e.g. name-only match)
+         ELSE                                                        'ROLE_UNCERTAIN'      -- supplier named, role not established
        END                                         AS builder_status,
        CASE WHEN b.project_id IS NULL THEN '[]'::jsonb ELSE b.candidates END AS candidates
 FROM trade_link q
@@ -742,9 +783,10 @@ ORDER BY (b.project_id IS NULL), q.project_name;
 Behaviour, all asserted by integration tests (§13):
 - **Absent evidence → explicit `UNKNOWN_BUILDER`** with empty candidates. No name or id is fabricated,
   and the row still appears (the `LEFT JOIN` keeps the project that needs the trade).
-- **An award that names a supplier without stating its role is `INFERRED_BUILDER`**, never
-  `CONFIRMED_BUILDER`; design, PM, QS, supply-only and panel awards produce no appointment edge, so they
-  yield `UNKNOWN_BUILDER`.
+- **An award that names a supplier without establishing its role is `ROLE_UNCERTAIN`**: not a confirmed
+  and not an inferred builder (D7 rule 4). `INFERRED_BUILDER` is reserved for an explicit role whose
+  identity match is still weak (e.g. name-only). Design, PM, QS, supply-only and panel awards produce no
+  appointment edge, so they yield `UNKNOWN_BUILDER`.
 - **Trade tiers are separate:** `TRADE_RELEVANCE_ONLY` for keyword matches, `REQUIRES_TRADE` only with an
   explicit requirement, `PACKAGE_AVAILABLE` only with a confirmed open procurement route. A project with
   only a keyword match is never reported as requiring or offering the trade.
@@ -892,12 +934,36 @@ Roles, implied trades and unknown cases still need a second person. Open policy 
 3. Are the `IMPLIED` lists reasonable to a working estimator (e.g. security on a court-house extension,
    roofing on a school hall)?
 
-**Labelling owner (Decision D5): not yet assigned.** The only human committer in this repository is
-`vnss771-sudo` (51 of 157 commits; the rest are Claude sessions) and there is no `CODEOWNERS` file, so
-the code gives no basis to name anyone. Requirements for the owner: has construction-procurement
-knowledge (a head contractor estimator or procurement lead), is not the author of the baseline, and signs
-off the three policy calls above and each batch of new labels. Until a name is recorded here, the
-baseline is provisional and §11.4 floors must not be fixed.
+**Labelling owner (Decision D5): the project owner, provisionally (adopted 2026-10-17).** The label owner
+is accountable for the gold set: accepts or rejects label changes (by argument, with the reviewer's
+reasons), signs each batch, and holds the private unblinding key. This is **not** the independent
+validation: the project owner is not asserted to be a construction-procurement specialist and is not
+independent of the project.
+
+**Independent reviewer: unassigned.** No external construction procurement or estimating specialist has
+accepted the engagement. **No reviewer identity is recorded here and no sign-off exists.** The requirement
+is: a qualified external specialist who did not write the labels or baseline, has no stake in ACAOS
+results, and returns the items below.
+
+**Distribution rule.** The reviewer receives only `labelling-review/blind-review-sheet.xlsx` and
+`LABELLING_BRIEF.md`. `labelling-review/blind-key.csv` stays private to the label owner. The workbook was
+opened and round-tripped in LibreOffice on 2026-10-17 (all 8 sheets, every cell value and all 10 dropdown
+ranges preserved; renders to PDF). It has not been opened in Microsoft Excel, and the frozen header row was
+not confirmable in headless LibreOffice (cosmetic).
+
+**What the reviewer must return before sign-off is recorded:** (1) the completed blind sheet, (2) rulings
+on the five policy calls, (3) disputed labels with reasons, (4) a signed review record (name, role,
+independence declaration, counts, rulings).
+
+**After sign-off, in order:** record the findings in this section; apply only justified label corrections;
+expand the gold set toward 100; re-record the baseline under the revised definitions; **only then**
+consider threshold tuning. PR 2 stays blocked until the sign-off is recorded.
+
+**Labels the provisional D7 rules may change (not changed now; labels move only after review):**
+specialist-scope suppliers labelled `KNOWN` builder (A5, A6, B3, B4, I1, I2, I4, I6); `F5`, where the same
+notice replaces the supplier with a different entity and no documentation, which rule 3 treats as a
+conflict, not a supersession; and every `KNOWN` builder whose record does not itself state the role, which
+would become `ROLE_UNCERTAIN` under rule 4. `F4` (same ABN, name corrected) remains a supersession.
 
 **Requirement before PR 2 is approved: independent construction-domain validation.** Its scope now
 also covers the revision-3 definitions: the reviewer labels, per project, whether the record explicitly
@@ -978,8 +1044,10 @@ design changes any production setting.
 - **Constraints:** endpoint-kind CHECK per edge type; `CONFIRMED` without `basisEvidenceId` rejected;
   `basisEvidenceId` pointing at another edge's evidence rejected; confidence bounds and band-vs-verification
   CHECKs; `ASSOCIATED_WITH` cannot be `CONFIRMED`; exactly-one evidence reference.
-- **Dedup/supersession:** re-ingest is a no-op; changed `contentHash` supersedes; cross-source disagreement
-  yields `CONFLICTED`, not an overwrite.
+- **Dedup/supersession:** re-ingest is a no-op; a documented same-notice correction supersedes; an
+  undocumented supplier change on one notice yields `CONFLICTED`; cross-source disagreement yields
+  `CONFLICTED`, not an overwrite; every re-published version keeps its own evidence row with
+  `versionOfEvidenceId` and `changeSummary`, and the earlier excerpt is unchanged (D7 rules 2, 3, 5).
 - **Review audit:** every action appends a review row and an `AuditEvent`; `UPDATE` on a review row fails.
 - **Lifecycle:** workspace delete cascades cleanly in one statement (the `NoAction` choice); deleting a
   referenced `Opportunity` is blocked until evidence is retracted; retention expiry retracts evidence and
@@ -989,10 +1057,11 @@ design changes any production setting.
 - **Licensing:** `prohibited` never ingested at any gate mode; `unverified` per `off`/`observe`/`enforce`;
   an unregistered source is rejected; a registry downgrade removes the evidence from §10 results without
   data changes.
-- **Query (§10):** returns `UNKNOWN_BUILDER`, `CONFLICTING_EVIDENCE`, `INFERRED_BUILDER`,
+- **Query (§10):** returns `UNKNOWN_BUILDER`, `CONFLICTING_EVIDENCE`, `ROLE_UNCERTAIN`, `INFERRED_BUILDER`,
   `CONFIRMED_BUILDER` on seeded fixtures; keeps projects with no builder edge; ignores `ASSOCIATED_WITH`.
-- **Builder identity (§6.1):** an award naming a supplier with no role statement yields an `INFERRED`
-  edge only; design, PM, QS, supply-only and panel awards yield no `APPOINTED_BUILDER` edge; a `CONFIRMED`
+- **Builder identity (§6.1):** an award naming a supplier with no role statement is reported
+  `ROLE_UNCERTAIN`, never an inferred or confirmed builder; a specialist with a narrow scope and no explicit
+  role statement is `ROLE_UNCERTAIN` (D7 rule 1); design, PM, QS, supply-only and panel awards yield no `APPOINTED_BUILDER` edge; a `CONFIRMED`
   promotion with `UNSPECIFIED_SUPPLIER` or a name-only match is rejected; evidence from a different
   `Opportunity` than the project's is rejected.
 - **Trade tiers:** a keyword-only match creates `TRADE_RELEVANCE` and can never be `CONFIRMED`; a
@@ -1034,6 +1103,15 @@ design changes any production setting.
 | 3 | Transactional creation: inferred edge, attach evidence, validate, promote; foreign keys alone cannot establish eligibility | §5.3, §7.2, §13.4 |
 | 4 | A `CONFIRMED` edge must retain currently eligible, unretracted, licensed primary evidence for that exact relationship, or stop being confirmed | §7.3, §10, §13.4 |
 
+### 14.2 Provisional classification rules (D7)
+
+| Rule | Where |
+|---|---|
+| Specialists are not principal builders without explicit evidence | §6.1 (D7 rule 1), §10 |
+| Documented same-notice corrections are supersessions; undocumented supplier changes are conflicts | §7, §9.4, §13.4 |
+| Ambiguous roles stay uncertain (`ROLE_UNCERTAIN`), never inferred | §2.3, §6.1, §10 |
+| Re-published notices keep every version and the change between them | §5.3, §7 |
+
 ## 15. Decisions needing your approval
 
 | # | Decision | Recommendation |
@@ -1042,9 +1120,9 @@ design changes any production setting.
 | D2 | v1 workspace-scoped only, with no shared public tier | **Yes**; revisit after licences are confirmed |
 | D3 | Index build strategy for the five existing tables | Decide in PR 3 from measured row counts |
 | D4 | Which role may promote/resolve edges | **Verified in §7.1:** new `graph:review` capability at the admin tier (admin and owner), mirroring `campaign:approve_draft`; added in PR 6 with matrix and test rows |
-| D5 | Gold-set labelling: who labels, and the ≥ 100 project size | **Unassigned.** Needs a named construction-procurement owner who is not the baseline author (§11.6); blocks fixing §11.4 floors |
+| D5 | Gold-set labelling: who labels, and the ≥ 100 project size | **Label owner: the project owner, provisionally.** Independent construction-domain reviewer **unassigned**, no sign-off recorded (§11.6); blocks PR 2 and fixing §11.4 floors |
 | D6 | Integer 0–100 confidence (replacing the first draft's decimal) | **Yes**, consistent with `CommercialEvent.confidence` |
-| D7 | May a specialist contractor appointed directly for a narrow scope (`PRINCIPAL_FOR_SCOPE`) be confirmed as `APPOINTED_BUILDER`? | **Undecided; default no** (stays `INFERRED`). Part of the independent review in §11.6 |
+| D7 | Classification rules for specialists, supplier corrections, conflicts, ambiguous roles and re-published notices | **Provisional rules adopted by the project owner (§6.1):** specialists are not principal builders without explicit evidence; documented same-notice corrections supersede; unresolved contradictory supplier evidence is a conflict; ambiguous roles stay uncertain; re-published notices preserve provenance and material changes. Pending the independent review in §11.6 |
 
 ## 16. Known limitations
 
