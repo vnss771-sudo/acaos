@@ -160,15 +160,7 @@ jobs:
         run: npm run typecheck
 
       - name: Test (with coverage gate)
-        # TEMPORARY DIAGNOSTIC (PR #413) — revert before review: surfaces failing lines as annotations.
-        run: |
-          set -o pipefail
-          npm run test:coverage 2>&1 | tee /tmp/unit.log || {
-            echo "::error::SUMMARY $(grep -E 'does not meet threshold|^ℹ (fail|pass|tests) ' /tmp/unit.log | tr '\n' ' ' | cut -c1-1500)"
-            echo "::error::FAILED $(grep -E '^\s*✖' /tmp/unit.log | sort -u | tr '\n' ' ' | cut -c1-3000)"
-            echo "::error::DETAIL $(grep -E -A14 '^\s*✖' /tmp/unit.log | grep -vE '^\s*$' | tail -60 | tr '\n' ' ' | cut -c1-6000)"
-            exit 1
-          }
+        run: npm run test:coverage
 
       - name: Frontend tests (Vitest)
         run: npm run test:web
