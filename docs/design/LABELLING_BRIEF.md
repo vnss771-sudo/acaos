@@ -48,7 +48,7 @@ Nothing is confidential and you need not protect it. Files, all under `eval/data
 | `drafts.ts` | Short outreach drafts checked against evidence | 10 |
 | `types.ts` | The label definitions (summarised in §5) | n/a |
 
-The author can supply a **blind review sheet** (records only, no truth fields) as a spreadsheet so you
+A **blind review sheet** (`labelling-review/blind-review-sheet.xlsx`: records only, no truth fields) is provided so you
 never need to read code.
 
 ## 5. Definitions you are asked to test
