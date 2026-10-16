@@ -1,12 +1,18 @@
 # Android real-device test: technician photo evidence
 
-Status: **checklist only; not yet run.** Run it against a **staging** deployment with disposable buckets, never production. The pass/fail record (section 4) is kept in the repo (`docs/runbooks/records/`) and is one of the release gates.
+Status: **checklist only; NOT YET RUN. No device validation has been done or claimed.** Run it against a **staging** deployment with disposable buckets, never production. The pass/fail record (section 4) is kept in the repo (`docs/runbooks/records/`) and is one of the release gates.
 
-## 0. Setup
+## 0. Who and what
 
-* Two phones: a **low-end** (2 to 3 GB RAM, Android 10 or 11 era) and a **recent** one. Chrome current stable on both. Repeat the key flows once in an **installed PWA / WebView** context if the app is distributed that way.
+* **Tester**: the owner or one trusted tester with their own Android phones. No developer tooling is needed on the phones. A second person (or the owner at a desk) plays the manager.
+* **Two physical phones, as different as possible**: one newer (recent flagship or mid-range, current Android) and one older or lower-powered (about 2 to 3 GB RAM, an older Android release). Record model, Android version and Chrome version for each. Emulators and desktop device-emulation do **not** count.
+* **Validation status**: until a completed record from section 4 is committed, the technician experience is **not device-validated** and nothing may say it is. The status line at the top of this file is updated only by committing a record.
+
+## 0.1 Setup
+
+* Run it against a **staging** deployment with disposable buckets (see `docs/plans/C5E_STAGING_VALIDATION_PROPOSAL.md`; a deployed staging app needs its own approval), never production. A local stack is not reachable from phones over mobile data, so rows 4 to 9 need the deployed staging app.
 * A staging workspace with: one manager (owner), two technicians (A, B) linked to crew records, one site with **two Jobs** (J1 assigned to A and B, J2 assigned to nobody), `EVIDENCE_UPLOADS_ENABLED=true` on the staging API and worker only.
-* A desktop browser logged in as the manager on Delivery, with J1's Photos gallery available.
+* A desktop browser logged in as the manager on Delivery, with J1's Photos gallery available (use **Refresh photos**).
 * Test photos on each phone: normal 12 MP; a **48 to 108 MP** shot; a portrait (rotated) shot; a screenshot (PNG); a photo with location tagging on; a HEIC/HEIF file if the phone can produce one.
 * Record per run: build commit, phone model/OS/Chrome version, network type, tester, UTC time.
 * Never paste signed URLs, tokens or screenshots showing them into tickets.

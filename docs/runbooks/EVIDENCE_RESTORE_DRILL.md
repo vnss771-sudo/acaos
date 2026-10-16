@@ -19,7 +19,7 @@ Status: **procedure only.** Nothing here has been run against real buckets. No p
 | Backup worker | read | write + read (no delete) |
 | Restore operator (short-lived, per drill) | write | read |
 
-The application code never calls delete on the backup store; also scope the R2 token without delete so this is enforced by the provider, not just by code. Use separate buckets per environment. Do not paste credentials, keys or presigned URLs into tickets or logs.
+The application code never calls delete on the backup store. **Correction (2026-10-16): R2's documented API-token levels are Admin Read & Write, Admin Read, Object Read & Write and Object Read; none is "write but not delete", so the provider cannot enforce this for the backup writer.** Scope the writer token to the one bucket (Object Read & Write), use a separate Object Read token for the restore operator, keep the credential off every service that does not need it, and test what the token can do (see `docs/plans/C5E_STAGING_VALIDATION_PROPOSAL.md`). Treat deletion by a compromised writer as a residual risk for the C4b provider-isolation decision. Use separate buckets per environment. Do not paste credentials, keys or presigned URLs into tickets or logs.
 
 ## Restore tool
 
