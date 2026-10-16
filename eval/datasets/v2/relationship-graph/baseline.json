@@ -1,0 +1,183 @@
+{
+  "datasetVersion": "v2",
+  "labelled": {
+    "projects": 42,
+    "entityPairs": 20,
+    "groundingDrafts": 10,
+    "sourceRecords": 51
+  },
+  "builderIdentity": {
+    "knownCases": 24,
+    "assertions": 33,
+    "correct": 24,
+    "wrong": 0,
+    "missed": 0,
+    "precision": 0.727,
+    "recall": 1,
+    "falseConfirmationRate": 0.273,
+    "nameOnlyAssertionRate": 0.152,
+    "wrongBuilderCases": [],
+    "missedCases": []
+  },
+  "unknownStates": {
+    "unknownCases": 15,
+    "correctlyUnknown": 9,
+    "fabricatedBuilder": 6,
+    "unknownCorrectness": 0.6,
+    "fabricatedCases": [
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "H3",
+      "I7"
+    ]
+  },
+  "conflicts": {
+    "conflictCases": 3,
+    "detected": 0,
+    "silentlyResolvedToOneBuilder": 3,
+    "detectionRate": 0,
+    "cases": [
+      "F1",
+      "F2",
+      "F3"
+    ]
+  },
+  "supersession": {
+    "cases": 2,
+    "correct": 2
+  },
+  "projectRoles": {
+    "cases": 42,
+    "developerCorrect": 42,
+    "developerAccuracy": 1,
+    "builderDeveloperSwaps": 1,
+    "swapCases": [
+      "H3"
+    ],
+    "developerWrongCases": []
+  },
+  "tradeRequirements": {
+    "stated": {
+      "pairs": 28,
+      "predictedRequired": 28,
+      "recall": 1,
+      "missed": []
+    },
+    "absent": {
+      "pairs": 13,
+      "predictedRequired": 0,
+      "falsePositiveRate": 0,
+      "falsePositives": []
+    },
+    "implied": {
+      "pairs": 39,
+      "surfacedAsRequired": 31,
+      "conflationRate": 0.795
+    }
+  },
+  "entityResolution": {
+    "pairs": 20,
+    "accuracy": 0.5,
+    "falseMerges": 3,
+    "falseSplits": 7,
+    "byKind": {
+      "abbreviation": {
+        "n": 3,
+        "correct": 0,
+        "accuracy": 0
+      },
+      "abn_trading_name": {
+        "n": 3,
+        "correct": 2,
+        "accuracy": 0.667
+      },
+      "bracket_variant": {
+        "n": 3,
+        "correct": 0,
+        "accuracy": 0
+      },
+      "distinct_similar": {
+        "n": 3,
+        "correct": 3,
+        "accuracy": 1
+      },
+      "name_variant": {
+        "n": 5,
+        "correct": 5,
+        "accuracy": 1
+      },
+      "same_name_different_abn": {
+        "n": 3,
+        "correct": 0,
+        "accuracy": 0
+      }
+    },
+    "wrongPairs": [
+      "P06",
+      "P07",
+      "P08",
+      "P09",
+      "P10",
+      "P11",
+      "P14",
+      "P18",
+      "P19",
+      "P20"
+    ]
+  },
+  "grounding": {
+    "unsupportedDrafts": 6,
+    "flagged": 3,
+    "detectionRate": 0.5,
+    "byKind": {
+      "misattributed_party": {
+        "n": 2,
+        "flagged": 0,
+        "detectionRate": 0
+      },
+      "number": {
+        "n": 1,
+        "flagged": 1,
+        "detectionRate": 1
+      },
+      "qualitative": {
+        "n": 1,
+        "flagged": 1,
+        "detectionRate": 1
+      },
+      "recency": {
+        "n": 1,
+        "flagged": 1,
+        "detectionRate": 1
+      },
+      "unstated_requirement": {
+        "n": 1,
+        "flagged": 0,
+        "detectionRate": 0
+      }
+    },
+    "supportedDrafts": 4,
+    "wronglyBlocked": 0,
+    "falseBlockRate": 0,
+    "missedDrafts": [
+      "G04",
+      "G06",
+      "G09"
+    ],
+    "wronglyBlockedDrafts": []
+  },
+  "licence": {
+    "recordsFromNonConfirmedOrUnregistered": 51,
+    "recordShare": 1,
+    "builderAssertionsSolelyOnNonConfirmed": 33,
+    "assertionShare": 1
+  },
+  "notMeasurableAtBaseline": [
+    "confidence calibration (no confidence on builder claims)",
+    "tenant leakage (no graph tables)",
+    "review/audit completeness (no review workflow)",
+    "multi-evidence corroboration (one record per claim)"
+  ]
+}
