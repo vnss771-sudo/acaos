@@ -7,7 +7,7 @@ import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
 import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, buildEstimateCheck, QUOTE_STATUSES, type EstimateCheck, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
-import { computeEstimate, crewRateSummary } from '@acaos/backend-core/lib/quoteEstimate.js'
+import { computeEstimate, crewRateSummary, ESTIMATE_PCT_LIMITS } from '@acaos/backend-core/lib/quoteEstimate.js'
 import { FIND_WORK_KIND_LABEL, loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
 import { resolveEvidenceStorage } from '@acaos/backend-core/lib/evidenceStorageConfig.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
@@ -34,11 +34,11 @@ const idParamsSchema = z.object({ id: idField })
 const estimateInputsSchema = z.object({
   labourHours: z.number().min(0).max(1_000_000).nullable(),
   labourRate: z.number().min(0).max(10_000).nullable(),
-  onCostPct: z.number().min(0).max(200).nullable(),
+  onCostPct: z.number().min(0).max(ESTIMATE_PCT_LIMITS.onCostPct).nullable(),
   materialsCents: centsField.nullable(),
   subcontractCents: centsField.nullable(),
-  overheadPct: z.number().min(0).max(200).nullable(),
-  targetMarginPct: z.number().min(0).max(95).nullable(),
+  overheadPct: z.number().min(0).max(ESTIMATE_PCT_LIMITS.overheadPct).nullable(),
+  targetMarginPct: z.number().min(0).max(ESTIMATE_PCT_LIMITS.targetMarginPct).nullable(),
 }).strict()
 type _EstimateInputsConforms = Assert<Extends<z.infer<typeof estimateInputsSchema>, EstimateInputs>>
 

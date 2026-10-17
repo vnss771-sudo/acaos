@@ -361,6 +361,14 @@ export interface EstimateInputs {
   targetMarginPct: number | null
 }
 
+// GET/PUT /api/workspaces/:id/quoting-defaults — admin-only. null = not set (the
+// estimate field starts blank), never 0; copied into a new estimate when it opens.
+export interface QuotingDefaults {
+  defaultOnCostPct: number | null
+  defaultOverheadPct: number | null
+  defaultTargetMarginPct: number | null
+}
+
 // POST /api/delivery/estimate — read-only preview; target optional (enables the track record).
 export interface PreviewEstimateRequest {
   workspaceId: string
@@ -931,6 +939,8 @@ export interface RouteContracts {
   'POST /api/opportunities/run': { body: { workspaceId: string }; response: { queued: boolean } }
   'POST /api/delivery/quotes': { body: CreateQuoteRequest; response: { quote: unknown } }
   'POST /api/delivery/estimate': { body: PreviewEstimateRequest; response: { estimate: unknown; crewRates: unknown; check: unknown } }
+  'GET /api/workspaces/:id/quoting-defaults': { params: { id: string }; response: { defaults: QuotingDefaults } }
+  'PUT /api/workspaces/:id/quoting-defaults': { params: { id: string }; body: QuotingDefaults; response: { defaults: QuotingDefaults } }
   'PATCH /api/delivery/quotes/:id/status': { params: { id: string }; body: UpdateQuoteStatusRequest; response: { quote: unknown } }
   'POST /api/delivery/quotes/:id/job': { params: { id: string }; body: CreateJobFromQuoteRequest; response: { job: unknown } }
   'POST /api/delivery/jobs/:id/closeout': { params: { id: string }; body: CloseoutJobRequest; response: { job: unknown } }

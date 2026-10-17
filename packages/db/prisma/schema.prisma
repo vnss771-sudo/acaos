@@ -182,6 +182,13 @@ model Workspace {
   // or an old version means human approval, whatever ICP.approvalMode says.
   autonomyOptInAt         DateTime?
   autonomyConsentVersion  String?
+  // Quoting defaults (lib/quoteEstimate.ts): copied into a new estimate when the
+  // builder opens, editable per quote. Null = not set (the field starts blank),
+  // never 0; an explicit 0 is a real 0. Saved estimates keep their own inputs, so
+  // changing these never alters a saved quote. Ranges are DB-checked.
+  defaultOnCostPct        Float?
+  defaultOverheadPct      Float?
+  defaultTargetMarginPct  Float?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   memberships             Membership[]

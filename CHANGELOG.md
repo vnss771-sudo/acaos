@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+### Quoting defaults (17 Oct 2026)
+- **Settings → Quoting defaults** (admins): an optional labour on-cost %, overhead % and target gross margin %. Blank means no default; 0 is a real 0.
+- **Build estimate** starts from them, and each quote can change them. They are copied in once, when the builder opens, so a change made by an admin mid-quote never moves an estimate in progress.
+- Saved quotes keep the figures they were saved with: changing a default never alters them.
+- New `GET`/`PUT /api/workspaces/:id/quoting-defaults` (admin-only, audited). Three nullable `Workspace` columns with range CHECKs (migration `20261019000000_workspace_quoting_defaults`, additive; existing workspaces start with no defaults).
+
 ### Quote estimate builder (17 Oct 2026)
 - **Record quote → Build estimate** works out what a price leaves after estimated labour (hours × rate × on-costs), materials and subcontractors. It shows gross margin, margin after overheads, the break-even price, and the price a target gross margin needs.
 - With comparable closed jobs, it also shows the margin if labour runs like those jobs did ("if labour runs like your recent comparable jobs (444 h): gross margin 22.3%").

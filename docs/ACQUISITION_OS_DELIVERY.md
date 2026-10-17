@@ -142,6 +142,22 @@ Migration `20261018000000_quote_estimate` adds the nullable `Quote.estimate` JSO
 rollback `ALTER TABLE "Quote" DROP COLUMN "estimate"`). Storing the breakdown is what will later let the
 estimate check compare estimated materials and subcontractor costs with actuals, not just hours.
 
+**Quoting defaults.** Admins can set an optional on-cost %, overhead % and target gross margin %
+in **Settings → Quoting defaults** (`GET`/`PUT /api/workspaces/:id/quoting-defaults`, `ops:manage`,
+audited as `workspace.quoting_defaults`).
+- Each is nullable on `Workspace` (`default*Pct`). `null` means not set, so the field starts blank;
+  `0` is a real 0.
+- Ranges come from `ESTIMATE_PCT_LIMITS` in `lib/quoteEstimate.ts` (on-costs and overheads 0–200,
+  target 0–95). They are enforced by the route and by database CHECKs.
+- The builder copies the defaults into blank, untouched fields **once, when it opens**. This is a
+  snapshot, not a link, so an admin changing them mid-quote never moves an estimate in progress.
+- Every value stays editable for that quote.
+- The server never applies defaults by itself: an estimate is computed only from the inputs sent.
+- Saved estimates keep their own inputs and results, so changing a default never alters a saved
+  quote.
+- Migration `20261019000000_workspace_quoting_defaults` is additive; existing workspaces start
+  with NULL.
+
 **Not yet:** grouping by region (only Work-discovery opportunities carry one), and a
 quote form on commercial opportunities in the web app (the API supports it; it
 belongs with the operator console).

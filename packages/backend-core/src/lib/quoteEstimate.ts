@@ -15,6 +15,11 @@
 
 export const QUOTE_ESTIMATE_VERSION = 1
 
+// Percentage limits shared by the estimate inputs, the workspace quoting defaults
+// and the database CHECKs on Workspace.default*Pct. On-costs and overheads may
+// exceed 100 % of their base; a gross margin of 100 % or more is impossible.
+export const ESTIMATE_PCT_LIMITS = { onCostPct: 200, overheadPct: 200, targetMarginPct: 95 } as const
+
 export interface EstimateInputs {
   labourHours: number | null
   // Base pay, dollars per hour.
