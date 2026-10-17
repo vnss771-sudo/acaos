@@ -6,14 +6,15 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
-import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, buildEstimateCheck, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
+import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, buildEstimateCheck, QUOTE_STATUSES, type EstimateCheck, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
+import { computeEstimate, crewRateSummary } from '@acaos/backend-core/lib/quoteEstimate.js'
 import { FIND_WORK_KIND_LABEL, loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
 import { resolveEvidenceStorage } from '@acaos/backend-core/lib/evidenceStorageConfig.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
 import { parseQuery, parseBody, parseParams, workspaceIdField, idField } from '../lib/validate.js'
 import type {
   Assert, Extends, CreateQuoteRequest, UpdateQuoteStatusRequest, CreateJobFromQuoteRequest, CloseoutJobRequest, ReopenJobRequest,
-  CreateVariationRequest, UpdateVariationStatusRequest,
+  CreateVariationRequest, UpdateVariationStatusRequest, EstimateInputs, PreviewEstimateRequest,
 } from '@acaos/shared'
 
 // Commercial capture (phase 15A, docs/ACQUISITION_OS_DELIVERY.md): quotes on
@@ -27,6 +28,19 @@ deliveryRouter.use(requireVerifiedForMutation)
 const MAX_CENTS = 2_000_000_000 // fits Postgres INTEGER with headroom ($20M)
 const centsField = z.number().int().min(0).max(MAX_CENTS)
 const idParamsSchema = z.object({ id: idField })
+
+// Estimate builder inputs (lib/quoteEstimate.ts). null = not entered, never zero.
+// Strict: a client cannot send computed results, only inputs.
+const estimateInputsSchema = z.object({
+  labourHours: z.number().min(0).max(1_000_000).nullable(),
+  labourRate: z.number().min(0).max(10_000).nullable(),
+  onCostPct: z.number().min(0).max(200).nullable(),
+  materialsCents: centsField.nullable(),
+  subcontractCents: centsField.nullable(),
+  overheadPct: z.number().min(0).max(200).nullable(),
+  targetMarginPct: z.number().min(0).max(95).nullable(),
+}).strict()
+type _EstimateInputsConforms = Assert<Extends<z.infer<typeof estimateInputsSchema>, EstimateInputs>>
 
 // ── Quotes ──────────────────────────────────────────────────────────────────
 
@@ -67,6 +81,7 @@ const createQuoteSchema = z.object({
   estimatedHours: z.number().min(0).max(1_000_000).optional(),
   notes: z.string().trim().max(2000).optional(),
   submit: z.boolean().optional(),
+  estimate: estimateInputsSchema.optional(),
 }).refine(b => (b.opportunityId == null) !== (b.commercialOpportunityId == null), {
   message: 'Give exactly one of opportunityId or commercialOpportunityId', path: ['opportunityId'],
 })
@@ -86,6 +101,16 @@ deliveryRouter.post(
     if (!target) throw new ApiError(404, 'Opportunity not found')
 
     const now = new Date()
+    // The estimate is recomputed here from the inputs, never taken from the client,
+    // and stored as a snapshot. It is advisory: the quote's amount and hours are
+    // exactly what the user entered.
+    let estimate: Prisma.InputJsonValue | undefined
+    let estimateResult: ReturnType<typeof computeEstimate> | null = null
+    if (b.estimate) {
+      const check = await loadEstimateCheck(b.workspaceId, b)
+      estimateResult = computeEstimate(b.estimate, { priceCents: b.amountCents, hoursFactor: check.hoursFactor })
+      estimate = { version: estimateResult.version, inputs: { ...b.estimate }, result: estimateResult, hoursFactor: check.hoursFactor, computedAt: now.toISOString() } as unknown as Prisma.InputJsonValue
+    }
     const quote = await prisma.quote.create({
       data: {
         workspaceId: b.workspaceId,
@@ -97,11 +122,12 @@ deliveryRouter.post(
         status: b.submit ? 'SUBMITTED' : 'DRAFT',
         submittedAt: b.submit ? now : null,
         createdByUserId: user.id,
+        ...(estimate ? { estimate } : {}),
       },
     })
     await recordAudit({
       workspaceId: b.workspaceId, actorUserId: user.id, type: 'quote.created', entityType: 'quote', entityId: quote.id,
-      metadata: { amountCents: b.amountCents, estimatedHours: b.estimatedHours ?? null, status: quote.status, opportunityId: b.opportunityId ?? null, commercialOpportunityId: b.commercialOpportunityId ?? null },
+      metadata: { amountCents: b.amountCents, estimatedHours: b.estimatedHours ?? null, status: quote.status, opportunityId: b.opportunityId ?? null, commercialOpportunityId: b.commercialOpportunityId ?? null, estimate: estimateResult ? { grossMarginPct: estimateResult.grossMarginPct, directCostCents: estimateResult.directCostCents } : null },
     })
     res.status(201).json({ quote })
   })
@@ -473,6 +499,28 @@ const estimateCheckSchema = z.object({
   message: 'Give exactly one of opportunityId or commercialOpportunityId', path: ['opportunityId'],
 })
 
+// How recent closed jobs of the same origin as this opportunity landed against
+// their estimated hours (buildEstimateCheck). Tenant-scoped; 404 for an
+// opportunity outside the workspace. Shared by the check and the estimate builder.
+async function loadEstimateCheck(workspaceId: string, t: { opportunityId?: string; commercialOpportunityId?: string }): Promise<EstimateCheck> {
+  const target = t.opportunityId
+    ? await prisma.opportunity.findFirst({ where: { id: t.opportunityId, workspaceId }, select: { kind: true } }) as { kind: string } | null
+    : await prisma.commercialOpportunity.findFirst({ where: { id: t.commercialOpportunityId!, workspaceId }, select: { eventType: true } }) as { eventType: string } | null
+  if (!target) throw new ApiError(404, 'Opportunity not found')
+  const origin = 'kind' in target
+    ? originGroup({ type: 'OPPORTUNITY', kind: target.kind })
+    : originGroup({ type: 'COMMERCIAL_OPPORTUNITY', kind: target.eventType })
+  const jobs = await prisma.job.findMany({
+    where: { workspaceId, status: 'COMPLETE' },
+    orderBy: { completedAt: 'desc' },
+    take: 1000,
+    include: { opsJobSite: jobInclude.opsJobSite, quote: jobInclude.quote },
+  }) as Array<Omit<JobRow, 'variations'>>
+  return buildEstimateCheck(origin, jobs.filter(j => j.closeout != null).map(j => ({
+    originKey: originGroup(originOf(j)).originKey, completedAt: j.completedAt, economics: j.closeout as JobEconomics,
+  })))
+}
+
 // GET /api/delivery/estimate-check — at quote time: how recent closed jobs of
 // the same origin as this opportunity landed against their estimated hours.
 // Advisory; withheld below the report's floor. Registered before /jobs/:id.
@@ -482,23 +530,39 @@ deliveryRouter.get(
     const user = requireUser(req)
     const q = parseQuery(estimateCheckSchema, req)
     await assertWorkspacePermission(user.id, q.workspaceId, 'ops:manage')
-    const target = q.opportunityId
-      ? await prisma.opportunity.findFirst({ where: { id: q.opportunityId, workspaceId: q.workspaceId }, select: { kind: true } }) as { kind: string } | null
-      : await prisma.commercialOpportunity.findFirst({ where: { id: q.commercialOpportunityId!, workspaceId: q.workspaceId }, select: { eventType: true } }) as { eventType: string } | null
-    if (!target) throw new ApiError(404, 'Opportunity not found')
-    const origin = 'kind' in target
-      ? originGroup({ type: 'OPPORTUNITY', kind: target.kind })
-      : originGroup({ type: 'COMMERCIAL_OPPORTUNITY', kind: target.eventType })
-    const jobs = await prisma.job.findMany({
-      where: { workspaceId: q.workspaceId, status: 'COMPLETE' },
-      orderBy: { completedAt: 'desc' },
-      take: 1000,
-      include: { opsJobSite: jobInclude.opsJobSite, quote: jobInclude.quote },
-    }) as Array<Omit<JobRow, 'variations'>>
-    const check = buildEstimateCheck(origin, jobs.filter(j => j.closeout != null).map(j => ({
-      originKey: originGroup(originOf(j)).originKey, completedAt: j.completedAt, economics: j.closeout as JobEconomics,
-    })))
-    res.json({ check })
+    res.json({ check: await loadEstimateCheck(q.workspaceId, q) })
+  })
+)
+
+const previewEstimateSchema = z.object({
+  workspaceId: workspaceIdField,
+  opportunityId: idField.optional(),
+  commercialOpportunityId: idField.optional(),
+  priceCents: centsField.nullable().optional(),
+  inputs: estimateInputsSchema,
+}).refine(b => !(b.opportunityId && b.commercialOpportunityId), {
+  message: 'Give at most one of opportunityId or commercialOpportunityId', path: ['opportunityId'],
+})
+type _PreviewEstimateConforms = Assert<Extends<z.infer<typeof previewEstimateSchema>, PreviewEstimateRequest>>
+
+// POST /api/delivery/estimate — the estimate builder's live preview: costs,
+// margin at the price being considered, price for the target margin, and (with
+// a target opportunity) the same at the hours recent comparable jobs took.
+// Read-only: writes nothing, never changes a quote. POST only because the
+// inputs are a body.
+deliveryRouter.post(
+  '/estimate',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const b = parseBody(previewEstimateSchema, req)
+    await assertWorkspacePermission(user.id, b.workspaceId, 'ops:manage')
+    const check = b.opportunityId || b.commercialOpportunityId ? await loadEstimateCheck(b.workspaceId, b) : null
+    const crew = await prisma.opsCrewMember.findMany({ where: { workspaceId: b.workspaceId, isActive: true }, select: { baseRate: true } }) as Array<{ baseRate: number | null }>
+    res.json({
+      estimate: computeEstimate(b.inputs, { priceCents: b.priceCents ?? null, hoursFactor: check?.hoursFactor ?? null }),
+      crewRates: crewRateSummary(crew),
+      check,
+    })
   })
 )
 

@@ -2026,6 +2026,10 @@ model Quote {
   // variance, only revenue vs quote.
   estimatedHours          Float?
   notes                   String?
+  // Advisory cost/margin estimate the price was built from (lib/quoteEstimate.ts):
+  // { version, inputs, result, hoursFactor, computedAt }, computed by the server at
+  // save time. Null = no estimate built. Never changes amountCents or estimatedHours.
+  estimate                Json?
   // DRAFT -> SUBMITTED -> ACCEPTED | REJECTED; DRAFT/SUBMITTED -> WITHDRAWN.
   status                  String                 @default("DRAFT")
   submittedAt             DateTime?

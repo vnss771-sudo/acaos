@@ -345,6 +345,29 @@ export interface CreateQuoteRequest {
   notes?: string
   // Create straight into SUBMITTED (the common case: the price has gone out).
   submit?: boolean
+  // Advisory estimate inputs the price was built from. The server recomputes the
+  // result and stores the snapshot; it never changes amountCents or estimatedHours.
+  estimate?: EstimateInputs
+}
+
+// Quote estimate builder (lib/quoteEstimate.ts). Null = not entered (unknown), never zero.
+export interface EstimateInputs {
+  labourHours: number | null
+  labourRate: number | null
+  onCostPct: number | null
+  materialsCents: number | null
+  subcontractCents: number | null
+  overheadPct: number | null
+  targetMarginPct: number | null
+}
+
+// POST /api/delivery/estimate — read-only preview; target optional (enables the track record).
+export interface PreviewEstimateRequest {
+  workspaceId: string
+  opportunityId?: string
+  commercialOpportunityId?: string
+  priceCents?: number | null
+  inputs: EstimateInputs
 }
 
 // PATCH /api/delivery/quotes/:id/status
@@ -907,6 +930,7 @@ export interface RouteContracts {
   'POST /api/opportunities/:id/create-job': { params: { id: string }; body: CreateJobFromOpportunityRequest; response: { jobSite: { id: string; jobCode: string } } }
   'POST /api/opportunities/run': { body: { workspaceId: string }; response: { queued: boolean } }
   'POST /api/delivery/quotes': { body: CreateQuoteRequest; response: { quote: unknown } }
+  'POST /api/delivery/estimate': { body: PreviewEstimateRequest; response: { estimate: unknown; crewRates: unknown; check: unknown } }
   'PATCH /api/delivery/quotes/:id/status': { params: { id: string }; body: UpdateQuoteStatusRequest; response: { quote: unknown } }
   'POST /api/delivery/quotes/:id/job': { params: { id: string }; body: CreateJobFromQuoteRequest; response: { job: unknown } }
   'POST /api/delivery/jobs/:id/closeout': { params: { id: string }; body: CloseoutJobRequest; response: { job: unknown } }
