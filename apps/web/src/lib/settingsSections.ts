@@ -10,6 +10,7 @@ export const SETTINGS_SECTIONS = {
   team: 'settings-team',
   targeting: 'settings-targeting',
   learning: 'settings-learning',
+  quoting: 'settings-quoting',
   email: 'settings-email',
   compliance: 'settings-compliance',
   deliverability: 'settings-deliverability',

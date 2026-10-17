@@ -21,6 +21,7 @@ import { WorkspaceInfoSection } from '../components/settings/WorkspaceInfoSectio
 import { AccessReviewSection } from '../components/settings/AccessReviewSection.js'
 import { LearningSection } from '../components/settings/LearningSection.js'
 import { AutonomySection } from '../components/settings/AutonomySection.js'
+import { QuotingDefaultsSection } from '../components/settings/QuotingDefaultsSection.js'
 import { SETTINGS_SECTIONS, scrollToSettingsSection, type SettingsSection } from '../lib/settingsSections.js'
 
 // Settings is a long page; this bar lets a user jump straight to the part they
@@ -602,6 +603,13 @@ export function Settings({ api, user, workspace, toast, onUserUpdate, onWorkspac
       {workspace && (
         <div id={SETTINGS_SECTIONS.learning} style={anchorStyle}>
           <LearningSection api={api} workspaceId={workspace.id} toast={toast} canManage={canManage} />
+        </div>
+      )}
+
+      {/* Admin-only, like quotes and margins; the server enforces it too. */}
+      {workspace && isOwnerOrAdmin && (
+        <div id={SETTINGS_SECTIONS.quoting} style={anchorStyle}>
+          <QuotingDefaultsSection api={api} workspaceId={workspace.id} toast={toast} />
         </div>
       )}
 

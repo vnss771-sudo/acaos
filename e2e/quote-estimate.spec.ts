@@ -35,6 +35,17 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800, mobile: false }, 
     const plain = await request.post('/api/delivery/quotes', { headers, data: { workspaceId, opportunityId: plainOpportunityId, amountCents: 1_234_500, submit: true } })
     expect(plain.status(), await plain.text()).toBe(201)
 
+    // Quoting defaults through Settings: 20 % on-costs, 10 % overheads, 25 % target.
+    await page.goto('/settings')
+    await expect(page.getByLabel('Labour on-costs (%)')).toHaveValue('')   // NULL until set
+    await page.getByLabel('Labour on-costs (%)').fill('20')
+    await page.getByLabel('Overheads (% of direct cost)').fill('10')
+    await page.getByLabel('Target gross margin (%)').fill('25')
+    await page.getByRole('button', { name: 'Save quoting defaults' }).click()
+    await expect(page.getByText('Quoting defaults saved')).toBeVisible()
+    const settingsOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+    expect(settingsOverflow, 'horizontal overflow on Settings, in px').toBeLessThanOrEqual(0)
+
     await page.goto('/ops/find-work')
     await expect(page.getByText('Quoted $12,345')).toBeVisible()
     await page.getByRole('button', { name: 'Record quote' }).click()
@@ -43,11 +54,13 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800, mobile: false }, 
     await page.getByLabel('Estimated labour hours').fill('400')
     await page.getByRole('button', { name: 'Use it' }).click()          // crew median rate
     await expect(page.getByLabel('Labour rate ($/h)')).toHaveValue('55')
-    await page.getByLabel('On-costs (%)').fill('20')
+    // Copied in from the workspace defaults when the builder opened, not typed.
+    await expect(page.getByLabel('On-costs (%)')).toHaveValue('20')
+    await expect(page.getByLabel('Overheads (% of direct)')).toHaveValue('10')
+    await expect(page.getByLabel('Target gross margin (%)')).toHaveValue('25')
+    await expect(page.getByTestId('estimate-defaults-note')).toBeVisible()
     await page.getByLabel('Materials ($)').fill('15,000')
     await page.getByLabel('Subcontractors ($)').fill('5000')
-    await page.getByLabel('Overheads (% of direct)').fill('10')
-    await page.getByLabel('Target gross margin (%)').fill('25')
     await page.getByLabel('Quote amount ($)').fill('60,000')
 
     const estimate = page.getByRole('region', { name: 'Estimate' })
@@ -88,6 +101,12 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800, mobile: false }, 
     await expect(summary).toContainText('At the quoted $61,867: gross profit $15,467 (25% gross margin) · after overheads $10,827 (17.5%)')
     await expect(summary.locator('input')).toHaveCount(0)
     await expect(page.getByText(/Quoted \$12,345$/)).toBeVisible()
+
+    // Changing the defaults afterwards never alters the saved estimate.
+    const changed = await request.put(`/api/workspaces/${workspaceId}/quoting-defaults`, { headers, data: { defaultOnCostPct: 35, defaultOverheadPct: 18, defaultTargetMarginPct: 30 } })
+    expect(changed.ok(), await changed.text()).toBeTruthy()
+    await page.reload()
+    await expect(page.getByRole('region', { name: 'Saved estimate' })).toContainText('labour $26,400 · materials $15,000 · subcontractors $5,000 · overheads $4,640')
     const overflowAfter = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     expect(overflowAfter, 'horizontal overflow after save, in px').toBeLessThanOrEqual(0)
     await page.screenshot({ path: `test-results/quote-estimate-saved-${vp.name}.png`, fullPage: true })

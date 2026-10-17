@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { EstimateBuilder, toInputs, type EstimateResult } from './EstimateBuilder'
+import { EstimateBuilder, toInputs, applyDefaults, type EstimateResult, type Fields } from './EstimateBuilder'
 import { QuoteCapture } from './QuoteCapture'
 import { makeRouteApi } from '../../lib/routeApi.js'
 
@@ -68,13 +68,14 @@ describe('EstimateBuilder', () => {
   test('an invalid field is named and nothing is previewed or offered for saving', async () => {
     const api = vi.fn(() => Promise.resolve({ estimate: ESTIMATE, crewRates: CREW, check: null }))
     const onInputs = vi.fn()
+    const previews = () => api.mock.calls.filter(c => (c as unknown[])[0] === '/api/delivery/estimate').length
     render(<EstimateBuilder route={makeRouteApi(api as never)} workspaceId="ws1" target={{ opportunityId: 'o1' }} priceCents={null} hours="" onUsePrice={vi.fn()} onInputs={onInputs} />)
-    await waitFor(() => expect(api).toHaveBeenCalledTimes(1), SLOW)
+    await waitFor(() => expect(previews()).toBe(1), SLOW)   // the opening preview (all blank)
     await userEvent.type(screen.getByLabelText('Target gross margin (%)'), '120')
     expect(screen.getByRole('alert')).toHaveTextContent('Target margin must be a number up to 95')
     expect(onInputs).toHaveBeenLastCalledWith(null)
     await new Promise(r => setTimeout(r, 400))
-    expect(api).toHaveBeenCalledTimes(1)
+    expect(previews()).toBe(1)   // nothing previewed for an invalid field
   })
 })
 
@@ -109,5 +110,52 @@ describe('QuoteCapture with the estimate builder', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save quote' }))
     await waitFor(() => expect(api).toHaveBeenCalled())
     expect(JSON.parse((api.mock.calls[0] as unknown as [string, { body: string }])[1].body)).toEqual({ workspaceId: 'ws1', opportunityId: 'o1', amountCents: 6_000_000, submit: true })
+  })
+})
+
+describe('quoting defaults in the builder', () => {
+  const BLANK: Fields = { rate: '', onCost: '', materials: '', subcontract: '', overhead: '', target: '' }
+
+  test('applyDefaults fills only set defaults into blank, untouched fields; 0 is filled as 0', () => {
+    const report = vi.fn()
+    const d = { defaultOnCostPct: 20, defaultOverheadPct: 0, defaultTargetMarginPct: null }
+    expect(applyDefaults(BLANK, d, new Set(), report)).toEqual({ ...BLANK, onCost: '20', overhead: '0' })
+    expect(report).toHaveBeenLastCalledWith(['onCost', 'overhead'])
+    // A field the user already typed in, or touched and cleared, is never overwritten.
+    expect(applyDefaults({ ...BLANK, onCost: '30' }, d, new Set(), report)).toEqual({ ...BLANK, onCost: '30', overhead: '0' })
+    expect(applyDefaults(BLANK, d, new Set(['overhead'] as const), report)).toEqual({ ...BLANK, onCost: '20' })
+  })
+
+  test('opening the builder copies the defaults in once; editing them changes this quote only', async () => {
+    let defaults = { defaultOnCostPct: 20, defaultOverheadPct: 10, defaultTargetMarginPct: 25 }
+    const api = vi.fn((path: string) => Promise.resolve(path.endsWith('/quoting-defaults') ? { defaults } : { estimate: ESTIMATE, crewRates: CREW, check: null }))
+    const onInputs = vi.fn()
+    const { rerender } = render(<EstimateBuilder route={makeRouteApi(api as never)} workspaceId="ws1" target={{ opportunityId: 'o1' }} priceCents={null} hours="400" onUsePrice={vi.fn()} onInputs={onInputs} />)
+    await waitFor(() => expect(screen.getByLabelText('On-costs (%)')).toHaveValue('20'))
+    expect(screen.getByLabelText('Overheads (% of direct)')).toHaveValue('10')
+    expect(screen.getByLabelText('Target gross margin (%)')).toHaveValue('25')
+    expect(screen.getByTestId('estimate-defaults-note')).toHaveTextContent('On-costs, Overheads, Target margin filled in from your quoting defaults')
+    await waitFor(() => expect(onInputs).toHaveBeenLastCalledWith(expect.objectContaining({ onCostPct: 20, overheadPct: 10, targetMarginPct: 25 })), SLOW)
+
+    await userEvent.clear(screen.getByLabelText('On-costs (%)'))
+    await userEvent.type(screen.getByLabelText('On-costs (%)'), '30')
+    // An admin changing the defaults now does not move this in-progress estimate.
+    defaults = { defaultOnCostPct: 50, defaultOverheadPct: 50, defaultTargetMarginPct: 50 }
+    rerender(<EstimateBuilder route={makeRouteApi(api as never)} workspaceId="ws1" target={{ opportunityId: 'o1' }} priceCents={6_000_000} hours="400" onUsePrice={vi.fn()} onInputs={onInputs} />)
+    await waitFor(() => expect(onInputs).toHaveBeenLastCalledWith(expect.objectContaining({ onCostPct: 30, overheadPct: 10, targetMarginPct: 25 })), SLOW)
+    expect(api.mock.calls.filter(c => (c[0] as string).endsWith('/quoting-defaults'))).toHaveLength(1)
+  })
+
+  test('no defaults set, or defaults unavailable: the fields start blank and the builder still works', async () => {
+    // Replies are made when requested, so a rejection always has the builder's handler attached.
+    for (const reply of [() => Promise.resolve({ defaults: { defaultOnCostPct: null, defaultOverheadPct: null, defaultTargetMarginPct: null } }), () => Promise.reject(new Error('403'))]) {
+      const api = vi.fn((path: string) => (path.endsWith('/quoting-defaults') ? reply() : Promise.resolve({ estimate: ESTIMATE, crewRates: CREW, check: null })))
+      const { unmount } = render(<EstimateBuilder route={makeRouteApi(api as never)} workspaceId="ws1" target={{ opportunityId: 'o1' }} priceCents={null} hours="" onUsePrice={vi.fn()} onInputs={vi.fn()} />)
+      await screen.findByRole('region', { name: 'Estimate' }, SLOW)
+      expect(screen.getByLabelText('On-costs (%)')).toHaveValue('')
+      expect(screen.getByLabelText('Target gross margin (%)')).toHaveValue('')
+      expect(screen.queryByTestId('estimate-defaults-note')).toBeNull()
+      unmount()
+    }
   })
 })

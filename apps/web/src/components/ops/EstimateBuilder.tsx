@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import type { EstimateInputs } from '@acaos/shared'
+import React, { useEffect, useRef, useState } from 'react'
+import type { EstimateInputs, QuotingDefaults } from '@acaos/shared'
 import type { RouteApi } from '../../lib/routeApi.js'
 import { colors, s } from '../../styles.js'
 import { formatCents, parseDollars } from '../../lib/money.js'
@@ -31,7 +31,7 @@ export type EstimateResult = {
 }
 type CrewRates = { activeCrew: number; ratedCrew: number; medianBaseRate: number | null }
 
-type Fields = { rate: string; onCost: string; materials: string; subcontract: string; overhead: string; target: string }
+export type Fields = { rate: string; onCost: string; materials: string; subcontract: string; overhead: string; target: string }
 const EMPTY: Fields = { rate: '', onCost: '', materials: '', subcontract: '', overhead: '', target: '' }
 
 /** Blank → null (not entered); a number → that number; anything else → NaN. */
@@ -55,6 +55,23 @@ export function toInputs(hours: string, f: Fields): { inputs: EstimateInputs } |
   return { inputs: { labourHours, labourRate, onCostPct, materialsCents, subcontractCents, overheadPct, targetMarginPct } }
 }
 
+const DEFAULT_FIELDS: Array<[keyof Fields, keyof QuotingDefaults]> = [
+  ['onCost', 'defaultOnCostPct'], ['overhead', 'defaultOverheadPct'], ['target', 'defaultTargetMarginPct'],
+]
+const DEFAULT_LABEL: Partial<Record<keyof Fields, string>> = { onCost: 'On-costs', overhead: 'Overheads', target: 'Target margin' }
+
+/** Copy set defaults into blank, untouched fields. null (not set) leaves the field blank; 0 fills "0". */
+export function applyDefaults(prev: Fields, d: QuotingDefaults, touched: ReadonlySet<keyof Fields>, report: (keys: Array<keyof Fields>) => void): Fields {
+  const next = { ...prev }
+  const filled: Array<keyof Fields> = []
+  for (const [field, key] of DEFAULT_FIELDS) {
+    const v = d[key]
+    if (v != null && Number.isFinite(v) && !touched.has(field) && prev[field] === '') { next[field] = String(v); filled.push(field) }
+  }
+  report(filled)
+  return next
+}
+
 const isEmpty = (i: EstimateInputs) => Object.values(i).every(v => v == null)
 const pctText = (p: number | null) => (p == null ? '—' : `${p}%`)
 
@@ -72,6 +89,19 @@ type Props = {
 
 export function EstimateBuilder({ route, workspaceId, target, priceCents, hours, onUsePrice, onInputs }: Props) {
   const [f, setF] = useState<Fields>(EMPTY)
+  // Quoting defaults are copied in ONCE, when the builder opens: a snapshot, never a
+  // live link, so an admin changing them mid-quote can't move figures being worked
+  // on. Only blank fields the user hasn't touched are filled; unset stays blank.
+  const touched = useRef(new Set<keyof Fields>())
+  const [fromDefaults, setFromDefaults] = useState<Array<keyof Fields>>([])
+  useEffect(() => {
+    let live = true
+    route('GET /api/workspaces/:id/quoting-defaults', { params: { id: workspaceId } })
+      .then(r => { if (live && r?.defaults) setF(prev => applyDefaults(prev, r.defaults, touched.current, setFromDefaults)) })
+      .catch(() => { /* no defaults: the fields simply start blank */ })
+    return () => { live = false }
+    // Once per builder: the snapshot above.
+  }, [])
   const [result, setResult] = useState<{ estimate: EstimateResult; crewRates: CrewRates } | null>(null)
   const [failed, setFailed] = useState(false)
   const parsed = toInputs(hours, f)
@@ -92,7 +122,10 @@ export function EstimateBuilder({ route, workspaceId, target, priceCents, hours,
     // inputsKey stands for the parsed inputs; target is fixed for the card.
   }, [inputsKey, price, workspaceId])
 
-  const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) => setF(prev => ({ ...prev, [k]: e.target.value }))
+  const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    touched.current.add(k)
+    setF(prev => ({ ...prev, [k]: e.target.value }))
+  }
   const field = (k: keyof Fields, label: string, placeholder: string) => (
     <div>
       <label style={s.label} htmlFor={`est-${k}`}>{label}</label>
@@ -112,6 +145,11 @@ export function EstimateBuilder({ route, workspaceId, target, priceCents, hours,
         {field('overhead', 'Overheads (% of direct)', '10')}
         {field('target', 'Target gross margin (%)', '25')}
       </div>
+      {fromDefaults.length > 0 && (
+        <span data-testid="estimate-defaults-note" style={{ fontSize: 12, color: colors.textFaint }}>
+          {fromDefaults.map(k => DEFAULT_LABEL[k]).join(', ')} filled in from your quoting defaults. Change them here for this quote only.
+        </span>
+      )}
       {result && (
         <span style={{ fontSize: 12, color: colors.textFaint }}>
           {median != null
