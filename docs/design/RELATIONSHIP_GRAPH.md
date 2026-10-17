@@ -1,17 +1,44 @@
-# Design: Construction Relationship Graph (revision 3)
+# Design: Construction Relationship Graph (revision 4)
 
-**Status:** Draft for approval. **Design only.** No application code, migration, merge, deploy or
-production setting is part of this document or of the PR that carries it.
+**Status:** Revision 4 design approved by the project owner on 2026-10-17 (decisions D8–D11 in §15).
+**Design only.** No application code, migration, deploy or production setting is part of this document or
+of the PR that carries it. Approval of the design does **not** unblock implementation: PR 2 stays blocked
+until the independent label review in §11.6 is recorded.
 
 **Supersedes:** the first draft (single `graph_entities` / `graph_relationships` pair, recursive CTE,
 `ON DELETE CASCADE` edges, schema-first ordering). That draft's architecture was approved; its schema,
 query and sequencing were not. Revision 2 addressed all ten required changes (index in §14). Revision 3
-adds four further corrections (§14.1): an award does not prove the head-builder role (§6.1), trade
+added four further corrections (§14.1): an award does not prove the head-builder role (§6.1), trade
 relevance, explicit requirement and open packages are separate relations (§2.2, §6.1), edges are created
 and promoted transactionally because foreign keys cannot establish evidence eligibility (§7.2), and a
 `CONFIRMED` edge must keep currently eligible primary evidence or stop being confirmed (§7.3).
 
-**Still open (unchanged by revision 3):** independent construction-domain labelling review (§11.6), all
+**Revision 4** makes five more corrections (index in §14.3):
+1. **Status before threshold.** Revision 3's query used the minimum confidence to decide which edges
+   *exist*, so states scored below it by design vanished: a role-uncertain supplier (capped at 69) read as
+   `UNKNOWN_BUILDER`, a keyword-only project (capped at 59) dropped out, and two penalised inferred
+   competitors read as `UNKNOWN_BUILDER` instead of `CONFLICTING_EVIDENCE`. Status is now decided from all
+   eligible live evidence; the threshold only decides what may be recommended (§9.1, §10).
+2. **Documents confirm; people classify.** Reviewer approval can never establish `CONFIRMED`. The
+   `REVIEWER_VERIFIED_*` assertions and the `REVIEWER_VERIFIED` entity match are removed. A confirmation
+   needs a primary record whose quoted excerpt is verbatim in the stored record and states the exact
+   relationship, plus an ABR-verified ABN match (§2.3, §6.1, §7.2).
+3. **Supporting and refuting evidence.** Evidence carries a stance. One fixed evaluation order decides
+   retraction, version supersession, ending statements and contradictions (§7.4).
+4. **Entity resolution.** Reuses `lib/abnLookup.ts`, adds aliases, and allows merges only by review, with
+   documents, reversibly, never across two verified ABNs; false merges become a zero-tolerance metric
+   (§6.2, §11.7).
+5. **Project lifecycle.** Lodged → approved → awarded → under construction → completed, from evidence,
+   kept separate from who holds which contract (§2.4).
+
+Revision 4 also fixes a latent revision-3 contradiction: the `CONFIRMED` CHECK demanded an
+organisation-strength entity match on every edge, which made `REQUIRES_TRADE` and `PACKAGE_AVAILABLE`
+(project → trade, no organisation) impossible to confirm. Those edges now use `STRUCTURAL` (§5.3).
+
+New tables rise from four to seven (§3). Fixtures and the pinned baseline are **not** changed: the new
+evaluation categories are specified in §11.7 and are labelled only after the independent review.
+
+**Still open (unchanged by revision 4):** independent construction-domain labelling review (§11.6), all
 thresholds provisional (§11.4), and **PR 2 is blocked** until that review is recorded.
 
 ---
@@ -76,8 +103,17 @@ P to the electrical node, so that **requirement carries its own evidence**.
 ### 2.3 Verified vs inferred
 
 - `CONFIRMED`: the relationship is stated by a **primary record that asserts that exact relationship on
-  that exact project** (§6.1), with an entity match strong enough to trust (§6.2). Categorical, not
-  "score ≥ N". It stays confirmed only while that evidence stays eligible (§7.3).
+  that exact project** (§6.1), with an ABR-verified ABN match for any organisation endpoint (§6.2).
+  Categorical, not "score ≥ N". It stays confirmed only while that evidence stays eligible and no eligible
+  primary record refutes it (§7.3, §7.4). In the product it is worded as **"stated in [source], [date]"**,
+  never as "verified" or "legally confirmed": it means a public record says so, not that the appointment
+  is legally in force.
+- **Documents confirm; people classify.** A reviewer may read a record and classify what its wording
+  asserts (for example, mark an excerpt as a head-contractor statement the rules missed), but the excerpt
+  must be **verbatim in the stored record** and the record must be a registered primary source. No review
+  action, approval or judgement can make an edge `CONFIRMED` without such a record. A document the user
+  holds privately (`MANUAL_ENTRY`) can confirm only the workspace-private `SUBCONTRACT_AWARDED` in v1
+  (Decision D9).
 - `INFERRED`: everything else that still asserts something (name-only matches, keyword matches,
   heuristics, website claims, historical patterns). Never presented as an appointment, a requirement or
   an opportunity.
@@ -85,12 +121,60 @@ P to the electrical node, so that **requirement carries its own evidence**.
   become an inferred builder: the role stays `ROLE_UNCERTAIN` (§6.1, provisional rules D7). The graph
   records the supplier as named on the award and says no more.
 
+### 2.4 Project lifecycle (separate from contract award status)
+
+"A project needs electrical work" and "an electrical package is open" are different facts (§2.2); so are
+"where the project is in its life" and "who holds which contract". Revision 4 models the first as a
+**stage** on the PROJECT and keeps the second on edges.
+
+| Stage | Means | Primary evidence that can establish it (stage assertion) |
+|---|---|---|
+| `LODGED` | an application exists and is under assessment | DA record stating lodgement (`DA_LODGED`) |
+| `APPROVED` | development consent granted | the determination, or a DA record stating approval (`DA_APPROVED`) |
+| `AWARDED` | the **head/main construction contract** has been let | a record that states a head-contract award for this project (`HEAD_CONTRACT_LET`), the same strictness as `HEAD_CONTRACTOR` in §6.1 |
+| `UNDER_CONSTRUCTION` | works have started | commencement notice, construction certificate stating commencement (`WORKS_COMMENCED`) |
+| `COMPLETED` | practical completion | occupation certificate or completion notice (`PRACTICAL_COMPLETION`) |
+| `REFUSED` / `WITHDRAWN` / `LAPSED` | off-path terminal states | the determination or the authority's record (`DA_REFUSED`, `DA_WITHDRAWN`, `DA_LAPSED`) |
+| `UNKNOWN` | no eligible stage evidence | n/a |
+
+**Stage is not award status.** `AWARDED` says only that the main contract is let. *Who* holds it is
+`APPOINTED_BUILDER`; *which trade packages* are open or let is `PACKAGE_AVAILABLE` / `SUBCONTRACT_AWARDED`.
+None is derived from another:
+- a contract-award notice whose role is `UNSPECIFIED_SUPPLIER` does **not** move the stage. The card says
+  "a contract was awarded on [date]; whether it is the head contract is not established";
+- `AWARDED` with no `APPOINTED_BUILDER` edge is valid and reads "head contract let, contractor unknown";
+- an approved development implies nothing about any package being open.
+
+**Derivation** (`deriveProjectStage`, pure, shared by the read service, revalidation and the eval):
+1. Use only eligible stage evidence (same eligibility and version rules as §7.4 steps 1–2). Secondary
+   and website evidence never sets a stage; it is shown as "reported, unconfirmed".
+2. The stage is the highest forward stage (`LODGED` < … < `COMPLETED`) with supporting primary evidence.
+   A terminal row (`REFUSED`/`WITHDRAWN`/`LAPSED`) wins if its `observedAt` is later than that row's.
+3. **Gaps are never filled.** Evidence of `UNDER_CONSTRUCTION` with no lodgement or approval evidence
+   gives `UNDER_CONSTRUCTION`; the earlier stages read "not evidenced", not inferred.
+4. **No silent regression.** A later primary record for a *lower* stage does not move the stage back. A
+   primary row that **refutes** the current stage (e.g. "works have not commenced") drops the stage to the
+   highest unrefuted one and flags `stageContested`, which puts the project in the review queue.
+5. The stage carries its `observedAt` ("as of"). Older than 180 days (provisional) it is flagged `stale`.
+6. Stage rows are append-only. The current stage is always derived; a cached copy may exist for listing
+   but is recomputed by revalidation (§7.3), never trusted.
+
+**Today's sources** give at most `LODGED` and (where the record states the determination) `APPROVED` from
+DAs, and `AWARDED` only from an award notice that states the head-contract role. `UNDER_CONSTRUCTION` and
+`COMPLETED` have no registered source in v1 (§16).
+
+**Effect on the next action** (read service, not SQL): `APPROVED` + `UNKNOWN_BUILDER` → "verify who holds
+the head contract"; `AWARDED` + `CONFIRMED_BUILDER` → the builder may be recommended; `COMPLETED`,
+`REFUSED`, `WITHDRAWN`, `LAPSED` → no outreach for this project (history only).
+
 ## 3. Mapping to existing Prisma models (reuse, don't duplicate)
 
 | Concern | Existing model/field | Graph treatment |
 |---|---|---|
 | Tenant | `Workspace` | every graph row has `workspaceId`; cascade from `Workspace` |
 | Company identity | `Prospect.companyNameKey` (via `normalizeCompanyNameKey` in `lib/normalize.ts`), `domainKey`; `Opportunity.counterpartyName/Abn` | `GraphEntity.nameKey` uses the **same normaliser**; optional `prospectId` link, no copied contact data |
+| ABN validation and verification | `lib/abnLookup.ts`: `normalizeAbn`, `isValidAbnChecksum`, `lookupAbn` (ABR: `status` active/cancelled, `entityName`, `entityType`), `AbnLookupNotConfiguredError` | reused as-is for entity resolution (§6.2); no second ABN parser |
+| Project lifecycle | `Opportunity.kind` (DA vs award) and record text | stage evidence rows (`GraphProjectStageEvidence`, §2.4); `Opportunity` is not given a stage column |
 | Project | `Opportunity` (`source`, `externalId`, `kind`, `region`, `locality`, `publishedAt`, `sourceUrl`, `contentHash`, `matchedTrades`, `rawData`) | `PROJECT` entity references it; location stays on `Opportunity` |
 | Trade taxonomy | `opportunityTaxonomy.ts` `TradeId` | `GraphEntity.tradeCode` |
 | Appointment evidence | `Opportunity` (CONTRACT_AWARD: counterparty = awarded supplier, buyer = agency) | `GraphEdgeEvidence.opportunityId` |
@@ -103,7 +187,9 @@ P to the electrical node, so that **requirement carries its own evidence**.
 | Approvals for learning changes | `LearningRecommendation` | calibration changes use the same propose → human-approve pattern (§9.3) |
 | Evidence **files** (`EvidenceFile*`, technician photos) | field-ops evidence | **out of scope**; unrelated to public-record provenance |
 
-New tables: `GraphEntity`, `GraphEdge`, `GraphEdgeEvidence`, `GraphEdgeReview`. Nothing else.
+New tables: `GraphEntity`, `GraphEdge`, `GraphEdgeEvidence`, `GraphEdgeReview` (revision 3), plus
+`GraphEntityAlias`, `GraphEntityMerge` (entity resolution, §6.2) and `GraphProjectStageEvidence`
+(lifecycle, §2.4) in revision 4. Nothing else.
 
 ## 4. Tenancy and public-source vs private data
 
@@ -154,22 +240,37 @@ enum GraphVerification      { CONFIRMED INFERRED }
 enum GraphEdgeStatus        { ACTIVE CONFLICTED SUPERSEDED REJECTED EXPIRED UNSUPPORTED }
 enum GraphEvidenceVisibility{ PUBLIC_SOURCE WORKSPACE_PRIVATE }
 enum GraphEvidenceClass     { PRIMARY_RECORD SECONDARY_REPORT WEBSITE_CLAIM HISTORICAL_PATTERN MANUAL_ENTRY }
-enum GraphEntityMatch       { ABN_EXACT NAME_EXACT NAME_FUZZY REVIEWER_VERIFIED }
-enum GraphReviewAction      { PROMOTE DEMOTE REJECT ADJUST_CONFIDENCE RESOLVE_CONFLICT SUPERSEDE REOPEN REVALIDATE }
+// Revision 4: REVIEWER_VERIFIED removed (a reviewer's opinion is not an identity anchor, §6.2).
+// STRUCTURAL = no organisation endpoint (project -> trade); nodes are identified by opportunityId/tradeCode.
+enum GraphEntityMatch       { ABN_EXACT ALIAS_MATCH NAME_EXACT NAME_FUZZY STRUCTURAL }
+enum GraphReviewAction      { PROMOTE DEMOTE REJECT ADJUST_CONFIDENCE RESOLVE_CONFLICT SUPERSEDE REOPEN REVALIDATE CLASSIFY_ASSERTION }
 enum GraphReviewActor       { REVIEWER SYSTEM }
+enum GraphEvidenceStance    { SUPPORTS REFUTES }
+enum GraphAssertedBy        { RULE REVIEWER }       // who classified the excerpt; never what makes it true
 // What the evidence actually ASSERTS about the relationship (not merely that it mentions the entity).
-// Set at ingest by deterministic rules or by a reviewer; the only values that can confirm each edge
-// type are listed in §6.1 and enforced by a CHECK on GraphEdge.
+// Set at ingest by deterministic rules or classified by a reviewer; the only values that can confirm
+// each edge type are listed in §6.1 and enforced by a CHECK on GraphEdge. Revision 4 removes the
+// REVIEWER_VERIFIED_* values: a reviewer classifies record wording into the ordinary values instead.
 enum GraphAssertion {
-  HEAD_CONTRACTOR PRINCIPAL_FOR_SCOPE REVIEWER_VERIFIED_ROLE          // APPOINTED_BUILDER
+  HEAD_CONTRACTOR PRINCIPAL_FOR_SCOPE                                 // APPOINTED_BUILDER (supports)
   UNSPECIFIED_SUPPLIER NON_BUILDER_SERVICE PANEL_ARRANGEMENT          // appointment evidence that does NOT confirm
-  STATED_CLIENT                                                       // DEVELOPED_BY
+  STATED_CLIENT                                                       // DEVELOPED_BY (supports)
   KEYWORD_ONLY                                                        // TRADE_RELEVANCE
-  STRUCTURED_CLASSIFICATION EXPLICIT_SCOPE_STATEMENT REVIEWER_VERIFIED_SCOPE   // REQUIRES_TRADE
-  OPEN_PROCUREMENT_NOTICE REVIEWER_VERIFIED_NOTICE CLOSED_OR_AWARDED  // PACKAGE_AVAILABLE
-  MANUAL_AWARD_RECORD                                                 // SUBCONTRACT_AWARDED
+  STRUCTURED_CLASSIFICATION EXPLICIT_SCOPE_STATEMENT                  // REQUIRES_TRADE (supports)
+  OPEN_PROCUREMENT_NOTICE                                             // PACKAGE_AVAILABLE (supports)
+  MANUAL_AWARD_RECORD                                                 // SUBCONTRACT_AWARDED (supports)
   CO_OCCURRENCE                                                       // ASSOCIATED_WITH
+  // Refuting assertions (stance = REFUTES only; §7.4):
+  ROLE_CONTRADICTED      // the record gives this party a different role on this project
+  CLIENT_CONTRADICTED    // the record names a different client/applicant
+  SCOPE_EXCLUDED         // the record states the trade is out of scope
+  RELATIONSHIP_ENDED     // terminated, novated or replaced, with a date (closes validity, §7.4 step 3)
+  CLOSED_OR_AWARDED      // the package notice has closed or been let (closes PACKAGE_AVAILABLE)
 }
+enum GraphProjectStage      { LODGED APPROVED AWARDED UNDER_CONSTRUCTION COMPLETED REFUSED WITHDRAWN LAPSED }
+enum GraphStageAssertion    { DA_LODGED DA_APPROVED HEAD_CONTRACT_LET WORKS_COMMENCED PRACTICAL_COMPLETION DA_REFUSED DA_WITHDRAWN DA_LAPSED }
+enum GraphAliasKind         { ABR_LEGAL_NAME ABR_BUSINESS_NAME OBSERVED_WITH_ABN REVIEWER_LINKED }
+enum GraphMergeAction       { MERGE UNMERGE }
 ```
 
 ### 5.3 Models
@@ -182,7 +283,14 @@ model GraphEntity {
   displayName   String
   // ORGANISATION only. Same normaliser as Prospect.companyNameKey.
   nameKey       String?
-  abn           String?         // ORGANISATION; 11 digits, verified form only
+  abn           String?         // ORGANISATION; normalizeAbn + isValidAbnChecksum, else NULL (§6.2)
+  // ABR verification via lib/abnLookup.ts lookupAbn (§6.2). Only an ABR-verified ABN anchors a confirmation.
+  abnStatus     String?         // 'active' | 'cancelled' (AbnStatus); NULL = not verified
+  abnLegalName  String?         // ABR entityName at check time
+  abnCheckedAt  DateTime?
+  // Reversible merge (§6.2): the absorbed entity points at the survivor; edges and evidence are never
+  // rewritten. Reads resolve COALESCE(mergedIntoId, id). Set and cleared only by GraphEntityMerge.
+  mergedIntoId  String?
   tradeCode     String?         // TRADE_PACKAGE only (TradeId)
   prospectId    String?         // ORGANISATION: optional link, never auto-created
   opportunityId String?         // PROJECT: the Opportunity this node is
@@ -191,6 +299,10 @@ model GraphEntity {
   workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect      Prospect?       @relation(fields: [workspaceId, prospectId], references: [workspaceId, id], onDelete: NoAction)
   opportunity   Opportunity?    @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: NoAction)
+  mergedInto    GraphEntity?    @relation("Merge", fields: [workspaceId, mergedIntoId], references: [workspaceId, id], onDelete: NoAction)
+  absorbed      GraphEntity[]   @relation("Merge")
+  aliases       GraphEntityAlias[]
+  stageEvidence GraphProjectStageEvidence[]
   outEdges      GraphEdge[]     @relation("EdgeSource")
   inEdges       GraphEdge[]     @relation("EdgeTarget")
 
@@ -204,7 +316,72 @@ model GraphEntity {
   //   (workspaceId, opportunityId) WHERE kind = 'PROJECT'
   //   (workspaceId, tradeCode)  WHERE kind = 'TRADE_PACKAGE'
   // CHECKs: kind-specific columns (ORGANISATION: nameKey NOT NULL; PROJECT: opportunityId NOT NULL;
-  //   TRADE_PACKAGE: tradeCode NOT NULL; other kinds' columns NULL).
+  //   TRADE_PACKAGE: tradeCode NOT NULL; other kinds' columns NULL); mergedIntoId only on ORGANISATION
+  //   and <> id; abnStatus NOT NULL => abn NOT NULL.
+  // Trigger (merge safety, §6.2): mergedIntoId may only be written by the GraphEntityMerge insert path;
+  //   refused if the survivor is itself merged (no chains), or if both entities carry an ABR-verified ABN
+  //   and the ABNs differ.
+}
+
+model GraphEntityAlias {           // names an organisation is known by (§6.2)
+  id            String         @id @default(cuid())
+  workspaceId   String
+  entityId      String
+  nameKey       String         // normalizeCompanyNameKey
+  displayName   String
+  kind          GraphAliasKind
+  // Where the alias came from: the ABR check (ABR_*), the evidence row whose record carried this name
+  // with the entity's ABN (OBSERVED_WITH_ABN), or the merge that linked it (REVIEWER_LINKED).
+  evidenceId    String?
+  mergeId       String?
+  observedAt    DateTime
+  createdAt     DateTime       @default(now())
+  entity        GraphEntity    @relation(fields: [workspaceId, entityId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, entityId, nameKey])
+  @@index([workspaceId, nameKey])
+  // CHECK: kind = 'REVIEWER_LINKED' => mergeId NOT NULL; kind = 'OBSERVED_WITH_ABN' => evidenceId NOT NULL.
+}
+
+model GraphEntityMerge {           // append-only; the only writer of GraphEntity.mergedIntoId
+  id              String           @id @default(cuid())
+  workspaceId     String
+  action          GraphMergeAction
+  absorbedId      String
+  survivorId      String
+  reviewerUserId  String
+  reason          String           // required, non-empty
+  // Documents shown and relied on (evidence ids or ABR check references); required for MERGE (§6.2).
+  basisEvidenceIds String[]
+  reversesMergeId String?          // UNMERGE: the MERGE row it undoes
+  createdAt       DateTime         @default(now())
+
+  @@index([workspaceId, absorbedId, createdAt])
+  @@index([workspaceId, survivorId, createdAt])
+  // CHECK: action = 'MERGE' => cardinality(basisEvidenceIds) >= 1; action = 'UNMERGE' => reversesMergeId NOT NULL.
+  // Trigger rejects UPDATE/DELETE (erasure cascade aside). Composite workspace FKs to GraphEntity.
+}
+
+model GraphProjectStageEvidence {  // append-only stage claims for a PROJECT (§2.4)
+  id                   String               @id @default(cuid())
+  workspaceId          String
+  projectEntityId      String
+  stage                GraphProjectStage
+  assertion            GraphStageAssertion
+  stance               GraphEvidenceStance  @default(SUPPORTS)
+  evidenceClass        GraphEvidenceClass
+  assertedBy           GraphAssertedBy      @default(RULE)
+  assertedByUserId     String?
+  // Same reference, snapshot, licence and version fields as GraphEdgeEvidence (exactly one reference,
+  // sourceKey, sourceUrl, excerpt, contentHash, observedAt, licence snapshot, retractedAt, expiresAt,
+  // versionOfEvidenceId, changeSummary).
+  // ...
+  project              GraphEntity          @relation(fields: [workspaceId, projectEntityId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, projectEntityId, contentHash, stage])
+  @@index([workspaceId, projectEntityId, observedAt])
+  // CHECKs: assertion maps to stage (DA_LODGED -> LODGED, ..., HEAD_CONTRACT_LET -> AWARDED);
+  //   project endpoint kind = PROJECT (composite FK with kind, as on GraphEdge).
 }
 
 model GraphEdge {
@@ -219,7 +396,7 @@ model GraphEdge {
   verification     GraphVerification @default(INFERRED)
   status           GraphEdgeStatus   @default(ACTIVE)
   confidence       Int               // 0–100 (§9)
-  entityMatch      GraphEntityMatch  // weakest match among the endpoints' resolution
+  entityMatch      GraphEntityMatch  // match of the ORGANISATION endpoint(s); STRUCTURAL when there is none
   // The evidence row that justifies CONFIRMED. The composite FK below proves, in the database, that it
   // belongs to THIS edge, resolves to THIS edge's target, and carries the class and assertion copied
   // here. It does NOT prove the evidence is currently eligible: see §7.2-7.3.
@@ -255,14 +432,17 @@ model GraphEdge {
   //     SUBCONTRACT_AWARDED             : ORGANISATION -> ORGANISATION, tradeEntityId NOT NULL
   //     ASSOCIATED_WITH                 : ORGANISATION -> ORGANISATION, verification = INFERRED
   //   confidence BETWEEN 0 AND 100
+  //   entityMatch = 'STRUCTURAL' <=> neither endpoint kind is ORGANISATION
   //   verification = 'CONFIRMED' => basisEvidenceId, basisEvidenceClass, basisAssertion NOT NULL,
-  //                                 confidence >= 80, entityMatch IN ('ABN_EXACT','REVIEWER_VERIFIED')
-  //   confirmable (edgeType, basisEvidenceClass, basisAssertion) combinations only (§6.1):
-  //     APPOINTED_BUILDER   : PRIMARY_RECORD + HEAD_CONTRACTOR | PRINCIPAL_FOR_SCOPE | REVIEWER_VERIFIED_ROLE
+  //                                 confidence >= 80,
+  //                                 entityMatch = 'ABN_EXACT' (organisation endpoint) or 'STRUCTURAL' (none)
+  //   confirmable (edgeType, basisEvidenceClass, basisAssertion) combinations only (§6.1); every allowed
+  //   basis assertion is a SUPPORTS assertion, so a refuting row can never be a basis:
+  //     APPOINTED_BUILDER   : PRIMARY_RECORD + HEAD_CONTRACTOR | PRINCIPAL_FOR_SCOPE
   //     DEVELOPED_BY        : PRIMARY_RECORD + STATED_CLIENT
-  //     REQUIRES_TRADE      : PRIMARY_RECORD + STRUCTURED_CLASSIFICATION | EXPLICIT_SCOPE_STATEMENT | REVIEWER_VERIFIED_SCOPE
-  //     PACKAGE_AVAILABLE   : PRIMARY_RECORD + OPEN_PROCUREMENT_NOTICE | REVIEWER_VERIFIED_NOTICE; validUntil NOT NULL
-  //     SUBCONTRACT_AWARDED : MANUAL_ENTRY + MANUAL_AWARD_RECORD
+  //     REQUIRES_TRADE      : PRIMARY_RECORD + STRUCTURED_CLASSIFICATION | EXPLICIT_SCOPE_STATEMENT
+  //     PACKAGE_AVAILABLE   : PRIMARY_RECORD + OPEN_PROCUREMENT_NOTICE; validUntil NOT NULL
+  //     SUBCONTRACT_AWARDED : MANUAL_ENTRY + MANUAL_AWARD_RECORD (document required on the evidence row)
   //     TRADE_RELEVANCE, ASSOCIATED_WITH : never CONFIRMED
   //   verification = 'INFERRED'  => confidence <= 79
   //   validUntil IS NULL OR validFrom IS NULL OR validUntil > validFrom
@@ -281,6 +461,14 @@ model GraphEdgeEvidence {
   // What this evidence asserts about THIS relationship (see GraphAssertion), and the entity the
   // asserted party was resolved to at ingest. Both are snapshots validated again at promotion (§7.2).
   assertion             GraphAssertion
+  stance                GraphEvidenceStance       @default(SUPPORTS)   // §7.4
+  // Who classified the excerpt into `assertion`. A REVIEWER classification is still only as good as the
+  // record: confirmation also requires the excerpt to be verbatim in the stored record (§7.2 step 4).
+  assertedBy            GraphAssertedBy           @default(RULE)
+  assertedByUserId      String?
+  // MANUAL_ENTRY only: the document the user holds (stored copy or cited reference) and its hash.
+  documentRef           String?
+  documentHash          String?
   resolvedEntityId      String
   visibility            GraphEvidenceVisibility
   // Exactly ONE of these references is set (CHECK), each a composite workspace FK:
@@ -315,6 +503,12 @@ model GraphEdgeEvidence {
   @@index([workspaceId, sourceKey])
   // Composite workspace FKs (onDelete NoAction) to Opportunity / Signal / EvidenceSource /
   // WebsiteEvidenceClaim on (workspaceId, <ref>Id).
+  // CHECKs (revision 4):
+  //   stance = 'REFUTES' <=> assertion IN ('ROLE_CONTRADICTED','CLIENT_CONTRADICTED','SCOPE_EXCLUDED',
+  //                                        'RELATIONSHIP_ENDED','CLOSED_OR_AWARDED')
+  //   assertedBy = 'REVIEWER' => assertedByUserId NOT NULL
+  //   evidenceClass = 'MANUAL_ENTRY' => documentRef NOT NULL AND documentHash NOT NULL
+  //   length(trim(excerpt)) > 0
 }
 
 model GraphEdgeReview {            // append-only
@@ -358,18 +552,19 @@ model GraphEdgeReview {            // append-only
 
 ### 6.1 Requirements per edge type
 
-"Primary record" means a record from a registered source (or an authorised manual entry with the document
-cited) that itself makes the assertion. "Names the organisation" is **not** the same as "asserts the
-relationship".
+"Primary record" means a record from a registered source that itself makes the assertion, stored so its
+text can be checked (§7.2). An authorised manual entry with the document attached or cited counts as
+primary only for the workspace-private `SUBCONTRACT_AWARDED` (D9). "Names the organisation" is **not** the
+same as "asserts the relationship".
 
 | Edge | CONFIRMED requires | Anything weaker is |
 |---|---|---|
-| `APPOINTED_BUILDER` | A `PRIMARY_RECORD` whose own text or structured fields **explicitly establish the builder / head-contractor (or an explicitly stated principal-contractor role for a named scope; provisional D7 rules below) on this specific project**, recorded as `assertion` ∈ {`HEAD_CONTRACTOR`, `PRINCIPAL_FOR_SCOPE`, `REVIEWER_VERIFIED_ROLE`} with the quoted excerpt; the evidence's `opportunityId` is the same `Opportunity` as the PROJECT node (or a reviewer-verified project link); **and** entity match `ABN_EXACT` or `REVIEWER_VERIFIED` | `INFERRED` |
+| `APPOINTED_BUILDER` | A `PRIMARY_RECORD` whose own text or structured fields **explicitly establish the builder / head-contractor (or an explicitly stated principal-contractor role for a named scope; provisional D7 rules below) on this specific project**, recorded as `assertion` ∈ {`HEAD_CONTRACTOR`, `PRINCIPAL_FOR_SCOPE`} with the quoted excerpt, **verbatim in the stored record**, whether the rules or a reviewer classified it; the evidence's `opportunityId` is the same `Opportunity` as the PROJECT node; **and** entity match `ABN_EXACT` against an ABR-verified ABN (§6.2); **and** no eligible primary refutation (§7.4) | `INFERRED` |
 | `DEVELOPED_BY` | A `PRIMARY_RECORD` stating the client/applicant/owner (`STATED_CLIENT`; today: `buyerName` on a contract award; a DA applicant only if the source exposes it) | `INFERRED` |
 | `TRADE_RELEVANCE` | never confirmable. Created from keyword/taxonomy matches (`assertion = KEYWORD_ONLY`) | n/a: always `INFERRED` |
-| `REQUIRES_TRADE` | A `PRIMARY_RECORD` that **explicitly requires** the trade: a structured classification naming it (`STRUCTURED_CLASSIFICATION`, e.g. an electrical UNSPSC class), an explicit scope statement quoted from the record (`EXPLICIT_SCOPE_STATEMENT`), or a reviewer who quotes the scope (`REVIEWER_VERIFIED_SCOPE`). **A keyword hit in a title or description is not enough** | `INFERRED` (and, when only keyword-visible, expressed as `TRADE_RELEVANCE`) |
-| `PACKAGE_AVAILABLE` | A `PRIMARY_RECORD` procurement notice (approach to market, RFQ, EOI, tender) for **this trade on this project** that is **open and unawarded now** (`validUntil` = bid close, in the future), with a stated route to bid (`OPEN_PROCUREMENT_NOTICE`), or a reviewer-verified notice. A development application, an award, or a keyword match **never** creates it | `INFERRED` is never surfaced as an opportunity |
-| `SUBCONTRACT_AWARDED` | `MANUAL_ENTRY` by an authorised user with the document attached or cited (`MANUAL_AWARD_RECORD`). No public source exists today | n/a: no inferred form in v1 |
+| `REQUIRES_TRADE` | A `PRIMARY_RECORD` that **explicitly requires** the trade: a structured classification naming it (`STRUCTURED_CLASSIFICATION`, e.g. an electrical UNSPSC class) or an explicit scope statement quoted verbatim from the record (`EXPLICIT_SCOPE_STATEMENT`; a reviewer may classify wording the rules missed, but the wording must be in the record). **A keyword hit in a title or description is not enough** | `INFERRED` (and, when only keyword-visible, expressed as `TRADE_RELEVANCE`) |
+| `PACKAGE_AVAILABLE` | A `PRIMARY_RECORD` procurement notice (approach to market, RFQ, EOI, tender) for **this trade on this project** that is **open and unawarded now** (`validUntil` = bid close, in the future), with a stated route to bid (`OPEN_PROCUREMENT_NOTICE`). A development application, an award, a keyword match or a reviewer's belief that a package is open **never** creates it | `INFERRED` is never surfaced as an opportunity |
+| `SUBCONTRACT_AWARDED` | `MANUAL_ENTRY` by an authorised user with the subcontract document attached or cited (`documentRef` + `documentHash`, `MANUAL_AWARD_RECORD`). The document is the proof; the entry is workspace-private and labelled "recorded by your team". No public source exists today | n/a: no inferred form in v1 |
 | `ASSOCIATED_WITH` | cannot be CONFIRMED | `INFERRED` only; needs ≥ 2 distinct projects where both appear |
 
 **Why an award does not confirm a builder.** A contract-award notice names a *supplier*. That supplier may
@@ -382,13 +577,14 @@ rule removes. Role is therefore its own assertion:
 |---|---|---|
 | States the head/principal contractor role for the project (e.g. "head contractor", "construction contract for X", "principal contractor") | `HEAD_CONTRACTOR` | may confirm |
 | **Explicitly states** a principal-contractor role for a named scope (e.g. "principal contractor for the switchboard works") | `PRINCIPAL_FOR_SCOPE` | may confirm (provisional D7 rule 1) |
-| A reviewer read the record and verified the role, quoting it | `REVIEWER_VERIFIED_ROLE` | may confirm |
+| A reviewer finds wording **in the record** that states the role and the rules missed it | the reviewer classifies it as `HEAD_CONTRACTOR` / `PRINCIPAL_FOR_SCOPE` (`assertedBy = REVIEWER`, verbatim excerpt) | may confirm, because the record says it; the reviewer only classified it |
+| A reviewer believes, knows or was told the role, but no stored primary record states it | none: no confirming assertion exists for this | **cannot confirm.** The edge stays `INFERRED`/`ROLE_UNCERTAIN`; the reviewer can add a note or a private `MANUAL_ENTRY` document, which supports `INFERRED` only (D9) |
 | Names a supplier, role unstated or ambiguous, including a specialist trade supplier whose scope is narrow but whose role is not stated | `UNSPECIFIED_SUPPLIER` | **uncertain, not inferred:** reported as `ROLE_UNCERTAIN` ("named on award, role not established"); confidence capped (§9.2), review queue, never outward, never counted as a builder |
 | Design, project management, QS, supply-only | `NON_BUILDER_SERVICE` | **no `APPOINTED_BUILDER` edge at all** |
 | Standing panel / period arrangement | `PANEL_ARRANGEMENT` | **no `APPOINTED_BUILDER` edge at all** |
 
 Expected consequence, stated plainly: most AusTender-derived supplier links will be `ROLE_UNCERTAIN` until
-a reviewer verifies the role or a source states it, so confirmed-builder **recall will be lower** than the
+a source states the role (a reviewer may classify wording the rules missed, but cannot supply it), so confirmed-builder **recall will be lower** than the
 baseline's 1.00. That is the intended trade: precision and honesty over coverage.
 
 #### Provisional classification rules (Decision D7)
@@ -400,7 +596,8 @@ only until reviewed.
 
 1. **Specialist subcontractors are not principal builders without explicit supporting evidence.** A narrow
    scope alone (switchboard, roofing, chillers) does not make a supplier the builder; the record must
-   explicitly state the principal-contractor role (`PRINCIPAL_FOR_SCOPE`), or a reviewer must verify it.
+   explicitly state the principal-contractor role (`PRINCIPAL_FOR_SCOPE`), whether the rules or a reviewer
+   classify that wording.
 2. **Documented same-notice supplier corrections are supersessions.** A re-published notice that carries a
    documented correction or amendment (or a same-ABN name correction) supersedes the earlier version (§7).
 3. **Unresolved contradictory supplier evidence is a conflict.** Different suppliers for the same project
@@ -415,24 +612,98 @@ Hard rules:
 1. **An award or a development application never, by itself, confirms a builder.** A DA identifies an
    applicant, not a contractor; an award identifies a supplier, not necessarily a builder.
 2. **`CONFIRMED` `APPOINTED_BUILDER` requires explicit primary evidence of the role on the specific
-   project** (the evidence's `Opportunity` is the project's own, or a reviewer-verified project link).
+   project** (the evidence's `Opportunity` is the project's own). Revision 4: a reviewer link between two
+   projects (e.g. a DA and a later award) can carry an `INFERRED` builder only, never a confirmation.
    Cross-record project linking (DA → award) is not automatic in v1 (§16).
 3. **`WEBSITE_CLAIM` and `SECONDARY_REPORT` evidence can support `INFERRED` only.** Website claims are
    documented in the schema as raw observation, not verified truth.
-4. **Name-only entity matches (`NAME_EXACT`, `NAME_FUZZY`) can never produce `CONFIRMED`.**
+4. **Name-based entity matches (`ALIAS_MATCH`, `NAME_EXACT`, `NAME_FUZZY`) can never produce `CONFIRMED`.**
+   Only `ABN_EXACT` against an ABR-verified ABN can (§6.2).
 5. **Keyword matches are trade relevance only.** They never produce a `CONFIRMED` `REQUIRES_TRADE` or
    `PACKAGE_AVAILABLE`, and are never surfaced as an opportunity to bid.
 6. A `CONFIRMED` edge needs `basisEvidenceId`, `basisEvidenceClass` and `basisAssertion`; the database
    rejects it otherwise (§5.3). The database cannot decide whether that evidence is *currently eligible*;
    that is §7.2-7.3.
 7. Evidence from a `prohibited` source is never ingested (§8).
+8. **No human action confirms.** Promote, classify, resolve and merge actions are recorded and can make an
+   edge *eligible to be checked*, but `CONFIRMED` is set only by `validateConfirmation` (§7.2) when a stored
+   primary record, verbatim, states the relationship. Approval alone never turns an inference into proof.
+9. **A contradiction between primary records is a conflict, never a tie-break.** An eligible primary
+   record that contradicts the relationship makes the edge `CONFLICTED`, whatever the stored state or which
+   record is newer, unless it is a documented correction or an ending statement (§7.4).
 
 ### 6.2 Entity resolution
 
-Order of trust: `ABN_EXACT` > `REVIEWER_VERIFIED` > `NAME_EXACT` (identical `normalizeCompanyNameKey`) >
-`NAME_FUZZY`. `NAME_FUZZY` matches create no edge on their own; they enter the review queue (§7). Entity
-merge/split tooling is out of scope for v1; ABN uniqueness prevents duplicate organisations where ABNs
-exist, name-only duplicates are tolerated and visible.
+Entity resolution runs **before** any edge is written (§7.2 step 1), because a wrong merge contaminates
+every edge, conflict group and recommendation downstream. The baseline shows the risk: name-only matching
+scored 10 / 20 on the entity pairs, with **3 false merges** (§11.5). Revision 4 replaces revision 3's
+four-line rule with the following.
+
+#### 6.2.1 Identity anchor: the ABN, verified with `lib/abnLookup.ts`
+
+- An ABN on a record is normalised with `normalizeAbn` and kept only if `isValidAbnChecksum` passes; a
+  checksum-invalid ABN is discarded (logged on the evidence row) and the record is matched by name only.
+- A checksum-valid ABN is verified with `lookupAbn` (ABR). The result is cached on the entity
+  (`abnStatus`, `abnLegalName`, `abnCheckedAt`) and the legal name becomes an `ABR_LEGAL_NAME` alias.
+  Re-checked when older than 90 days (provisional) or when a record shows a different name with that ABN.
+- **Only an ABR-verified ABN anchors a confirmation.** A checksum-valid but unverified ABN (lookup not
+  configured, `AbnLookupNotConfiguredError`, or the ABR unreachable) still links records that carry the same
+  ABN, but the match is recorded as `NAME_EXACT`-strength for confirmation purposes until verified. A typo
+  that happens to pass the checksum can point at a real, different company; the ABR check catches it.
+- **Cancelled ABN:** existing edges keep their history but are flagged for review; no new confirmation is
+  made to an entity whose ABN is `cancelled`.
+- The eval harness uses a stub ABR keyed by the synthetic ABNs (the fixtures' ABNs are deliberately not
+  checksum-valid, §11.1); production uses the existing `lookupAbn` unchanged.
+
+#### 6.2.2 Match classes (deterministic, in order)
+
+| Match | Rule | Can confirm? |
+|---|---|---|
+| `ABN_EXACT` | the record carries a checksum-valid ABN equal to the entity's **ABR-verified** ABN | **yes** (the only one) |
+| `ALIAS_MATCH` | no ABN on the record; its `nameKey` equals an alias of **exactly one** organisation in the workspace and no other organisation's `nameKey` or alias | no; strong `INFERRED` |
+| `NAME_EXACT` | no ABN; `nameKey` equals an entity's `nameKey`, ambiguity allowed | no |
+| `NAME_FUZZY` | similarity candidate only | no; creates **no edge**, enters the review queue |
+| `STRUCTURAL` | the edge has no organisation endpoint (project → trade) | n/a (identity is `opportunityId` / `tradeCode`) |
+
+Two records with **different** checksum-valid ABNs are never the same entity, however similar the names
+(pairs P17–P20). When the normaliser collapses two different registered names to one `nameKey`, `ALIAS_MATCH`
+does not apply (the "exactly one" condition fails) and the match falls back to `NAME_EXACT`.
+
+#### 6.2.3 Aliases
+
+`GraphEntityAlias` rows record every name an organisation is known by, with where each came from:
+- `ABR_LEGAL_NAME`: the ABR `entityName` from `lookupAbn`.
+- `ABR_BUSINESS_NAME`: registered business names. **Not available yet:** `lookupAbn` parses only
+  `EntityName`, so this needs a small extension to the ABR parser in a later production PR (Decision D11).
+  Until then, trading names arrive only as `OBSERVED_WITH_ABN`.
+- `OBSERVED_WITH_ABN`: a name seen on a primary record **that also carries this entity's verified ABN**
+  (for example "Volt Electrical" on a notice with Voltaic Services' ABN, pair P12). A name seen without an
+  ABN never becomes an alias automatically.
+- `REVIEWER_LINKED`: added by a merge (§6.2.4), carrying the merge id.
+
+Aliases only widen `ALIAS_MATCH`; they never confirm on their own.
+
+#### 6.2.4 Merges: reviewed, documented, reversible
+
+- **Nothing merges automatically.** Ingestion only *attaches* a record to an entity (by `ABN_EXACT`, or a
+  new entity is created). Two existing entities become one only through a reviewer `MERGE`.
+- **A merge needs a document, not an opinion.** `GraphEntityMerge.basisEvidenceIds` must cite at least one
+  record or ABR result showing both names under one ABN (for example an ABR result listing the trading name,
+  or a primary record carrying the name and the ABN). Merging two entities that both carry ABR-verified ABNs
+  that **differ** is refused by trigger, with no override.
+- **Reversible by construction.** A merge sets `mergedIntoId` on the absorbed entity and nothing else:
+  edges, evidence and aliases keep their original entity ids, and reads resolve
+  `COALESCE(mergedIntoId, id)`. `UNMERGE` appends a row that reverses a named `MERGE` and clears the
+  pointer, restoring exactly the prior state. No merge chains: the survivor must not itself be merged.
+- **Downstream re-evaluation.** Every `MERGE`/`UNMERGE` triggers revalidation (§7.3) of each `CONFIRMED`
+  edge touching either entity and re-evaluation of their conflict groups: merging two "competing" builders
+  can dissolve a conflict, and unmerging can restore it. Both outcomes are recorded as `SYSTEM` review rows.
+- Merge and unmerge use the `graph:review` capability (D4) and also write an `AuditEvent`.
+
+#### 6.2.5 Testing false merges
+
+False merges are a **hard invariant (0)** on the gold set (§11.4), measured separately from missed
+matches; the categories the eval must cover are listed in §11.7.
 
 ## 7. Provenance, supersession, dedup and reviewer audit
 
@@ -497,16 +768,22 @@ shared by ingestion, review and the eval harness) and applied inside a database 
 Protocol (one transaction per edge; isolation `SERIALIZABLE`, or `READ COMMITTED` plus the advisory lock below):
 
 1. **Lock.** Take `pg_advisory_xact_lock(hash(workspaceId, conflictGroupKey))` so two ingestions cannot
-   race on the same slot, then upsert entities.
+   race on the same slot, then resolve and upsert entities by the §6.2 rules (attach, never merge).
 2. **Create the edge as `INFERRED`**, `status = ACTIVE`, confidence ≤ 79, no basis columns.
 3. **Attach evidence** rows: snapshot (excerpt, `contentHash`, `observedAt`), licence snapshot,
    `assertion`, `resolvedEntityId`, `expiresAt`. Rejected here: `prohibited`/unregistered sources, a
    missing excerpt, an evidence `Opportunity` that is not the project's own.
 4. **Validate** with `validateConfirmation(edge, evidence, registry, mode, now)`: edge-type rule from §6.1;
    class and assertion allowed for the type; `retractedAt IS NULL` and `expiresAt` in the future; source
-   present in the **live** registry with the commercial-use position §8 requires; entity match strong
-   enough; for `PACKAGE_AVAILABLE`, the notice still open (`validUntil` in the future); and the
-   conflict-group check of §9.4.
+   present in the **live** registry with the commercial-use position §8 requires; entity match
+   `ABN_EXACT` against an ABR-verified ABN (or `STRUCTURAL`); for `PACKAGE_AVAILABLE`, the notice still
+   open (`validUntil` in the future); the conflict-group check of §9.4; and, new in revision 4:
+   - **the excerpt is verbatim in the stored record**: it is found, after whitespace normalisation only, in
+     the referenced `Opportunity`'s text (`title`, `description`, or the text fields of `rawData`) at the
+     `contentHash` snapshotted on the evidence row. This is what makes "the document supports the
+     relationship" a machine check rather than a reviewer's say-so, and it applies equally to rule- and
+     reviewer-classified assertions;
+   - **no eligible primary refutation** on the edge (§7.4 step 6).
 5. **Promote or stay inferred.** If valid, set `basisEvidenceId`, `basisEvidenceClass`, `basisAssertion`,
    `verification = CONFIRMED` and the confirmed confidence band in a single `UPDATE`; the CHECKs and the
    composite FK then re-verify the static facts. If invalid, leave it `INFERRED` and record why.
@@ -527,11 +804,12 @@ what it can do:
 ### 7.3 Evidence validity: a CONFIRMED edge must stay supported
 
 **Invariant.** Every `CONFIRMED` edge retains **at least one currently eligible, unretracted,
-appropriately licensed `PRIMARY_RECORD` (or authorised `MANUAL_ENTRY`) evidence row that supports that exact
-relationship**: the basis row is attached to this edge, resolves to this edge's target entity, carries the
-required `assertion`, has `retractedAt IS NULL`, `expiresAt` null or in the future, and a source the live
-registry permits for the surface being served. If no such row exists, the edge **cannot remain
-confirmed**.
+appropriately licensed `PRIMARY_RECORD` (or, for `SUBCONTRACT_AWARDED` only, authorised `MANUAL_ENTRY`)
+evidence row that supports that exact relationship**: the basis row is attached to this edge, resolves to
+this edge's target entity, carries the required `assertion` with `stance = SUPPORTS`, is the newest version
+of its chain, has `retractedAt IS NULL`, `expiresAt` null or in the future, and a source the live registry
+permits for the surface being served; **and** no eligible primary row refutes the edge (§7.4). If either
+condition fails, the edge **cannot remain confirmed**.
 
 How it is kept true:
 - **Read-time guard.** No query trusts the stored `verification`. §10 computes an *effective*
@@ -541,7 +819,8 @@ How it is kept true:
 - **Revalidation job** (worker, default off with the graph flag) re-runs `validateConfirmation` for every
   `CONFIRMED` edge when any of these happens: evidence retracted or past `expiresAt`; the licence registry
   changes a source's position or the gate mode changes; the referenced `Opportunity.contentHash` changes
-  so the snapshot no longer matches; retention expiry; an entity merge or ABN change; supersession;
+  so the snapshot no longer matches; retention expiry; an entity merge, unmerge, ABN change or ABR status
+  change to `cancelled`; supersession; a **refuting** evidence row attached to the edge (§7.4);
   `PACKAGE_AVAILABLE` past `validUntil`. It also runs on a schedule as a safety net.
 - **Demotion, not deletion.** An edge that fails revalidation is set to `INFERRED`, its basis columns are
   cleared, `status` becomes `UNSUPPORTED` when no eligible evidence of any kind remains (or `EXPIRED`
@@ -552,6 +831,41 @@ How it is kept true:
   withdrawn evidence even if the job is down. (Licence registry changes are code, so the read-time guard
   and the job cover those.)
 - **Re-promotion** follows §7.2 again, with new or restored eligible evidence.
+
+### 7.4 Supporting and refuting evidence
+
+Revision 3 let several records *support* an edge but had no way for a record to argue *against* one: the
+only contradiction it could see was two edges competing for one slot (§9.4). Revision 4 gives every
+evidence row (`GraphEdgeEvidence` and `GraphProjectStageEvidence`) a `stance`: `SUPPORTS` or `REFUTES`.
+Refuting assertions are `ROLE_CONTRADICTED`, `CLIENT_CONTRADICTED`, `SCOPE_EXCLUDED`,
+`RELATIONSHIP_ENDED` and `CLOSED_OR_AWARDED` (§5.2); the CHECK ties stance to assertion.
+
+**Evaluation order.** One pure function, `evaluateEdgeEvidence(edge, evidence, registry, mode, now)`,
+shared by ingestion, revalidation, the eval harness and (in SQL form) the §10 query, applies these steps
+in this order. The same inputs always give the same state.
+
+| Step | Rule | Outcome |
+|---|---|---|
+| 1. Eligibility | Drop rows that are retracted, past `expiresAt`, or from a source the live registry does not permit for this surface (§8) | ineligible rows are kept for audit and ignored |
+| 2. Versions | Within a `versionOfEvidenceId` chain only the newest unretracted row counts | an older version, supporting or refuting, no longer counts; the change is in `changeSummary` |
+| 3. Endings | A primary row asserting `RELATIONSHIP_ENDED` (terminated, novated or replaced, with a date) or `CLOSED_OR_AWARDED` (bid closed or let) sets the edge's `validUntil` to that date | past it the edge is `EXPIRED`: it ended, it was not wrong. **Not a conflict.** A non-primary ending row only flags the edge for review |
+| 4. Partition | Split the remaining rows into supporting and refuting | |
+| 5. Support required | No supporting row left | `UNSUPPORTED`. A refutation alone never creates or sustains an edge |
+| 6. Primary refutation | Any eligible refuting row of class `PRIMARY_RECORD` (or, on the private `SUBCONTRACT_AWARDED` only, a documented `MANUAL_ENTRY`) | `status = CONFLICTED`; a `CONFIRMED` edge is demoted to `INFERRED` with a `SYSTEM` `DEMOTE` row; the conflict group is re-evaluated; a reviewer resolves it with documents. Dates do not break the tie |
+| 7. Weaker refutation | Refuting rows only of class `SECONDARY_REPORT` / `WEBSITE_CLAIM` / `HISTORICAL_PATTERN`, or a `MANUAL_ENTRY` on a public edge (D9) | a `CONFIRMED` edge **stays confirmed** (a weaker source cannot overturn a primary record) but is flagged `contestedWeak` and queued for review; an `INFERRED` edge takes a −15 confidence penalty (§9.2) |
+| 8. Confirmation | Otherwise | the §6.1 / §7.2 confirmation rules decide `CONFIRMED` vs `INFERRED` |
+
+**How the four "change" events differ**, so none is mistaken for another:
+
+| Event | What happened | Effect |
+|---|---|---|
+| **Retraction** | the source withdrew the record, or the evidence expired under retention | the row stops counting (step 1). Neither side wins; the edge is re-evaluated, often to `UNSUPPORTED` |
+| **Evidence supersession** | the same source re-published the same notice (same `externalId`) | the new version replaces the old in counting (step 2). If the new version names a *different* supplier without documenting a correction, that is a conflict (D7 rule 3), not a supersession |
+| **Edge supersession** | a documented same-notice correction (D7 rule 2), or a reviewer resolving a conflict | a new edge is created; the old one becomes `SUPERSEDED` with `supersededById`. Both keep their evidence |
+| **Refutation** | a *different* eligible record contradicts the relationship | step 6 or 7. Never a silent overwrite, whichever record is newer |
+
+Rejected and superseded edges, and every refuting row, are kept: a reviewer and an auditor can always see
+what was believed, when, on what evidence, and what overturned it.
 
 ## 8. Source licensing and provenance (PR #413)
 
@@ -595,6 +909,14 @@ confirmation; PlanningAlerts non-commercial plan only).
 | 40–69 | uncertain | **review queue**; not shown outward |
 | < 40 | weak | suppressed from outward recommendations; kept for audit |
 
+**Bands govern recommendation, never status (revision 4).** A project's builder status, trade tier and
+stage are decided from **all** eligible live evidence, whatever the confidence. The band and the caller's
+minimum confidence decide only which candidates may be *recommended*. So a supplier capped at 69 still
+makes the project `ROLE_UNCERTAIN`, a keyword-only match still makes it `TRADE_RELEVANCE_ONLY`, and two
+penalised competitors still make it `CONFLICTING_EVIDENCE`; none of them is shown as a contact to
+approach. Revision 3 filtered on confidence first, which turned all three into "unknown" or dropped the
+project (§10).
+
 ### 9.2 Deterministic scoring (initial constants, to be recalibrated)
 
 `score = base(evidenceClass) + entityMatch + corroboration − ageDecay − conflictPenalty`, clamped to the
@@ -604,10 +926,11 @@ band the verification state allows.
 |---|---|
 | base | PRIMARY_RECORD 85, SECONDARY_REPORT 55, MANUAL_ENTRY 75, WEBSITE_CLAIM 40, HISTORICAL_PATTERN 35 |
 | assertion cap | `UNSPECIFIED_SUPPLIER` capped at 69 (reported as `ROLE_UNCERTAIN`; review queue, never outward); `KEYWORD_ONLY` capped at 59 |
-| entityMatch | ABN_EXACT +10, REVIEWER_VERIFIED +10, NAME_EXACT 0, NAME_FUZZY −20 |
-| corroboration | +5 per additional independent source, max +10 |
+| entityMatch | ABN_EXACT +10 (ABR-verified), ALIAS_MATCH +5, NAME_EXACT 0, NAME_FUZZY −20, STRUCTURAL 0 |
+| corroboration | +5 per additional independent source, max +10 (supporting rows only) |
 | ageDecay | −1 per 30 days beyond 90 days since `observedAt`, max −20 |
-| conflictPenalty | −30 on every edge in a conflict group |
+| conflictPenalty | −30 on every edge in a conflict group, and on an edge with an eligible primary refutation (§7.4 step 6) |
+| weakRefutation | −15 on an `INFERRED` edge with only non-primary refuting rows (§7.4 step 7) |
 
 ### 9.3 Calibration
 
@@ -630,7 +953,11 @@ A *slot* is `(project, APPOINTED_BUILDER)` (likewise `DEVELOPED_BY`). Edges comp
   review row.
 - Same-source re-delivery with changed supplier is automatic supersession (§7), not a conflict.
 - Evidence that disagrees with a `CONFIRMED` edge demotes it to `CONFLICTED` pending review; `CONFIRMED`
-  is never silently overwritten.
+  is never silently overwritten. Revision 4 makes "disagrees" precise: an eligible **primary** refuting row
+  on the edge itself (§7.4 step 6), or a competing edge for the same slot (above). A weaker refuting row
+  only flags it (§7.4 step 7).
+- Slot identity uses the **canonical** organisation (`COALESCE(mergedIntoId, id)`), so two entities a
+  reviewer has merged do not compete, and unmerging them can restore a conflict (§6.2.4).
 
 ## 10. Corrected example SQL
 
@@ -638,166 +965,186 @@ The first draft used a recursive CTE, which is wrong here: appointment and trade
 single-hop edges from the same project, and recursion would walk edges of different meaning. Below is a
 non-recursive, fully tenant-scoped query. Every join carries `workspaceId`, so it uses the composite
 indexes and cannot cross tenants. Identifiers are quoted because Prisma creates camel-cased columns.
+Fixed one-hop joins are used throughout; recursion stays reserved for genuinely variable-depth traversal,
+which v1 does not have.
+
+**Revision 4 correction.** Revision 3 put `confidence >= $5` on both the trade and the builder joins, so
+it decided which edges *existed* by the recommendation threshold. States capped below it by design were
+lost: a role-uncertain supplier (≤ 69) read as `UNKNOWN_BUILDER`, a keyword-only trade match (≤ 59) dropped
+the project although §13.4 required `TRADE_RELEVANCE_ONLY`, and two penalised inferred competitors read as
+`UNKNOWN_BUILDER` instead of `CONFLICTING_EVIDENCE`. The query below has **no confidence filter**. It
+decides status from all eligible live evidence (§9.1) and returns each candidate's confidence so that the
+read service applies the threshold afterwards, to recommendations only. The builder join also gains the
+missing `validFrom` check.
 
 Parameters: `$1` workspaceId · `$2` tradeCode (e.g. `electrical`) · `$3` region (e.g. `QLD`) ·
-`$4` locality pattern (e.g. `%Brisbane%`) · `$5` minimum confidence (e.g. 70) · `$6` eligible source keys
-(`text[]`, computed by the service from the live registry, the gate mode and the surface being served,
-§8.4-8.5; includes `manual` only when workspace-private evidence is permitted).
-
-Two rules from §7.3 are applied in SQL, not trusted from stored columns: an edge counts as `CONFIRMED`
-only if its **basis evidence is currently eligible**, and every edge needs at least one eligible evidence
-row. The trade relation reported is the strongest **effective** tier: a keyword match is reported as
-`TRADE_RELEVANCE_ONLY`, never as a requirement or an opportunity.
+`$4` locality pattern (e.g. `%Brisbane%`) · `$5` minimum confidence for **recommendation** (e.g. 70; it only
+sets each candidate's `meetsThreshold` flag) · `$6` eligible source keys (`text[]`, computed by the service
+from the live registry, the gate mode and the surface being served, §8.4-8.5; includes `manual` only when
+workspace-private evidence is permitted).
 
 ```sql
-WITH trade_edges AS (
-  -- Every live trade edge for in-scope projects, with its EFFECTIVE verification.
+WITH ev AS (
+  -- Evidence that counts now (§7.4 steps 1-2): unretracted, unexpired, licence-eligible for this
+  -- surface, and the newest version of its chain.
+  SELECT e.*,
+         -- Every edge type this query reads is public, so only a PRIMARY_RECORD has primary strength;
+         -- a private MANUAL_ENTRY refutation only flags (D9, §7.4 step 7).
+         (e."evidenceClass" = 'PRIMARY_RECORD') AS is_primary
+  FROM "GraphEdgeEvidence" e
+  WHERE e."workspaceId" = $1
+    AND e."retractedAt" IS NULL
+    AND (e."expiresAt" IS NULL OR e."expiresAt" > now())
+    AND e."sourceKey" = ANY ($6)
+    AND NOT EXISTS (
+      SELECT 1 FROM "GraphEdgeEvidence" n
+      WHERE n."workspaceId" = e."workspaceId" AND n."versionOfEvidenceId" = e."id"
+        AND n."retractedAt" IS NULL)
+),
+edge_state AS (
+  -- Every live edge with at least one counting SUPPORTS row (§7.4 step 5), and its EFFECTIVE state.
+  -- No confidence filter: status is decided from all of it.
+  SELECT r."id"             AS edge_id,
+         r."edgeType"       AS edge_type,
+         r."sourceEntityId" AS project_entity_id,
+         r."targetEntityId" AS target_id,
+         r."status"         AS status,
+         r."confidence"     AS confidence,
+         bool_or(ev."stance" = 'REFUTES' AND ev.is_primary)                          AS primary_refuted,
+         bool_or(ev."stance" = 'SUPPORTS'
+                 AND ev."assertion" IN ('HEAD_CONTRACTOR', 'PRINCIPAL_FOR_SCOPE'))     AS explicit_role,
+         bool_or(r."verification" = 'CONFIRMED'                                        -- basis must count NOW
+                 AND ev."id" = r."basisEvidenceId"
+                 AND ev."stance" = 'SUPPORTS'
+                 AND ev."resolvedEntityId" = r."targetEntityId"
+                 AND ev."assertion" = r."basisAssertion"
+                 AND ev."evidenceClass" = r."basisEvidenceClass")                     AS basis_counts
+  FROM "GraphEdge" r
+  JOIN ev ON ev."workspaceId" = r."workspaceId" AND ev."edgeId" = r."id"
+  WHERE r."workspaceId" = $1
+    AND r."edgeType" IN ('APPOINTED_BUILDER', 'PACKAGE_AVAILABLE', 'REQUIRES_TRADE', 'TRADE_RELEVANCE')
+    AND r."status" IN ('ACTIVE', 'CONFLICTED')
+    AND (r."validFrom" IS NULL OR r."validFrom" <= now())
+    AND (r."validUntil" IS NULL OR r."validUntil" > now())
+  GROUP BY r."id"                                  -- primary key: the r columns above are dependent
+  HAVING bool_or(ev."stance" = 'SUPPORTS')
+),
+trade_link AS (
+  -- One row per in-scope project: the strongest EFFECTIVE trade tier (§2.2). Effective confirmation =
+  -- the basis counts and no primary refutation (§7.4 step 6).
   SELECT p."id"        AS project_id,
+         o."id"        AS opportunity_id,
          o."title"     AS project_name,
          o."locality"  AS locality,
-         r."id"        AS edge_id,
-         r."edgeType"  AS edge_type,
-         (r."verification" = 'CONFIRMED' AND EXISTS (
-            SELECT 1 FROM "GraphEdgeEvidence" b             -- basis evidence must be eligible NOW
-            WHERE b."workspaceId" = r."workspaceId" AND b."edgeId" = r."id"
-              AND b."id" = r."basisEvidenceId"
-              AND b."resolvedEntityId" = r."targetEntityId"
-              AND b."assertion" = r."basisAssertion"
-              AND b."evidenceClass" = r."basisEvidenceClass"
-              AND b."retractedAt" IS NULL
-              AND (b."expiresAt" IS NULL OR b."expiresAt" > now())
-              AND b."sourceKey" = ANY ($6)))  AS effective_confirmed,
-         r."confidence" AS confidence
+         CASE
+           WHEN bool_or(s.primary_refuted)                                         THEN 'TRADE_CONTESTED'
+           WHEN bool_or(s.edge_type = 'PACKAGE_AVAILABLE' AND s.basis_counts)     THEN 'PACKAGE_AVAILABLE'
+           WHEN bool_or(s.edge_type = 'REQUIRES_TRADE'    AND s.basis_counts)     THEN 'REQUIRES_TRADE'
+           ELSE                                                                         'TRADE_RELEVANCE_ONLY'
+         END           AS trade_tier
   FROM "GraphEntity" p
   JOIN "Opportunity" o
     ON o."workspaceId" = p."workspaceId" AND o."id" = p."opportunityId"
-  JOIN "GraphEdge" r
-    ON r."workspaceId" = p."workspaceId"
-   AND r."sourceEntityId" = p."id"
-   AND r."edgeType" IN ('PACKAGE_AVAILABLE', 'REQUIRES_TRADE', 'TRADE_RELEVANCE')
-   AND r."status" = 'ACTIVE'
-   AND (r."validFrom" IS NULL OR r."validFrom" <= now())
-   AND (r."validUntil" IS NULL OR r."validUntil" > now())
-   AND r."confidence" >= $5
+  JOIN edge_state s
+    ON s.project_entity_id = p."id"
+   AND s.edge_type IN ('PACKAGE_AVAILABLE', 'REQUIRES_TRADE', 'TRADE_RELEVANCE')
   JOIN "GraphEntity" t
-    ON t."workspaceId" = r."workspaceId" AND t."id" = r."targetEntityId"
+    ON t."workspaceId" = p."workspaceId" AND t."id" = s.target_id
    AND t."kind" = 'TRADE_PACKAGE' AND t."tradeCode" = $2
   WHERE p."workspaceId" = $1
     AND p."kind" = 'PROJECT'
     AND o."region" = $3
     AND o."locality" ILIKE $4
-    AND EXISTS (                         -- at least one eligible, non-retracted evidence row
-      SELECT 1 FROM "GraphEdgeEvidence" ev
-      WHERE ev."workspaceId" = r."workspaceId" AND ev."edgeId" = r."id"
-        AND ev."retractedAt" IS NULL AND (ev."expiresAt" IS NULL OR ev."expiresAt" > now())
-        AND ev."sourceKey" = ANY ($6))
-),
-trade_link AS (
-  -- One row per project: the strongest effective tier. INFERRED PACKAGE_AVAILABLE or REQUIRES_TRADE
-  -- edges fall to the relevance tier; they are never reported as a requirement or an opportunity.
-  SELECT DISTINCT ON (project_id)
-         project_id, project_name, locality,
-         CASE WHEN effective_confirmed AND edge_type = 'PACKAGE_AVAILABLE' THEN 'PACKAGE_AVAILABLE'
-              WHEN effective_confirmed AND edge_type = 'REQUIRES_TRADE'    THEN 'REQUIRES_TRADE'
-              ELSE 'TRADE_RELEVANCE_ONLY' END AS trade_tier
-  FROM trade_edges
-  ORDER BY project_id,
-           CASE WHEN effective_confirmed AND edge_type = 'PACKAGE_AVAILABLE' THEN 1
-                WHEN effective_confirmed AND edge_type = 'REQUIRES_TRADE'    THEN 2
-                ELSE 3 END,
-           confidence DESC
+  GROUP BY p."id", o."id"
 ),
 builder AS (
-  -- Appointment edges for those same projects: a separate relationship with its own evidence.
+  -- Appointment edges for those projects, by CANONICAL organisation (§6.2.4).
   SELECT q.project_id,
-         count(DISTINCT a."targetEntityId")                          AS distinct_builders,
-         bool_or(a."status" = 'CONFLICTED')                          AS flagged_conflict,
-         bool_or(a."verification" = 'CONFIRMED' AND EXISTS (         -- effective, not stored
-            SELECT 1 FROM "GraphEdgeEvidence" b
-            WHERE b."workspaceId" = a."workspaceId" AND b."edgeId" = a."id"
-              AND b."id" = a."basisEvidenceId"
-              AND b."resolvedEntityId" = a."targetEntityId"
-              AND b."assertion" = a."basisAssertion"
-              AND b."evidenceClass" = a."basisEvidenceClass"
-              AND b."retractedAt" IS NULL
-              AND (b."expiresAt" IS NULL OR b."expiresAt" > now())
-              AND b."sourceKey" = ANY ($6)))                         AS any_confirmed,
-         bool_or(EXISTS (                                            -- explicit role asserted (not merely named)
-            SELECT 1 FROM "GraphEdgeEvidence" ex
-            WHERE ex."workspaceId" = a."workspaceId" AND ex."edgeId" = a."id"
-              AND ex."assertion" IN ('HEAD_CONTRACTOR', 'PRINCIPAL_FOR_SCOPE', 'REVIEWER_VERIFIED_ROLE')
-              AND ex."retractedAt" IS NULL
-              AND (ex."expiresAt" IS NULL OR ex."expiresAt" > now())
-              AND ex."sourceKey" = ANY ($6)))                        AS any_explicit_role,
+         count(DISTINCT COALESCE(b."mergedIntoId", b."id"))       AS distinct_builders,
+         bool_or(s.status = 'CONFLICTED' OR s.primary_refuted)     AS contested,
+         bool_or(s.basis_counts AND NOT s.primary_refuted)         AS any_confirmed,
+         bool_or(s.explicit_role)                                  AS any_explicit_role,
          jsonb_agg(jsonb_build_object(
-           'builderEntityId', b."id",
-           'builderName',     b."displayName",
-           'abn',             b."abn",
-           'edgeId',          a."id",
-           'storedVerification', a."verification",
-           'confidence',      a."confidence",
-           'evidence',        (SELECT jsonb_agg(jsonb_build_object(
-                                  'evidenceId', ev."id", 'sourceKey', ev."sourceKey",
-                                  'assertion', ev."assertion", 'sourceUrl', ev."sourceUrl",
-                                  'excerpt', ev."excerpt", 'attribution', ev."attribution"))
-                               FROM "GraphEdgeEvidence" ev
-                               WHERE ev."workspaceId" = a."workspaceId" AND ev."edgeId" = a."id"
-                                 AND ev."retractedAt" IS NULL
-                                 AND (ev."expiresAt" IS NULL OR ev."expiresAt" > now())
-                                 AND ev."sourceKey" = ANY ($6))
-         ) ORDER BY a."confidence" DESC)                             AS candidates
+           'builderEntityId',    COALESCE(b."mergedIntoId", b."id"),
+           'builderName',        COALESCE(c."displayName", b."displayName"),
+           'nameAsRecorded',     b."displayName",
+           'abn',                COALESCE(c."abn", b."abn"),
+           'edgeId',             s.edge_id,
+           'effectiveConfirmed', s.basis_counts AND NOT s.primary_refuted,
+           'explicitRole',       s.explicit_role,
+           'refuted',            s.primary_refuted,
+           'confidence',         s.confidence,
+           'meetsThreshold',     s.confidence >= $5,
+           'evidence',           (SELECT jsonb_agg(jsonb_build_object(
+                                    'evidenceId', e."id", 'stance', e."stance", 'assertion', e."assertion",
+                                    'assertedBy', e."assertedBy", 'sourceKey', e."sourceKey",
+                                    'sourceUrl', e."sourceUrl", 'excerpt', e."excerpt",
+                                    'observedAt', e."observedAt", 'attribution', e."attribution")
+                                    ORDER BY e."observedAt")
+                                  FROM ev e WHERE e."edgeId" = s.edge_id)
+         ) ORDER BY s.confidence DESC)                             AS candidates
   FROM trade_link q
-  JOIN "GraphEdge" a
-    ON a."workspaceId" = $1
-   AND a."sourceEntityId" = q.project_id
-   AND a."edgeType" = 'APPOINTED_BUILDER'
-   AND a."status" IN ('ACTIVE', 'CONFLICTED')
-   AND (a."validUntil" IS NULL OR a."validUntil" > now())
-   AND a."confidence" >= $5
+  JOIN edge_state s
+    ON s.project_entity_id = q.project_id
+   AND s.edge_type = 'APPOINTED_BUILDER'
   JOIN "GraphEntity" b
-    ON b."workspaceId" = a."workspaceId" AND b."id" = a."targetEntityId"
-   AND b."kind" = 'ORGANISATION'
-  WHERE EXISTS (                         -- at least one eligible, non-retracted evidence row
-    SELECT 1 FROM "GraphEdgeEvidence" ev
-    WHERE ev."workspaceId" = a."workspaceId" AND ev."edgeId" = a."id"
-      AND ev."retractedAt" IS NULL AND (ev."expiresAt" IS NULL OR ev."expiresAt" > now())
-      AND ev."sourceKey" = ANY ($6))
+    ON b."workspaceId" = $1 AND b."id" = s.target_id AND b."kind" = 'ORGANISATION'
+  LEFT JOIN "GraphEntity" c                       -- the survivor, when b has been merged
+    ON c."workspaceId" = b."workspaceId" AND c."id" = b."mergedIntoId"
   GROUP BY q.project_id
 )
-SELECT q.project_name,
+SELECT q.project_id,
+       q.opportunity_id,
+       q.project_name,
        q.locality,
        q.trade_tier,
        CASE
-         WHEN b.project_id IS NULL                              THEN 'UNKNOWN_BUILDER'
-         WHEN b.distinct_builders > 1 OR b.flagged_conflict     THEN 'CONFLICTING_EVIDENCE'
-         WHEN b.any_confirmed                                   THEN 'CONFIRMED_BUILDER'
-         WHEN b.any_explicit_role                               THEN 'INFERRED_BUILDER'   -- role explicit, another requirement unmet (e.g. name-only match)
-         ELSE                                                        'ROLE_UNCERTAIN'      -- supplier named, role not established
-       END                                         AS builder_status,
-       CASE WHEN b.project_id IS NULL THEN '[]'::jsonb ELSE b.candidates END AS candidates
+         WHEN b.project_id IS NULL                          THEN 'UNKNOWN_BUILDER'
+         WHEN b.distinct_builders > 1 OR b.contested        THEN 'CONFLICTING_EVIDENCE'
+         WHEN b.any_confirmed                               THEN 'CONFIRMED_BUILDER'
+         WHEN b.any_explicit_role                           THEN 'INFERRED_BUILDER'   -- role explicit, a confirmation rule unmet (e.g. no ABR-verified ABN)
+         ELSE                                                    'ROLE_UNCERTAIN'      -- supplier named, role not established
+       END                                       AS builder_status,
+       COALESCE(b.candidates, '[]'::jsonb)       AS candidates
 FROM trade_link q
 LEFT JOIN builder b ON b.project_id = q.project_id
 ORDER BY (b.project_id IS NULL), q.project_name;
 ```
 
+**After the query (read service, pure functions):**
+- `deriveProjectStage` (§2.4) runs over the projects' stage evidence in one further workspace-scoped query
+  and adds `stage`, `stageAsOf`, `stageContested`, `stale`.
+- `recommendFrom(row, minConfidence)` applies the threshold **only here**. It may offer a builder as a
+  contact only when `builder_status` is `CONFIRMED_BUILDER` (candidates with `effectiveConfirmed`) or
+  `INFERRED_BUILDER` (candidates with `explicitRole` and `meetsThreshold`, labelled inferred). For
+  `CONFLICTING_EVIDENCE`, `ROLE_UNCERTAIN` and `UNKNOWN_BUILDER` it offers **no contact**, only the next
+  verification step. A trade is presented as an opportunity to bid only at `PACKAGE_AVAILABLE`. Rows are
+  never dropped by the threshold; only contacts are withheld.
+
 Behaviour, all asserted by integration tests (§13):
+- **Status is decided before the threshold.** `ROLE_UNCERTAIN`, `TRADE_RELEVANCE_ONLY` and
+  `CONFLICTING_EVIDENCE` are returned whatever `$5` is; `$5` changes only `meetsThreshold`.
 - **Absent evidence → explicit `UNKNOWN_BUILDER`** with empty candidates. No name or id is fabricated,
   and the row still appears (the `LEFT JOIN` keeps the project that needs the trade).
 - **An award that names a supplier without establishing its role is `ROLE_UNCERTAIN`**: not a confirmed
   and not an inferred builder (D7 rule 4). `INFERRED_BUILDER` is reserved for an explicit role whose
-  identity match is still weak (e.g. name-only). Design, PM, QS, supply-only and panel awards produce no
-  appointment edge, so they yield `UNKNOWN_BUILDER`.
+  identity is not ABR-verified. Design, PM, QS, supply-only and panel awards produce no appointment edge,
+  so they yield `UNKNOWN_BUILDER`.
 - **Trade tiers are separate:** `TRADE_RELEVANCE_ONLY` for keyword matches, `REQUIRES_TRADE` only with an
-  explicit requirement, `PACKAGE_AVAILABLE` only with a confirmed open procurement route. A project with
-  only a keyword match is never reported as requiring or offering the trade.
-- **Stored `CONFIRMED` is not trusted.** If the basis evidence is retracted, expired, resolves to a
-  different entity, carries a different assertion, or its source is no longer eligible, the edge reads as
-  inferred in this query even before revalidation runs.
-- **Conflicts surface as `CONFLICTING_EVIDENCE`**, never as a pick.
+  effective explicit requirement, `PACKAGE_AVAILABLE` only with an effective open procurement notice, and
+  `TRADE_CONTESTED` when an eligible primary record excludes the trade or contradicts the package. A
+  project with only a keyword match is never reported as requiring or offering the trade.
+- **Stored `CONFIRMED` is not trusted.** If the basis evidence is retracted, expired, superseded by a
+  newer version, resolves to a different entity, carries a different assertion, or its source is no
+  longer eligible, or an eligible primary row refutes the edge, the edge reads as inferred (or conflicting)
+  in this query even before revalidation runs.
+- **Refutation alone never creates a row.** An edge whose only counting evidence refutes it is not live.
+- **Conflicts surface as `CONFLICTING_EVIDENCE`**, never as a pick, and are counted by canonical
+  organisation, so merged entities do not conflict with themselves.
 - **Licence-ineligible evidence is invisible:** an edge supported only by sources outside `$6` does not
   count, so it cannot appear as a builder or a trade link.
-- **Tenant isolation is redundant by design:** `workspaceId = $1` on the anchor, `workspaceId` equality on
-  every join, and composite FKs underneath.
+- **Tenant isolation is redundant by design:** `workspaceId = $1` on the anchor and on the evidence CTE,
+  `workspaceId` equality on every join, and composite FKs underneath.
 - `ASSOCIATED_WITH` is not joined at all, so historical associations can never answer this question.
 
 ## 11. Evaluation: baselines first
@@ -831,7 +1178,12 @@ grounding rate (via `draftGrounding`).
 | Package-available precision | `CONFIRMED` `PACKAGE_AVAILABLE` vs labelled open procurement notices; any keyword-only case counts as a false positive |
 | Builder-role assertion accuracy | `assertion` (`HEAD_CONTRACTOR`, `UNSPECIFIED_SUPPLIER`, `NON_BUILDER_SERVICE`, `PANEL_ARRANGEMENT`) vs labelled role evidence |
 | Confirmation revalidation | after simulated retraction, expiry, licence downgrade and content change: `CONFIRMED` edges left without eligible basis evidence |
-| Entity-resolution accuracy | correct merge/non-merge on labelled name/ABN pairs, split by `ABN_EXACT`, `NAME_EXACT`, `NAME_FUZZY` |
+| Entity-resolution accuracy | correct merge/non-merge on labelled name/ABN pairs, split by `ABN_EXACT`, `ALIAS_MATCH`, `NAME_EXACT`, `NAME_FUZZY` |
+| False-merge rate (rev. 4) | pairs labelled *different* that the resolver attaches or proposes to merge as one, reported separately from missed matches; plus the unmerge round trip (state after `MERGE`+`UNMERGE` equals the state before) |
+| Status preservation (rev. 4) | share of labelled `ROLE_UNCERTAIN` / `TRADE_RELEVANCE_ONLY` / `CONFLICTING_EVIDENCE` cases still reported as such at every tested minimum confidence (e.g. 0, 40, 70, 90) |
+| Refutation handling (rev. 4) | seeded primary refutations reported as `CONFLICTING_EVIDENCE`/`TRADE_CONTESTED`; weak refutations leave a `CONFIRMED` edge confirmed and flagged; ending statements expire, not conflict |
+| Confirmation provenance (rev. 4) | `CONFIRMED` edges whose basis excerpt is not verbatim in the stored record, or whose only support is a reviewer action |
+| Lifecycle accuracy (rev. 4) | derived stage vs labelled stage; gaps reported "not evidenced"; no stage set by non-primary evidence; `AWARDED` never derived from an `UNSPECIFIED_SUPPLIER` award |
 | False confirmation rate | `CONFIRMED` edges whose label is wrong, or which lack qualifying primary evidence |
 | Unknown correctness | share of "evidence absent" cases that return `UNKNOWN_BUILDER` |
 | Citation grounding rate | share of output claims with ≥ 1 eligible evidence row |
@@ -851,12 +1203,18 @@ Hard invariants (must be exactly met on the gold set and in tests):
 - **0** `CONFIRMED` `APPOINTED_BUILDER` edges whose evidence does not explicitly assert the role on that project.
 - **0** `CONFIRMED` `REQUIRES_TRADE`/`PACKAGE_AVAILABLE` edges resting only on a keyword match.
 - **0** `CONFIRMED` edges without currently eligible basis evidence after the simulated changes above.
+- Revision 4: **0** false merges; **0** failed unmerge round trips; **0** status states lost or turned
+  into `UNKNOWN_BUILDER` by the recommendation threshold; **0** `CONFIRMED` edges with an eligible primary
+  refutation, with a non-verbatim basis excerpt, or resting only on a reviewer action; **0** stages set by
+  non-primary evidence or filled in for a gap.
 
 Quality floors (numbers to be fixed after the baseline is measured; proposed starting values):
 - `CONFIRMED` builder precision ≥ **95%** and **not below baseline**; recall ≥ baseline + **10 points**,
   otherwise the graph's added complexity is not justified and the project stops there.
 - False confirmation rate on labelled `CONFIRMED` ≤ **1%**.
-- Entity resolution: `ABN_EXACT` ≥ 99%; name-only matches never promoted to `CONFIRMED`.
+- Entity resolution: `ABN_EXACT` ≥ 99%; name-based matches (`ALIAS_MATCH`, `NAME_*`) never promoted to
+  `CONFIRMED`; missed-match rate reported and allowed to be high (a split is recoverable by a reviewed
+  merge, a false merge contaminates everything downstream).
 - ECE ≤ **0.05**; every band used outward has ≥ 30 labelled edges or is capped one band lower.
 
 The PR 1 gold set labels trades as `STATED`/`IMPLIED`/`ABSENT` and builders as `KNOWN`/`UNKNOWN`/`CONFLICT`;
@@ -980,6 +1338,47 @@ substitute.
 (Node 26)" job runs install, prisma generate, typecheck, unit tests and build). See the PR for the run
 that covers the final head commit.
 
+### 11.7 Revision 4 evaluation additions (specified, not yet labelled)
+
+**Why the fixtures are not changed in this revision.** §11.6 says labels move only after the independent
+review, and the blind sheet must not be anchored by the author's rulings. Writing new labelled cases now,
+by the same author, would add exactly the unreviewed labels that process exists to prevent, and would move
+the pinned `baseline.json` that the reviewer is measuring against. So revision 4 specifies the new
+categories here; they are labelled as a **second batch** after the first sign-off, then the baseline is
+re-recorded (the order in §11.6 "After sign-off").
+
+**Entity resolution (extends `pairs.ts`; new `EntityPairKind` values in parentheses):**
+- same legal name, different ABN (exists: P18–P20);
+- one trading name used by two different ABNs (`trading_name_collision`);
+- group companies with near-identical names (exists: P15–P17);
+- a checksum-invalid ABN on one side (`abn_checksum_invalid`), which must fall back to name matching;
+- a checksum-valid ABN the stub ABR does not recognise, or reports `cancelled` (`abn_unverified`,
+  `abn_cancelled`);
+- legal name vs registered business name under one ABN (exists: P12–P14);
+- normaliser collisions: two different registered names that collapse to one `nameKey`
+  (`normaliser_collision`), which must not produce `ALIAS_MATCH`;
+- a merge then unmerge scenario per pair kind, asserting the round trip.
+
+**Status before threshold:** for each labelled `ROLE_UNCERTAIN`, keyword-only and two-competitor case,
+run the query model at minimum confidence 0, 40, 70 and 90 and assert the status is unchanged.
+
+**Refuting evidence:** cases with (a) a later primary record giving the named supplier a different role,
+(b) a scope-exclusion statement against a keyword match, (c) a termination/novation with a date, (d) a
+package notice closed early, (e) a website claim contradicting a primary record, (f) a refutation that is
+itself later retracted, and (g) a re-published version that withdraws a refutation.
+
+**Confirmation provenance:** a reviewer-classified excerpt that is verbatim (may confirm), one that is
+paraphrased (must not), and a reviewer promotion with no primary record (must not).
+
+**Lifecycle:** DA lodged only; DA approved; approved then refused on appeal (terminal wins by date); award
+with stated head-contract role (`AWARDED`); award with role unstated (stage unchanged); commencement with
+no DA evidence (gap not filled); a later record for a lower stage (no regression); a refutation of the
+current stage (`stageContested`). New `GraphCase.truth` fields: `stage`, `stageEvidenced` (which stages the
+records actually evidence), and per-record `stance`.
+
+**Labelling brief.** The new label definitions will be added to `LABELLING_BRIEF.md` for the second batch, not
+to the current blind sheet, so the first review is not disturbed.
+
 ## 12. Implementation sequence (revised: evaluation before schema)
 
 Each step is its own small PR, merged and verified before the next. No step enables anything in
@@ -988,11 +1387,11 @@ production; `RELATIONSHIP_GRAPH_MODE` stays `off` until step 7 is separately app
 | PR | Scope | Touches DB/prod? | Gate to proceed |
 |---|---|---|---|
 | **1. Eval baseline** (in review) | `eval/datasets/v2` manifest, 42 labelled projects + 20 entity pairs + 10 grounding drafts, offline "no-graph" baseline, recorded `baseline.json` (§11.5) | No | Baseline numbers reviewed; thresholds in §11.4 fixed |
-| **2. Pure rule library** | Evidence-requirement, entity-match, confidence and conflict functions as pure TypeScript with unit tests, run through the PR 1 eval | No | Meets §11.4 invariants offline **and** the independent construction-domain validation in §11.6 is recorded |
-| **3. Schema, flag, rollback** | Migration for §5 (+ prerequisite unique indexes), rollback SQL, `RELATIONSHIP_GRAPH_MODE` parsing with `validateConfig`, `tests-db` isolation/constraint tests. **No writers** | Additive only, empty tables | Integration tests green; rollback rehearsed on a clean DB |
+| **2. Pure rule library** | Evidence-requirement, entity-match, confidence and conflict functions as pure TypeScript with unit tests, run through the PR 1 eval. Revision 4 adds `evaluateEdgeEvidence` (§7.4), `deriveProjectStage` (§2.4), the §6.2 resolver and merge rules (against a stub ABR), the verbatim-excerpt check, and `recommendFrom` (§10) | No | Meets §11.4 invariants offline **and** the independent construction-domain validation in §11.6 is recorded (**still blocked**) |
+| **3. Schema, flag, rollback** | Migration for §5 (seven tables + prerequisite unique indexes), rollback SQL, `RELATIONSHIP_GRAPH_MODE` parsing with `validateConfig`, `tests-db` isolation/constraint tests. **No writers** | Additive only, empty tables | Integration tests green; rollback rehearsed on a clean DB |
 | **4. Shadow ingestion** | Worker job reading `Opportunity` by cursor; licence-gated; writes edges/evidence in `shadow` only; idempotent | Writes only if mode ≠ `off` | Eval vs gold set on ingested output meets §11.4 |
 | **5. Read service + read-only API** | §10 query as a repository function, route returning §10 statuses; admin/owner only; shadow-only data | No writes | Query integration tests green |
-| **6. Review workflow** | Review queue, promote/demote/reject/resolve actions, `GraphEdgeReview` + `AuditEvent`, UI shows evidence | Writes review rows | Audit/append-only tests green |
+| **6. Review workflow** | Review queue, promote/demote/reject/resolve/classify actions, reviewed entity merge/unmerge (§6.2.4), `GraphEdgeReview` / `GraphEntityMerge` + `AuditEvent`, UI shows evidence | Writes review rows | Audit/append-only and unmerge round-trip tests green |
 | **7. `on` mode** | Allow licence-eligible edges to feed recommendations (never outreach directly) | Yes, behind flag | **Separate explicit approval**, eval results attached, source licences confirmed |
 
 Hybrid retrieval, embeddings, and agent orchestration remain deferred and are not part of this sequence.
@@ -1001,7 +1400,7 @@ Hybrid retrieval, embeddings, and agent orchestration remain deferred and are no
 
 ### 13.1 Migration (PR 3)
 
-- Additive only: four tables, enums, indexes, CHECKs and triggers; plus `UNIQUE (workspaceId, id)`
+- Additive only: seven tables, enums, indexes, CHECKs and triggers; plus `UNIQUE (workspaceId, id)`
   indexes on `Prospect`, `Opportunity`, `Signal`, `EvidenceSource`, `WebsiteEvidenceClaim`.
 - Applied through the existing `prisma migrate deploy` startup path (`docs/MIGRATIONS.md`); never
   `db push`. Partial uniques, CHECKs and triggers live in the migration's raw SQL, as with the Prospect
@@ -1013,10 +1412,11 @@ Hybrid retrieval, embeddings, and agent orchestration remain deferred and are no
 ### 13.2 Rollback
 
 - Ships `docs/plans/RELATIONSHIP_GRAPH_ROLLBACK.sql` (same convention as `C4_EVIDENCE_GOVERNANCE_ROLLBACK.sql`):
-  drop in dependency order (`GraphEdgeReview`, `GraphEdgeEvidence`, `GraphEdge`, `GraphEntity`, enums,
-  triggers, then the prerequisite indexes) and remove the `_prisma_migrations` row.
+  drop in dependency order (`GraphEdgeReview`, `GraphEdgeEvidence`, `GraphEdge`,
+  `GraphProjectStageEvidence`, `GraphEntityAlias`, `GraphEntityMerge`, `GraphEntity`, enums, triggers,
+  then the prerequisite indexes) and remove the `_prisma_migrations` row.
 - Order of operations: (1) set `RELATIONSHIP_GRAPH_MODE=off`, (2) confirm the worker job idle,
-  (3) **export `GraphEdgeReview` and `AuditEvent` rows** if any exist (the SQL deletes reviewer
+  (3) **export `GraphEdgeReview`, `GraphEntityMerge` and `AuditEvent` rows** if any exist (the SQL deletes reviewer
   history), (4) run the rollback SQL. Safe with zero data; with data it discards graph state and review
   history, and says so.
 - Rehearsed in CI on a clean database: migrate up, roll back, migrate up again.
@@ -1078,6 +1478,26 @@ design changes any production setting.
   change each make the revalidation job demote the edge with a `SYSTEM` review row; the §10 query shows the
   edge as inferred *before* the job runs; re-promotion needs new eligible evidence.
 - **Migration:** up → rollback → up on a clean DB.
+- **Status before threshold (rev. 4):** the §10 query returns `ROLE_UNCERTAIN`, `TRADE_RELEVANCE_ONLY` and
+  `CONFLICTING_EVIDENCE` on seeded fixtures at `$5` = 0, 70 and 90 alike; only `meetsThreshold` changes;
+  `recommendFrom` offers no contact for those statuses.
+- **Confirmation provenance (rev. 4):** promotion with a paraphrased (non-verbatim) excerpt is refused; a
+  reviewer-classified verbatim excerpt confirms; a reviewer `PROMOTE` with no primary record leaves the edge
+  `INFERRED`; a `CONFIRMED` edge whose organisation match is not `ABN_EXACT` is rejected by the CHECK;
+  `REQUIRES_TRADE` confirms with `STRUCTURAL`.
+- **Refutation (rev. 4):** the stance/assertion CHECK rejects a refuting assertion marked `SUPPORTS`; a
+  refuting row can never be a basis; an eligible primary refutation demotes a `CONFIRMED` edge to
+  `CONFLICTED` with a `SYSTEM` row; a website refutation only flags it; a dated `RELATIONSHIP_ENDED` expires
+  the edge (not a conflict); retracting the refutation restores eligibility for re-promotion; an edge with
+  only refuting rows is not returned.
+- **Entity resolution (rev. 4):** a checksum-invalid ABN is discarded; an unverified ABN cannot confirm;
+  merging two different ABR-verified ABNs is refused by trigger; a merge without `basisEvidenceIds` is
+  refused; merge chains are refused; `UNMERGE` restores the exact prior state; a merge dissolves a conflict
+  between the two entities and an unmerge restores it; `ALIAS_MATCH` is not used when two entities share
+  the `nameKey`.
+- **Lifecycle (rev. 4):** stage assertion/stage CHECK; `UNSPECIFIED_SUPPLIER` award leaves the stage
+  unchanged; gaps not filled; no regression from a later lower-stage record; a refutation flags
+  `stageContested`; website evidence never sets a stage.
 
 ## 14. Index: how this revision answers the ten required changes
 
@@ -1112,6 +1532,17 @@ design changes any production setting.
 | Ambiguous roles stay uncertain (`ROLE_UNCERTAIN`), never inferred | §2.3, §6.1, §10 |
 | Re-published notices keep every version and the change between them | §5.3, §7 |
 
+### 14.3 Revision 4: the five corrections
+
+| # | Correction | Where |
+|---|---|---|
+| 1 | Decide status from all eligible live evidence before applying the recommendation threshold; preserve `ROLE_UNCERTAIN`, `TRADE_RELEVANCE_ONLY`, `CONFLICTING_EVIDENCE` | §9.1, §10, §11.3–11.4, §13.4 |
+| 2 | A primary document must explicitly support the relationship; reviewer approval alone never confirms (`REVIEWER_VERIFIED_*` removed; verbatim-excerpt check; ABR-verified ABN only) | §2.3, §5.2–5.3, §6.1 (hard rules 8–9), §7.2 |
+| 3 | Supporting and refuting evidence with one deterministic order for retraction, versions, endings, refutation and supersession | §5.2–5.3, §7.4, §9.2, §9.4, §10 |
+| 4 | Entity resolution: reuse `abnLookup.ts`, aliases, reviewed documented reversible merges, false-merge testing | §3, §5.3, §6.2, §11.3–11.4, §11.7, §13.4 |
+| 5 | Project lifecycle (lodged → completed, plus terminal states) from evidence, separate from contract award status | §2.4, §5.2–5.3, §11.7, §13.4 |
+| — | Latent rev-3 fix: trade edges confirm with `STRUCTURAL` instead of an impossible organisation match | §5.3 |
+
 ## 15. Decisions needing your approval
 
 | # | Decision | Recommendation |
@@ -1119,10 +1550,15 @@ design changes any production setting.
 | D1 | Outward use requires `confirmed` licence even when `SOURCE_LICENCE_GATE` is `off` | **Yes.** The graph is new and default-off, so it can be stricter; effect today is shadow-only until AusTender is confirmed |
 | D2 | v1 workspace-scoped only, with no shared public tier | **Yes**; revisit after licences are confirmed |
 | D3 | Index build strategy for the five existing tables | Decide in PR 3 from measured row counts |
-| D4 | Which role may promote/resolve edges | **Verified in §7.1:** new `graph:review` capability at the admin tier (admin and owner), mirroring `campaign:approve_draft`; added in PR 6 with matrix and test rows |
+| D4 | Which role may promote/resolve edges | **Verified in §7.1:** new `graph:review` capability at the admin tier (admin and owner), mirroring `campaign:approve_draft`; added in PR 6 with matrix and test rows. Revision 4: the same capability covers classify, merge and unmerge; none of them can confirm on its own (§6.1 rule 8) |
 | D5 | Gold-set labelling: who labels, and the ≥ 100 project size | **Label owner: the project owner, provisionally.** Independent construction-domain reviewer **unassigned**, no sign-off recorded (§11.6); blocks PR 2 and fixing §11.4 floors |
 | D6 | Integer 0–100 confidence (replacing the first draft's decimal) | **Yes**, consistent with `CommercialEvent.confidence` |
 | D7 | Classification rules for specialists, supplier corrections, conflicts, ambiguous roles and re-published notices | **Provisional rules adopted by the project owner (§6.1):** specialists are not principal builders without explicit evidence; documented same-notice corrections supersede; unresolved contradictory supplier evidence is a conflict; ambiguous roles stay uncertain; re-published notices preserve provenance and material changes. Pending the independent review in §11.6 |
+
+| D8 | Stage vocabulary (`LODGED`, `APPROVED`, `AWARDED`, `UNDER_CONSTRUCTION`, `COMPLETED`, `REFUSED`, `WITHDRAWN`, `LAPSED`), the 180-day staleness flag, and `AWARDED` meaning the head contract only | **Approved by the project owner, 2026-10-17.** The 180-day constant stays provisional until the second labelling batch (§11.7) |
+| D9 | Private documents (`MANUAL_ENTRY`) confirm only the workspace-private `SUBCONTRACT_AWARDED` in v1; for public relationships they support `INFERRED` only | **Approved by the project owner, 2026-10-17.** Confirmation of public relationships stays machine-checkable against stored records |
+| D10 | Only `ABN_EXACT` against an ABR-verified ABN confirms an organisation; `ALIAS_MATCH` never does | **Approved by the project owner, 2026-10-17** (strict identity verification retained). Costs recall on notices without an ABN; accepted (§16) |
+| D11 | Extend the ABR parser in `lib/abnLookup.ts` to return registered business names (a later production PR) | **Deferred by the project owner, 2026-10-17,** until the ABR integration is ready. Until then trading names arrive only as `OBSERVED_WITH_ABN` aliases |
 
 ## 16. Known limitations
 
@@ -1134,7 +1570,16 @@ design changes any production setting.
 - Explicit builder-role statements are uncommon in public award notices, so confirmed builder links will be
   few until reviewers verify roles (§6.1). Recall will be below the baseline's by design.
 - `PACKAGE_AVAILABLE` has no public source today; in v1 it can only come from a registered tender-type
-  source for that trade or an authorised manual entry.
+  source for that trade; an authorised manual entry can record it as `INFERRED` only (D9), so it is never
+  offered as an opportunity to bid.
 - A DA and a later award for the same site are separate `Opportunity` rows, hence separate PROJECT nodes.
-  Linking them is not automatic in v1 (a reviewer-verified project link is the only path to carry a builder
-  from an award onto a DA project).
+  Linking them is not automatic in v1; a reviewer link can carry a builder from an award onto a DA project
+  as `INFERRED` only (§6.1 hard rule 2).
+- Revision 4: confirmation needs an ABR-verified ABN, so records without an ABN never confirm and an
+  environment without ABR lookup configured confirms nothing (shadow-only either way today).
+- Private documents cannot confirm public relationships in v1 (D9); a contractor's own knowledge stays
+  `INFERRED` until a stored primary record states it.
+- `UNDER_CONSTRUCTION` and `COMPLETED` have no registered source; until one exists they come only from
+  documented manual entries, which can record but not confirm a stage.
+- The verbatim-excerpt check relies on the stored `Opportunity` text; evidence whose record text ACAOS does
+  not store cannot be the basis of a confirmation.
