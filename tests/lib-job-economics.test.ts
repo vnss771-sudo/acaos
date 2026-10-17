@@ -210,6 +210,16 @@ test('estimate check: jobs with approved variations and jobs without an hours es
   assert.equal(c.scopeChangedJobs, 2)
 })
 
+test('estimate check: a zero-hour estimate has no variance and is left out, never divided by', () => {
+  const zero = measured(DA.originKey, 50, 0)
+  assert.equal(zero.economics.hoursVariancePct, null)
+  const c = buildEstimateCheck(DA, [zero, zero, zero, measured(DA.originKey, 110, 100)])
+  assert.equal(c.basis, null)
+  assert.equal(c.sameOriginJobs, 1)
+  const ok = buildEstimateCheck(DA, [zero, measured(DA.originKey, 110, 100), measured(DA.originKey, 120, 100), measured(DA.originKey, 130, 100)])
+  assert.deepEqual(ok.hoursVariancePct, { n: 3, median: 20, min: 10, max: 30 })
+})
+
 test('estimate check: below the floor for this origin it falls back to all closed jobs, labelled so', () => {
   const other = 'COMMERCIAL_OPPORTUNITY:CAPACITY_EXPANSION'
   const c = buildEstimateCheck(DA, [measured(DA.originKey, 130, 100), measured(other, 120, 100), measured(other, 125, 100)])

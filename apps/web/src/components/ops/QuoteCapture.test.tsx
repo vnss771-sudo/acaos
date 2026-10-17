@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QuoteCapture, quoteLifecycleCue, adjustedHours, type EstimateCheck } from './QuoteCapture'
 import { makeRouteApi } from '../../lib/routeApi.js'
@@ -39,6 +39,19 @@ describe('QuoteCapture estimate check', () => {
     expect(screen.getByText(/1 job\(s\) with approved variations left out/)).toBeInTheDocument()
     await userEvent.type(screen.getByLabelText('Estimated labour hours'), '400')
     expect(screen.getByRole('note', { name: 'Estimate check' })).toHaveTextContent('400 h is closer to 444 h')
+  })
+
+  test('advisory only: the quote saves the hours and amount as entered, never the adjusted figure', async () => {
+    const api = vi.fn((path: string) => Promise.resolve(path.startsWith('/api/delivery/estimate-check') ? { check: OVER } : { quote: {} }))
+    renderForm(api)
+    await userEvent.click(screen.getByRole('button', { name: 'Record quote' }))
+    await screen.findByText(/median 11% more hours/)
+    await userEvent.type(screen.getByLabelText('Quote amount ($)'), '60000')
+    await userEvent.type(screen.getByLabelText('Estimated labour hours'), '400')
+    await userEvent.click(screen.getByRole('button', { name: 'Save quote' }))
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/delivery/quotes', expect.objectContaining({ method: 'POST' })))
+    const post = api.mock.calls.find(c => c[0] === '/api/delivery/quotes') as unknown as [string, { body: string }]
+    expect(JSON.parse(post[1].body)).toEqual({ workspaceId: 'ws1', opportunityId: 'o1', amountCents: 6_000_000, estimatedHours: 400, submit: true })
   })
 
   test('below the floor it says how many closed jobs are still needed, with no figure', async () => {

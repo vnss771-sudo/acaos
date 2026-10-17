@@ -325,9 +325,17 @@ test('estimate check: closed jobs of the quoted origin, active jobs ignored; ten
 
   assert.equal((await check(`opportunityId=${pending.id}&commercialOpportunityId=${co.id}`)).status, 400, 'exactly one target')
   assert.equal((await req(user.id, 'GET', `/estimate-check?workspaceId=${ws}`)).status, 400)
+  // Tenant boundary: another workspace's admin never sees this workspace's job history.
   const other = await seedUserWithWorkspace()
   const foreign = await seedOpportunity(other.workspace.id)
   assert.equal((await check(`opportunityId=${foreign.id}`)).status, 404, 'another workspace\'s opportunity')
+  assert.equal((await check(`opportunityId=${pending.id}`, other.user.id)).status, 403, 'naming the victim\'s workspace')
+  const theirs = await req(other.user.id, 'GET', `/estimate-check?workspaceId=${other.workspace.id}&opportunityId=${pending.id}`)
+  assert.equal(theirs.status, 404, 'their own workspace with the victim\'s opportunity')
+  // Same kind of work in their own workspace: none of the victim's closed jobs count.
+  const own = await req(other.user.id, 'GET', `/estimate-check?workspaceId=${other.workspace.id}&opportunityId=${foreign.id}`)
+  assert.equal(own.status, 200)
+  assert.deepEqual([own.body.check.basis, own.body.check.sameOriginJobs, own.body.check.message], [null, 0, null])
   const member = await seedUserWithWorkspace()
   await prisma.membership.create({ data: { userId: member.user.id, workspaceId: ws, role: 'member' } })
   assert.equal((await check(`opportunityId=${pending.id}`, member.user.id)).status, 403)
