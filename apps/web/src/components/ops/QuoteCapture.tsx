@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { RouteApi } from '../../lib/routeApi.js'
 import type { ApiHook } from '../../hooks/useApi.js'
 import type { EstimateInputs } from '@acaos/shared'
-import { EstimateBuilder } from './EstimateBuilder.js'
+import { EstimateBuilder, type EstimateResult } from './EstimateBuilder.js'
 import type { ToastHook } from '../../hooks/useToast.js'
 import { colors, s } from '../../styles.js'
 import { formatCents, parseDollars } from '../../lib/money.js'
@@ -20,6 +20,46 @@ export type QuoteSummary = {
   estimatedHours: number | null
   // The delivery job this quote became, once started.
   job?: { id: string; status: string } | null
+  // The estimate snapshot the server stored when the quote was saved (Quote.estimate); null = none built.
+  estimate?: SavedEstimate | null
+}
+
+// Quote.estimate as stored by POST /api/delivery/quotes: the figures as they were
+// at save time. Shown as saved, never recomputed with today's rates.
+export type SavedEstimate = {
+  version: number
+  computedAt: string
+  result: Pick<EstimateResult,
+    'labourCostCents' | 'labourIncludesOnCosts' | 'materialsCents' | 'subcontractCents' | 'overheadCents' | 'directCostCents'
+    | 'priceCents' | 'grossMarginCents' | 'grossMarginPct' | 'marginAfterOverheadsCents' | 'marginAfterOverheadsPct'>
+}
+
+/** A stored figure: "not entered" when unknown, never $0; an entered 0 is $0. */
+const saved = (cents: number | null | undefined) => (cents == null ? 'not entered' : formatCents(cents))
+
+/** Read-only summary of the estimate a quote was saved with. Renders nothing for a quote without one. */
+export function SavedEstimateSummary({ estimate }: { estimate: SavedEstimate | null | undefined }) {
+  const r = estimate?.result
+  if (!estimate || !r) return null
+  const date = new Date(estimate.computedAt)
+  const when = Number.isNaN(date.getTime()) ? '' : ` on ${date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  return (
+    <div role="region" aria-label="Saved estimate" style={{ flexBasis: '100%', display: 'grid', gap: 2, fontSize: 12, color: colors.textMuted }}>
+      <span>
+        Estimate saved with this quote{when}: labour <strong>{saved(r.labourCostCents)}</strong>{r.labourCostCents != null && !r.labourIncludesOnCosts ? ' (base pay only)' : ''}
+        {' · '}materials <strong>{saved(r.materialsCents)}</strong>
+        {' · '}subcontractors <strong>{saved(r.subcontractCents)}</strong>
+        {' · '}overheads <strong>{saved(r.overheadCents)}</strong>
+      </span>
+      {r.grossMarginCents != null
+        ? <span style={{ color: r.grossMarginCents < 0 ? colors.red : colors.text }}>
+            At the quoted {formatCents(r.priceCents)}: gross profit <strong>{formatCents(r.grossMarginCents)}</strong> ({r.grossMarginPct == null ? '—' : `${r.grossMarginPct}%`} gross margin)
+            {r.marginAfterOverheadsCents != null && <> · after overheads {formatCents(r.marginAfterOverheadsCents)}{r.marginAfterOverheadsPct == null ? '' : ` (${r.marginAfterOverheadsPct}%)`}</>}
+          </span>
+        : <span>Gross profit unknown: not every direct cost was entered when the quote was saved.</span>}
+      <span style={{ color: colors.textFaint }}>Figures as saved, not recalculated.</span>
+    </div>
+  )
 }
 
 // GET /api/delivery/estimate-check: how recent comparable closed jobs landed
@@ -67,6 +107,11 @@ export function quoteLifecycleCue(quote: Pick<QuoteSummary, 'status' | 'job'>): 
   return 'Opportunity → quote → won → job in delivery'
 }
 
+// With the phone keyboard open, a tap first blurs the input and the layout jumps as
+// the keyboard closes, so the click can miss. Keeping focus through the press lets
+// the tap land on Save; the form then closes and the keyboard with it.
+const keepFocus = (e: React.MouseEvent) => e.preventDefault()
+
 export function QuoteCapture({ route, api, toast, workspaceId, target, quote, onChanged, onDecided, onOpenJob }: Props) {
   const targetKey = 'opportunityId' in target ? 'opportunityId' : 'commercialOpportunityId'
   const targetId = 'opportunityId' in target ? target.opportunityId : target.commercialOpportunityId
@@ -77,6 +122,9 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
   const [check, setCheck] = useState<EstimateCheck | null>(null)
   const [estimating, setEstimating] = useState(false)
   const [estimate, setEstimate] = useState<EstimateInputs | null>(null)
+  // Both Save buttons share save(); this stops a double tap posting twice before
+  // `busy` has re-rendered the buttons as disabled.
+  const submitting = useRef(false)
 
   // Fetched when the form opens. Advisory: a failure just means no check shown.
   useEffect(() => {
@@ -90,10 +138,12 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
   const suggested = adjustedHours(hours, check)
 
   async function save() {
+    if (submitting.current) return
     const amountCents = parseDollars(amount)
     if (amountCents == null || Number.isNaN(amountCents)) { toast.error('Enter the quoted amount in dollars'); return }
     const h = hours.trim() === '' ? undefined : Number(hours)
     if (h !== undefined && (!Number.isFinite(h) || h < 0)) { toast.error('Estimated hours must be a number'); return }
+    submitting.current = true
     setBusy(true)
     try {
       // The estimate travels as inputs only; the server recomputes and stores it. The amount and hours are as typed.
@@ -103,7 +153,7 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
       setOpen(false); setAmount(''); setHours(''); setEstimating(false); setEstimate(null)
       onChanged()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to record quote') }
-    finally { setBusy(false) }
+    finally { submitting.current = false; setBusy(false) }
   }
 
   async function decide(status: 'ACCEPTED' | 'REJECTED') {
@@ -140,6 +190,7 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
           {quote.estimatedHours != null && <> · {quote.estimatedHours} h estimated</>}
           {quote.status === 'ACCEPTED' && <span style={{ color: colors.green }}> · accepted</span>}
         </span>
+        <SavedEstimateSummary estimate={quote.estimate} />
         {quote.status === 'ACCEPTED' && !quote.job && (
           <button style={s.btnSm} disabled={busy} onClick={startJob}>Start the job</button>
         )}
@@ -171,7 +222,7 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
         <label style={s.label} htmlFor={`q-hrs-${targetId}`}>Estimated labour hours</label>
         <input id={`q-hrs-${targetId}`} style={{ ...s.input, width: 120 }} inputMode="decimal" value={hours} placeholder="400" onChange={e => setHours(e.target.value)} />
       </div>
-      <button style={s.btnSm} disabled={busy} onClick={save}>Save quote</button>
+      <button type="button" style={s.btnSm} disabled={busy} onMouseDown={keepFocus} onClick={save}>Save quote</button>
       <button style={s.btnGhost} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
       {!estimating && <button style={s.btnGhost} disabled={busy} onClick={() => setEstimating(true)}>Build estimate</button>}
       {estimating && (
@@ -179,6 +230,12 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
           route={route} workspaceId={workspaceId} target={target} priceCents={parseDollars(amount)} hours={hours}
           onUsePrice={cents => setAmount((cents / 100).toFixed(2))} onInputs={setEstimate}
         />
+      )}
+      {/* On a phone the builder pushes the top Save out of view; this one saves the same way. */}
+      {estimating && (
+        <div style={{ flexBasis: '100%' }}>
+          <button type="button" data-testid="save-quote-bottom" style={s.btnSm} disabled={busy} onMouseDown={keepFocus} onClick={save}>Save quote</button>
+        </div>
       )}
       {check && (
         <div role="note" aria-label="Estimate check" style={{ flexBasis: '100%', fontSize: 12, color: check.direction === 'OVER' || check.direction === 'UNDER' ? colors.amber : colors.textFaint }}>

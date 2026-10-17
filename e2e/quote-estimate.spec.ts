@@ -12,9 +12,12 @@ import { uniqueEmail, signUp, skipOnboarding, verifyEmailInDb, apiLogin, getWork
 
 test.afterAll(async () => { await closeDb() })
 
-for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone', width: 390, height: 844 }]) {
-  test(`quote estimate builder: estimate, use the suggested price, save and reload (${vp.name})`, async ({ page, request }) => {
-    await page.setViewportSize({ width: vp.width, height: vp.height })
+// Desktop saves with the Save beside the amount; the phone (touch, mobile emulation)
+// saves with the Save below the estimate, tapped while an input has focus.
+for (const vp of [{ name: 'desktop', width: 1280, height: 800, mobile: false }, { name: 'phone', width: 390, height: 844, mobile: true }]) {
+  test(`quote estimate builder: estimate, use the suggested price, save and reload (${vp.name})`, async ({ browser, request }) => {
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.mobile, isMobile: vp.mobile })
+    const page = await context.newPage()
     const email = uniqueEmail()
     await signUp(page, email)
     await skipOnboarding(page)
@@ -27,9 +30,13 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     await seedCrewMember(workspaceId, 60)
     const pursued = await request.patch(`/api/opportunities/${opportunityId}/status`, { headers, data: { workspaceId, status: 'PURSUING' } })
     expect(pursued.ok(), await pursued.text()).toBeTruthy()
+    // A quote saved without an estimate (as every quote before #419 was) must display as before.
+    const plainOpportunityId = await seedDeliveryOpportunity(workspaceId)
+    const plain = await request.post('/api/delivery/quotes', { headers, data: { workspaceId, opportunityId: plainOpportunityId, amountCents: 1_234_500, submit: true } })
+    expect(plain.status(), await plain.text()).toBe(201)
 
     await page.goto('/ops/find-work')
-    await expect(page.getByText('E2E Warehouse Electrical Package')).toBeVisible()
+    await expect(page.getByText('Quoted $12,345')).toBeVisible()
     await page.getByRole('button', { name: 'Record quote' }).click()
     await page.getByRole('button', { name: 'Build estimate' }).click()
 
@@ -63,12 +70,27 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     expect((await before.json()).quotes).toHaveLength(0)
     await expect(estimate).toContainText('gross margin $15,467 (25%)')
 
-    await page.getByRole('button', { name: 'Save quote' }).click()
+    if (vp.mobile) {
+      // Keyboard up: focus a field, then tap the Save below the estimate.
+      await page.getByLabel('Target gross margin (%)').focus()
+      await page.getByTestId('save-quote-bottom').tap()
+    } else {
+      await page.getByRole('button', { name: 'Save quote' }).first().click()
+    }
     await expect(page.getByText('Quote recorded')).toBeVisible()
 
-    // Reopen: reload the page and read the stored quote back.
+    // Reopen: reload the page; the saved estimate is shown as saved, read-only.
     await page.reload()
     await expect(page.getByText(/Quoted \$61,867 · 400 h estimated/)).toBeVisible()
+    const summary = page.getByRole('region', { name: 'Saved estimate' })
+    await expect(summary).toHaveCount(1)   // the plain quote has none
+    await expect(summary).toContainText('labour $26,400 · materials $15,000 · subcontractors $5,000 · overheads $4,640')
+    await expect(summary).toContainText('At the quoted $61,867: gross profit $15,467 (25% gross margin) · after overheads $10,827 (17.5%)')
+    await expect(summary.locator('input')).toHaveCount(0)
+    await expect(page.getByText(/Quoted \$12,345$/)).toBeVisible()
+    const overflowAfter = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+    expect(overflowAfter, 'horizontal overflow after save, in px').toBeLessThanOrEqual(0)
+    await page.screenshot({ path: `test-results/quote-estimate-saved-${vp.name}.png`, fullPage: true })
     const saved = await request.get(`/api/delivery/quotes?workspaceId=${workspaceId}&opportunityId=${opportunityId}`, { headers })
     const [quote] = (await saved.json()).quotes
     expect(quote.amountCents).toBe(6_186_667)
@@ -78,5 +100,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     expect(quote.estimate.result.grossMarginCents).toBe(1_546_667)
     expect(quote.estimate.result.marginAfterOverheadsCents).toBe(1_082_667)
     expect(quote.estimate.result.gaps).toEqual([])
+    expect((await saved.json()).quotes).toHaveLength(1)   // one save, however it was tapped
+    await context.close()
   })
 }
