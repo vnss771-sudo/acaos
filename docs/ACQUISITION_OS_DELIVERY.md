@@ -158,6 +158,25 @@ audited as `workspace.quoting_defaults`).
 - Migration `20261019000000_workspace_quoting_defaults` is additive; existing workspaces start
   with NULL.
 
+**Deploying the quoting migrations (not yet in production).** Two migrations are pending and apply
+in this order through the normal `prisma migrate deploy` start-up path:
+1. `20261018000000_quote_estimate` (#419) adds the nullable `Quote.estimate`;
+2. `20261019000000_workspace_quoting_defaults` adds the three nullable `Workspace.default*Pct` columns
+   and their range CHECKs.
+
+Both only add nullable columns, with no backfill. They were rehearsed in sequence from a
+production-equivalent schema: existing workspaces were identical in all 34 original columns, and
+quotes and jobs were unchanged.
+
+Rollback limits:
+- Rolling back the **defaults** migration (SQL at the foot of its `migration.sql`) loses only the
+  configured defaults. Quotes and saved estimates are untouched.
+- Rolling back **`Quote.estimate`** (`ALTER TABLE "Quote" DROP COLUMN "estimate"`) permanently deletes
+  every estimate saved since deployment. Re-applying the migration does not bring them back.
+- Once contractors have saved estimates, prefer turning the feature off in the UI over dropping the
+  column.
+- Roll back in reverse order, and remove each migration's `_prisma_migrations` row.
+
 **Not yet:** grouping by region (only Work-discovery opportunities carry one), and a
 quote form on commercial opportunities in the web app (the API supports it; it
 belongs with the operator console).

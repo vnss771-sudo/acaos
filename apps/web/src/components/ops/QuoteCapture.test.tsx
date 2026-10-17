@@ -178,3 +178,27 @@ describe('Save quote buttons', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Quote recorded'))
   })
 })
+
+describe('quoting defaults unavailable', () => {
+  test('a failed defaults request never blocks a quote: the fields start blank and Save still works', async () => {
+    const ESTIMATE_REPLY = { estimate: { labourCostCents: null, labourIncludesOnCosts: false, materialsCents: 1_500_000, subcontractCents: null, directCostCents: null, knownDirectCostCents: 1_500_000, overheadCents: null, totalCostCents: null, priceCents: 6_000_000, grossMarginCents: null, grossMarginPct: null, marginAfterOverheadsCents: null, marginAfterOverheadsPct: null, targetMarginPct: null, priceForTargetCents: null, trackRecord: null, gaps: [] }, crewRates: { activeCrew: 0, ratedCrew: 0, medianBaseRate: null }, check: null }
+    const api = vi.fn((path: string) => {
+      if (path.endsWith('/quoting-defaults')) return Promise.reject(new Error('Service unavailable'))
+      return Promise.resolve(path === '/api/delivery/estimate' ? ESTIMATE_REPLY : { quote: {} })
+    })
+    render(<QuoteCapture route={makeRouteApi(api as never)} toast={toast as never} workspaceId="ws1" target={{ opportunityId: 'o1' }} quote={null} onChanged={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Record quote' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Build estimate' }))
+    await waitFor(() => expect(api.mock.calls.some(c => (c[0] as string).endsWith('/quoting-defaults'))).toBe(true))
+    expect(screen.getByLabelText('On-costs (%)')).toHaveValue('')
+    expect(screen.getByLabelText('Overheads (% of direct)')).toHaveValue('')
+    expect(screen.getByLabelText('Target gross margin (%)')).toHaveValue('')
+    await userEvent.type(screen.getByLabelText('Quote amount ($)'), '60000')
+    await userEvent.type(screen.getByLabelText('Materials ($)'), '15000')
+    await userEvent.click(screen.getByTestId('save-quote-bottom'))
+    await waitFor(() => expect(api.mock.calls.filter(c => c[0] === '/api/delivery/quotes')).toHaveLength(1), { timeout: 3000 })
+    const body = JSON.parse((api.mock.calls.find(c => c[0] === '/api/delivery/quotes') as unknown as [string, { body: string }])[1].body)
+    expect(body).toMatchObject({ amountCents: 6_000_000, estimate: { onCostPct: null, overheadPct: null, targetMarginPct: null, materialsCents: 1_500_000 } })
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringMatching(/default/i))
+  })
+})
