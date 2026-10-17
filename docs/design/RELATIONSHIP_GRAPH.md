@@ -1,7 +1,9 @@
 # Design: Construction Relationship Graph (revision 4)
 
-**Status:** Draft for approval. **Design only.** No application code, migration, merge, deploy or
-production setting is part of this document or of the PR that carries it.
+**Status:** Revision 4 design approved by the project owner on 2026-10-17 (decisions D8–D11 in §15).
+**Design only.** No application code, migration, deploy or production setting is part of this document or
+of the PR that carries it. Approval of the design does **not** unblock implementation: PR 2 stays blocked
+until the independent label review in §11.6 is recorded.
 
 **Supersedes:** the first draft (single `graph_entities` / `graph_relationships` pair, recursive CTE,
 `ON DELETE CASCADE` edges, schema-first ordering). That draft's architecture was approved; its schema,
@@ -1553,10 +1555,10 @@ design changes any production setting.
 | D6 | Integer 0–100 confidence (replacing the first draft's decimal) | **Yes**, consistent with `CommercialEvent.confidence` |
 | D7 | Classification rules for specialists, supplier corrections, conflicts, ambiguous roles and re-published notices | **Provisional rules adopted by the project owner (§6.1):** specialists are not principal builders without explicit evidence; documented same-notice corrections supersede; unresolved contradictory supplier evidence is a conflict; ambiguous roles stay uncertain; re-published notices preserve provenance and material changes. Pending the independent review in §11.6 |
 
-| D8 | Stage vocabulary (`LODGED`, `APPROVED`, `AWARDED`, `UNDER_CONSTRUCTION`, `COMPLETED`, `REFUSED`, `WITHDRAWN`, `LAPSED`), the 180-day staleness flag, and `AWARDED` meaning the head contract only | **Yes**, provisional until the second labelling batch (§11.7) |
-| D9 | Private documents (`MANUAL_ENTRY`) confirm only the workspace-private `SUBCONTRACT_AWARDED` in v1; for public relationships they support `INFERRED` only | **Yes.** Confirmation of public relationships stays machine-checkable against stored records |
-| D10 | Only `ABN_EXACT` against an ABR-verified ABN confirms an organisation; `ALIAS_MATCH` never does | **Yes.** Costs recall on notices without an ABN; accepted (§16) |
-| D11 | Extend the ABR parser in `lib/abnLookup.ts` to return registered business names (a later production PR) | **Yes, later.** Until then trading names arrive only as `OBSERVED_WITH_ABN` aliases |
+| D8 | Stage vocabulary (`LODGED`, `APPROVED`, `AWARDED`, `UNDER_CONSTRUCTION`, `COMPLETED`, `REFUSED`, `WITHDRAWN`, `LAPSED`), the 180-day staleness flag, and `AWARDED` meaning the head contract only | **Approved by the project owner, 2026-10-17.** The 180-day constant stays provisional until the second labelling batch (§11.7) |
+| D9 | Private documents (`MANUAL_ENTRY`) confirm only the workspace-private `SUBCONTRACT_AWARDED` in v1; for public relationships they support `INFERRED` only | **Approved by the project owner, 2026-10-17.** Confirmation of public relationships stays machine-checkable against stored records |
+| D10 | Only `ABN_EXACT` against an ABR-verified ABN confirms an organisation; `ALIAS_MATCH` never does | **Approved by the project owner, 2026-10-17** (strict identity verification retained). Costs recall on notices without an ABN; accepted (§16) |
+| D11 | Extend the ABR parser in `lib/abnLookup.ts` to return registered business names (a later production PR) | **Deferred by the project owner, 2026-10-17,** until the ABR integration is ready. Until then trading names arrive only as `OBSERVED_WITH_ABN` aliases |
 
 ## 16. Known limitations
 
