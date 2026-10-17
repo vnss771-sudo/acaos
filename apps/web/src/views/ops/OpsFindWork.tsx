@@ -450,7 +450,7 @@ export function OpsFindWork({ api, workspace, toast, canManage = false, setView 
 
               {canManage && (o.status === 'PURSUING' || quotes.has(o.id)) && (
                 <QuoteCapture
-                  route={route} toast={toast} workspaceId={workspace.id} target={{ opportunityId: o.id }} quote={quotes.get(o.id) ?? null}
+                  route={route} api={api} toast={toast} workspaceId={workspace.id} target={{ opportunityId: o.id }} quote={quotes.get(o.id) ?? null}
                   onChanged={load}
                   // A won card would vanish from "Active"; follow it to "Won" where the job is started.
                   onDecided={status => (status === 'ACCEPTED' && filter !== 'WON' ? setFilter('WON') : load())}

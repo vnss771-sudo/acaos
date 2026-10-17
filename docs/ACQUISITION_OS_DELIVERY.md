@@ -101,6 +101,18 @@ walks the whole loop over the real routes (find → quote → win → job → cr
 shifts via the Field Ops API → closeout → report) and checks the tenant boundary
 on every delivery route.
 
+**Estimate check (quote time).** `GET /api/delivery/estimate-check?workspaceId=&opportunityId=|commercialOpportunityId=`
+returns `buildEstimateCheck` (pure, `lib/jobEconomics.ts`). It covers the 10 most recent
+closed jobs whose origin matches the opportunity being quoted, using the report's
+origin key. It reports the median hours vs estimate with *n*, how many overran,
+`direction` (`OVER` / `UNDER` / `ON_TARGET`, ±10%) and an `hoursFactor` to apply
+to a new estimate.
+- Jobs with approved variations are excluded, because their hours were for a different scope.
+- Below 3 jobs of this origin it falls back to all closed jobs (`basis: 'ALL_JOBS'`).
+- Below 3 jobs overall it returns `basis: null` and no message.
+- The Record quote form shows the message and the adjusted hours. It is advisory
+  (rule 10) and never changes a quote.
+
 **Not yet:** grouping by region (only Work-discovery opportunities carry one), and a
 quote form on commercial opportunities in the web app (the API supports it; it
 belongs with the operator console).

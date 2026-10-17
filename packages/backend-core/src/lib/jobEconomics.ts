@@ -231,6 +231,95 @@ export function buildDeliveryReport(jobs: ReportJob[], minJobs = DELIVERY_REPORT
   return { minJobs, overall: group('ALL', 'All closed jobs', jobs, minJobs), groups }
 }
 
+// ── Estimate check (quote time) ─────────────────────────────────────────────
+// Before a price goes out: how did recent closed jobs of the same origin land
+// against their estimated hours? The delivery report's grouping, median and
+// floor, read at the moment it can still change the quote. Advisory only
+// (truth rule 10): it never alters a quote. A job with approved variations is
+// left out — its hours were for a different scope, not an estimating miss.
+// Below the floor for the origin it falls back to all closed jobs, labelled so;
+// below the floor overall it says nothing (truth rule 7).
+
+export const ESTIMATE_CHECK_RECENT_JOBS = 10
+// A median within ±this of the estimate is "on target": no adjustment suggested.
+export const ESTIMATE_CHECK_THRESHOLD_PCT = 10
+
+export interface EstimateCheckJob {
+  originKey: string
+  completedAt: Date | string | null
+  economics: JobEconomics
+}
+
+export type EstimateCheckBasis = 'SAME_ORIGIN' | 'ALL_JOBS'
+
+export interface EstimateCheck {
+  minJobs: number
+  thresholdPct: number
+  // Which jobs the figures are from; null = too few to say anything.
+  basis: EstimateCheckBasis | null
+  label: string
+  // Comparable closed jobs of this origin (hours variance known, scope unchanged), before the recent cap.
+  sameOriginJobs: number
+  // Closed jobs left out of the chosen pool because approved variations changed the scope.
+  scopeChangedJobs: number
+  hoursVariancePct: ReportStat | null
+  // Of the jobs in the stat, how many took more hours than estimated.
+  overran: number | null
+  direction: 'OVER' | 'UNDER' | 'ON_TARGET' | null
+  // Multiply an hours estimate by this to match the track record; null unless OVER/UNDER.
+  hoursFactor: number | null
+  message: string | null
+}
+
+const completedMs = (j: EstimateCheckJob) => (j.completedAt ? new Date(j.completedAt).getTime() : 0)
+
+export function buildEstimateCheck(
+  target: { originKey: string; originLabel: string },
+  jobs: EstimateCheckJob[],
+  opts: { minJobs?: number; recentJobs?: number; thresholdPct?: number } = {},
+): EstimateCheck {
+  const minJobs = opts.minJobs ?? DELIVERY_REPORT_MIN_JOBS
+  const recentJobs = opts.recentJobs ?? ESTIMATE_CHECK_RECENT_JOBS
+  const thresholdPct = opts.thresholdPct ?? ESTIMATE_CHECK_THRESHOLD_PCT
+  const measured = jobs
+    .filter(j => j.economics.hoursVariancePct != null && Number.isFinite(j.economics.hoursVariancePct))
+    .sort((a, b) => completedMs(b) - completedMs(a))
+  // Economics v1 predate variations: absent means none.
+  const scopeChanged = (j: EstimateCheckJob) => (j.economics.approvedVariations ?? 0) > 0
+  const sameOrigin = measured.filter(j => j.originKey === target.originKey)
+  const sameUsable = sameOrigin.filter(j => !scopeChanged(j))
+  const allUsable = measured.filter(j => !scopeChanged(j))
+
+  const basis: EstimateCheckBasis | null = sameUsable.length >= minJobs ? 'SAME_ORIGIN' : allUsable.length >= minJobs ? 'ALL_JOBS' : null
+  const domain = basis === 'ALL_JOBS' ? measured : sameOrigin
+  const pool = (basis === 'ALL_JOBS' ? allUsable : sameUsable).slice(0, recentJobs)
+  const variance = basis ? stat(pool.map(j => j.economics.hoursVariancePct), minJobs) : null
+  const base = {
+    minJobs, thresholdPct, basis,
+    label: basis === 'ALL_JOBS' ? 'All closed jobs' : target.originLabel,
+    sameOriginJobs: sameUsable.length,
+    scopeChangedJobs: domain.filter(scopeChanged).length,
+  }
+  if (!variance) return { ...base, basis: null, hoursVariancePct: null, overran: null, direction: null, hoursFactor: null, message: null }
+
+  const overran = pool.filter(j => (j.economics.hoursVariancePct as number) > 0).length
+  const m = variance.median
+  const direction = m >= thresholdPct ? 'OVER' : m <= -thresholdPct ? 'UNDER' : 'ON_TARGET'
+  const subject = basis === 'SAME_ORIGIN'
+    ? `${target.originLabel} — your last ${variance.n} closed jobs`
+    : `Across your last ${variance.n} closed jobs (fewer than ${minJobs} of this kind so far)`
+  const message = direction === 'OVER'
+    ? `${subject} took a median ${m}% more hours than estimated (${overran} of ${variance.n} ran over). Review the labour allowance before you send this quote.`
+    : direction === 'UNDER'
+      ? `${subject} took a median ${Math.abs(m)}% fewer hours than estimated. Your labour allowance may be pricing you out.`
+      : `${subject} landed within ${thresholdPct}% of their estimated hours (median ${m > 0 ? '+' : ''}${m}%).`
+  return {
+    ...base, hoursVariancePct: variance, overran, direction,
+    hoursFactor: direction === 'ON_TARGET' ? null : Math.round((1 + m / 100) * 1000) / 1000,
+    message,
+  }
+}
+
 // Variation lifecycle (UQ-35). Decided variations are history, never edited.
 export const VARIATION_STATUSES = ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'] as const
 export type VariationStatus = typeof VARIATION_STATUSES[number]
