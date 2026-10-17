@@ -147,8 +147,9 @@ describe('quoting defaults in the builder', () => {
   })
 
   test('no defaults set, or defaults unavailable: the fields start blank and the builder still works', async () => {
-    for (const reply of [Promise.resolve({ defaults: { defaultOnCostPct: null, defaultOverheadPct: null, defaultTargetMarginPct: null } }), Promise.reject(new Error('403'))]) {
-      const api = vi.fn((path: string) => (path.endsWith('/quoting-defaults') ? reply : Promise.resolve({ estimate: ESTIMATE, crewRates: CREW, check: null })))
+    // Replies are made when requested, so a rejection always has the builder's handler attached.
+    for (const reply of [() => Promise.resolve({ defaults: { defaultOnCostPct: null, defaultOverheadPct: null, defaultTargetMarginPct: null } }), () => Promise.reject(new Error('403'))]) {
+      const api = vi.fn((path: string) => (path.endsWith('/quoting-defaults') ? reply() : Promise.resolve({ estimate: ESTIMATE, crewRates: CREW, check: null })))
       const { unmount } = render(<EstimateBuilder route={makeRouteApi(api as never)} workspaceId="ws1" target={{ opportunityId: 'o1' }} priceCents={null} hours="" onUsePrice={vi.fn()} onInputs={vi.fn()} />)
       await screen.findByRole('region', { name: 'Estimate' }, SLOW)
       expect(screen.getByLabelText('On-costs (%)')).toHaveValue('')
