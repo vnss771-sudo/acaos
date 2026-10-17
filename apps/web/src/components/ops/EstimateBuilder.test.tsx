@@ -92,7 +92,7 @@ describe('QuoteCapture with the estimate builder', () => {
 
     await userEvent.clear(screen.getByLabelText('Quote amount ($)'))
     await userEvent.type(screen.getByLabelText('Quote amount ($)'), '60000')
-    await userEvent.click(screen.getByRole('button', { name: 'Save quote' }))
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quote' })[0])
     await waitFor(() => expect(api).toHaveBeenCalledWith('/api/delivery/quotes', expect.objectContaining({ method: 'POST' })))
     const post = api.mock.calls.find(c => c[0] === '/api/delivery/quotes') as unknown as [string, { body: string }]
     expect(JSON.parse(post[1].body)).toEqual({
