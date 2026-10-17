@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import type { RouteApi } from '../../lib/routeApi.js'
 import type { ApiHook } from '../../hooks/useApi.js'
+import type { EstimateInputs } from '@acaos/shared'
+import { EstimateBuilder } from './EstimateBuilder.js'
 import type { ToastHook } from '../../hooks/useToast.js'
 import { colors, s } from '../../styles.js'
 import { formatCents, parseDollars } from '../../lib/money.js'
@@ -73,6 +75,8 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
   const [hours, setHours] = useState('')
   const [busy, setBusy] = useState(false)
   const [check, setCheck] = useState<EstimateCheck | null>(null)
+  const [estimating, setEstimating] = useState(false)
+  const [estimate, setEstimate] = useState<EstimateInputs | null>(null)
 
   // Fetched when the form opens. Advisory: a failure just means no check shown.
   useEffect(() => {
@@ -92,9 +96,11 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
     if (h !== undefined && (!Number.isFinite(h) || h < 0)) { toast.error('Estimated hours must be a number'); return }
     setBusy(true)
     try {
-      await route('POST /api/delivery/quotes', { body: { workspaceId, ...target, amountCents, estimatedHours: h, submit: true } })
+      // The estimate travels as inputs only; the server recomputes and stores it. The amount and hours are as typed.
+      const withEstimate = estimating && estimate ? { estimate } : {}
+      await route('POST /api/delivery/quotes', { body: { workspaceId, ...target, amountCents, estimatedHours: h, submit: true, ...withEstimate } })
       toast.success('Quote recorded')
-      setOpen(false); setAmount(''); setHours('')
+      setOpen(false); setAmount(''); setHours(''); setEstimating(false); setEstimate(null)
       onChanged()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to record quote') }
     finally { setBusy(false) }
@@ -167,6 +173,13 @@ export function QuoteCapture({ route, api, toast, workspaceId, target, quote, on
       </div>
       <button style={s.btnSm} disabled={busy} onClick={save}>Save quote</button>
       <button style={s.btnGhost} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      {!estimating && <button style={s.btnGhost} disabled={busy} onClick={() => setEstimating(true)}>Build estimate</button>}
+      {estimating && (
+        <EstimateBuilder
+          route={route} workspaceId={workspaceId} target={target} priceCents={parseDollars(amount)} hours={hours}
+          onUsePrice={cents => setAmount((cents / 100).toFixed(2))} onInputs={setEstimate}
+        />
+      )}
       {check && (
         <div role="note" aria-label="Estimate check" style={{ flexBasis: '100%', fontSize: 12, color: check.direction === 'OVER' || check.direction === 'UNDER' ? colors.amber : colors.textFaint }}>
           {check.message ?? `Estimate check: ${check.sameOriginJobs} of ${check.minJobs} closed jobs needed before your estimates are compared with your track record.`}

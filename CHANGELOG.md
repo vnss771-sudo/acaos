@@ -6,6 +6,13 @@
 
 ## Unreleased
 
+### Quote estimate builder (17 Oct 2026)
+- **Record quote → Build estimate** works out what a price leaves after estimated labour (hours × rate × on-costs), materials and subcontractors. It shows gross margin, margin after overheads, the break-even price, and the price a target gross margin needs.
+- With comparable closed jobs, it also shows the margin if labour runs like those jobs did ("if labour runs like your recent comparable jobs (444 h): gross margin 22.3%").
+- A blank figure is unknown, never $0. Costs entered so far are shown, never presented as the total. The median base rate of active crew is offered as the labour rate.
+- Advisory: buttons only fill the form's fields. The quote's amount and hours are what the user types, and nothing is sent until they save.
+- New read-only `POST /api/delivery/estimate` (admin-only). `POST /api/delivery/quotes` accepts optional estimate inputs and stores a server-computed snapshot in the new nullable `Quote.estimate` column (migration `20261018000000_quote_estimate`, additive).
+
 ### Estimate check at quote time (17 Oct 2026)
 - Opening **Record quote** now shows how recent closed jobs of the same kind landed against their estimated hours. For example: "Development applications — your last 5 closed jobs took a median 11% more hours than estimated (4 of 5 ran over). Review the labour allowance before you send this quote."
 - When hours are entered, the form shows what they become at that track record ("400 h is closer to 444 h"). Underruns are flagged too, because over-allowing labour loses bids.

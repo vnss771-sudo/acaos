@@ -113,6 +113,35 @@ to a new estimate.
 - The Record quote form shows the message and the adjusted hours. It is advisory
   (rule 10) and never changes a quote.
 
+**Estimate builder (quote time).** **Build estimate** in the Record quote form answers "if I quote this
+job at this price, what profit am I likely to make?". `lib/quoteEstimate.ts` (`computeEstimate`, pure) uses
+the closeout's definitions, so an estimate and its job's actuals compare like for like:
+- labour = hours × base rate × (1 + on-cost %);
+- gross margin = price − labour − materials − subcontractors;
+- overheads (a % of direct cost) are a separate "after overheads" line;
+- price for target = direct cost ÷ (1 − target %), rounded up.
+
+Rules:
+- **Unknown is never zero.** A blank input makes everything that depends on it unknown, with a gap. The
+  costs that are known are shown as "entered so far", never as the total. An entered `0` is a real zero.
+  With no on-cost %, labour is base pay only and says so (as the closeout does).
+- **Track record.** With a target opportunity, the estimate is re-run at the estimate check's hours factor:
+  "if labour runs like your recent comparable jobs (444 h): gross margin …". Materials and subcontractor
+  costs are not adjusted, because no estimate of them existed before this.
+- **Crew rates.** The median base rate of active crew is offered as a labour rate; unrated crew are
+  counted, never treated as $0.
+- **Advisory.** "Use this price" and "Use it" only fill the editable form fields. Nothing is saved or sent
+  until the user saves the quote, and the quote's amount and hours are exactly what they typed.
+
+| Route | What |
+|---|---|
+| `POST /api/delivery/estimate` | `{ workspaceId, opportunityId?|commercialOpportunityId?, priceCents?, inputs }` → `{ estimate, crewRates, check }`. Read-only preview (POST only for the body); `ops:manage`; the opportunity must be in the workspace (404). Inputs only: a client cannot send results |
+| `POST /api/delivery/quotes` | now also takes optional `estimate` inputs. The server recomputes at the saved price and stores `Quote.estimate` = `{ version, inputs, result, hoursFactor, computedAt }`. The audit row records the estimated gross margin % and direct cost |
+
+Migration `20261018000000_quote_estimate` adds the nullable `Quote.estimate` JSONB column (no backfill;
+rollback `ALTER TABLE "Quote" DROP COLUMN "estimate"`). Storing the breakdown is what will later let the
+estimate check compare estimated materials and subcontractor costs with actuals, not just hours.
+
 **Not yet:** grouping by region (only Work-discovery opportunities carry one), and a
 quote form on commercial opportunities in the web app (the API supports it; it
 belongs with the operator console).

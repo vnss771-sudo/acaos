@@ -353,3 +353,95 @@ test('outcome graph: an accepted quote is the win and revenue for exactly that c
   assert.equal(result.chain.revenueCents, 4_500_000)
   assert.equal(result.chain.nodes.find(n => n.stage === 'WON')!.ref.type, 'quote')
 })
+
+// ── Estimate builder ─────────────────────────────────────────────────────────
+const estimateInputs = { labourHours: 100, labourRate: 50, onCostPct: 20, materialsCents: 300_000, subcontractCents: null, overheadPct: 10, targetMarginPct: 25 }
+
+test('estimate preview: computed server-side, crew rates from active crew, track record from closed jobs; writes nothing', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const ws = workspace.id
+  const crew = await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'Q1', fullName: 'Q', role: 'Electrician', baseRate: 40 } })
+  await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'Q2', fullName: 'Q2', role: 'Electrician', baseRate: 60 } })
+  await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'Q3', fullName: 'Q3', role: 'Apprentice' } })
+  await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'Q4', fullName: 'Q4', role: 'Former', baseRate: 500, isActive: false } })
+  // Three closed jobs of the same origin estimated at 100h, taking 110/120/130h: hours factor 1.2.
+  for (const hours of [110, 120, 130]) {
+    const opp = await seedOpportunity(ws)
+    const quoteId = await acceptedQuote(user.id, ws, { opportunityId: opp.id }, 2_000_000, 100)
+    const made = await req(user.id, 'POST', `/quotes/${quoteId}/job`, { workspaceId: ws })
+    await seedShift(ws, crew.id, made.body.job.opsJobSiteId, hours)
+    assert.equal((await req(user.id, 'POST', `/jobs/${made.body.job.id}/closeout`, { workspaceId: ws, invoicedRevenueCents: 2_000_000, otherCostCents: 0 })).status, 200)
+  }
+  const pending = await seedOpportunity(ws)
+  const quotesBefore = await prisma.quote.count({ where: { workspaceId: ws } })
+
+  const r = await req(user.id, 'POST', '/estimate', { workspaceId: ws, opportunityId: pending.id, priceCents: 1_500_000, inputs: estimateInputs })
+  assert.equal(r.status, 200, JSON.stringify(r.body))
+  const e = r.body.estimate
+  assert.equal(e.labourCostCents, 600_000)                  // 100h × $50 × 1.2
+  assert.equal(e.directCostCents, null, 'subcontractors not entered: unknown, not zero')
+  assert.equal(e.knownDirectCostCents, 900_000)
+  assert.equal(e.grossMarginCents, null)
+  assert.ok(e.gaps.some((g: string) => /Subcontractors not entered/.test(g)))
+  assert.deepEqual(r.body.crewRates, { activeCrew: 3, ratedCrew: 2, medianBaseRate: 50 }, 'inactive crew excluded; unrated counted')
+  assert.equal(r.body.check.hoursFactor, 1.2)
+  assert.equal(e.trackRecord.adjustedHours, 120)
+  assert.equal(e.trackRecord.labourCostCents, 720_000)
+
+  const complete = await req(user.id, 'POST', '/estimate', { workspaceId: ws, opportunityId: pending.id, priceCents: 1_500_000, inputs: { ...estimateInputs, subcontractCents: 0 } })
+  assert.equal(complete.body.estimate.grossMarginCents, 600_000)
+  assert.equal(complete.body.estimate.trackRecord.grossMarginCents, 480_000)
+  // Without a target there is no track record, only the arithmetic.
+  const bare = await req(user.id, 'POST', '/estimate', { workspaceId: ws, priceCents: null, inputs: estimateInputs })
+  assert.equal(bare.status, 200)
+  assert.deepEqual([bare.body.check, bare.body.estimate.trackRecord], [null, null])
+
+  assert.equal(await prisma.quote.count({ where: { workspaceId: ws } }), quotesBefore, 'preview never writes a quote')
+})
+
+test('estimate preview: validation, admin-only and tenant-scoped', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const ws = workspace.id
+  const opp = await seedOpportunity(ws)
+  const call = (body: Record<string, unknown>, as = user.id) => req(as, 'POST', '/estimate', { workspaceId: ws, inputs: estimateInputs, ...body }, server)
+  assert.equal((await call({ inputs: { ...estimateInputs, result: { grossMarginCents: 1 } } })).status, 400, 'a client cannot send computed results')
+  assert.equal((await call({ inputs: { ...estimateInputs, targetMarginPct: 100 } })).status, 400)
+  assert.equal((await call({ inputs: { ...estimateInputs, materialsCents: -1 } })).status, 400)
+  assert.equal((await call({ opportunityId: opp.id, commercialOpportunityId: opp.id })).status, 400)
+
+  const member = await seedUserWithWorkspace()
+  await prisma.membership.create({ data: { userId: member.user.id, workspaceId: ws, role: 'member' } })
+  assert.equal((await call({}, member.user.id)).status, 403, 'quotes and margins are admin-only')
+  const other = await seedUserWithWorkspace()
+  assert.equal((await call({}, other.user.id)).status, 403, 'another workspace\'s admin naming this workspace')
+  const own = await req(other.user.id, 'POST', '/estimate', { workspaceId: other.workspace.id, opportunityId: opp.id, inputs: estimateInputs })
+  assert.equal(own.status, 404, 'their own workspace with this workspace\'s opportunity')
+  // Crew rates never leak across workspaces.
+  await prisma.opsCrewMember.create({ data: { workspaceId: ws, employeeCode: 'Z1', fullName: 'Z', role: 'Electrician', baseRate: 99 } })
+  const theirs = await req(other.user.id, 'POST', '/estimate', { workspaceId: other.workspace.id, inputs: estimateInputs })
+  assert.deepEqual(theirs.body.crewRates, { activeCrew: 0, ratedCrew: 0, medianBaseRate: null })
+})
+
+test('saving a quote with an estimate stores a server-computed snapshot and never changes the quoted amount or hours', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const ws = workspace.id
+  const opp = await seedOpportunity(ws)
+  const inputs = { ...estimateInputs, subcontractCents: 0 }
+  const created = await req(user.id, 'POST', '/quotes', { workspaceId: ws, opportunityId: opp.id, amountCents: 1_234_500, estimatedHours: 90, estimate: inputs, submit: true })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const q = await prisma.quote.findUnique({ where: { id: created.body.quote.id } }) as { amountCents: number; estimatedHours: number; estimate: Record<string, any> }
+  assert.equal(q.amountCents, 1_234_500, 'the price is what the user entered, not the estimate\'s target price')
+  assert.equal(q.estimatedHours, 90, 'the hours are what the user entered')
+  assert.deepEqual(q.estimate.inputs, inputs)
+  assert.equal(q.estimate.result.priceCents, 1_234_500, 'margin is computed at the saved price')
+  assert.equal(q.estimate.result.directCostCents, 900_000)
+  assert.equal(q.estimate.result.grossMarginCents, 334_500)
+  assert.equal(q.estimate.hoursFactor, null, 'no comparable closed jobs yet')
+  assert.equal(q.estimate.version, 1)
+  const audit = await prisma.auditEvent.findFirst({ where: { workspaceId: ws, type: 'quote.created' } }) as { metadata: Record<string, any> }
+  assert.deepEqual(audit.metadata.estimate, { grossMarginPct: 27.1, directCostCents: 900_000 })
+
+  const plain = await req(user.id, 'POST', '/quotes', { workspaceId: ws, opportunityId: (await seedOpportunity(ws)).id, amountCents: 100, submit: true })
+  assert.equal((await prisma.quote.findUnique({ where: { id: plain.body.quote.id } }) as { estimate: unknown }).estimate, null, 'no estimate is stored as null')
+  assert.equal((await req(user.id, 'POST', '/quotes', { workspaceId: ws, opportunityId: opp.id, amountCents: 100, estimate: { ...inputs, result: {} } })).status, 400)
+})
