@@ -285,7 +285,7 @@ export function Today({ api, workspace, toast, isAdmin = false, setView }: Props
       {isAdmin && (o.status === 'PURSUING' || quotes.has(o.id)) && (
         <div style={{ marginTop: 8 }}>
           <QuoteCapture
-            route={route} toast={toast} workspaceId={workspace.id} target={{ commercialOpportunityId: o.id }} quote={quotes.get(o.id) ?? null}
+            route={route} api={api} toast={toast} workspaceId={workspace.id} target={{ commercialOpportunityId: o.id }} quote={quotes.get(o.id) ?? null}
             onChanged={load} onOpenJob={() => setView('ops-delivery')}
           />
         </div>

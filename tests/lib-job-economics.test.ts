@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, type EconomicsShift, type ReportJob } from '../packages/backend-core/src/lib/jobEconomics.ts'
+import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, buildEstimateCheck, type EconomicsInput, type EconomicsShift, type EstimateCheckJob, type ReportJob } from '../packages/backend-core/src/lib/jobEconomics.ts'
 
 const done = new Date('2026-10-01T16:00:00Z')
 const shift = (crewMemberId: string, totalHours: number, endTime: Date | null = done): EconomicsShift => ({ crewMemberId, totalHours, endTime })
@@ -155,4 +155,72 @@ test('variation lifecycle: drafts submit, submissions are decided, decisions are
   assert.ok(!canTransitionVariation('DRAFT', 'APPROVED'), 'approval needs a submission first')
   for (const done of ['APPROVED', 'REJECTED', 'CANCELLED']) assert.ok(!canTransitionVariation(done, 'SUBMITTED'))
   assert.ok(!canTransitionVariation('APPROVED', 'CANCELLED'), 'an approved variation is history')
+})
+
+// ── Estimate check ──────────────────────────────────────────────────────────
+const DA = { originKey: 'OPPORTUNITY:DEVELOPMENT_APPLICATION', originLabel: 'Development applications' }
+let day = 0
+function measured(originKey: string, actualHours: number, estHours: number | null, variations: EconomicsInput['variations'] = []): EstimateCheckJob {
+  day++
+  return {
+    originKey, completedAt: new Date(Date.UTC(2026, 8, day)),
+    economics: computeJobEconomics({ shifts: [shift('a', actualHours)], rates, quote: { amountCents: 100_000, estimatedHours: estHours }, revenueCents: 100_000, otherCostCents: 0, variations }),
+  }
+}
+
+test('estimate check: same-origin median overrun, with n and how many ran over, and an hours factor', () => {
+  // +5%, +10%, +12%, +20%, -2% → median +10
+  const jobs = [measured(DA.originKey, 105, 100), measured(DA.originKey, 110, 100), measured(DA.originKey, 112, 100), measured(DA.originKey, 120, 100), measured(DA.originKey, 98, 100)]
+  const c = buildEstimateCheck(DA, [...jobs, measured('OPPORTUNITY:CONTRACT_AWARD', 300, 100)])
+  assert.equal(c.basis, 'SAME_ORIGIN')
+  assert.equal(c.sameOriginJobs, 5)
+  assert.deepEqual(c.hoursVariancePct, { n: 5, median: 10, min: -2, max: 20 })
+  assert.equal(c.overran, 4)
+  assert.equal(c.direction, 'OVER')
+  assert.equal(c.hoursFactor, 1.1)
+  assert.equal(c.message, 'Development applications — your last 5 closed jobs took a median 10% more hours than estimated (4 of 5 ran over). Review the labour allowance before you send this quote.')
+})
+
+test('estimate check: only the most recent jobs count', () => {
+  // Three old overruns, then three recent on-target jobs: with a cap of 3, only the recent ones count.
+  const jobs = [measured(DA.originKey, 150, 100), measured(DA.originKey, 150, 100), measured(DA.originKey, 150, 100), measured(DA.originKey, 101, 100), measured(DA.originKey, 99, 100), measured(DA.originKey, 100, 100)]
+  const c = buildEstimateCheck(DA, jobs, { recentJobs: 3 })
+  assert.equal(c.hoursVariancePct?.n, 3)
+  assert.equal(c.direction, 'ON_TARGET')
+  assert.equal(c.hoursFactor, null, 'nothing to adjust when on target')
+  assert.match(c.message ?? '', /landed within 10% of their estimated hours \(median 0%\)/)
+})
+
+test('estimate check: an underrun is flagged too — overpricing loses bids', () => {
+  const c = buildEstimateCheck(DA, [measured(DA.originKey, 80, 100), measured(DA.originKey, 85, 100), measured(DA.originKey, 70, 100)])
+  assert.equal(c.direction, 'UNDER')
+  assert.equal(c.hoursFactor, 0.8)
+  assert.match(c.message ?? '', /median 20% fewer hours than estimated/)
+})
+
+test('estimate check: jobs with approved variations and jobs without an hours estimate are left out', () => {
+  const scopeChanged = [{ revenueCents: 10_000, estimatedCostCents: 0 }]
+  const jobs = [measured(DA.originKey, 200, 100, scopeChanged), measured(DA.originKey, 200, 100, scopeChanged), measured(DA.originKey, 200, null), measured(DA.originKey, 105, 100), measured(DA.originKey, 110, 100)]
+  const c = buildEstimateCheck(DA, jobs)
+  // Two usable jobs of this kind: below the floor, and too few overall to fall back.
+  assert.equal(c.basis, null)
+  assert.equal(c.message, null)
+  assert.equal(c.hoursFactor, null)
+  assert.equal(c.sameOriginJobs, 2, 'neither scope-changed jobs nor one without an estimate are comparable')
+  assert.equal(c.scopeChangedJobs, 2)
+})
+
+test('estimate check: below the floor for this origin it falls back to all closed jobs, labelled so', () => {
+  const other = 'COMMERCIAL_OPPORTUNITY:CAPACITY_EXPANSION'
+  const c = buildEstimateCheck(DA, [measured(DA.originKey, 130, 100), measured(other, 120, 100), measured(other, 125, 100)])
+  assert.equal(c.basis, 'ALL_JOBS')
+  assert.equal(c.label, 'All closed jobs')
+  assert.equal(c.sameOriginJobs, 1)
+  assert.equal(c.hoursVariancePct?.median, 25)
+  assert.match(c.message ?? '', /^Across your last 3 closed jobs \(fewer than 3 of this kind so far\) took a median 25% more hours/)
+})
+
+test('estimate check: no closed jobs says nothing, never a default', () => {
+  const c = buildEstimateCheck(DA, [])
+  assert.deepEqual([c.basis, c.direction, c.hoursVariancePct, c.overran, c.message, c.sameOriginJobs], [null, null, null, null, null, 0])
 })

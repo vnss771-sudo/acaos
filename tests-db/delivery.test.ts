@@ -283,6 +283,56 @@ test('report: regional grouping falls back to locality and never invents a regio
   assert.deepEqual(labels, ['Logan City', 'Unknown region'])
 })
 
+test('estimate check: closed jobs of the quoted origin, active jobs ignored; tenant-scoped and admin-only', async () => {
+  const { user, workspace } = await seedUserWithWorkspace()
+  const crew = await prisma.opsCrewMember.create({ data: { workspaceId: workspace.id, employeeCode: 'X1', fullName: 'X', role: 'Electrician', baseRate: 100 } })
+  const pending = await seedOpportunity(workspace.id)
+  const ws = workspace.id
+  const check = (q: string, as = user.id) => req(as, 'GET', `/estimate-check?workspaceId=${ws}&${q}`)
+
+  // Nothing closed yet: a count, no figure.
+  const empty = await check(`opportunityId=${pending.id}`)
+  assert.equal(empty.status, 200, JSON.stringify(empty.body))
+  assert.deepEqual([empty.body.check.basis, empty.body.check.message, empty.body.check.sameOriginJobs], [null, null, 0])
+
+  // Three closed development-application jobs estimated at 100h: +10, +20, +30 → median +20.
+  for (const hours of [110, 120, 130]) {
+    const opp = await seedOpportunity(ws)
+    const quoteId = await acceptedQuote(user.id, ws, { opportunityId: opp.id }, 2_000_000, 100)
+    const made = await req(user.id, 'POST', `/quotes/${quoteId}/job`, { workspaceId: ws })
+    await seedShift(ws, crew.id, made.body.job.opsJobSiteId, hours)
+    assert.equal((await req(user.id, 'POST', `/jobs/${made.body.job.id}/closeout`, { workspaceId: ws, invoicedRevenueCents: 2_000_000, otherCostCents: 0 })).status, 200)
+  }
+  // A job still in delivery, far over its estimate, must not count.
+  const live = await seedOpportunity(ws)
+  const liveQuote = await acceptedQuote(user.id, ws, { opportunityId: live.id }, 2_000_000, 100)
+  const liveJob = await req(user.id, 'POST', `/quotes/${liveQuote}/job`, { workspaceId: ws })
+  await seedShift(ws, crew.id, liveJob.body.job.opsJobSiteId, 500)
+
+  const r = await check(`opportunityId=${pending.id}`)
+  assert.equal(r.status, 200)
+  assert.equal(r.body.check.basis, 'SAME_ORIGIN')
+  assert.deepEqual(r.body.check.hoursVariancePct, { n: 3, median: 20, min: 10, max: 30 })
+  assert.equal(r.body.check.direction, 'OVER')
+  assert.equal(r.body.check.hoursFactor, 1.2)
+  assert.match(r.body.check.message, /^Development applications — your last 3 closed jobs took a median 20% more hours/)
+
+  // A commercial opportunity has no closed jobs of its own kind: all closed jobs, labelled so.
+  const co = await seedCommercialOpportunity(ws)
+  const fallback = await check(`commercialOpportunityId=${co.id}`)
+  assert.equal(fallback.body.check.basis, 'ALL_JOBS')
+  assert.equal(fallback.body.check.sameOriginJobs, 0)
+
+  assert.equal((await check(`opportunityId=${pending.id}&commercialOpportunityId=${co.id}`)).status, 400, 'exactly one target')
+  assert.equal((await req(user.id, 'GET', `/estimate-check?workspaceId=${ws}`)).status, 400)
+  const other = await seedUserWithWorkspace()
+  const foreign = await seedOpportunity(other.workspace.id)
+  assert.equal((await check(`opportunityId=${foreign.id}`)).status, 404, 'another workspace\'s opportunity')
+  const member = await seedUserWithWorkspace()
+  await prisma.membership.create({ data: { userId: member.user.id, workspaceId: ws, role: 'member' } })
+  assert.equal((await check(`opportunityId=${pending.id}`, member.user.id)).status, 403)
+})
+
 test('outcome graph: an accepted quote is the win and revenue for exactly that commercial opportunity', async () => {
   const { user, workspace } = await seedUserWithWorkspace()
   const co = await seedCommercialOpportunity(workspace.id)

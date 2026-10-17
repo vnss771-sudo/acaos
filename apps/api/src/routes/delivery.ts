@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@acaos/backend-core/lib/prisma.js'
 import { recordAudit } from '@acaos/backend-core/lib/audit.js'
 import { retireBridge } from '@acaos/backend-core/lib/commercialOpportunityStore.js'
-import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
+import { computeJobEconomics, canTransitionQuote, canTransitionVariation, buildDeliveryReport, buildEstimateCheck, QUOTE_STATUSES, type JobEconomics } from '@acaos/backend-core/lib/jobEconomics.js'
 import { FIND_WORK_KIND_LABEL, loadPilotScorecard, SCORECARD_DEFAULT_WEEKS, SCORECARD_MAX_WEEKS } from '@acaos/backend-core/lib/pilotScorecard.js'
 import { resolveEvidenceStorage } from '@acaos/backend-core/lib/evidenceStorageConfig.js'
 import { assertWorkspacePermission } from '../lib/permissions.js'
@@ -312,6 +312,16 @@ function originOf(job: Omit<JobRow, 'variations'>) {
   return null
 }
 
+// The report's grouping key and label for an origin; the estimate check groups
+// the opportunity being quoted the same way, so the two always agree.
+function originGroup(o: { type: 'OPPORTUNITY' | 'COMMERCIAL_OPPORTUNITY'; kind: string } | null) {
+  const kind = o?.kind ?? 'UNKNOWN'
+  const originLabel = o == null ? 'Unknown origin'
+    : o.type === 'OPPORTUNITY' ? (FIND_WORK_KIND_LABEL[kind] ?? kind)
+    : `Signal: ${kind.toLowerCase().replace(/_/g, ' ')}`
+  return { originKey: `${o?.type ?? 'NONE'}:${kind}`, originLabel }
+}
+
 // Live economics for ACTIVE jobs, derived from shifts (never stored), with one
 // query for shifts and one for crew rates however many jobs are listed.
 async function liveEconomics(workspaceId: string, jobs: JobRow[]): Promise<Map<string, JobEconomics>> {
@@ -446,19 +456,49 @@ deliveryRouter.get(
       include: reportJobInclude,
     }) as ReportJobRow[]
     const closed = jobs.filter(j => j.closeout != null)
-    const report = buildDeliveryReport(closed.map(j => {
-      const o = originOf(j)
-      const kind = o?.kind ?? 'UNKNOWN'
-      const label = o == null ? 'Unknown origin'
-        : o.type === 'OPPORTUNITY' ? (FIND_WORK_KIND_LABEL[kind] ?? kind)
-        : `Signal: ${kind.toLowerCase().replace(/_/g, ' ')}`
-      return { originKey: `${o?.type ?? 'NONE'}:${kind}`, originLabel: label, economics: j.closeout as JobEconomics }
-    }))
+    const report = buildDeliveryReport(closed.map(j => ({ ...originGroup(originOf(j)), economics: j.closeout as JobEconomics })))
     const regionalReport = buildDeliveryReport(closed.map(j => {
       const r = regionOf(j)
       return { originKey: r.key, originLabel: r.label, economics: j.closeout as JobEconomics }
     }))
     res.json({ report, regionalReport })
+  })
+)
+
+const estimateCheckSchema = z.object({
+  workspaceId: workspaceIdField,
+  opportunityId: idField.optional(),
+  commercialOpportunityId: idField.optional(),
+}).refine(b => (b.opportunityId == null) !== (b.commercialOpportunityId == null), {
+  message: 'Give exactly one of opportunityId or commercialOpportunityId', path: ['opportunityId'],
+})
+
+// GET /api/delivery/estimate-check — at quote time: how recent closed jobs of
+// the same origin as this opportunity landed against their estimated hours.
+// Advisory; withheld below the report's floor. Registered before /jobs/:id.
+deliveryRouter.get(
+  '/estimate-check',
+  asyncHandler(async (req, res) => {
+    const user = requireUser(req)
+    const q = parseQuery(estimateCheckSchema, req)
+    await assertWorkspacePermission(user.id, q.workspaceId, 'ops:manage')
+    const target = q.opportunityId
+      ? await prisma.opportunity.findFirst({ where: { id: q.opportunityId, workspaceId: q.workspaceId }, select: { kind: true } }) as { kind: string } | null
+      : await prisma.commercialOpportunity.findFirst({ where: { id: q.commercialOpportunityId!, workspaceId: q.workspaceId }, select: { eventType: true } }) as { eventType: string } | null
+    if (!target) throw new ApiError(404, 'Opportunity not found')
+    const origin = 'kind' in target
+      ? originGroup({ type: 'OPPORTUNITY', kind: target.kind })
+      : originGroup({ type: 'COMMERCIAL_OPPORTUNITY', kind: target.eventType })
+    const jobs = await prisma.job.findMany({
+      where: { workspaceId: q.workspaceId, status: 'COMPLETE' },
+      orderBy: { completedAt: 'desc' },
+      take: 1000,
+      include: { opsJobSite: jobInclude.opsJobSite, quote: jobInclude.quote },
+    }) as Array<Omit<JobRow, 'variations'>>
+    const check = buildEstimateCheck(origin, jobs.filter(j => j.closeout != null).map(j => ({
+      originKey: originGroup(originOf(j)).originKey, completedAt: j.completedAt, economics: j.closeout as JobEconomics,
+    })))
+    res.json({ check })
   })
 )
 

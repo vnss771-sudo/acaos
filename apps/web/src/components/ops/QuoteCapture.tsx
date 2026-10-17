@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { RouteApi } from '../../lib/routeApi.js'
+import type { ApiHook } from '../../hooks/useApi.js'
 import type { ToastHook } from '../../hooks/useToast.js'
 import { colors, s } from '../../styles.js'
 import { formatCents, parseDollars } from '../../lib/money.js'
@@ -19,8 +20,29 @@ export type QuoteSummary = {
   job?: { id: string; status: string } | null
 }
 
+// GET /api/delivery/estimate-check: how recent comparable closed jobs landed
+// against their estimated hours. Advisory; null basis = too few jobs to say.
+export type EstimateCheck = {
+  minJobs: number
+  basis: 'SAME_ORIGIN' | 'ALL_JOBS' | null
+  sameOriginJobs: number
+  scopeChangedJobs: number
+  direction: 'OVER' | 'UNDER' | 'ON_TARGET' | null
+  hoursFactor: number | null
+  message: string | null
+}
+
+/** The hours an estimate becomes at the track record, or null when there's nothing to adjust. */
+export function adjustedHours(hours: string, check: Pick<EstimateCheck, 'hoursFactor'> | null): number | null {
+  const h = Number(hours)
+  if (!check?.hoursFactor || hours.trim() === '' || !Number.isFinite(h) || h <= 0) return null
+  return Math.round(h * check.hoursFactor)
+}
+
 type Props = {
   route: RouteApi
+  // Raw GET client for the estimate check; without it the form shows no check.
+  api?: ApiHook
   toast: ToastHook
   workspaceId: string
   // Which opportunity this prices: a Work-discovery one or a commercial one.
@@ -43,12 +65,25 @@ export function quoteLifecycleCue(quote: Pick<QuoteSummary, 'status' | 'job'>): 
   return 'Opportunity → quote → won → job in delivery'
 }
 
-export function QuoteCapture({ route, toast, workspaceId, target, quote, onChanged, onDecided, onOpenJob }: Props) {
+export function QuoteCapture({ route, api, toast, workspaceId, target, quote, onChanged, onDecided, onOpenJob }: Props) {
+  const targetKey = 'opportunityId' in target ? 'opportunityId' : 'commercialOpportunityId'
   const targetId = 'opportunityId' in target ? target.opportunityId : target.commercialOpportunityId
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
   const [hours, setHours] = useState('')
   const [busy, setBusy] = useState(false)
+  const [check, setCheck] = useState<EstimateCheck | null>(null)
+
+  // Fetched when the form opens. Advisory: a failure just means no check shown.
+  useEffect(() => {
+    if (!open || !api) return
+    let live = true
+    api<{ check: EstimateCheck }>(`/api/delivery/estimate-check?workspaceId=${encodeURIComponent(workspaceId)}&${targetKey}=${encodeURIComponent(targetId)}`)
+      .then(r => { if (live) setCheck(r.check) })
+      .catch(() => { if (live) setCheck(null) })
+    return () => { live = false }
+  }, [open, api, workspaceId, targetKey, targetId])
+  const suggested = adjustedHours(hours, check)
 
   async function save() {
     const amountCents = parseDollars(amount)
@@ -132,6 +167,13 @@ export function QuoteCapture({ route, toast, workspaceId, target, quote, onChang
       </div>
       <button style={s.btnSm} disabled={busy} onClick={save}>Save quote</button>
       <button style={s.btnGhost} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      {check && (
+        <div role="note" aria-label="Estimate check" style={{ flexBasis: '100%', fontSize: 12, color: check.direction === 'OVER' || check.direction === 'UNDER' ? colors.amber : colors.textFaint }}>
+          {check.message ?? `Estimate check: ${check.sameOriginJobs} of ${check.minJobs} closed jobs needed before your estimates are compared with your track record.`}
+          {suggested != null && <> At that record, {hours.trim()} h is closer to <strong>{suggested} h</strong>.</>}
+          {check.message && check.scopeChangedJobs > 0 && <span style={{ color: colors.textFaint }}> ({check.scopeChangedJobs} job(s) with approved variations left out.)</span>}
+        </div>
+      )}
     </div>
   )
 }

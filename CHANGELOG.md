@@ -6,6 +6,16 @@
 
 ## Unreleased
 
+### Estimate check at quote time (17 Oct 2026)
+- Opening **Record quote** now shows how recent closed jobs of the same kind landed against their estimated hours. For example: "Development applications — your last 5 closed jobs took a median 11% more hours than estimated (4 of 5 ran over). Review the labour allowance before you send this quote."
+- When hours are entered, the form shows what they become at that track record ("400 h is closer to 444 h"). Underruns are flagged too, because over-allowing labour loses bids.
+- It uses the same rules as the delivery report:
+  - closed jobs only;
+  - medians with their *n*;
+  - nothing shown below 3 jobs, only how many more are needed.
+- It uses the 10 most recent jobs. Jobs with approved variations are left out, because their hours were for a different scope. If there are too few jobs of this kind, it falls back to all closed jobs and says so.
+- Advisory only: it never changes a quote. New endpoint: `GET /api/delivery/estimate-check` (admin-only). No schema change, no migration.
+
 ### Source licence registry and gate (17 Oct 2026)
 - Added `sourceRegistry.ts`: one licence entry per work-discovery source (licence, terms, evidence links, review date, commercial-use status, attribution). A unit test fails if a source has no entry, or an entry has no source.
 - AusTender is recorded as **unverified**: Finance publishes the same contract-notice data on data.gov.au under CC BY 3.0 AU, but the OCDS API states no data licence. PlanningAlerts is unverified (commercial plan not held).
